@@ -1,0 +1,5 @@
+set oneMember := first;
+set unitParamsSeparatePrint := "invested_capacity_MW" "fuel" "cf_profile" "inflow" "input_grid" "input_node" "output2_grid" "output2_node" "invested_storage_MWh" "max_invest_MW" "max_invest_MWh";
+set nodeNodeParamsSeparatePrint := "cap.rightward_MW" "cap.leftward_MW" "max_invest_MW" "invested_capacity_MW";
+set unit_ts_param := "efficiency" "fix_generation" "min_online" "min_generation" "max_generation";
+end;
