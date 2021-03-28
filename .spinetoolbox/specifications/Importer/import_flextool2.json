@@ -1707,7 +1707,8 @@
                 "1": "float",
                 "2": "float",
                 "3": "float",
-                "4": "float"
+                "4": "float",
+                "5": "float"
             },
             "calc": {
                 "0": "string",
