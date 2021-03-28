@@ -1,0 +1,8 @@
+*.csv
+FlexTool2D_data.sqlite
+Results.sqlite
+paramNotWritten.dat
+.spinetoolbox/items/flextool/output/
+.spinetoolbox/items/exporttocsv/exported.json
+.spinetoolbox/items/
+results/
