@@ -18,7 +18,12 @@
                 {
                     "type": "path",
                     "relative": true,
-                    "path": ".spinetoolbox/specifications/Importer/import_node.json"
+                    "path": ".spinetoolbox/specifications/Importer/importresultcsv.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Importer/importflexresults.json"
                 }
             ],
             "Exporter": [
@@ -117,13 +122,16 @@
                     "bottom"
                 ],
                 "to": [
-                    "ResultsToDB",
+                    "Import",
                     "right"
-                ]
+                ],
+                "options": {
+                    "use_datapackage": true
+                }
             },
             {
                 "from": [
-                    "ResultsToDB",
+                    "Import",
                     "left"
                 ],
                 "to": [
@@ -138,7 +146,7 @@
             "type": "Data Store",
             "description": "",
             "x": -58.45796513434699,
-            "y": 12.310746305263677,
+            "y": 11.729181048950835,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -156,8 +164,8 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 69.4601241551712,
-            "y": 134.32914163868395,
+            "x": -36.384752493757304,
+            "y": 134.9107068949967,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -176,7 +184,7 @@
             "type": "Data Connection",
             "description": "",
             "x": -294.2156749429846,
-            "y": 35.62201141969403,
+            "y": 35.04044616338119,
             "references": [
                 {
                     "type": "path",
@@ -194,7 +202,7 @@
             "type": "Data Connection",
             "description": "",
             "x": 141.4552893379034,
-            "y": -130.3291416386839,
+            "y": -130.91070689499674,
             "references": [
                 {
                     "type": "path",
@@ -207,7 +215,7 @@
             "type": "Tool",
             "description": "",
             "x": 292.21567494298455,
-            "y": -21.15129045296237,
+            "y": -21.732855709275213,
             "specification": "FlexTool",
             "execute_in_work": false,
             "cmd_line_args": []
@@ -216,7 +224,7 @@
             "type": "Importer",
             "description": "",
             "x": -176.69316483789865,
-            "y": 28.550832332624587,
+            "y": 27.969267076311745,
             "specification": "Import_FlexTool2",
             "cancel_on_error": false,
             "file_selection": [
@@ -230,128 +238,16 @@
                 ]
             ]
         },
-        "ResultsToDB": {
+        "Import": {
             "type": "Importer",
             "description": "",
-            "x": 219.53455298678205,
-            "y": 123.17496111741556,
-            "specification": "Import_node",
+            "x": 148.5454735349703,
+            "y": 105.09339624242797,
+            "specification": "ImportFlexResults",
             "cancel_on_error": false,
             "file_selection": [
                 [
-                    "results/node_D.csv",
-                    true
-                ],
-                [
                     "results/color_codes_elec.dat",
-                    false
-                ],
-                [
-                    "results/color_codes_heat.dat",
-                    false
-                ],
-                [
-                    "results/inertiaUnit_elec_D.csv",
-                    false
-                ],
-                [
-                    "results/reserveUnit_elec_D.csv",
-                    false
-                ],
-                [
-                    "results/units_elec_D.csv",
-                    false
-                ],
-                [
-                    "results/node_t_heat_heatA_D.csv",
-                    false
-                ],
-                [
-                    "results/color_codes_no_grid.dat",
-                    false
-                ],
-                [
-                    "results/events_D.csv",
-                    false
-                ],
-                [
-                    "results/node_t_elec_nodeB_D.csv",
-                    false
-                ],
-                [
-                    "results/storageContent_heat_D.csv",
-                    false
-                ],
-                [
-                    "results/genUnitGroup_elec_D.csv",
-                    false
-                ],
-                [
-                    "results/node_t_elec_nodeA_D.csv",
-                    false
-                ],
-                [
-                    "results/units_heat_D.csv",
-                    false
-                ],
-                [
-                    "results/genUnit_heat_D.csv",
-                    false
-                ],
-                [
-                    "results/costs_t_D.csv",
-                    false
-                ],
-                [
-                    "results/genUnitGroup_heat_D.csv",
-                    false
-                ],
-                [
-                    "results/costs_D.csv",
-                    false
-                ],
-                [
-                    "results/transfers_elec_D.csv",
-                    false
-                ],
-                [
-                    "results/units_csp_D.csv",
-                    false
-                ],
-                [
-                    "results/grid_t_csp_D.csv",
-                    false
-                ],
-                [
-                    "results/grid_t_elec_D.csv",
-                    false
-                ],
-                [
-                    "results/onlineUnit_elec_D.csv",
-                    false
-                ],
-                [
-                    "results/investments_D.dat",
-                    false
-                ],
-                [
-                    "results/costs_unitGroup_D.csv",
-                    false
-                ],
-                [
-                    "results/storageContent_csp_D.csv",
-                    false
-                ],
-                [
-                    "results/storageContent_elec_D.csv",
-                    false
-                ],
-                [
-                    "results/genUnit_csp_D.csv",
-                    false
-                ],
-                [
-                    "results/grid_t_heat_D.csv",
                     false
                 ],
                 [
@@ -359,20 +255,20 @@
                     false
                 ],
                 [
-                    "results/node_t_elec_nodeC_D.csv",
+                    "results/investments_D.dat",
                     false
                 ],
                 [
-                    "results/genUnit_elec_D.csv",
+                    "results/color_codes_heat.dat",
                     false
                 ],
                 [
-                    "results/genUnitGroup_csp_D.csv",
+                    "results/color_codes_no_grid.dat",
                     false
                 ],
                 [
-                    "results/summary_D.csv",
-                    false
+                    "datapackage@FlexTool",
+                    true
                 ]
             ]
         },
@@ -380,7 +276,7 @@
             "type": "Exporter",
             "description": "",
             "x": 165.753308605153,
-            "y": -5.313213269048433,
+            "y": -5.894778525361275,
             "databases": [
                 {
                     "output_file_name": "inputData",
@@ -400,7 +296,7 @@
             "type": "Data Transformer",
             "description": "",
             "x": 52.873111245964694,
-            "y": 7.74808940880186,
+            "y": 7.166524152489018,
             "specification": "Replace_spaces"
         }
     }
