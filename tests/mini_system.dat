@@ -1,0 +1,140 @@
+set debug := mini_system;
+
+set entity := gas_node coal_node elec_A elec_B_lossless elec_C_losses gas_turbine coal_unit A_to_B A_to_C transfer_Losses_A;
+set process := gas_turbine coal_unit A_to_B A_to_C transfer_Losses_A;
+set node := gas_node coal_node elec_A elec_B_lossless elec_C_losses;
+set commodity := gas coal elec;
+set reserve := FCR_up;
+set time := t01 t02 t03;
+
+set nodeBalance := elec_A elec_C_losses elec_B_lossless;
+set nodeState := ;
+set nodeInflow := elec_A elec_C_losses elec_B_lossless;
+set process_method := 
+  (gas_turbine, 1way_1variable) 
+  (coal_unit, 1way_online) 
+  (A_to_B, 2way_1variable) 
+  (A_to_C, 2way_2variable) 
+;
+set reserve_node := ('FCR_up', 'elec_A');
+set read_process_source_sink := 
+  (gas_turbine, gas_node, elec_A) 
+  (coal_unit, coal_node, elec_A)
+  (A_to_B, elec_A, elec_B_lossless) 
+  (A_to_C, elec_A, elec_C_losses) 
+;
+set process_reserve_source_sink := 
+  (gas_turbine, FCR_up, gas_turbine, elec_A)
+  (coal_unit, FCR_up, coal_node, elec_A)
+  (A_to_C, FCR_up, A_to_C, elec_C_losses) 
+;
+set commodity_node := ('gas', 'gas_node') ('coal', 'coal_node');
+
+set pet_invest :=;
+set pet_divest :=;
+
+param t_jump := ["t01"] 0, ["t02"] 1, ["t03"] -2;
+
+param p_commodity := 
+["gas", "gas_node", "price", "t01"] 10,
+["gas", "gas_node", "price", "t02"] 10,
+["gas", "gas_node", "price", "t03"] 10,
+["coal", "coal_node", "price", "t01"] 5,
+["coal", "coal_node", "price", "t02"] 5,
+["coal", "coal_node", "price", "t03"] 5
+;
+
+param p_process :=
+["gas_turbine", "efficiency", "t01"] 0.4
+["gas_turbine", "efficiency", "t02"] 0.4
+["gas_turbine", "efficiency", "t03"] 0.4
+["coal_unit", "efficiency", "t01"] 0.3
+["coal_unit", "efficiency", "t02"] 0.3
+["coal_unit", "efficiency", "t03"] 0.3
+[A_to_B, efficiency, t01] 1
+[A_to_B, efficiency, t02] 1
+[A_to_B, efficiency, t03] 1
+[A_to_C, efficiency, t01] 0.8
+[A_to_C, efficiency, t02] 0.8
+[A_to_C, efficiency, t03] 0.8
+;
+
+param p_process_source := 
+[gas_turbine, gas_node, coefficient] 1
+[coal_unit, coal_node, coefficient] 1
+[A_to_B, elec_A, coefficient] 1
+[A_to_C, elec_A, coefficient] 1
+;
+
+param p_process_sink :=
+[gas_turbine, elec_A, coefficient] 1
+[coal_unit, elec_A, coefficient] 1
+[A_to_B, elec_B_lossless, coefficient] 1 
+[A_to_C, elec_C_losses, coefficient] 1
+[gas_turbine, elec_A, capacity] 60
+[coal_unit, elec_A, capacity] 30
+[A_to_B, elec_B_lossless, capacity] 10 
+[A_to_C, elec_C_losses, capacity] 10
+;
+
+param p_inflow :=
+[elec_A, t01] -70
+[elec_A, t02] -70
+[elec_A, t03] -70
+[elec_C_losses, t01] -20
+[elec_C_losses, t02] -20
+[elec_C_losses, t03] 20
+[elec_B_lossless, t01] -20
+[elec_B_lossless, t02] 20
+[elec_B_lossless, t03] -20
+;
+
+param pq_up := 
+"elec_A" 10000,
+"elec_C_losses" 12000,
+"elec_B_lossless" 14000,
+;
+
+param pq_down := 
+"elec_A" 5000,
+"elec_C_losses" 12000,
+"elec_B_lossless" 14000,
+;
+
+param d_obj := 5.486625e5;
+
+param d_flow :=
+[gas_turbine, gas_node, elec_A, t01] 60
+[gas_turbine, gas_node, elec_A, t02] 32.5
+[gas_turbine, gas_node, elec_A, t03] 34
+[coal_unit, coal_node, coal_unit, t01] -100
+[coal_unit, coal_node, coal_unit, t02] -100
+[coal_unit, coal_node, coal_unit, t03] -100
+[coal_unit, coal_unit, elec_A, t01] 30
+[coal_unit, coal_unit, elec_A, t02] 30
+[coal_unit, coal_unit, elec_A, t03] 30
+[A_to_B, elec_A, elec_B_lossless, t01] 10
+[A_to_B, elec_A, elec_B_lossless, t02] -20
+[A_to_B, elec_A, elec_B_lossless, t03] 10
+[A_to_C, elec_A, elec_C_losses, t01] 8   #incoming to elec_C_losses
+[A_to_C, elec_A, elec_C_losses, t02] 10
+[A_to_C, elec_A, elec_C_losses, t03] 0
+[A_to_C, elec_C_losses, elec_A, t01] 0 
+[A_to_C, elec_C_losses, elec_A, t02] 0
+[A_to_C, elec_C_losses, elec_A, t03] 16
+;
+
+param d_flow_1_or_2_variable :=
+[gas_turbine, gas_node, elec_A, t01] -150
+[gas_turbine, gas_node, elec_A, t02] -81.25
+[gas_turbine, gas_node, elec_A, t03] -85
+[A_to_B, elec_A, elec_B_lossless, t01] -10
+[A_to_B, elec_A, elec_B_lossless, t02] 20
+[A_to_B, elec_A, elec_B_lossless, t03] -10
+[A_to_C, elec_A, elec_C_losses, t01] -10
+[A_to_C, elec_A, elec_C_losses, t02] -12.5
+[A_to_C, elec_A, elec_C_losses, t03] 0
+[A_to_C, elec_C_losses, elec_A, t01] 0
+[A_to_C, elec_C_losses, elec_A, t02] 0
+[A_to_C, elec_C_losses, elec_A, t03] -20
+;
