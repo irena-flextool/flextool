@@ -24,23 +24,23 @@ set method 'm - Type of process that transfers, converts or stores commodities';
 set debug 'flags to output debugging and test results';
 
 #Individual methods
-set method_1way_1variable;
-set method_2way_1variable;
-set method_2way_2variable;
-set method_1way_offline;
-set method_1way_online;
-set method_2way_offline;
-set method_2way_online;
-set method_2way_online_exclusive;
+set method_1way_1variable within method;
+set method_2way_1variable within method;
+set method_2way_2variable within method;
+set method_1way_offline within method;
+set method_1way_online within method;
+set method_2way_offline within method;
+set method_2way_online within method;
+set method_2way_online_exclusive within method;
 
 #Method collections
 set method_1variable;
-set method_1way;
-set method_2way;
-set method_online;
-set method_offline;
-set method_sum_flow;
-set method_sum_flow_2way;
+set method_1way within method;
+set method_2way within method;
+set method_online within method;
+set method_offline within method;
+set method_sum_flow within method;
+set method_sum_flow_2way within method;
 
 
 set nodeBalance 'nodes that maintain a node balance' within node;
@@ -48,9 +48,8 @@ set nodeState 'nodes that have a state' within node;
 set nodeInflow 'nodes that have an inflow' within node;
 set nodeGroup_node 'member nodes of a particular nodeGroup' dimen 2 within {nodeGroup, node};
 set process_method dimen 2 within {process, method};
-set read_process_source_sink dimen 3 within {process, node, node};
-set process_source := setof {(p, source, sink) in read_process_source_sink} (p, source);
-set process_sink := setof {(p, source, sink) in read_process_source_sink} (p, sink);
+set process_source dimen 2 within {process, entity};
+set process_sink dimen 2 within {process, entity};
 set process_source_toProcess := {
     p in process, source in node, p2 in process 
 	:  p = p2 
@@ -80,12 +79,15 @@ set process_process_toSource := {
 	&& sum{(p, m) in process_method 
 	        : m in method_sum_flow_2way} 1};
 set process_source_toSink := {
-    (p, source, sink) in read_process_source_sink 
-	: sum{(p, m) in process_method 
+    p in process, source in node, sink in node
+	:  (p, source) in process_source
+	&& (p, sink) in process_sink
+    && sum{(p, m) in process_method 
 	       : m in method_1variable union method_2way_2variable} 1};
 set process_sink_toSource := {
     p in process, sink in node, source in node
-	:  (p, source, sink) in read_process_source_sink
+	:  (p, source) in process_source
+	&& (p, sink) in process_sink
 	&& sum{(p, m) in process_method 
 	       : m in method_2way_2variable} 1};
 set process_source_sink := 
@@ -152,19 +154,12 @@ table data IN 'CSV' 'process__method.csv' : process_method <- [process,method];
 table data IN 'CSV' 'process__source.csv' : process_source <- [process,source];
 table data IN 'CSV' 'process__sink.csv' : process_sink <- [process,sink];
 
-table data IN 'CSV' '.csv' :  <- [];
+table data IN 'CSV' 'p_process.csv' : [process, processParam, time], p_process;
+
+
+#table data IN 'CSV' '.csv' :  <- [];
 
 table data IN 'CSV' 't_jump.csv' : [time], t_jump;
-
-set nodeBalance 'nodes that maintain a node balance' within node;
-set nodeState 'nodes that have a state' within node;
-set nodeInflow 'nodes that have an inflow' within node;
-set nodeGroup_node 'member nodes of a particular nodeGroup' dimen 2 within {nodeGroup, node};
-set process_method dimen 2 within {process, method};
-set read_process_source_sink dimen 3 within {process, node, node};
-set process_source := setof {(p, source, sink) in read_process_source_sink} (p, source);
-set process_sink := setof {(p, source, sink) in read_process_source_sink} (p, sink);
-
 
 #########################
 # Variable declarations
@@ -179,6 +174,8 @@ var vq_state_up {n in nodeBalance, t in time_in_use} >= 0;
 var vq_state_down {n in nodeBalance, t in time_in_use} >= 0;
 var vq_reserve_up {(r, ng) in reserve_nodeGroup, t in time_in_use} >= 0;
 
+display p_process;
+display process_method;
 #########################
 ## Data checks 
 printf 'Checking: Data for 1 variable conversions directly from source to sink (and possibly back)\n';
@@ -236,11 +233,11 @@ s.t. reserveBalance_eq {r in reserve, ng in nodeGroup, t in time_in_use : (r, ng
   + p_reserve[r, ng, t]
   =
   + vq_reserve_up[r, ng, t]
-  + sum {(p, r, n, sink) in process_reserve_source_sink : not (p, 'simple_1way') in process_method 
+  + sum {(p, r, n, sink) in process_reserve_source_sink : not (p, 'simple_method_1way') in process_method 
 		  && (ng, n) in nodeGroup_node 
 		  && (r, ng) in reserve_nodeGroup} 
 	   v_reserve[p, r, n, sink, t]
-  + sum {(p, r, n, sink) in process_reserve_source_sink :     (p, 'simple_1way') in process_method 
+  + sum {(p, r, n, sink) in process_reserve_source_sink :     (p, 'simple_method_1way') in process_method 
 		  && (ng, n) in nodeGroup_node 
 		  && (r, ng) in reserve_nodeGroup} 
 	   v_reserve[p, r, n, sink, t] / p_process[sink, 'efficiency', t]

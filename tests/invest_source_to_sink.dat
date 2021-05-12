@@ -12,7 +12,7 @@ set nodeInflow := sink_node;
 set process_method := 
   (convert_1way_1variable, 1way_1variable) 
 ;
-set reserve_node := ;
+set reserve_nodeGroup := ;
 set read_process_source_sink := 
   (convert_1way_1variable, source_node, sink_node) 
 ;
@@ -41,7 +41,7 @@ param p_process_source :=
 ;
 
 param p_process_sink :=
-[convert_1way_1variable, sink_node, capacity] 0
+[convert_1way_1variable, sink_node, capacity_existing] 0
 ;
 
 param p_pet_invest := 

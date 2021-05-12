@@ -3,6 +3,7 @@ set debug := mini_system;
 set entity := gas_node coal_node elec_A elec_B_lossless elec_C_losses gas_turbine coal_unit A_to_B A_to_C transfer_Losses_A;
 set process := gas_turbine coal_unit A_to_B A_to_C transfer_Losses_A;
 set node := gas_node coal_node elec_A elec_B_lossless elec_C_losses;
+set nodeGroup := elec_nodes
 set commodity := gas coal elec;
 set reserve := FCR_up;
 set time := t01 t02 t03;
@@ -16,7 +17,7 @@ set process_method :=
   (A_to_B, 2way_1variable) 
   (A_to_C, 2way_2variable) 
 ;
-set reserve_node := ('FCR_up', 'elec_A');
+set reserve_nodeGroup := ('FCR_up', 'elec_nodes');
 set read_process_source_sink := 
   (gas_turbine, gas_node, elec_A) 
   (coal_unit, coal_node, elec_A)
@@ -71,10 +72,10 @@ param p_process_sink :=
 [coal_unit, elec_A, coefficient] 1
 [A_to_B, elec_B_lossless, coefficient] 1 
 [A_to_C, elec_C_losses, coefficient] 1
-[gas_turbine, elec_A, capacity] 60
-[coal_unit, elec_A, capacity] 30
-[A_to_B, elec_B_lossless, capacity] 10 
-[A_to_C, elec_C_losses, capacity] 10
+[gas_turbine, elec_A, capacity_existing] 60
+[coal_unit, elec_A, capacity_existing] 30
+[A_to_B, elec_B_lossless, capacity_existing] 10 
+[A_to_C, elec_C_losses, capacity_existing] 10
 ;
 
 param p_inflow :=

@@ -1,20 +1,20 @@
-set method := 1way_1variable, 2way_1variable, 2way_2variable, 1way_offline, 1way_online, 2way_offline, 2way_online, 2way_online_exclusive;
-set method_1way_1variable := 1way_1variable;
-set method_2way_1variable := 2way_1variable;
-set method_2way_2variable := 2way_2variable;
-set method_1way_offline := 1way_offline;
-set method_1way_online := 1way_online;
-set method_2way_offline := 2way_offline;
-set method_2way_online := 2way_online;
-set method_2way_online_exclusive := 2way_online_exclusive;
+set method := method_1way_1variable, method_2way_1variable, method_2way_2variable, method_1way_offline, method_1way_online, method_2way_offline, method_2way_online, method_2way_online_exclusive;
+set method_1way_1variable := method_1way_1variable;
+set method_2way_1variable := method_2way_1variable;
+set method_2way_2variable := method_2way_2variable;
+set method_1way_offline := method_1way_offline;
+set method_1way_online := method_1way_online;
+set method_2way_offline := method_2way_offline;
+set method_2way_online := method_2way_online;
+set method_2way_online_exclusive := method_2way_online_exclusive;
 
-set method_1variable := 1way_1variable, 2way_1variable;
-set method_1way := 1way_1variable, 1way_offline, 1way_online;
-set method_2way := 2way_1variable, 2way_offline, 2way_online, 2way_online_exclusive;
-set method_offline := 1way_1variable, 2way_1variable, 1way_offline, 2way_offline;
-set method_online := 1way_online, 2way_online, 2way_online_exclusive;
-set method_sum_flow := 1way_offline, 1way_online, 2way_offline, 2way_online, 2way_online_exclusive;
-set method_sum_flow_2way := 2way_offline, 2way_online, 2way_online_exclusive;
+set method_1variable := method_1way_1variable, method_2way_1variable;
+set method_1way := method_1way_1variable, method_1way_offline, method_1way_online;
+set method_2way := method_2way_1variable, method_2way_offline, method_2way_online, method_2way_online_exclusive;
+set method_offline := method_1way_1variable, method_2way_1variable, method_1way_offline, method_2way_offline;
+set method_online := method_1way_online, method_2way_online, method_2way_online_exclusive;
+set method_sum_flow := method_1way_offline, method_1way_online, method_2way_offline, method_2way_online, method_2way_online_exclusive;
+set method_sum_flow_2way := method_2way_offline, method_2way_online, method_2way_online_exclusive;
 
 set commodityParam := price;
 set processParam := coefficient efficiency capacity invest_cost;

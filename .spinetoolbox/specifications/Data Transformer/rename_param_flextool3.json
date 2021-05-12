@@ -1,0 +1,28 @@
+{
+    "name": "rename_param_flexTool3",
+    "item_type": "Data Transformer",
+    "description": "",
+    "filter": {
+        "type": "parameter_rename",
+        "settings": {
+            "capacity": "capacity",
+            "capacity_existing": "capacity_existing",
+            "capacity_forced": "capacity_forced",
+            "capacity_maxInvest": "capacity_maxInvest",
+            "coefficient": "coefficient",
+            "efficiency": "efficiency",
+            "has_balance": "has_balance",
+            "has_inflow": "has_inflow",
+            "has_state": "has_state",
+            "inflow": "p_inflow",
+            "method": "method",
+            "penalty_down": "pq_down",
+            "penalty_up": "pq_up",
+            "price": "price",
+            "time_divest": "t_divest",
+            "time_in_use": "time_in_use",
+            "time_invest": "t_invest",
+            "time_jump": "t_jump"
+        }
+    }
+}

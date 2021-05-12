@@ -1,0 +1,45 @@
+{
+    "name": "FlexTool3",
+    "tooltype": "executable",
+    "includes": [
+        "glpsol.exe",
+        "flexModel3.mod",
+        "glpk_4_61.dll",
+        "FlexTool3_base_sets.dat"
+    ],
+    "description": "",
+    "inputfiles": [
+        "time_in_use.csv",
+        "process__reserve__source.csv",
+        "process__source.csv",
+        "p_process.csv",
+        "t_jump.csv",
+        "process__sink.csv",
+        "time.csv",
+        "reserve__nodeGroup.csv",
+        "process.csv",
+        "nodeState.csv",
+        "nodeGroup.csv",
+        "entity.csv",
+        "reserve.csv",
+        "process__method.csv",
+        "process__reserve__sink.csv",
+        "node.csv",
+        "commodity__node.csv",
+        "commodity.csv",
+        "process__reserve__source__sink.csv",
+        "nodeInflow.csv",
+        "nodeGroup__node.csv",
+        "nodeBalance.csv"
+    ],
+    "inputfiles_opt": [],
+    "outputfiles": [],
+    "cmdline_args": [
+        "--model",
+        "flexModel3.mod",
+        "-d",
+        "FlexTool3_base_sets.dat"
+    ],
+    "execute_in_work": true,
+    "includes_main_path": "../../.."
+}
