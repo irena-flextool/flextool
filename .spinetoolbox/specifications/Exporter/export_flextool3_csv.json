@@ -4,29 +4,6 @@
     "name": "export_FlexTool3_csv",
     "description": "",
     "mappings": {
-        "entity": {
-            "type": "objects",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "entity"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^node$|^unit$"
-                },
-                {
-                    "map_type": "Object",
-                    "position": 0,
-                    "header": "entity"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "use_fixed_table_name": true
-        },
         "process_node_node": {
             "type": "relationships",
             "mapping": [
@@ -309,14 +286,61 @@
                 },
                 {
                     "map_type": "ParameterValue",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "true"
                 }
             ],
             "enabled": true,
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 2": {
+        "nodeState": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "nodeState"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^node$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "has_state"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "nodeState"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": "hidden",
+                    "filter_re": "true"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "commodity__node": {
             "type": "relationships",
             "mapping": [
                 {
@@ -356,7 +380,7 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 3": {
+        "reserve__nodeGroup": {
             "type": "relationships",
             "mapping": [
                 {
@@ -394,7 +418,7 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 4": {
+        "process__reserve__source": {
             "type": "relationships",
             "mapping": [
                 {
@@ -443,7 +467,7 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 5": {
+        "process__reserve__sink": {
             "type": "relationships",
             "mapping": [
                 {
@@ -492,7 +516,7 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 6": {
+        "process__reserve__source__sink": {
             "type": "relationships",
             "mapping": [
                 {
@@ -542,53 +566,7 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 1": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "nodeState"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^node$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "has_state"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": 0,
-                    "header": "nodeState"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValue",
-                    "position": "hidden",
-                    "filter_re": "true"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "use_fixed_table_name": true
-        },
-        "Mapping 7": {
+        "nodeInflow": {
             "type": "object_parameter_values",
             "mapping": [
                 {
@@ -634,69 +612,7 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 8": {
-            "type": "objects",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "process"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^unit$"
-                },
-                {
-                    "map_type": "Object",
-                    "position": 0
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "use_fixed_table_name": true
-        },
-        "Mapping 9": {
-            "type": "relationships",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "process__source"
-                },
-                {
-                    "map_type": "RelationshipClass",
-                    "position": "hidden",
-                    "filter_re": "^unit__sourceNode$"
-                },
-                {
-                    "map_type": "RelationshipClassObjectClass",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "RelationshipClassObjectClass",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "Relationship",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "RelationshipObject",
-                    "position": 0,
-                    "header": "process"
-                },
-                {
-                    "map_type": "RelationshipObject",
-                    "position": 1,
-                    "header": "source"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "use_fixed_table_name": true
-        },
-        "Mapping 10": {
+        "process__sink__unit": {
             "type": "relationships",
             "mapping": [
                 {
@@ -736,7 +652,47 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 11": {
+        "process__source__unit": {
+            "type": "relationships",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "process__source"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^unit__sourceNode$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "source"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "process__source__node__node": {
             "type": "relationships",
             "mapping": [
                 {
@@ -775,7 +731,7 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 12": {
+        "process__sink__node__node": {
             "type": "relationships",
             "mapping": [
                 {
@@ -814,7 +770,7 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 13": {
+        "time_in_use": {
             "type": "object_parameter_values",
             "mapping": [
                 {
@@ -863,7 +819,7 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 14": {
+        "process__method__node__node": {
             "type": "relationship_parameter_values",
             "mapping": [
                 {
@@ -873,59 +829,58 @@
                 },
                 {
                     "map_type": "RelationshipClass",
-                    "position": "hidden",
+                    "position": 0,
                     "filter_re": "^node__node$"
                 },
                 {
                     "map_type": "RelationshipClassObjectClass",
-                    "position": "hidden"
+                    "position": 1
                 },
                 {
                     "map_type": "RelationshipClassObjectClass",
-                    "position": "hidden"
+                    "position": 2
                 },
                 {
                     "map_type": "ParameterDefinition",
-                    "position": "hidden",
+                    "position": 3,
                     "filter_re": "^method$"
                 },
                 {
                     "map_type": "ParameterValueList",
-                    "position": "hidden",
+                    "position": 4,
                     "ignorable": true
                 },
                 {
                     "map_type": "Relationship",
-                    "position": 0,
+                    "position": 5,
                     "header": "process"
                 },
                 {
                     "map_type": "RelationshipObject",
-                    "position": "hidden"
+                    "position": 6
                 },
                 {
                     "map_type": "RelationshipObject",
-                    "position": "hidden"
+                    "position": 7
                 },
                 {
                     "map_type": "Alternative",
-                    "position": "hidden"
+                    "position": 8
                 },
                 {
                     "map_type": "ParameterValueType",
-                    "position": "hidden"
+                    "position": 9
                 },
                 {
                     "map_type": "ParameterValue",
-                    "position": 1,
-                    "header": "method"
+                    "position": 10
                 }
             ],
             "enabled": true,
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 15": {
+        "process__method__unit": {
             "type": "object_parameter_values",
             "mapping": [
                 {
@@ -969,122 +924,30 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "p_process__unit": {
-            "type": "object_parameter_values",
+        "entity__unit": {
+            "type": "objects",
             "mapping": [
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "p_process"
+                    "value": "entity"
                 },
                 {
                     "map_type": "ObjectClass",
                     "position": "hidden",
-                    "filter_re": "^unit$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": 1,
-                    "header": "processParam",
-                    "filter_re": "^efficiency$"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
+                    "filter_re": "^node$|^unit$"
                 },
                 {
                     "map_type": "Object",
                     "position": 0,
-                    "header": "process"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": 2,
-                    "header": "time"
-                },
-                {
-                    "map_type": "ExpandedValue",
-                    "position": 3,
-                    "header": "p_process"
+                    "header": "entity"
                 }
             ],
             "enabled": true,
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "p_process__node__node": {
-            "type": "relationship_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "p_process"
-                },
-                {
-                    "map_type": "RelationshipClass",
-                    "position": "hidden",
-                    "filter_re": "^node__node$"
-                },
-                {
-                    "map_type": "RelationshipClassObjectClass",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "RelationshipClassObjectClass",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": 1,
-                    "filter_re": "^efficiency$"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "Relationship",
-                    "position": 0
-                },
-                {
-                    "map_type": "RelationshipObject",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "RelationshipObject",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": 2
-                },
-                {
-                    "map_type": "ExpandedValue",
-                    "position": 3
-                }
-            ],
-            "enabled": true,
-            "always_export_header": false,
-            "use_fixed_table_name": true
-        },
-        "Mapping 16": {
+        "entity__node__node": {
             "type": "relationships",
             "mapping": [
                 {
@@ -1122,7 +985,7 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 17": {
+        "commodityParam": {
             "type": "object_parameter_values",
             "mapping": [
                 {
@@ -1166,7 +1029,7 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "Mapping 18": {
+        "processParam": {
             "type": "object_parameter_values",
             "mapping": [
                 {
@@ -1205,6 +1068,856 @@
                 {
                     "map_type": "ParameterValue",
                     "position": "hidden"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "process_unit": {
+            "type": "objects",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "process"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^unit$"
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "p_node_s": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "p_node"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^node$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 1,
+                    "header": "paramNode",
+                    "filter_re": "^(?!has_)"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "node"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "single_value"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 2,
+                    "header": "p_node"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "p_node_t": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pt_node"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^node$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 1,
+                    "header": "paramNode",
+                    "filter_re": "^(?!has_)"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "node"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "1d_map"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 3,
+                    "header": "pt_node"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "p_process_t1__unit": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pt_process"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^unit$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 1,
+                    "header": "processParam"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "1d_map"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 3,
+                    "header": "pt_process"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "p_process_t2__node__node": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pt_process"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^node__node$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 1
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": 0
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "1d_map"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 3
+                }
+            ],
+            "enabled": true,
+            "always_export_header": false,
+            "use_fixed_table_name": true
+        },
+        "p_process__sink_s1__unit": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "p_process_sink"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^unit__sink$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 2,
+                    "header": "processParam",
+                    "filter_re": "^(?!method)"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "sink"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "single_value"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 3,
+                    "header": "p_process_sink"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "p_process__sink_s2__node__node": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "p_process_sink"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^node__node$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 2,
+                    "filter_re": "^(?!method)"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": 0
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "single_value"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 3
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "p_process__source_s1__unit": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "p_process_source"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^unit__sourceNode$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 2,
+                    "header": "processParam",
+                    "filter_re": "^(?!method)"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "source"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "single_value"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 3,
+                    "header": "p_process_source"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "p_process__source_s2__node__node": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "p_process_source"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^node__node$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 2,
+                    "filter_re": "^(?!method)"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": 0
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "single_value"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 3
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "p_reserve_t": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pt_reserve"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^reserve__nodeGroup$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 2,
+                    "header": "paramReserve"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "reserve"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "nodeGroup"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "1d_map"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 3,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 4,
+                    "header": "pt_reserve"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "p_reserve_s": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "p_reserve"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^reserve__nodeGroup$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 2,
+                    "header": "paramReserve"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "reserve"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "nodeGroup"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "single_value"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 3,
+                    "header": "p_reserve"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "p_commodity_t": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pt_commodity"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^commodity__node$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 2,
+                    "header": "commodityParam"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "commodity"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "node"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 3,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 4,
+                    "header": "pt_commodity"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "p_process_s1__unit": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "p_process"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "unit"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 1,
+                    "header": "paramUnit",
+                    "filter_re": "^(?!method)"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "unit"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "single_value"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 2,
+                    "header": "p_process"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "p_process_s2__node__node": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "p_process"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "node__node"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 2,
+                    "filter_re": "^(?!method)"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "single_value"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 3
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "time_invest": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "time_invest"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^model$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^time_invest$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 0,
+                    "header": "time"
                 }
             ],
             "enabled": true,

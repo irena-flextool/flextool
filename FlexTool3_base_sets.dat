@@ -17,4 +17,7 @@ set method_sum_flow := method_1way_offline, method_1way_online, method_2way_offl
 set method_sum_flow_2way := method_2way_offline, method_2way_online, method_2way_online_exclusive;
 
 set commodityParam := price;
-set processParam := coefficient efficiency capacity invest_cost;
+set processParam := coefficient efficiency capacity investment_cost lifetime interest annuity;
+set nodeParam := inflow pq_down pq_up, existing, interest_rate, invest_cost, invest_forced, invest_max_time, invest_max_total, lifetime, retire_forced, retire_max, state_unitsize;
+set reserveParam := reserve pq_reserve;
+
