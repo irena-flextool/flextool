@@ -43,6 +43,8 @@ set method_sum_flow within method;
 set method_sum_flow_2way within method;
 
 
+set entity__invest_method 'the investment method applied to an entity' dimen 2 within {entity, invest_method};
+set entityInvest 'nodes, units and node__nodes that can be invested in' setof {(e, m) in entity__invest_method0 (e);
 set nodeBalance 'nodes that maintain a node balance' within node;
 set nodeState 'nodes that have a state' within node;
 set nodeInflow 'nodes that have an inflow' within node;
@@ -129,8 +131,13 @@ param pq_down {n in nodeBalance};
 param pq_reserve {(r, ng) in reserve_nodeGroup};
 param t_jump{t in time};
 param t_duration{t in time};
-param p_node_annual{n in node, nodeParam} := 
-      p_node[n, 'invest_cost'] * ( p_node[n, 'interest'] / (1 - (1 / (1 + p_node[n, 'invest_cost'])^p_node[n, 'lifetime'] ) ) );
+param p_entity_annual{e in entityInvest, t in time_invest} := 
+        + sum{m in invest_method : (e, m) in entity__invest_method && m = 'one_cost'}
+            1
+; 			
+#        if invest_method[e] = 'one_cost' 
+#		then 1 else 2;
+#       p_node[e, 'invest_cost'] * ( p_node[e, 'interest_rate'] / (1 - (1 / (1 + p_node[e, 'invest_cost'])^p_node[e, 'lifetime'] ) ) );
 
 set pt_invest := {
     p in process, t in time_invest 
@@ -138,7 +145,7 @@ set pt_invest := {
 	|| pt_process[p, 'invest_cost', t] };
 set nt_invest := {
     n in node, t in time_invest 
-	:  p_node[n, 'invest_cost'] 
+	:  n in entityInvest
 	|| pt_node[n, 'invest_cost', t] };
 set et_invest := pt_invest union nt_invest;
 set et_divest := et_invest;
@@ -160,6 +167,7 @@ table data IN 'CSV' 'commodity.csv' : commodity <- [commodity];
 table data IN 'CSV' 'reserve.csv' : reserve <- [reserve];
 table data IN 'CSV' 'time.csv' : time <- [time];
 
+table data IN 'CSV' 'entityInvest.csv' : entityInvest <- [entityInvest];
 table data IN 'CSV' 'nodeBalance.csv' : nodeBalance <- [nodeBalance];
 table data IN 'CSV' 'nodeState.csv' : nodeState <- [nodeState];
 table data IN 'CSV' 'nodeInflow.csv' : nodeInflow <- [nodeInflow];
@@ -168,9 +176,9 @@ table data IN 'CSV' 'process__method.csv' : process_method <- [process,method];
 table data IN 'CSV' 'process__source.csv' : process_source <- [process,source];
 table data IN 'CSV' 'process__sink.csv' : process_sink <- [process,sink];
 
-table data IN 'CSV' 'p_node' : [node, nodeParam], p_node;
-table data IN 'CSV' 'pt_node' : [node, nodeParam, time], pt_node;
-table data IN 'CSV' 'pt_commodity' : [process, node, commodityParam, time], pt_commodity;
+table data IN 'CSV' 'p_node.csv' : [node, nodeParam], p_node;
+table data IN 'CSV' 'pt_node.csv' : [node, nodeParam, time], pt_node;
+table data IN 'CSV' 'pt_commodity.csv' : [commodity, node, commodityParam, time], pt_commodity;
 table data IN 'CSV' 'p_process.csv' : [process, processParam], p_process;
 table data IN 'CSV' 'pt_process.csv' : [process, processParam, time], pt_process;
 table data IN 'CSV' 'p_process_source.csv' : [process, source, processParam], p_process_source;
@@ -181,10 +189,10 @@ table data IN 'CSV' 'pt_reserve.csv' : [reserve, nodeGroup, reserveParam, time],
 
 table data IN 'CSV' 't_jump.csv' : [time], t_jump;
 table data IN 'CSV' 't_duration.csv' : [time], t_duration;
-table data IN 'CSV' 'time_invest.csv' : time <- [time];
+table data IN 'CSV' 'time_invest.csv' : time_invest <- [time_invest];
 
 
-display p_node_annual;
+display et_invest, p_entity_annual;
 
 #########################
 # Variable declarations

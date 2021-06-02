@@ -829,51 +829,52 @@
                 },
                 {
                     "map_type": "RelationshipClass",
-                    "position": 0,
+                    "position": "hidden",
                     "filter_re": "^node__node$"
                 },
                 {
                     "map_type": "RelationshipClassObjectClass",
-                    "position": 1
+                    "position": "hidden"
                 },
                 {
                     "map_type": "RelationshipClassObjectClass",
-                    "position": 2
+                    "position": "hidden"
                 },
                 {
                     "map_type": "ParameterDefinition",
-                    "position": 3,
+                    "position": "hidden",
                     "filter_re": "^method$"
                 },
                 {
                     "map_type": "ParameterValueList",
-                    "position": 4,
+                    "position": "hidden",
                     "ignorable": true
                 },
                 {
                     "map_type": "Relationship",
-                    "position": 5,
+                    "position": 0,
                     "header": "process"
                 },
                 {
                     "map_type": "RelationshipObject",
-                    "position": 6
+                    "position": "hidden"
                 },
                 {
                     "map_type": "RelationshipObject",
-                    "position": 7
+                    "position": "hidden"
                 },
                 {
                     "map_type": "Alternative",
-                    "position": 8
+                    "position": "hidden"
                 },
                 {
                     "map_type": "ParameterValueType",
-                    "position": 9
+                    "position": "hidden"
                 },
                 {
                     "map_type": "ParameterValue",
-                    "position": 10
+                    "position": 1,
+                    "header": "method"
                 }
             ],
             "enabled": true,
@@ -985,95 +986,6 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "commodityParam": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "commodityParam"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^commodity$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": 0,
-                    "header": "commodityParam"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValue",
-                    "position": "hidden"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "use_fixed_table_name": true
-        },
-        "processParam": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "processParam"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^unit$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": 0,
-                    "header": "processParam",
-                    "filter_re": "^(?!method)"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValue",
-                    "position": "hidden"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "use_fixed_table_name": true
-        },
         "process_unit": {
             "type": "objects",
             "mapping": [
@@ -1112,7 +1024,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "header": "paramNode",
+                    "header": "nodeParam",
                     "filter_re": "^(?!has_)"
                 },
                 {
@@ -1297,8 +1209,7 @@
                 },
                 {
                     "map_type": "ParameterValueType",
-                    "position": "hidden",
-                    "filter_re": "1d_map"
+                    "position": "hidden"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -1589,7 +1500,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 2,
-                    "header": "paramReserve"
+                    "header": "reserveParam"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1917,7 +1828,155 @@
                 {
                     "map_type": "ExpandedValue",
                     "position": 0,
+                    "header": "time_invest"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "t_duration": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "t_duration"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^model$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "t_duration"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 0,
                     "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 1,
+                    "header": "t_duration"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "entityInvest__node_unit": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "entity__invest_method"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^node$||^unit$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "invest_method"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "entity"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 1,
+                    "header": "invest_method"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "entityInvest__node__node": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "entityInvest"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^node__node$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "invest_method"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": 0
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 1
                 }
             ],
             "enabled": true,

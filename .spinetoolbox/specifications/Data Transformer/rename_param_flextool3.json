@@ -17,7 +17,8 @@
                 "penalty_reserve": "pq_reserve"
             },
             "model": {
-                "time_jump": "t_jump"
+                "time_jump": "t_jump",
+                "time_duration": "t_duration"
             },
             "unit__sinkNode": {
                 "coefficient": "coefficient"
