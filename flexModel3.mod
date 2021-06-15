@@ -127,6 +127,8 @@ param p_process_source {(p, source) in process_source, sourceSinkParam} default 
 param p_process_sink {(p, sink) in process_sink, sourceSinkParam} default 0;
 param p_process_source_coefficient {(p, source) in process_source} := if (p_process_source[p, source, 'coefficient']) then p_process_source[p, source, 'coefficient'] else 1;
 param p_process_sink_coefficient {(p, sink) in process_sink} := if (p_process_sink[p, sink, 'coefficient']) then p_process_sink[p, sink, 'coefficient'] else 1;
+param p_process_source_flow_unitsize {(p, source) in process_source} := if (p_process_source[p, source, 'flow_unitsize']) then p_process_source[p, source, 'flow_unitsize'] else 1;
+param p_process_sink_flow_unitsize {(p, sink) in process_sink} := if (p_process_sink[p, sink, 'flow_unitsize']) then p_process_sink[p, sink, 'flow_unitsize'] else 1;
 param p_inflow {n in nodeInflow, t in time_in_use};
 param p_reserve {r in reserve, ng in nodeGroup, reserveParam};
 param pt_reserve {r in reserve, ng in nodeGroup, reserveParam, t in time_in_use};
@@ -135,15 +137,15 @@ param pq_down {n in nodeBalance};
 param pq_reserve {(r, ng) in reserve_nodeGroup};
 param t_jump{t in time};
 param t_duration{t in time};
-param p_entity_annual{e in entityInvest, t in time_invest} := 
-        + sum{m in invest_method : (e, m) in entity__invest_method && m = 'one_cost'}
+param pt_entity_annual{e in entityInvest, t in time_invest} := 
+        + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m = 'one_cost'}
             (p_node[e, 'invest_cost'] * ( p_node[e, 'interest_rate'] / (1 - (1 / (1 + p_node[e, 'invest_cost'])^p_node[e, 'lifetime'] ) ) ))
+        + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m = 'one_cost'}
+            (p_process[e, 'invest_cost'] * ( p_process[e, 'interest_rate'] / (1 - (1 / (1 + p_process[e, 'invest_cost'])^p_process[e, 'lifetime'] ) ) ))
 ; 			
-#        if invest_method[e] = 'one_cost' 
-#		then 1 else 2;
 #       p_node[e, 'invest_cost'] * ( p_node[e, 'interest_rate'] / (1 - (1 / (1 + p_node[e, 'invest_cost'])^p_node[e, 'lifetime'] ) ) );
 
-set et_invest := {e in entityInvest, t in time_invest : p_entity_annual[e, t]};
+set et_invest := {e in entityInvest, t in time_invest : pt_entity_annual[e, t]};
 set pt_invest := {(p, t) in et_invest : p in process};
 set nt_invest := {(n, t) in et_invest : n in node};
 #    p in process, t in time_invest 
@@ -201,7 +203,7 @@ table data IN 'CSV' 't_jump.csv' : [time], t_jump;
 table data IN 'CSV' 't_duration.csv' : [time], t_duration;
 table data IN 'CSV' 'time_invest.csv' : time_invest <- [time_invest];
 
-
+display et_invest, pt_entity_annual;
 #########################
 # Variable declarations
 var v_flow {(p, source, sink, t) in peet};
@@ -243,7 +245,7 @@ minimize total_cost:
       + sum {(r, ng) in reserve_nodeGroup} vq_reserve_up[r, ng, t] * p_reserve[r, ng, 'pq_reserve']
 	) * t_duration[t]
   + sum {(e, t) in et_invest} v_invest[e, t] 
-##  * pt_invest_annual[e, t]
+    * pt_entity_annual[e, t]
 ;
 	  
 
@@ -298,10 +300,11 @@ s.t. maxToSink {(p, source, sink) in process_source_sink, t in time_in_use : (p,
   + v_flow[p, source, sink, t]
   + sum {r in reserve : (p, r, source, sink) in process_reserve_source_sink} v_reserve[p, r, source, sink, t]
   <=
-  + p_process[p, 'existing']
-#  + p_process_sink[p, sink, 'flow_unitsize'] * p_process[p, 'existing']
-#  + sum {(p, sink, t_invest) in pet_invest : t_invest <= t} v_flowInvest[p, sink, t_invest]
-#  - sum {(p, sink, t_invest) in pet_divest : t_invest <= t} v_flowDivest[p, sink, t_invest]
+  + p_process_sink_flow_unitsize[p, sink] 
+    * ( + p_process[p, 'existing']
+        + sum {(p, t_invest) in pt_invest : t_invest <= t} v_invest[p, t_invest]
+#        - sum {(p, t_invest) in pt_divest : t_invest <= t} v_divest[p, t_invest]
+	  )	
 ;
 
 s.t. minToSink {(p, source, sink) in process_source_sink, t in time_in_use : (p, sink) in process_sink && sum{(p,m) in process_method : m in method diff method_2way_1variable } 1 } :
@@ -315,10 +318,11 @@ s.t. maxToSource {(p, source, sink) in process_source_sink, t in time_in_use : (
   + v_flow[p, sink, source, t]
   + sum {r in reserve : (p, r, sink, source) in process_reserve_source_sink} v_reserve[p, r, sink, source, t]
   <=
-  + p_process[p, 'existing']
-#  + p_process_sink[p, sink, 'flow_unitsize'] * p_process[p, 'existing']
-##  + sum {(p, source, t_invest) in et_invest : t_invest <= t} v_flowInvest[p, source, t_invest]
-##  - sum {(p, source, t_invest) in et_divest : t_invest <= t} v_flowDivest[p, source, t_invest]
+  + p_process_source_flow_unitsize[p, sink] 
+    * ( + p_process[p, 'existing']
+        + sum {(p, t_invest) in pt_invest : t_invest <= t} v_invest[p, t_invest]
+#        - sum {(p, t_invest) in pt_divest : t_invest <= t} v_divest[p, t_invest]
+	  )	
 ;
 
 s.t. minToSource {(p, source, sink) in process_source_sink, t in time_in_use : (p, sink) in process_sink && sum{(p,m) in process_method : m in method_2way_2variable } 1 } :
@@ -357,14 +361,18 @@ for {(p, source, sink) in process_source_sink, t in time_in_use}
     printf '%s, %s, %s, %s, %.8g\n', p, source, sink, t, v_flow[p, source, sink, t].val >> resultFile;
   }
 
-printf '\nFlow investments\n' >> resultFile;
-#for {(p, n, t_invest) in pet_invest} {
-#  printf '%s, %s, %s, %.8g\n', p, n, t_invest , v_flowInvest[p, n, t_invest].val >> resultFile;
-#}
-  
+printf '\nInvestments\n' >> resultFile;
+for {(e, t_invest) in et_invest} {
+  printf '%s, %s, %.8g\n', e, t_invest , v_invest[e, t_invest].val >> resultFile;
+}
+
+printf '\nDivestments\n' >> resultFile;
+for {(e, t_invest) in et_divest} {
+  printf '%s, %s, %.8g\n', e, t_invest , v_divest[e, t_invest].val >> resultFile;
+}
 
 
-printf '\nNode balance\n' >> resultFile;
+printf '\nNode balances\n' >> resultFile;
 for {n in node} {
   printf '\n%s\nNode', n >> resultFile;
   printf (if n in nodeInflow then ', %s' else ''), n >> resultFile;
@@ -429,7 +437,6 @@ for {n in node : 'method_1way_1variable' in debug || 'mini_system' in debug} {
   printf '\n' >> unitTestFile;
 }  
 
-display reserve_nodeGroup;
 ## Testing reserves
 for {(p, r, source, sink, t) in preet} {
   printf (if v_reserve[p, r, source, sink, t].val <> d_reserve[p, r, source, sink, t]

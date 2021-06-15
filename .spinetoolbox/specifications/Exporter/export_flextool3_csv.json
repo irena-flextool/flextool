@@ -1319,7 +1319,7 @@
                     "map_type": "ParameterDefinition",
                     "position": 1,
                     "header": "processParam",
-                    "filter_re": "^(?!method)"
+                    "filter_re": "^(?!method|invest_method)"
                 },
                 {
                     "map_type": "ParameterValueList",
