@@ -5,11 +5,7 @@
     "filter": {
         "type": "parameter_rename",
         "settings": {
-            "unit__sourceNode": {
-                "coefficient": "coefficient"
-            },
             "node": {
-                "inflow": "p_inflow",
                 "penalty_down": "pq_down",
                 "penalty_up": "pq_up"
             },
@@ -19,9 +15,6 @@
             "model": {
                 "time_jump": "t_jump",
                 "time_duration": "t_duration"
-            },
-            "unit__sinkNode": {
-                "coefficient": "coefficient"
             }
         }
     }

@@ -102,14 +102,7 @@
                 "to": [
                     "Params",
                     "left"
-                ],
-                "resource_filters": {
-                    "db_url@FlexTool2D_data": {
-                        "scenario_filter": [
-                            1
-                        ]
-                    }
-                }
+                ]
             },
             {
                 "from": [
@@ -190,8 +183,8 @@
         "FlexTool2D_data": {
             "type": "Data Store",
             "description": "",
-            "x": -106.9971255833511,
-            "y": 55.29260802774226,
+            "x": -127.86516571420566,
+            "y": -81.18487868819216,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -209,8 +202,8 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 213.89991079673143,
-            "y": -191.09596615738693,
+            "x": 225.4932664249838,
+            "y": -220.91458109339862,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -228,8 +221,8 @@
         "FlexTool3_data": {
             "type": "Data Store",
             "description": "",
-            "x": -321.2953287218896,
-            "y": 193.93663059456168,
+            "x": -315.0148195607221,
+            "y": 181.21589062263007,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -247,8 +240,8 @@
         "InputDataXlsx": {
             "type": "Data Connection",
             "description": "",
-            "x": -335.3634333913652,
-            "y": 75.43612942761969,
+            "x": -356.23147352221974,
+            "y": -61.041357288314714,
             "references": [
                 {
                     "type": "path",
@@ -265,8 +258,8 @@
         "FlexToolFiles": {
             "type": "Data Connection",
             "description": "",
-            "x": 100.30753088952278,
-            "y": -90.51502363075824,
+            "x": 79.43949075866823,
+            "y": -226.99251034669265,
             "references": [
                 {
                     "type": "path",
@@ -278,8 +271,8 @@
         "FlexTool": {
             "type": "Tool",
             "description": "",
-            "x": 253.581247056676,
-            "y": 14.29057958329999,
+            "x": 232.71320692582145,
+            "y": -122.18690713263442,
             "specification": "FlexTool",
             "execute_in_work": false,
             "cmd_line_args": []
@@ -287,17 +280,17 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 195.63445333904707,
-            "y": 157.30537800660926,
+            "x": 182.85254630013924,
+            "y": 186.58366092685532,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": []
         },
         "ImportOrig": {
             "type": "Importer",
             "description": "",
-            "x": -219.09088537540208,
-            "y": 67.11498825142745,
+            "x": -239.9589255062566,
+            "y": -69.36249846450698,
             "specification": "Import_FlexTool2",
             "cancel_on_error": false,
             "file_selection": [
@@ -314,11 +307,15 @@
         "Import": {
             "type": "Importer",
             "description": "",
-            "x": 333.3634333913653,
-            "y": -80.47663879810912,
+            "x": 354.2314735222197,
+            "y": -215.79478995121832,
             "specification": "ImportFlexResults",
             "cancel_on_error": false,
             "file_selection": [
+                [
+                    "results/color_codes_csp.dat",
+                    false
+                ],
                 [
                     "results/color_codes_no_grid.dat",
                     false
@@ -328,15 +325,11 @@
                     false
                 ],
                 [
-                    "results/color_codes_elec.dat",
-                    false
-                ],
-                [
                     "results/color_codes_heat.dat",
                     false
                 ],
                 [
-                    "results/color_codes_csp.dat",
+                    "results/color_codes_elec.dat",
                     false
                 ],
                 [
@@ -348,8 +341,8 @@
         "ExportToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": 123.38966743858424,
-            "y": 34.500904738877225,
+            "x": 102.52162730772969,
+            "y": -101.97658197705721,
             "databases": [
                 {
                     "output_file_name": "inputData",
@@ -368,8 +361,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": 41.195756032174714,
-            "y": 167.1015751482266,
+            "x": 26.153609563276262,
+            "y": 201.01720031977365,
             "databases": [
                 {
                     "output_file_name": "inputData",
@@ -388,15 +381,15 @@
         "Params": {
             "type": "Data Transformer",
             "description": "",
-            "x": 11.72535279758408,
-            "y": 47.56220741672752,
+            "x": -9.142687333270473,
+            "y": -88.9152792992069,
             "specification": "Replace_spaces"
         },
         "Pamam_update": {
             "type": "Data Transformer",
             "description": "",
-            "x": -127.6470763293355,
-            "y": 175.8727628018428,
+            "x": -139.2404319575881,
+            "y": 210.976939384045,
             "specification": "rename_param_flexTool3"
         }
     }
