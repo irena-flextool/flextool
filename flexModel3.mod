@@ -22,6 +22,7 @@ set reserve 'r - Categories for the reservation of capacity_existing';
 set time 't - Time steps in the data files'; 
 set method 'm - Type of process that transfers, converts or stores commodities';
 set debug 'flags to output debugging and test results';
+set foo;
 
 #Individual methods
 set method_1way_1variable within method;

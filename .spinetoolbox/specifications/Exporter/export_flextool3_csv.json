@@ -80,51 +80,6 @@
             "always_export_header": true,
             "use_fixed_table_name": false
         },
-        "t_jump": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^model$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": "table_name",
-                    "filter_re": "t_jump"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": 0,
-                    "header": "time"
-                },
-                {
-                    "map_type": "ExpandedValue",
-                    "position": 1,
-                    "header": "t_jump"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "use_fixed_table_name": false
-        },
         "commodity": {
             "type": "objects",
             "mapping": [
@@ -160,55 +115,6 @@
             "enabled": true,
             "always_export_header": true,
             "use_fixed_table_name": false
-        },
-        "time": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "time"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^model$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "time_in_use"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ExpandedValue",
-                    "position": 0,
-                    "header": "time"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "use_fixed_table_name": true
         },
         "nodeBalance": {
             "type": "object_parameter_values",
@@ -653,55 +559,6 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "time_in_use": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "time_in_use"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^model$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "time_in_use"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ExpandedValue",
-                    "position": 0,
-                    "header": "time"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "use_fixed_table_name": true
-        },
         "p_node_s": {
             "type": "object_parameter_values",
             "mapping": [
@@ -786,7 +643,11 @@
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
-                    "filter_re": "1d_map"
+                    "filter_re": "1d_map|array|time_series"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -988,6 +849,10 @@
                     "filter_re": "1d_map"
                 },
                 {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
                     "map_type": "ParameterValueIndex",
                     "position": 3,
                     "header": "time"
@@ -1120,6 +985,10 @@
                     "position": "hidden"
                 },
                 {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
                     "map_type": "ParameterValueIndex",
                     "position": 3,
                     "header": "time"
@@ -1128,105 +997,6 @@
                     "map_type": "ExpandedValue",
                     "position": 4,
                     "header": "pt_commodity"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "use_fixed_table_name": true
-        },
-        "time_invest": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "time_invest"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^model$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "^time_invest$"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ExpandedValue",
-                    "position": 0,
-                    "header": "time_invest"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "use_fixed_table_name": true
-        },
-        "t_duration": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "t_duration"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^model$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "t_duration"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": 0,
-                    "header": "time"
-                },
-                {
-                    "map_type": "ExpandedValue",
-                    "position": 1,
-                    "header": "t_duration"
                 }
             ],
             "enabled": true,
@@ -1386,6 +1156,10 @@
                     "map_type": "ParameterValueType",
                     "position": "hidden",
                     "filter_re": "1d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -1594,6 +1368,394 @@
                     "map_type": "ParameterValue",
                     "position": 0,
                     "header": "debug"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "block_in_use": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "block_in_use"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^model$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "block_in_use"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 0,
+                    "header": "solve"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 1,
+                    "header": "block"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "solves": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "solves"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^model$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "solves"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 0,
+                    "header": "solve"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "step_duration": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "step_duration"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^model$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "step_duration"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 0,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 1,
+                    "header": "step_duration"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "step_jump": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^model$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "table_name",
+                    "filter_re": "step_jump"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 0,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 1,
+                    "header": "step_jump"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": false
+        },
+        "step_invest": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "step_invest"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^model$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^step_invest$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 0,
+                    "header": "solve"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 1,
+                    "header": "step_invest"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "block_start": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "block_start"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^model$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "block_start"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 0,
+                    "header": "block"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 1,
+                    "header": "step"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "block_steps": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "block_steps"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^model$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "block_duration"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 0,
+                    "header": "block"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 1,
+                    "header": "steps"
                 }
             ],
             "enabled": true,

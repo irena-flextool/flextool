@@ -1385,6 +1385,10 @@
                     "position": "hidden"
                 },
                 {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
                     "map_type": "ParameterValueIndex",
                     "position": 0,
                     "header": "time"
@@ -1445,6 +1449,10 @@
                 },
                 {
                     "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
                     "position": "hidden"
                 },
                 {
@@ -1512,6 +1520,10 @@
                     "position": "hidden"
                 },
                 {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
                     "map_type": "ParameterValueIndex",
                     "position": 2,
                     "header": "time"
@@ -1556,6 +1568,10 @@
                 },
                 {
                     "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
                     "position": "hidden"
                 },
                 {
@@ -1606,6 +1622,10 @@
                     "position": "hidden"
                 },
                 {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
                     "map_type": "ParameterValueIndex",
                     "position": 1,
                     "header": "time"
@@ -1653,6 +1673,10 @@
                     "position": "hidden"
                 },
                 {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
                     "map_type": "ParameterValueIndex",
                     "position": 1,
                     "header": "time"
@@ -1697,6 +1721,10 @@
                 },
                 {
                     "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
                     "position": "hidden"
                 },
                 {
@@ -1771,6 +1799,10 @@
                 },
                 {
                     "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
                     "position": "hidden"
                 },
                 {
