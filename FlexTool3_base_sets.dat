@@ -1,4 +1,3 @@
-set foo := 0 1 2;
 set method := method_1way_1variable, method_2way_1variable, method_2way_2variable, method_1way_offline, method_1way_online, method_2way_offline, method_2way_online, method_2way_online_exclusive;
 set method_1way_1variable := method_1way_1variable;
 set method_2way_1variable := method_2way_1variable;
