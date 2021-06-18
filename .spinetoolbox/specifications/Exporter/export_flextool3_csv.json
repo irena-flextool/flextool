@@ -688,8 +688,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 2,
-                    "header": "sourceSinkParam",
-                    "filter_re": "^(?!method)"
+                    "header": "sourceSinkParam"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -753,8 +752,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 2,
-                    "header": "sourceSinkParam",
-                    "filter_re": "^(?!method)"
+                    "header": "sourceSinkParam"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1089,7 +1087,7 @@
                     "map_type": "ParameterDefinition",
                     "position": 1,
                     "header": "processParam",
-                    "filter_re": "^(?!method|invest_method)"
+                    "filter_re": "^(?!conversion_method|invest_method|transfer_method)"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1762,13 +1760,13 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "time": {
+        "steps": {
             "type": "object_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "time"
+                    "value": "steps"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -1804,7 +1802,7 @@
                 {
                     "map_type": "ParameterValueIndex",
                     "position": 0,
-                    "header": "time"
+                    "header": "step"
                 },
                 {
                     "map_type": "ExpandedValue",

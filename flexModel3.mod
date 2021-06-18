@@ -15,6 +15,8 @@
 # Fundamental sets of the model
 set entity 'e - contains both nodes and processes';
 set process 'p - Particular activity that transfers, converts or stores commodities' within entity;
+set processUnit 'Unit processes' within process;
+set processTransfer 'Transfer processes' within process;
 set node 'n - Any location where a balance needs to be maintained' within entity;
 set nodeGroup 'ng - Any group of nodes that have a set of common constraints';
 set commodity 'c - Stuff that is being processed';
@@ -173,7 +175,7 @@ table data IN 'CSV' 'node.csv' : node <- [node];
 table data IN 'CSV' 'nodeGroup.csv' : nodeGroup <- [nodeGroup];
 table data IN 'CSV' 'commodity.csv' : commodity <- [commodity];
 table data IN 'CSV' 'reserve.csv' : reserve <- [reserve];
-table data IN 'CSV' 'time.csv' : time <- [time];
+table data IN 'CSV' 'steps.csv' : time <- [step];
 table data IN 'CSV' 'reserve__nodeGroup.csv' : reserve_nodeGroup <- [reserve,nodeGroup];
 table data IN 'CSV' 'commodity__node.csv' : commodity_node <- [commodity,node];
 
@@ -333,6 +335,19 @@ s.t. minToSource {(p, source, sink) in process_source_sink, t in steps_in_use : 
 
 
 solve;
+
+
+#param unitMW{p in process, n in node} := 
+#  ( + (if (g,n,u) not in (gnu_convertOutput union gnu_output2) then abs(p_unit[g,n,u,'capacity_MW']))
+#  );
+
+printf 'Write unit results...\n';
+param fn_unit symbolic := "units";
+printf 'Node,Unit,"Capacity (MW)","Produce (MWh)","Consume (MWh)"' > fn_unit;
+printf ',"Curtail (MWh)","Utilization (\%)","Max. ramp up (p.u.)","Max. ramp down (p.u.)"' >> fn_unit;
+printf ',"Reserve provision (\%)"' >> fn_unit;
+	
+
 
 
 param resultFile symbolic := "result.csv";
