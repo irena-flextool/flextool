@@ -1,24 +1,137 @@
-set method := method_1way_1variable, method_2way_1variable, method_2way_2variable, method_1way_offline, method_1way_online, method_2way_offline, method_2way_online, method_2way_online_exclusive;
-set method_1way_1variable := method_1way_1variable;
-set method_2way_1variable := method_2way_1variable;
-set method_2way_2variable := method_2way_2variable;
-set method_1way_offline := method_1way_offline;
-set method_1way_online := method_1way_online;
-set method_2way_offline := method_2way_offline;
-set method_2way_online := method_2way_online;
-set method_2way_online_exclusive := method_2way_online_exclusive;
+set ct_method := 
+  efficiency
+  operating_area
+  no_losses
+  regular
+  exact
+;
 
-set method_1variable := method_1way_1variable, method_2way_1variable;
-set method_1way := method_1way_1variable, method_1way_offline, method_1way_online;
-set method_2way := method_2way_1variable, method_2way_offline, method_2way_online, method_2way_online_exclusive;
-set method_offline := method_1way_1variable, method_2way_1variable, method_1way_offline, method_2way_offline;
-set method_online := method_1way_online, method_2way_online, method_2way_online_exclusive;
-set method_sum_flow := method_1way_offline, method_1way_online, method_2way_offline, method_2way_online, method_2way_online_exclusive;
-set method_sum_flow_2way := method_2way_offline, method_2way_online, method_2way_online_exclusive;
+set startup_method :=
+  no_startup
+  linear
+  binary
+;
+
+set method :=
+  method_1way_1var_off
+  method_1way_1var_LP
+  method_1way_1var_MIP
+  method_1way_nvar_off
+  method_1way_nvar_LP
+  method_1way_nvar_MIP
+  method_2way_1var_off
+  method_2way_2var_off
+  method_2way_2var_exclude
+  method_2way_2var_MIP_exclude
+  method_2way_nvar_off
+
+  method_1var_off
+  method_1way_off
+  method_1way_LP
+  method_1way_MIP
+  method_2way_off
+  method_1way_1var_on
+  method_1way_nvar_on
+  method_1way
+  method_1way_1var
+  method_2way_1var
+  method_2way
+  method_2way_2var
+  method_2way_nvar
+  method_1way_on
+  method_2way_on
+  method_1var
+  method_nvar
+  method_off
+  method_on
+  method_LP
+  method_MIP
+  method_direct
+  method_indirect
+  method_1var_per_way
+;
+
+set methods := 
+(efficiency, no_startup, method_1way_1var_off)
+(efficiency, no_startup, method_1way_1var)
+(efficiency, no_startup, method_1var_off)
+(efficiency, no_startup, method_1way_off)
+(efficiency, no_startup, method_1way)
+(efficiency, no_startup, method_1var)
+(efficiency, no_startup, method_off)
+(efficiency, no_startup, method_direct)
+(efficiency, no_startup, method_1var_per_way)
+(efficiency, linear, method_1way_nvar_LP)
+(efficiency, linear, method_1way_nvar_on)
+(efficiency, linear, method_1way_LP)
+(efficiency, linear, method_1way)
+(efficiency, linear, method_1way_on)
+(efficiency, linear, method_on)
+(efficiency, linear, method_nvar)
+(efficiency, linear, method_indirect)
+(efficiency, binary, method_1way_nvar_MIP)
+(efficiency, binary, method_1way_nvar_on)
+(efficiency, binary, method_1way)
+(efficiency, binary, method_1way_on)
+(efficiency, binary, method_on)
+(efficiency, binary, method_nvar)
+(efficiency, binary, method_indirect)
+(no_losses, no_startup, method_2way_1var_off)
+(no_losses, no_startup, method_2way_1var)
+(no_losses, no_startup, method_1var)
+(no_losses, no_startup, method_2way_off)
+(no_losses, no_startup, method_2way)
+(no_losses, no_startup, method_off)
+(no_losses, no_startup, method_direct)
+(regular, no_startup, method_2way_2var_exclude)
+(regular, no_startup, method_2way_2var)
+(regular, no_startup, method_2way_off)
+(regular, no_startup, method_2way)
+(regular, no_startup, method_off)
+(regular, no_startup, method_direct)
+(regular, no_startup, method_1var_per_way)
+(exact, no_startup, method_2way_2var_MIP_exclude)
+(exact, no_startup, method_2way_2var)
+(exact, no_startup, method_2way)
+(exact, no_startup, method_2way_on)
+(exact, no_startup, method_on)
+(exact, no_startup, method_direct)
+(exact, no_startup, method_1var_per_way)
+;
+
+  
+#set method_1way_1var_off := efficiency_only;
+#set method_1way_1var_LP := ;
+#set method_1way_1var_MIP := ;
+#set method_1way_nvar_off := ;
+#set method_1way_nvar_LP := efficiency_and_LP_online;
+#set method_1way_nvar_MIP := efficiency_and_MIP_online;
+#set method_2way_1var_off := no_losses;
+#set method_2way_2var_off := ;
+#set method_2way_2var_exclude := regular;
+#set method_2way_2var_MIP_exclude := exact;
+#set method_2way_nvar_off := ;
+
+#set method_1var := efficiency_only;                
+#set method_1var_off := efficiency_only, no_losses; 
+#set method_1way_off := efficiency_only;
+#set method_2way_off := no_losses, regular; 
+#set method_1way_1var_on := ; 
+#set method_1way_nvar_on := efficiency_and_LP_online, efficiency_and_MIP_online; 
+#set method_1way_LP := efficiency_and_LP_online;
+#set method_1way_MIP := efficiency_and_MIP_online;
+#set method_1way := efficiency_only, efficiency_and_LP_online, efficiency_and_MIP_online; 
+#set method_2way := no_losses, regular, exact;
+#set method_off := efficiency_only, no_losses, regular;  
+#set method_1way_on := efficiency_and_LP_online, efficiency_and_MIP_online; 
+#set method_2way_on := exact;
+#set method_on := efficiency_and_LP_online, efficiency_and_MIP_online, exact;
+#set method_nvar := efficiency_and_LP_online, efficiency_and_MIP_online;
+
 
 set commodityParam := price;
 set processParam := existing efficiency fixed_cost interest_rate invest_cost invest_forced invest_max_time invest_max_total lifetime retire_forced retire_max;
-set sourceSinkParam := coefficient flow_unitsize variable_cost;
+set sourceSinkParam := coefficient flow_unitsize var_cost;
 set nodeParam := inflow, pq_down, pq_up, existing, interest_rate, invest_cost, invest_forced, invest_max_time, invest_max_total, lifetime, retire_forced, retire_max, state_unitsize;
 set reserveParam := reserve pq_reserve;
 set invest_method := one_cost, timeseries_cost;

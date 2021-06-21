@@ -1001,52 +1001,6 @@
             "always_export_header": true,
             "use_fixed_table_name": true
         },
-        "process__method": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "process__method"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^unit$|^connection$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "^method$"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": 0,
-                    "header": "process"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValue",
-                    "position": 1,
-                    "header": "method"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "use_fixed_table_name": true
-        },
         "process": {
             "type": "objects",
             "mapping": [
@@ -1087,7 +1041,7 @@
                     "map_type": "ParameterDefinition",
                     "position": 1,
                     "header": "processParam",
-                    "filter_re": "^(?!conversion_method|invest_method|transfer_method)"
+                    "filter_re": "^(?!conversion_method|invest_method|transfer_method|startup_method)"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1807,6 +1761,98 @@
                 {
                     "map_type": "ExpandedValue",
                     "position": "hidden"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "process__ct_method": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "process__ct_method"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^unit$|^connection$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^conversion_method$|^transfer_method$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 1,
+                    "header": "ct_method"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "process__startup_method": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "process__startup_method"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^unit$|^connection$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^startup_method$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 1,
+                    "header": "startup_method"
                 }
             ],
             "enabled": true,
