@@ -3,6 +3,8 @@ import re
 import math
 import subprocess
 import itertools
+import logging
+import sys
 
 # [10.44] Kiviluoma Juha
 #     Sain viimein työnnettyä päivitykset. Se oli vähän monimutkaisempaa kuin eka ajattelin, mutta ehkä tämä on nyt lähempänä lopullista.
@@ -269,6 +271,12 @@ def get_blocks(solve, blocklist):
 
 
 def main():
+    logging.basicConfig(
+        stream=sys.stderr,
+        level=logging.DEBUG,
+        format='%(asctime)s %(levelname)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+    )
     #read the data in
     solves = get_solves()
     blocklist = get_blocklist()
@@ -286,7 +294,7 @@ def main():
         make_solve_timeline(steplist)
         make_step_invest(solve, invest)
         model_out, model_err = model_run()
-        print(model_out.decode("utf-8"))
+        logging.info(model_out.decode("utf-8"))
 
     #model_run()
 
