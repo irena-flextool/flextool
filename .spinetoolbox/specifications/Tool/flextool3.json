@@ -1,11 +1,12 @@
 {
     "name": "FlexTool3",
-    "tooltype": "executable",
+    "tooltype": "python",
     "includes": [
-        "glpsol.exe",
+        "flextoolrunner.py",
         "flexModel3.mod",
         "glpk_4_61.dll",
-        "FlexTool3_base_sets.dat"
+        "FlexTool3_base_sets.dat",
+        "glpsol.exe"
     ],
     "description": "",
     "inputfiles": [
@@ -52,12 +53,7 @@
     "outputfiles": [
         "result.csv"
     ],
-    "cmdline_args": [
-        "--model",
-        "flexModel3.mod",
-        "-d",
-        "FlexTool3_base_sets.dat"
-    ],
+    "cmdline_args": [],
     "execute_in_work": true,
     "includes_main_path": "../../.."
 }

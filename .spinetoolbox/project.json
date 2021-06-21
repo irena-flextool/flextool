@@ -281,8 +281,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 190.98685412503502,
-            "y": 191.57468163102425,
+            "x": 190.98685412503505,
+            "y": 190.00652773815008,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": []
@@ -362,8 +362,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": 36.89182572998315,
-            "y": 211.56818060782314,
+            "x": 44.732595194353905,
+            "y": 205.2955650363264,
             "databases": [
                 {
                     "output_file_name": "inputData",
