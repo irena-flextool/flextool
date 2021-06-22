@@ -5,6 +5,7 @@ import subprocess
 import itertools
 import logging
 import sys
+import os
 
 # [10.44] Kiviluoma Juha
 #     Sain viimein työnnettyä päivitykset. Se oli vähän monimutkaisempaa kuin eka ajattelin, mutta ehkä tämä on nyt lähempänä lopullista.
@@ -228,10 +229,11 @@ def make_solve_timeline(blocks):
     """
     make a timeline for the full solve, single solve can consist of multiple blocks
     :param blocks: list of block timelines as given by make_block_timeline
-    :return:
+    :return list of stpes included in the solve:
     """
     steplist =  list(itertools.chain(*blocks))
-    write_steps(steplist, 'steps_in_use.csv')
+    write_steps(steplist, 'step_in_use.csv')
+    return steplist
 
 
 def make_step_invest(solve_code, step_invest):
@@ -252,7 +254,7 @@ def make_step_invest(solve_code, step_invest):
 def model_run():
     """
     run the model executable once
-    :return:
+    :return the output of glpsol.exe:
     """
     modelout = subprocess.Popen(['glpsol.exe', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
     stdout, stderr = modelout.communicate()
@@ -269,6 +271,50 @@ def get_blocks(solve, blocklist):
     """
     return [block[1] for block in blocklist if block[0] == solve]
 
+def make_step_jump(steplist, duration):
+    """
+    make a file that indicates the length of jump from one simulation step to next one.
+    the final line should always contain a jump to the first line.
+
+    length of jump is the number of lines needed to advance in the timeline specified in step_duration.csv
+
+    :param steplist: active steps used in the solve
+    :param duration: duration of every timestep
+    :return:
+    """
+    # define index for every step from the reference list
+    active_steps = []
+    for i, line in enumerate(duration):
+        # duration lines (stepcode, duration)
+        if line[0] in steplist:
+            active_steps.append((line[0], i))
+    # calculate jump length based on step index
+    step_lengths = []
+    for j, line in enumerate(active_steps):
+        # last step is different, last step index length -1
+        if j < len(active_steps)-1:
+            jump = active_steps[j+1][1] - active_steps[j][1]
+            step_lengths.append((line[0], jump))
+        else:
+            jump = active_steps[0][1]- active_steps[j][1]
+            step_lengths.append((line[0], jump))
+    return step_lengths
+
+def write_step_jump(step_lengths):
+    """
+    write step_jump.csv according to spec.
+
+    :param step_lengths:
+    :return:
+    """
+
+    headers = ("time","step_jump")
+    with open("step_jump.csv", 'w', newline='\n') as stepfile:
+        writer = csv.writer(stepfile, delimiter=',')
+        writer.writerow(headers)
+        writer.writerows(step_lengths)
+
+
 
 def main():
     logging.basicConfig(
@@ -277,6 +323,9 @@ def main():
         format='%(asctime)s %(levelname)s: %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
     )
+    #make a directory for model unit tests
+    if not os.path.exists("./tests"):
+        os.makedirs("./tests")
     #read the data in
     solves = get_solves()
     blocklist = get_blocklist()
@@ -291,10 +340,13 @@ def main():
         steplist = []
         for block in active_blocks:
             steplist.append(make_block_timeline(starts[block], steps[block]))
-        make_solve_timeline(steplist)
+        steplist = make_solve_timeline(steplist)
+        jumps  = make_step_jump(steplist, durations)
+        write_step_jump(jumps)
         make_step_invest(solve, invest)
         model_out, model_err = model_run()
         logging.info(model_out.decode("utf-8"))
+        
 
     #model_run()
 
