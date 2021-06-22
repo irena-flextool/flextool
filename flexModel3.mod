@@ -29,6 +29,30 @@ set debug 'flags to output debugging and test results';
 
 
 #Method collections use in the model (abstracted methods)
+set method_1var_off within method;
+set method_1way_off within method;
+set method_1way_LP within method;
+set method_1way_MIP within method;
+set method_2way_off within method;
+set method_1way_1var_on within method;
+set method_1way_nvar_on within method;
+set method_1way within method;
+set method_1way_1var within method;
+set method_2way_1var within method;
+set method_2way within method;
+set method_2way_2var within method;
+set method_2way_nvar within method;
+set method_1way_on within method;
+set method_2way_on within method;
+set method_1var within method;
+set method_nvar within method;
+set method_off within method;
+set method_on within method;
+set method_LP within method;
+set method_MIP within method;
+set method_direct within method;
+set method_indirect within method;
+set method_1var_per_way within method;
 
 
 
@@ -58,7 +82,7 @@ set process_source_toProcess := {
 	&& (p2, source) in process_source 
 #	&& (p, m) in process_method;
 	&& sum{(p, m) in process_method 
-	         : m = 'method_indirect'} 1};
+	         : m in method_indirect} 1};
 set process_process_toSink := {
 	p in process, p2 in process, sink in node 
 	:  p = p2 
@@ -66,33 +90,33 @@ set process_process_toSink := {
 	&& (p2, sink) in process_sink 
 #	&& (p, 'method_var') in process_method;
 	&& sum{(p, m) in process_method 
-	        : m = 'method_indirect'} 1};
+	        : m in method_indirect} 1};
 set process_sink_toProcess := {
     sink in node, p in process, p2 in process 
 	:  p = p2 
 	&& (p, sink) in process_sink 
 	&& (p2, sink) in process_sink 
 	&& sum{(p, m) in process_method 
-	         : m = 'method_2way_nvar'} 1};
+	         : m in method_2way_nvar} 1};
 set process_process_toSource := {
     p in process, p2 in process, source in node 
 	:  p = p2 
 	&& (p, source) in process_source
 	&& (p2, source) in process_source
 	&& sum{(p, m) in process_method 
-	        : m = 'method_2way_nvar'} 1};
+	        : m in method_2way_nvar} 1};
 set process_source_toSink := {
     p in process, source in node, sink in node
 	:  (p, source) in process_source
 	&& (p, sink) in process_sink
     && sum{(p, m) in process_method 
-	       : m = 'method_direct'} 1};
+	       : m in method_direct} 1};
 set process_sink_toSource := {
     p in process, sink in node, source in node
 	:  (p, source) in process_source
 	&& (p, sink) in process_sink
 	&& sum{(p, m) in process_method 
-	       : m = 'method_2way_2var'} 1};
+	       : m in method_2way_2var} 1};
 set process_source_sink := 
     process_source_toSink union 
 	process_sink_toSource union   
@@ -221,13 +245,13 @@ display process_method;
 #########################
 ## Data checks 
 printf 'Checking: Data for 1 variable conversions directly from source to sink (and possibly back)\n';
-check {(p, m) in process_method, t in steps_in_use : m = 'method_1var'} pt_process[p, 'efficiency', t] != 0 ;
+check {(p, m) in process_method, t in steps_in_use : m in method_1var} pt_process[p, 'efficiency', t] != 0 ;
 
 printf 'Checking: Data for 1-way conversions with an online variable\n';
-check {(p, m) in process_method, t in steps_in_use : m = 'method_1way_on'} pt_process[p, 'efficiency', t] != 0;
+check {(p, m) in process_method, t in steps_in_use : m in method_1way_on} pt_process[p, 'efficiency', t] != 0;
 
 printf 'Checking: Data for 2-way linear conversions without online variables\n';
-#check {(p, m) in process_method, t in steps_in_use : m = 'method_2way_off'} pt_process[p, 'efficiency', t] != 0;
+#check {(p, m) in process_method, t in steps_in_use : m in method_2way_off} pt_process[p, 'efficiency', t] != 0;
 
 display commodity_node, nodeBalance, reserve_nodeGroup, et_invest;
 minimize total_cost: 
@@ -235,9 +259,9 @@ minimize total_cost:
     (
       + sum {(c, n) in commodity_node} pt_commodity[c, n, 'price', t] 
           * ( 
-	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m = 'method_1var_per_way'} 1 } 
+	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } 
 			         v_flow[p, n, sink, t] / pt_process[p, 'efficiency', t]
-	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m <> 'method_1var_per_way'} 1 } 
+	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } 
 			         v_flow[p, n, sink, t]
 	          + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, t]
 		    )
@@ -248,7 +272,6 @@ minimize total_cost:
   + sum {(e, t) in et_invest} v_invest[e, t] 
     * pt_entity_annual[e, t]
 ;
-	  
 
 # Energy balance in each node  
 s.t. nodeBalance_eq {n in nodeBalance, t in steps_in_use} :
@@ -257,10 +280,10 @@ s.t. nodeBalance_eq {n in nodeBalance, t in steps_in_use} :
   + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, t]
   + (if n in nodeInflow then pt_node[n, 'inflow', t])
   + vq_state_up[n, t]
-  - sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m = 'method_1var_per_way'} 1 } (
+  - sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } (
        + v_flow[p, n, sink, t] / pt_process[p, 'efficiency', t]
     )		
-  - sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m <> 'method_1var_per_way'} 1 } (
+  - sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } (
        + v_flow[p, n, sink, t]
     )		
   - vq_state_down[n, t]
@@ -273,18 +296,20 @@ s.t. reserveBalance_eq {(r, ng) in reserve_nodeGroup, t in steps_in_use} :
   + pt_reserve[r, ng, 'reservation', t]
   =
   + vq_reserve_up[r, ng, t]
-  + sum {(p, r, n, sink) in process_reserve_source_sink : (p, 'method_indirect') in process_method 
+  + sum {(p, r, n, sink) in process_reserve_source_sink 
+	      : sum{(p, m) in process_method : m in method_1var_per_way} 1
 		  && (ng, n) in nodeGroup_node 
 		  && (r, ng) in reserve_nodeGroup} 
 	   v_reserve[p, r, n, sink, t]
-  + sum {(p, r, n, sink) in process_reserve_source_sink : (p, 'method_direct') in process_method 
+  + sum {(p, r, n, sink) in process_reserve_source_sink  
+		  : sum{(p, m) in process_method : m not in method_1var_per_way} 1
 		  && (ng, n) in nodeGroup_node 
 		  && (r, ng) in reserve_nodeGroup} 
 	   v_reserve[p, r, n, sink, t] / pt_process[sink, 'efficiency', t]
 #  + vq_reserve_down[r, ng, t]
 ;
 
-s.t. conversion_equality_constraint {(p, m) in process_method, t in steps_in_use : m = 'method_indirect'} :
+s.t. conversion_equality_constraint {(p, m) in process_method, t in steps_in_use : m in method_indirect} :
   + sum {source in entity : (p, source) in process_source} 
     ( + v_flow[p, source, p, t] 
   	      * p_process_source_coefficient[p, source]
@@ -308,14 +333,18 @@ s.t. maxToSink {(p, source, sink) in process_source_sink, t in steps_in_use : (p
 	  )	
 ;
 
-s.t. minToSink {(p, source, sink) in process_source_sink, t in steps_in_use : (p, sink) in process_sink && sum{(p,m) in process_method : m <> 'method_2way_1var'} 1 } :
+s.t. minToSink {(p, source, sink) in process_source_sink, t in steps_in_use 
+     : (p, sink) in process_sink 
+	 && sum{(p,m) in process_method : m not in method_2way_1var} 1 } :
   + v_flow[p, source, sink, t]
   >=
   + 0
 ;
 
 # Special equations for the method with 2 variables presenting 2way connection between source and sink (without the process)
-s.t. maxToSource {(p, source, sink) in process_source_sink, t in steps_in_use : (p, source) in process_sink && sum{(p,m) in process_method : m = 'method_2way_2var'} 1 } :
+s.t. maxToSource {(p, source, sink) in process_source_sink, t in steps_in_use 
+     : (p, source) in process_sink 
+	 && sum{(p,m) in process_method : m in method_2way_2var} 1 } :
   + v_flow[p, sink, source, t]
   + sum {r in reserve : (p, r, sink, source) in process_reserve_source_sink} v_reserve[p, r, sink, source, t]
   <=
@@ -326,7 +355,9 @@ s.t. maxToSource {(p, source, sink) in process_source_sink, t in steps_in_use : 
 	  )	
 ;
 
-s.t. minToSource {(p, source, sink) in process_source_sink, t in steps_in_use : (p, sink) in process_sink && sum{(p,m) in process_method : m = 'method_2way_2var' } 1 } :
+s.t. minToSource {(p, source, sink) in process_source_sink, t in steps_in_use 
+     : (p, sink) in process_sink 
+	 && sum{(p,m) in process_method : m in method_2way_2var } 1 } :
   + v_flow[p, sink, source, t]
   >=
   + 0
@@ -405,13 +436,13 @@ for {n in node} {
   printf '\n%s\nNode', n >> resultFile;
   printf (if n in nodeInflow then ', %s' else ''), n >> resultFile;
   for {(p, source, n) in process_source_sink} {
-    printf ', %s', source >> resultFile;
+    printf ', %s s ', source >> resultFile;
   }
-  for {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m = 'method_1var' || m = 'method_2way_2var'} 1 } {
-    printf ', %s', sink >> resultFile;
+  for {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } {
+    printf ', %s = ', sink >> resultFile;
   }
-  for {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method && (m <> 'method_1var' || m <> 'method_2way_2var')} 1 } {
-    printf ', %s', sink >> resultFile;
+  for {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } {
+    printf ', %s <> ', sink >> resultFile;
   }
   printf '\n' >> resultFile;
   for {t in steps_in_use} {
@@ -420,10 +451,10 @@ for {n in node} {
     for {(p, source, n) in process_source_sink} {
       printf ', %.8g', v_flow[p, source, n, t].val >> resultFile;
 	}
-    for {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m = 'method_1var' || m = 'method_2way_2var'} 1 } {
+    for {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } {
       printf ', %.8g', -v_flow[p, n, sink, t].val / pt_process[p, 'efficiency', t] >> resultFile;
 	}
-    for {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method && (m <> 'method_1var' || m <> 'method_2way_2var')} 1 } {
+    for {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } {
       printf ', %.8g', -v_flow[p, n, sink, t].val >> resultFile;
 	}
     printf '\n' >> resultFile;
