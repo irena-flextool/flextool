@@ -374,11 +374,14 @@ param process_MW{p in process, t_invest in step_invest} :=
   + sum {(p, t) in pt_invest : t <= t_invest} v_invest[p, t].val
 ;
 
-param process_produce{(p, source) in process_source, t_invest in step_invest} :=
+param process_source_produce{(p, source) in process_source, t_invest in step_invest} :=
+  + sum {(p, source, sink) in process_source_sink, t in step_in_use} v_flow[p, source, sink, t]
+;
+param process_sink_produce{(p, sink) in process_sink, t_invest in step_invest} :=
   + sum {(p, source, sink) in process_source_sink, t in step_in_use} v_flow[p, source, sink, t]
 ;
 
-display process_MW, process_produce;
+display process_MW, process_source_produce, process_sink_produce;
 #  ( + (if (g,n,u) not in (gnu_convertOutput union gnu_output2) then abs(p_unit[g,n,u,'capacity_MW']))
 #  );
 
@@ -393,13 +396,13 @@ printf ',"Reserve provision (\%)"\n' >> fn_unit;
 
 for {p in process, t_invest in step_invest}
   {
-    for {(p, source) in process_source}}
+    for {(p, source) in process_source}
       {
-        printf '%s, %s, %s, %.8g\n', p, source, t_invest,  >> fn_unit;
+        printf '%s, %s, %s, %.8g\n', p, source, t_invest, process_source_produce[p, source, t_invest] >> fn_unit;
       }
-    for {(p, sink) in process_sink}}
+    for {(p, sink) in process_sink}
       {
-        printf '%s, %s, %s, %.8g\n', p, source, t_invest,  >> fn_unit;
+        printf '%s, %s, %s, %.8g\n', p, sink, t_invest, process_sink_produce[p, sink, t_invest] >> fn_unit;
       }
   }  
   
