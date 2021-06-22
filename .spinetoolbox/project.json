@@ -24,6 +24,16 @@
                     "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Importer/importflexresults.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Importer/flextool3_results.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Importer/import_flex3.json"
                 }
             ],
             "Exporter": [
@@ -176,6 +186,29 @@
                     "FlexTool3",
                     "left"
                 ]
+            },
+            {
+                "from": [
+                    "FlexTool3",
+                    "right"
+                ],
+                "to": [
+                    "Import_Flex3",
+                    "left"
+                ],
+                "options": {
+                    "use_datapackage": true
+                }
+            },
+            {
+                "from": [
+                    "Import_Flex3",
+                    "bottom"
+                ],
+                "to": [
+                    "Results_F3",
+                    "right"
+                ]
             }
         ]
     },
@@ -183,8 +216,8 @@
         "FlexTool2D_data": {
             "type": "Data Store",
             "description": "",
-            "x": -127.86516571420566,
-            "y": -58.63186206387513,
+            "x": -121.57863487262745,
+            "y": -96.59011241974821,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -202,8 +235,8 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 225.4932664249838,
-            "y": -198.3615644690816,
+            "x": 231.779797266562,
+            "y": -236.31981482495468,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -221,8 +254,8 @@
         "FlexTool3_data": {
             "type": "Data Store",
             "description": "",
-            "x": -306.18600926011777,
-            "y": 199.37325313291856,
+            "x": -361.6201593809845,
+            "y": 153.6999176567399,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -240,8 +273,8 @@
         "InputDataXlsx": {
             "type": "Data Connection",
             "description": "",
-            "x": -356.23147352221974,
-            "y": -38.48834066399769,
+            "x": -349.94494268064153,
+            "y": -76.44659101987077,
             "references": [
                 {
                     "type": "path",
@@ -258,8 +291,8 @@
         "FlexToolFiles": {
             "type": "Data Connection",
             "description": "",
-            "x": 79.43949075866823,
-            "y": -204.43949372237563,
+            "x": 85.72602160024644,
+            "y": -242.3977440782487,
             "references": [
                 {
                     "type": "path",
@@ -271,8 +304,8 @@
         "FlexTool": {
             "type": "Tool",
             "description": "",
-            "x": 232.71320692582145,
-            "y": -99.63389050831739,
+            "x": 238.99973776739967,
+            "y": -137.59214086419047,
             "specification": "FlexTool",
             "execute_in_work": false,
             "cmd_line_args": []
@@ -280,8 +313,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 196.88683906852194,
-            "y": 194.61021085946928,
+            "x": 142.96042246126518,
+            "y": 106.27656501509432,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": []
@@ -289,8 +322,8 @@
         "ImportOrig": {
             "type": "Importer",
             "description": "",
-            "x": -239.9589255062566,
-            "y": -46.80948184018996,
+            "x": -233.6723946646784,
+            "y": -84.76773219606304,
             "specification": "Import_FlexTool2",
             "cancel_on_error": false,
             "file_selection": [
@@ -307,13 +340,13 @@
         "Import": {
             "type": "Importer",
             "description": "",
-            "x": 354.2314735222197,
-            "y": -193.2417733269013,
+            "x": 361.62015938098443,
+            "y": -231.20002368277437,
             "specification": "ImportFlexResults",
             "cancel_on_error": false,
             "file_selection": [
                 [
-                    "results/color_codes_csp.dat",
+                    "results/investments_D.dat",
                     false
                 ],
                 [
@@ -321,11 +354,11 @@
                     false
                 ],
                 [
-                    "results/color_codes_elec.dat",
+                    "results/color_codes_csp.dat",
                     false
                 ],
                 [
-                    "results/investments_D.dat",
+                    "results/color_codes_elec.dat",
                     false
                 ],
                 [
@@ -341,8 +374,8 @@
         "ExportToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": 102.52162730772969,
-            "y": -79.42356535274018,
+            "x": 108.8081581493079,
+            "y": -117.38181570861326,
             "databases": [
                 {
                     "output_file_name": "inputData",
@@ -361,8 +394,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": 44.732595194353905,
-            "y": 208.42425192177384,
+            "x": -21.72310509837808,
+            "y": 106.1681693503975,
             "databases": [
                 {
                     "output_file_name": "inputData",
@@ -381,16 +414,49 @@
         "Params": {
             "type": "Data Transformer",
             "description": "",
-            "x": -9.142687333270473,
-            "y": -66.36226267488988,
+            "x": -2.8561564916922606,
+            "y": -104.32051303076295,
             "specification": "Replace_spaces"
         },
         "Pamam_update": {
             "type": "Data Transformer",
             "description": "",
-            "x": -139.24043195758813,
-            "y": 208.43949372237563,
+            "x": -199.08320214720095,
+            "y": 123.0885776274823,
             "specification": "rename_param_flexTool3"
+        },
+        "Results_F3": {
+            "type": "Data Store",
+            "description": "",
+            "x": 112.09341249148393,
+            "y": 246.39774407824865,
+            "url": {
+                "dialect": "sqlite",
+                "username": "",
+                "password": "",
+                "host": "",
+                "port": "",
+                "database": {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/items/results_f3/Results_F3.sqlite"
+                }
+            },
+            "cancel_on_error": false
+        },
+        "Import_Flex3": {
+            "type": "Importer",
+            "description": "",
+            "x": 261.6673076686913,
+            "y": 143.5606629622003,
+            "specification": "Import_flex3",
+            "cancel_on_error": false,
+            "file_selection": [
+                [
+                    "datapackage@FlexTool3",
+                    true
+                ]
+            ]
         }
     }
 }

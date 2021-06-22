@@ -143,10 +143,10 @@ set peet := {(p, source, sink) in process_source_sink, t in step_in_use};
 set preet := {(p, r, source, sink) in process_reserve_source_sink, t in step_in_use};
 
 param p_node {n in node, nodeParam};
-param pt_node {n in node, nodeParam, t in step_in_use};
-param pt_commodity {(c, n) in commodity_node, commodityParam, t in step_in_use};
+param pt_node {n in node, nodeParam, t in time};
+param pt_commodity {(c, n) in commodity_node, commodityParam, t in time};
 param p_process {process, processParam} default 0;
-param pt_process {process, processParam, step_in_use} default 0;
+param pt_process {process, processParam, time} default 0;
 param p_process_source {(p, source) in process_source, sourceSinkParam} default 0;
 param p_process_sink {(p, sink) in process_sink, sourceSinkParam} default 0;
 param p_process_source_coefficient {(p, source) in process_source} := if (p_process_source[p, source, 'coefficient']) then p_process_source[p, source, 'coefficient'] else 1;
@@ -182,7 +182,7 @@ set nt_invest := {(n, t) in et_invest : n in node};
 #set et_invest := pt_invest union nt_invest;
 set et_divest := et_invest;
 
-param d_obj;
+param d_obj default 0;
 param d_flow {(p, source, sink, t) in peet} default 0;
 param d_flow_1_or_2_variable {(p, source, sink, t) in peet} default 0;
 param d_flowInvest {(p, t) in pt_invest} default 0;
@@ -242,14 +242,15 @@ var vq_state_up {n in nodeBalance, t in step_in_use} >= 0;
 var vq_state_down {n in nodeBalance, t in step_in_use} >= 0;
 var vq_reserve_up {(r, ng) in reserve_nodeGroup, t in step_in_use} >= 0;
 
-display process_method;
+display process_method, time, step_in_use;
+display pt_process;
 #########################
 ## Data checks 
 printf 'Checking: Data for 1 variable conversions directly from source to sink (and possibly back)\n';
-check {(p, m) in process_method, t in step_in_use : m in method_1var} pt_process[p, 'efficiency', t] != 0 ;
+#check {(p, m) in process_method, t in step_in_use : m in method_1var} pt_process[p, 'efficiency', t] != 0 ;
 
 printf 'Checking: Data for 1-way conversions with an online variable\n';
-check {(p, m) in process_method, t in step_in_use : m in method_1way_on} pt_process[p, 'efficiency', t] != 0;
+#check {(p, m) in process_method, t in step_in_use : m in method_1way_on} pt_process[p, 'efficiency', t] != 0;
 
 printf 'Checking: Data for 2-way linear conversions without online variables\n';
 #check {(p, m) in process_method, t in step_in_use : m in method_2way_off} pt_process[p, 'efficiency', t] != 0;
@@ -375,10 +376,10 @@ param process_MW{p in process, t_invest in step_invest} :=
 ;
 
 param process_source_produce{(p, source) in process_source, t_invest in step_invest} :=
-  + sum {(p, source, sink) in process_source_sink, t in step_in_use} v_flow[p, source, sink, t]
+  + sum {(p, source, sink) in process_source_sink, t in step_in_use : t >= t_invest} v_flow[p, source, sink, t]
 ;
 param process_sink_produce{(p, sink) in process_sink, t_invest in step_invest} :=
-  + sum {(p, source, sink) in process_source_sink, t in step_in_use} v_flow[p, source, sink, t]
+  + sum {(p, source, sink) in process_source_sink, t in step_in_use : t >= t_invest} v_flow[p, source, sink, t]
 ;
 
 display process_MW, process_source_produce, process_sink_produce;
@@ -387,9 +388,7 @@ display process_MW, process_source_produce, process_sink_produce;
 
 printf 'Write unit results...\n';
 param fn_unit symbolic := "units.csv";
-printf 'Unit,Time,"Capacity (MW)","Produce (MWh)","Consume (MWh)"' > fn_unit;
-printf ',"Curtail (MWh)","Utilization (\%)","Max. ramp up (p.u.)","Max. ramp down (p.u.)"' >> fn_unit;
-printf ',"Reserve provision (\%)"\n' >> fn_unit;
+printf 'Unit,node,time_start,produce\n' >> fn_unit;
 
 # process_MW[p, t_invest]
 	
