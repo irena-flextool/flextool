@@ -6,349 +6,324 @@ import itertools
 import logging
 import sys
 import os
+import shutil
 
-# [10.44] Kiviluoma Juha
-#     Sain viimein työnnettyä päivitykset. Se oli vähän monimutkaisempaa kuin eka ajattelin, mutta ehkä tämä on nyt lähempänä lopullista.
-#
-#
-#
-# solves: tässä on lista 'solve' nimistä, jotka pitää ajaa yksittäisinä malliajoina käyttäen Python koodia
-# 	block_in_use: kertoo mitkä aikablokit ovat käytössä missäkin solvessa
-# 	block_start: kertoo ajanhetken jolloin block alkaa
-# 	block_steps: kertoo montako aika-askelta blockiin kuuluu
-# 	step_duration: kertoo jokaisen aika-askeleen pituuden tunteina
-# 	step_invest: kertoo kullekin solvelle ajanhetket jolloin malli saa investoida uuteen kapasiteettiin (voisi olla tyhjä, jolloin ei saa investoida)
-# 	step_jump: montako tuntia pitää edetä että pääsee seuraavan aika-askeleen alkuun. Tämä tulee myöhemmin laskettavaksi Python koodin sisällä, koska sen voi päätellä noista muista tiedoista, mutta mennään eka vaan läpi syötöllä.
-#
-# Eli näiden pohjalta pitäisi viedä seuraavat tiedostot jokaiselle solvelle:
-#
-#
-#
-# steps: kaikki aika-askeleet
-# 	steps_in_use: ajanaskeleet jotka ovat kyseisessä malliajossa käytössä (nämä päätellään block_start ja block_steps pohjalta)
-# 	step_jump: läpivientinä toistaiseksi
-# 	step_duration: läpivienti
-# 	[Yesterday 14.26] Kiviluoma Juha
-#     step_invest: läpivienti ei riitä, vaan pitää valita se solve ja tulostaa uusi versio tiedostosta jossa on vain sen kyseisen solven 'step_invest' leimat
-#
-# Varmaan vain steps_in_use tarvitsee päivittää solvejen välillä
+class FlexToolRunner:
+    """
+    Define Class to run the model and read and recreate the requierd config files:
+    """
+    def __init__(self) -> None:
+        logging.basicConfig(
+            stream=sys.stderr,
+            level=logging.DEBUG,
+            format='%(asctime)s %(levelname)s: %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+        )
+        #make a directory for model unit tests
+        if not os.path.exists("./tests"):
+            os.makedirs("./tests")
+        #read the data in
+        self.durations, self.steplist = self.get_step_dur()
+        self.solves = self.get_solves()
+        self.starts = self.get_block_start()
+        self.steps = self.get_block_steps()
+        self.blocklist = self.get_blocklist()
+        self.jumps = self.get_step_jump()
+        self.invest = self.get_step_invest()
+        self.write_steps(self.steplist, 'steps.csv')
+        
 
-def get_solves():
-    """
-    read in the list of solves return it as a list of strings
-    :return:
-    """
-    with open("solves.csv", 'r') as solvefile:
-        header = solvefile.readline()
-        solves = solvefile.readlines()
-    return [solve.strip() for solve in solves]
-
-def get_blocklist():
-    """
-    block_in_use.csv contains two columns
-    solve: name of the solve
-    block: name of the block used for a particular solve
-
-    :return list of tuples of solve-block pairs:
-    """
-    with open('block_in_use.csv', 'r') as blk:
-        filereader = csv.reader(blk, delimiter=',')
-        headers = next(filereader)
-        block_id = []
-        while True:
-            try:
-                datain = next(filereader)
-                block_id.append((datain[0], datain[1]))
-            except StopIteration:
-                break
-    return block_id
+        
 
 
-def get_block_start():
-    """
-    fetch the start time for each block form the file
-    :return: dictionary containing block name:starttime
-    """
-    with open('block_start.csv', 'r') as blk:
-        filereader = csv.reader(blk, delimiter=',')
-        headers = next(filereader)
-        block_strt = {}
-        while True:
-            try:
-                datain = next(filereader)
-                block_strt[datain[0]] = datain[1]
-            except StopIteration:
-                break
-    return block_strt
+    def get_solves(self):
+        """
+        read in the list of solves return it as a list of strings
+        :return:
+        """
+        with open("solves.csv", 'r') as solvefile:
+            header = solvefile.readline()
+            solves = solvefile.readlines()
+        return [solve.strip() for solve in solves]
 
-def get_block_steps():
-    """
-    fetch the block step count
-    :return: dictionary blockname:stepcount
-    """
-    with open('block_steps.csv', 'r') as blk:
-        filereader = csv.reader(blk, delimiter=',')
-        headers = next(filereader)
-        block_steps = {}
-        while True:
-            try:
-                datain = next(filereader)
-                block_steps[datain[0]] = datain[1]
-            except StopIteration:
-                break
-    return block_steps
+    def get_blocklist(self):
+        """
+        block_in_use.csv contains two columns
+        solve: name of the solve
+        block: name of the block used for a particular solve
 
-def get_step_dur():
-    """
-    read in step durations for all simulation steps
-    """
-    with open('step_duration.csv', 'r') as blk:
-        filereader = csv.reader(blk, delimiter=',')
-        headers = next(filereader)
-        step_dur = []
-        while True:
-            try:
-                datain = next(filereader)
-                step_dur.append((datain[0], datain[1]))
-            except StopIteration:
-                break
-    return step_dur
-
-def get_step_invest():
-    """
-    read in step_invest
-    :return  a list of tuples (casename, timestep):
-    """
-    with open('step_invest.csv', 'r') as blk:
-        filereader = csv.reader(blk, delimiter=',')
-        headers = next(filereader)
-        invest_step = []
-        while True:
-            try:
-                datain = next(filereader)
-                invest_step.append((datain[0], datain[1]))
-            except StopIteration:
-                break
-    return invest_step
-
-def get_step_jump():
-    """
-    get the jump vaue for every timestep,
-    :return a list of tuples (step, jump):
-    """
-    with open('step_jump.csv', 'r') as blk:
-        filereader = csv.reader(blk, delimiter=',')
-        headers = next(filereader)
-        step_jump = []
-        while True:
-            try:
-                datain = next(filereader)
-                step_jump.append((datain[0], float(datain[1])))
-            except StopIteration:
-                break
-    return step_jump
-
-def make_steps(start, stop):
-    """
-    make a list of timesteps available
-    :return: list of timesteps
-    """
-    step_code = "t{0:02d}"
-    active_step = start
-    steps = []
-    while active_step <= stop:
-        steps.append(step_code.format(active_step))
-        active_step += 1
-    return steps
-
-def write_steps(steplist, filename):
-    """
-    write to file a list of timestep as defined in steplist. Use the same function to write
-    the total set and the scenario dependent one
-    :param filename: filename to write to
-    :param steplist: list of timestep indexes
-    :return:
-    """
-    with open(filename, 'w') as outfile:
-        # prepend with a header
-        outfile.write('step\n')
-        for item in steplist:
-            outfile.write(item)
-            outfile.write('\n')
-
-def get_index_int(a):
-    """
-    helper function to convert timestamp index in format "tddd" to in ddd
-    :param a:
-    :return:
-    """
-    return int(re.search("t(\d+)",a).group(1))
-
-def make_full_timeline(starts, steps):
-    """
-    full timeline is from the smallest start index to the last possible stop index
-    just write directly to file
-    :param starts: starts for different solves
-    :param steps: lengths of different solves
-    :return:
-    """
-    # find the latest stop and earliest start
-    latest_stop = 0
-    earliest_start = None
-    for item in starts.keys():
-        starttime = get_index_int(starts[item])
-        stoptime = starttime + float(steps[item])
-        if stoptime >= latest_stop:
-            latest_stop = stoptime
-        if earliest_start is None:
-            earliest_start = starttime
-        elif (earliest_start is not None) and (starttime < earliest_start):
-            earliest_start = starttime
-    steplist = []
-    step_code = "t{0:02d}"
-
-    for i in range(earliest_start, math.ceil(latest_stop)):
-        steplist.append(step_code.format(i))
-    write_steps(steplist, 'steps.csv')
-
-def make_block_timeline(start, length):
-    """
-    make a block timeline, there might be multiple blocks per solve so these blocks might need to be combined for a run
-    :param start: start of block
-    :param length: length of block
-    :return: block timeline
-    """
-    steplist = []
-    step_code = "t{0:02d}"
-    startnum = get_index_int(start)
-    for i in range(startnum, math.ceil(startnum + float(length))):
-        steplist.append(step_code.format(i))
-    return steplist
-
-def make_solve_timeline(blocks):
-    """
-    make a timeline for the full solve, single solve can consist of multiple blocks
-    :param blocks: list of block timelines as given by make_block_timeline
-    :return list of stpes included in the solve:
-    """
-    steplist =  list(itertools.chain(*blocks))
-    write_steps(steplist, 'step_in_use.csv')
-    return steplist
+        :return list of tuples of solve-block pairs:
+        """
+        with open('block_in_use.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            block_id = []
+            while True:
+                try:
+                    datain = next(filereader)
+                    block_id.append((datain[0], datain[1]))
+                    # blockname needs to be in both block_start and block_steps.csv
+                    assert datain[1] in self.starts.keys(), "Block {0} not in block_starts.csv".format(datain[1])
+                    assert datain[1] in self.steps.keys(), "Block {0} not in block_steps.csv".format(datain[1])
+                except StopIteration:
+                    break
+                except AssertionError as e:
+                    logging.error(e)
+                    sys.exit(-1)
+        return block_id
 
 
-def make_step_invest(solve_code, step_invest):
-    """
-    make new step_invest2.csv that has only the timestamps defined by solve_code
-    :param solve_code:
-    :param step_invest:
-    :return:
-    """
-    with open("step_invest.csv", 'w', newline='\n') as stepfile:
-        headers = ["solve", "step_invest"]
-        writer = csv.writer(stepfile, delimiter=',')
-        writer.writerow(headers)
-        for line in step_invest:
-            if line[0] == solve_code:
-                writer.writerow(line)
+    def get_block_start(self):
+        """
+        fetch the start time for each block form the file
+        if the start timestep is not found from the list of available 
+        steps raise an error and stop execution
+        :return: dictionary containing block name:starttime
+        """
+        with open('block_start.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            block_strt = {}
+            while True:
+                try:
+                    datain = next(filereader)
+                    block_strt[datain[0]] = datain[1]
+                    assert datain[1] in self.steplist, "Block {0} start time {1} not found in steplist".format(datain[0], datain[1])
+                except StopIteration:
+                    break
+                except AssertionError as e:
+                    logging.error(e)
+                    sys.exit(-1)
 
-def model_run():
-    """
-    run the model executable once
-    :return the output of glpsol.exe:
-    """
-    modelout = subprocess.Popen(['glpsol.exe', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
-    stdout, stderr = modelout.communicate()
-    #print(stdout.decode("utf-8"))
-    #print(stderr)
-    return stdout, stderr
 
-def get_blocks(solve, blocklist):
-    """
-    retunr all block codes that are included in solve
-    :param solve:
-    :param blocklist:
-    :return:
-    """
-    return [block[1] for block in blocklist if block[0] == solve]
+        return block_strt
 
-def make_step_jump(steplist, duration):
-    """
-    make a file that indicates the length of jump from one simulation step to next one.
-    the final line should always contain a jump to the first line.
+    def get_block_steps(self):
+        """
+        fetch the block step count
+        :return: dictionary blockname:stepcount
+        """
+        with open('block_steps.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            block_steps = {}
+            while True:
+                try:
+                    datain = next(filereader)
+                    block_steps[datain[0]] = datain[1]
+                except StopIteration:
+                    break
+        return block_steps
 
-    length of jump is the number of lines needed to advance in the timeline specified in step_duration.csv
 
-    :param steplist: active steps used in the solve
-    :param duration: duration of every timestep
-    :return:
-    """
-    # define index for every step from the reference list
-    active_steps = []
-    for i, line in enumerate(duration):
-        # duration lines (stepcode, duration)
-        if line[0] in steplist:
-            active_steps.append((line[0], i))
-    # calculate jump length based on step index
-    step_lengths = []
-    for j, line in enumerate(active_steps):
-        # last step is different, last step index length -1
-        if j < len(active_steps)-1:
-            jump = active_steps[j+1][1] - active_steps[j][1]
-            step_lengths.append((line[0], jump))
-        else:
-            jump = active_steps[0][1]- active_steps[j][1]
-            step_lengths.append((line[0], jump))
-    return step_lengths
+    def get_step_dur(self):
+        """
+        read in step durations for all simulation steps
+        step_durations is the only inputfile that contains the full timeline
+        return also a list with just the timestep names. 
+        Both are needed so this is the easiest shortcut for this.
+        :return: list of tuples (timestep name, duration)
+        :return: timestep names
+        """
+        with open('step_duration.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            step_dur = []
+            step_names = []
+            while True:
+                try:
+                    datain = next(filereader)
+                    step_dur.append((datain[0], datain[1]))
+                    step_names.append(datain[0])
+                except StopIteration:
+                    break
+        return step_dur, step_names
 
-def write_step_jump(step_lengths):
-    """
-    write step_jump.csv according to spec.
+    def get_step_invest(self):
+        """
+        read in step_invest
+        :return  a list of tuples (casename, timestep):
+        """
+        with open('step_invest.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            invest_step = []
+            while True:
+                try:
+                    datain = next(filereader)
+                    invest_step.append((datain[0], datain[1]))
+                except StopIteration:
+                    break
+        return invest_step
 
-    :param step_lengths:
-    :return:
-    """
+    def get_step_jump(self):
+        """
+        get the jump vaue for every timestep,
+        :return a list of tuples (step, jump):
+        """
+        with open('step_jump.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            step_jump = []
+            while True:
+                try:
+                    datain = next(filereader)
+                    step_jump.append((datain[0], float(datain[1])))
+                except StopIteration:
+                    break
+        return step_jump
 
-    headers = ("time","step_jump")
-    with open("step_jump.csv", 'w', newline='\n') as stepfile:
-        writer = csv.writer(stepfile, delimiter=',')
-        writer.writerow(headers)
-        writer.writerows(step_lengths)
+    def make_steps(self, start, stop):
+        """
+        make a list of timesteps available
+        :param start: Start index of of the block
+        :param stop: Stop index of the block
+        :param steplist: list of steps, read from steps.csv
+        :return: list of timesteps
+        """
+
+        active_step = start
+        steps = []
+        while active_step <= stop:
+            steps.append(self.steplist[active_step])
+            active_step += 1
+        return steps
+
+    def write_steps(self, steplist, filename):
+        """
+        write to file a list of timestep as defined in steplist. Use the same function to write
+        the total set and the scenario dependent one
+        :param filename: filename to write to
+        :param steplist: list of timestep indexes
+        :return:
+        """
+        with open(filename, 'w') as outfile:
+            # prepend with a header
+            outfile.write('step\n')
+            for item in steplist:
+                outfile.write(item)
+                outfile.write('\n')
+
+
+    def make_block_timeline(self, start, length):
+        """
+        make a block timeline, there might be multiple blocks per solve so these blocks might need to be combined for a run
+        :param start: start of block
+        :param length: length of block
+        :return: block timeline
+        """
+        steplist = []
+        startnum = self.steplist.index(start)
+        for i in range(startnum, math.ceil(startnum + float(length))):
+            steplist.append(self.steplist[i])
+        return steplist
+
+    def make_solve_timeline(self, blocks):
+        """
+        make a timeline for the full solve, single solve can consist of multiple blocks
+        :param blocks: list of block timelines as given by make_block_timeline
+        :return list of stpes included in the solve:
+        """
+        steplist =  list(itertools.chain(*blocks))
+        self.write_steps(steplist, 'step_in_use.csv')
+        return steplist
+
+
+    def make_step_invest(self, solve_code, step_invest):
+        """
+        make new step_invest2.csv that has only the timestamps defined by solve_code
+        :param solve_code:
+        :param step_invest:
+        :return:
+        """
+        with open("step_invest.csv", 'w', newline='\n') as stepfile:
+            headers = ["solve", "step_invest"]
+            writer = csv.writer(stepfile, delimiter=',')
+            writer.writerow(headers)
+            for line in step_invest:
+                if line[0] == solve_code:
+                    writer.writerow(line)
+
+    def model_run(self):
+        """
+        run the model executable once
+        :return the output of glpsol.exe:
+        """
+        modelout = subprocess.Popen(['glpsol.exe', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        stdout, stderr = modelout.communicate()
+        #print(stdout.decode("utf-8"))
+        #print(stderr)
+        return stdout, stderr
+
+    def get_blocks(self, solve, blocklist):
+        """
+        retunr all block codes that are included in solve
+        :param solve:
+        :param blocklist:
+        :return:
+        """
+        return [block[1] for block in blocklist if block[0] == solve]
+
+    def make_step_jump(self, steplist, duration):
+        """
+        make a file that indicates the length of jump from one simulation step to next one.
+        the final line should always contain a jump to the first line.
+
+        length of jump is the number of lines needed to advance in the timeline specified in step_duration.csv
+
+        :param steplist: active steps used in the solve
+        :param duration: duration of every timestep
+        :return:
+        """
+        # define index for every step from the reference list
+        active_steps = []
+        for i, line in enumerate(duration):
+            # duration lines (stepcode, duration)
+            if line[0] in steplist:
+                active_steps.append((line[0], i))
+        # calculate jump length based on step index
+        step_lengths = []
+        for j, line in enumerate(active_steps):
+            # last step is different, last step index length -1
+            if j < len(active_steps)-1:
+                jump = active_steps[j+1][1] - active_steps[j][1]
+                step_lengths.append((line[0], jump))
+            else:
+                jump = active_steps[0][1]- active_steps[j][1]
+                step_lengths.append((line[0], jump))
+        return step_lengths
+
+    def write_step_jump(self, step_lengths):
+        """
+        write step_jump.csv according to spec.
+
+        :param step_lengths:
+        :return:
+        """
+
+        headers = ("time","step_jump")
+        with open("step_jump.csv", 'w', newline='\n') as stepfile:
+            writer = csv.writer(stepfile, delimiter=',')
+            writer.writerow(headers)
+            writer.writerows(step_lengths)
 
 
 
 def main():
-    logging.basicConfig(
-        stream=sys.stderr,
-        level=logging.DEBUG,
-        format='%(asctime)s %(levelname)s: %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-    )
-    #make a directory for model unit tests
-    if not os.path.exists("./tests"):
-        os.makedirs("./tests")
-    #read the data in
-    solves = get_solves()
-    blocklist = get_blocklist()
-    starts = get_block_start()
-    steps = get_block_steps()
-    durations = get_step_dur()
-    jumps = get_step_jump()
-    invest = get_step_invest()
-    make_full_timeline(starts, steps)
-    for solve in solves:
-        active_blocks = get_blocks(solve, blocklist)
+    runner = FlexToolRunner()
+    for solve in runner.solves:
+        active_blocks = runner.get_blocks(solve, runner.blocklist)
         steplist = []
         for block in active_blocks:
-            steplist.append(make_block_timeline(starts[block], steps[block]))
-        steplist = make_solve_timeline(steplist)
-        jumps  = make_step_jump(steplist, durations)
-        write_step_jump(jumps)
-        make_step_invest(solve, invest)
-        model_out, model_err = model_run()
+            steplist.append(runner.make_block_timeline(runner.starts[block], runner.steps[block]))
+        steplist = runner.make_solve_timeline(steplist)
+        jumps  = runner.make_step_jump(steplist, runner.durations)
+        runner.write_step_jump(jumps)
+        runner.make_step_invest(solve, runner.invest)
+        model_out, model_err = runner.model_run()
         logging.info(model_out.decode("utf-8"))
+        shutil.copy("result.csv", "{0}_result.csv".format(solve))
         
-
-    #model_run()
 
 if __name__ == '__main__':
     main()
