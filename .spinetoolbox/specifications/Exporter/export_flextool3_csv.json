@@ -1858,6 +1858,28 @@
             "enabled": true,
             "always_export_header": true,
             "use_fixed_table_name": true
+        },
+        "step_in_use": {
+            "type": "objects",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "step_in_use"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": 0,
+                    "filter_re": "^model$"
+                },
+                {
+                    "map_type": "Object",
+                    "position": 1
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
         }
     }
 }

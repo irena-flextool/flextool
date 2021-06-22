@@ -137,25 +137,25 @@ set processParam;
 set sourceSinkParam;
 set reserveParam;
 
-set steps_in_use := {t in time};
+set step_in_use within time;
 set step_invest dimen 1 within time;
-set peet := {(p, source, sink) in process_source_sink, t in steps_in_use};
-set preet := {(p, r, source, sink) in process_reserve_source_sink, t in steps_in_use};
+set peet := {(p, source, sink) in process_source_sink, t in step_in_use};
+set preet := {(p, r, source, sink) in process_reserve_source_sink, t in step_in_use};
 
 param p_node {n in node, nodeParam};
-param pt_node {n in node, nodeParam, t in steps_in_use};
-param pt_commodity {(c, n) in commodity_node, commodityParam, t in steps_in_use};
+param pt_node {n in node, nodeParam, t in step_in_use};
+param pt_commodity {(c, n) in commodity_node, commodityParam, t in step_in_use};
 param p_process {process, processParam} default 0;
-param pt_process {process, processParam, steps_in_use} default 0;
+param pt_process {process, processParam, step_in_use} default 0;
 param p_process_source {(p, source) in process_source, sourceSinkParam} default 0;
 param p_process_sink {(p, sink) in process_sink, sourceSinkParam} default 0;
 param p_process_source_coefficient {(p, source) in process_source} := if (p_process_source[p, source, 'coefficient']) then p_process_source[p, source, 'coefficient'] else 1;
 param p_process_sink_coefficient {(p, sink) in process_sink} := if (p_process_sink[p, sink, 'coefficient']) then p_process_sink[p, sink, 'coefficient'] else 1;
 param p_process_source_flow_unitsize {(p, source) in process_source} := if (p_process_source[p, source, 'flow_unitsize']) then p_process_source[p, source, 'flow_unitsize'] else 1;
 param p_process_sink_flow_unitsize {(p, sink) in process_sink} := if (p_process_sink[p, sink, 'flow_unitsize']) then p_process_sink[p, sink, 'flow_unitsize'] else 1;
-param p_inflow {n in nodeInflow, t in steps_in_use};
+param p_inflow {n in nodeInflow, t in step_in_use};
 param p_reserve {r in reserve, ng in nodeGroup, reserveParam};
-param pt_reserve {r in reserve, ng in nodeGroup, reserveParam, t in steps_in_use};
+param pt_reserve {r in reserve, ng in nodeGroup, reserveParam, t in step_in_use};
 param pq_up {n in nodeBalance};
 param pq_down {n in nodeBalance};
 param pq_reserve {(r, ng) in reserve_nodeGroup};
@@ -187,7 +187,7 @@ param d_flow {(p, source, sink, t) in peet} default 0;
 param d_flow_1_or_2_variable {(p, source, sink, t) in peet} default 0;
 param d_flowInvest {(p, t) in pt_invest} default 0;
 param d_reserve {(p, r, source, sink, t) in preet} default 0;
-param dq_reserve_up {(r, ng) in reserve_nodeGroup, t in steps_in_use} default 0;
+param dq_reserve_up {(r, ng) in reserve_nodeGroup, t in step_in_use} default 0;
 
 #########################
 # Read parameter data (no time series yet)
@@ -227,35 +227,36 @@ table data IN 'CSV' 'debug.csv' : debug <- [debug];
 table data IN 'CSV' 'step_jump.csv' : [time], step_jump;
 table data IN 'CSV' 'step_duration.csv' : [time], step_duration;
 table data IN 'CSV' 'step_invest.csv' : step_invest <- [step_invest];
+table data IN 'CSV' 'step_in_use.csv' : step_in_use <- [step_in_use];
 
 display pt_entity_annual, entityInvest, step_invest;
 #########################
 # Variable declarations
 var v_flow {(p, source, sink, t) in peet};
 var v_reserve {(p, r, source, sink, t) in preet} >= 0;
-var v_state {n in nodeState, t in steps_in_use} >= 0;
-var v_online {p in process, t in steps_in_use} >=0;
+var v_state {n in nodeState, t in step_in_use} >= 0;
+var v_online {p in process, t in step_in_use} >=0;
 var v_invest {(e, t) in et_invest} >= 0;
 var v_divest {(e, t) in et_divest} >= 0;
-var vq_state_up {n in nodeBalance, t in steps_in_use} >= 0;
-var vq_state_down {n in nodeBalance, t in steps_in_use} >= 0;
-var vq_reserve_up {(r, ng) in reserve_nodeGroup, t in steps_in_use} >= 0;
+var vq_state_up {n in nodeBalance, t in step_in_use} >= 0;
+var vq_state_down {n in nodeBalance, t in step_in_use} >= 0;
+var vq_reserve_up {(r, ng) in reserve_nodeGroup, t in step_in_use} >= 0;
 
 display process_method;
 #########################
 ## Data checks 
 printf 'Checking: Data for 1 variable conversions directly from source to sink (and possibly back)\n';
-check {(p, m) in process_method, t in steps_in_use : m in method_1var} pt_process[p, 'efficiency', t] != 0 ;
+check {(p, m) in process_method, t in step_in_use : m in method_1var} pt_process[p, 'efficiency', t] != 0 ;
 
 printf 'Checking: Data for 1-way conversions with an online variable\n';
-check {(p, m) in process_method, t in steps_in_use : m in method_1way_on} pt_process[p, 'efficiency', t] != 0;
+check {(p, m) in process_method, t in step_in_use : m in method_1way_on} pt_process[p, 'efficiency', t] != 0;
 
 printf 'Checking: Data for 2-way linear conversions without online variables\n';
-#check {(p, m) in process_method, t in steps_in_use : m in method_2way_off} pt_process[p, 'efficiency', t] != 0;
+#check {(p, m) in process_method, t in step_in_use : m in method_2way_off} pt_process[p, 'efficiency', t] != 0;
 
 display commodity_node, nodeBalance, reserve_nodeGroup, et_invest;
 minimize total_cost: 
-  + sum {t in steps_in_use}
+  + sum {t in step_in_use}
     (
       + sum {(c, n) in commodity_node} pt_commodity[c, n, 'price', t] 
           * ( 
@@ -274,7 +275,7 @@ minimize total_cost:
 ;
 
 # Energy balance in each node  
-s.t. nodeBalance_eq {n in nodeBalance, t in steps_in_use} :
+s.t. nodeBalance_eq {n in nodeBalance, t in step_in_use} :
   + (if n in nodeState then (v_state[n, t] -  v_state[n, t-1]))
   =
   + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, t]
@@ -289,7 +290,7 @@ s.t. nodeBalance_eq {n in nodeBalance, t in steps_in_use} :
   - vq_state_down[n, t]
 ;
 
-s.t. reserveBalance_eq {(r, ng) in reserve_nodeGroup, t in steps_in_use} :
+s.t. reserveBalance_eq {(r, ng) in reserve_nodeGroup, t in step_in_use} :
   + sum {(p, r, source, n) in process_reserve_source_sink : (ng, n) in nodeGroup_node 
           && (r, ng) in reserve_nodeGroup} 
 	   v_reserve[p, r, source, n, t]
@@ -309,7 +310,7 @@ s.t. reserveBalance_eq {(r, ng) in reserve_nodeGroup, t in steps_in_use} :
 #  + vq_reserve_down[r, ng, t]
 ;
 
-s.t. conversion_equality_constraint {(p, m) in process_method, t in steps_in_use : m in method_indirect} :
+s.t. conversion_equality_constraint {(p, m) in process_method, t in step_in_use : m in method_indirect} :
   + sum {source in entity : (p, source) in process_source} 
     ( + v_flow[p, source, p, t] 
   	      * p_process_source_coefficient[p, source]
@@ -322,7 +323,7 @@ s.t. conversion_equality_constraint {(p, m) in process_method, t in steps_in_use
 	)
 ;
 display process_source_sink, process_sink, process_source;
-s.t. maxToSink {(p, source, sink) in process_source_sink, t in steps_in_use : (p, sink) in process_sink} :
+s.t. maxToSink {(p, source, sink) in process_source_sink, t in step_in_use : (p, sink) in process_sink} :
   + v_flow[p, source, sink, t]
   + sum {r in reserve : (p, r, source, sink) in process_reserve_source_sink} v_reserve[p, r, source, sink, t]
   <=
@@ -333,7 +334,7 @@ s.t. maxToSink {(p, source, sink) in process_source_sink, t in steps_in_use : (p
 	  )	
 ;
 
-s.t. minToSink {(p, source, sink) in process_source_sink, t in steps_in_use 
+s.t. minToSink {(p, source, sink) in process_source_sink, t in step_in_use 
      : (p, sink) in process_sink 
 	 && sum{(p,m) in process_method : m not in method_2way_1var} 1 } :
   + v_flow[p, source, sink, t]
@@ -342,7 +343,7 @@ s.t. minToSink {(p, source, sink) in process_source_sink, t in steps_in_use
 ;
 
 # Special equations for the method with 2 variables presenting 2way connection between source and sink (without the process)
-s.t. maxToSource {(p, source, sink) in process_source_sink, t in steps_in_use 
+s.t. maxToSource {(p, source, sink) in process_source_sink, t in step_in_use 
      : (p, source) in process_sink 
 	 && sum{(p,m) in process_method : m in method_2way_2var} 1 } :
   + v_flow[p, sink, source, t]
@@ -355,7 +356,7 @@ s.t. maxToSource {(p, source, sink) in process_source_sink, t in steps_in_use
 	  )	
 ;
 
-s.t. minToSource {(p, source, sink) in process_source_sink, t in steps_in_use 
+s.t. minToSource {(p, source, sink) in process_source_sink, t in step_in_use 
      : (p, sink) in process_sink 
 	 && sum{(p,m) in process_method : m in method_2way_2var } 1 } :
   + v_flow[p, sink, source, t]
@@ -374,7 +375,7 @@ param process_MW{p in process, t_invest in step_invest} :=
 ;
 
 param process_produce{(p, source) in process_source, t_invest in step_invest} :=
-  + sum {(p, source, sink) in process_source_sink, t in steps_in_use} v_flow[p, source, sink, t]
+  + sum {(p, source, sink) in process_source_sink, t in step_in_use} v_flow[p, source, sink, t]
 ;
 
 display process_MW, process_produce;
@@ -397,25 +398,25 @@ for {p in process, t_invest in step_invest}
 param resultFile symbolic := "result.csv";
 
 printf 'Upward slack for node balance\n' > resultFile;
-for {n in nodeBalance, t in steps_in_use}
+for {n in nodeBalance, t in step_in_use}
   {
     printf '%s, %s, %.8g\n', n, t, vq_state_up[n, t].val >> resultFile;
   }
 
 printf '\nDownward slack for node balance\n' >> resultFile;
-for {n in nodeBalance, t in steps_in_use}
+for {n in nodeBalance, t in step_in_use}
   {
     printf '%s, %s, %.8g\n', n, t, vq_state_down[n, t].val >> resultFile;
   }
 
 printf '\nReserve upward slack variable\n' >> resultFile;
-for {(r, ng) in reserve_nodeGroup, t in steps_in_use} 
+for {(r, ng) in reserve_nodeGroup, t in step_in_use} 
   {
     printf '%s, %s, %s, %.8g\n', r, ng, t, vq_reserve_up[r, ng, t].val >> resultFile;
   }
 
 printf '\nFlow variables\n' >> resultFile;
-for {(p, source, sink) in process_source_sink, t in steps_in_use}
+for {(p, source, sink) in process_source_sink, t in step_in_use}
   {
     printf '%s, %s, %s, %s, %.8g\n', p, source, sink, t, v_flow[p, source, sink, t].val >> resultFile;
   }
@@ -445,7 +446,7 @@ for {n in node} {
     printf ', %s <> ', sink >> resultFile;
   }
   printf '\n' >> resultFile;
-  for {t in steps_in_use} {
+  for {t in step_in_use} {
     printf '%s', t >> resultFile;
 	printf (if n in nodeInflow then ', %.8g' else ''), pt_node[n, 'inflow', t] >> resultFile; 
     for {(p, source, n) in process_source_sink} {
@@ -502,7 +503,7 @@ for {(p, r, source, sink, t) in preet} {
           then 'Reserve test fails at %s, %s, %s, %s, %s. Model value: %.8g, test value: %.8g\n' else ''),
 		      p, r, source, sink, t, v_reserve[p, r, source, sink, t].val, d_reserve[p, r, source, sink, t] >> unitTestFile;
 }
-for {(r, ng) in reserve_nodeGroup, t in steps_in_use} {
+for {(r, ng) in reserve_nodeGroup, t in step_in_use} {
   printf (if vq_reserve_up[r, ng, t].val <> dq_reserve_up[r, ng, t]
           then 'Reserve slack variable test fails at %s, %s, %s. Model value: %.8g, test value: %.8g\n' else ''),
 		      r, ng, t, vq_reserve_up[r, ng, t].val, dq_reserve_up[r, ng, t] >> unitTestFile;
