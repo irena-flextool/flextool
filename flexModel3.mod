@@ -227,7 +227,7 @@ table data IN 'CSV' 'debug.csv' : debug <- [debug];
 table data IN 'CSV' 'step_jump.csv' : [time], step_jump;
 table data IN 'CSV' 'step_duration.csv' : [time], step_duration;
 table data IN 'CSV' 'step_invest.csv' : step_invest <- [step_invest];
-table data IN 'CSV' 'step_in_use.csv' : step_in_use <- [step_in_use];
+table data IN 'CSV' 'step_in_use.csv' : step_in_use <- [step];
 
 display pt_entity_annual, entityInvest, step_invest;
 #########################
@@ -387,17 +387,27 @@ param fn_unit symbolic := "units.csv";
 printf 'Unit,Time,"Capacity (MW)","Produce (MWh)","Consume (MWh)"' > fn_unit;
 printf ',"Curtail (MWh)","Utilization (\%)","Max. ramp up (p.u.)","Max. ramp down (p.u.)"' >> fn_unit;
 printf ',"Reserve provision (\%)"\n' >> fn_unit;
+
+# process_MW[p, t_invest]
 	
+
 for {p in process, t_invest in step_invest}
   {
-    printf '%s, %s, %.8g\n', p, t_invest, process_MW[p, t_invest] >> fn_unit;
-  }
+    for {(p, source) in process_source}}
+      {
+        printf '%s, %s, %s, %.8g\n', p, source, t_invest,  >> fn_unit;
+      }
+    for {(p, sink) in process_sink}}
+      {
+        printf '%s, %s, %s, %.8g\n', p, source, t_invest,  >> fn_unit;
+      }
+  }  
   
 
 
 param resultFile symbolic := "result.csv";
 
-printf 'Upward slack for node balance\n' > resultFile;
+printf 'Upward slack for node balance\n' >> resultFile;
 for {n in nodeBalance, t in step_in_use}
   {
     printf '%s, %s, %.8g\n', n, t, vq_state_up[n, t].val >> resultFile;
