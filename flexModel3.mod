@@ -229,7 +229,7 @@ table data IN 'CSV' 'step_duration.csv' : [time], step_duration;
 table data IN 'CSV' 'step_invest.csv' : step_invest <- [step_invest];
 table data IN 'CSV' 'step_in_use.csv' : step_in_use <- [step];
 
-display pt_entity_annual, entityInvest, step_invest;
+display pt_entity_annual, entityInvest, step_invest, p_process_source_flow_unitsize, p_process_sink_flow_unitsize;
 #########################
 # Variable declarations
 var v_flow {(p, source, sink, t) in peet};
@@ -242,20 +242,19 @@ var vq_state_up {n in nodeBalance, t in step_in_use} >= 0;
 var vq_state_down {n in nodeBalance, t in step_in_use} >= 0;
 var vq_reserve_up {(r, ng) in reserve_nodeGroup, t in step_in_use} >= 0;
 
-display process_method, time, step_in_use;
-display pt_process;
+
 #########################
 ## Data checks 
 printf 'Checking: Data for 1 variable conversions directly from source to sink (and possibly back)\n';
-#check {(p, m) in process_method, t in step_in_use : m in method_1var} pt_process[p, 'efficiency', t] != 0 ;
+check {(p, m) in process_method, t in step_in_use : m in method_1var} pt_process[p, 'efficiency', t] != 0 ;
 
 printf 'Checking: Data for 1-way conversions with an online variable\n';
-#check {(p, m) in process_method, t in step_in_use : m in method_1way_on} pt_process[p, 'efficiency', t] != 0;
+check {(p, m) in process_method, t in step_in_use : m in method_1way_on} pt_process[p, 'efficiency', t] != 0;
 
 printf 'Checking: Data for 2-way linear conversions without online variables\n';
-#check {(p, m) in process_method, t in step_in_use : m in method_2way_off} pt_process[p, 'efficiency', t] != 0;
+check {(p, m) in process_method, t in step_in_use : m in method_2way_off} pt_process[p, 'efficiency', t] != 0;
 
-display commodity_node, nodeBalance, reserve_nodeGroup, et_invest;
+display et_invest, pt_invest;
 minimize total_cost: 
   + sum {t in step_in_use}
     (
@@ -323,13 +322,14 @@ s.t. conversion_equality_constraint {(p, m) in process_method, t in step_in_use 
 	      * p_process_sink_coefficient[p, sink]
 	)
 ;
-display process_source_sink, process_sink, process_source;
+
 s.t. maxToSink {(p, source, sink) in process_source_sink, t in step_in_use : (p, sink) in process_sink} :
   + v_flow[p, source, sink, t]
   + sum {r in reserve : (p, r, source, sink) in process_reserve_source_sink} v_reserve[p, r, source, sink, t]
   <=
   + p_process_sink_flow_unitsize[p, sink] 
     * ( + p_process[p, 'existing']
+	    + p_process[p, 'invest_forced']
         + sum {(p, t_invest) in pt_invest : t_invest <= t} v_invest[p, t_invest]
 #        - sum {(p, t_invest) in pt_divest : t_invest <= t} v_divest[p, t_invest]
 	  )	
@@ -337,21 +337,40 @@ s.t. maxToSink {(p, source, sink) in process_source_sink, t in step_in_use : (p,
 
 s.t. minToSink {(p, source, sink) in process_source_sink, t in step_in_use 
      : (p, sink) in process_sink 
-	 && sum{(p,m) in process_method : m not in method_2way_1var} 1 } :
+	 && sum{(p,m) in process_method : m not in method_2way_1var} 1 
+} :
   + v_flow[p, source, sink, t]
   >=
   + 0
 ;
 
+# Special equation to limit the 1variable connection on the negative transfer
+s.t. minToSink_1var {(p, source, sink) in process_source_sink, t in step_in_use 
+     : (p, sink) in process_sink 
+	 && sum{(p,m) in process_method : m in method_1way_1var} 1 
+} :
+  + v_flow[p, source, sink, t]
+  >=
+  - p_process_sink_flow_unitsize[p, sink] 
+    * ( + p_process[p, 'existing']
+	    + p_process[p, 'invest_forced']
+        + sum {(p, t_invest) in pt_invest : t_invest <= t} v_invest[p, t_invest]
+#        - sum {(p, t_invest) in pt_divest : t_invest <= t} v_divest[p, t_invest]
+	  )	
+
+;
+
 # Special equations for the method with 2 variables presenting 2way connection between source and sink (without the process)
 s.t. maxToSource {(p, source, sink) in process_source_sink, t in step_in_use 
-     : (p, source) in process_sink 
-	 && sum{(p,m) in process_method : m in method_2way_2var} 1 } :
+     : (p, source) in process_source
+	 && sum{(p,m) in process_method : m in method_2way_2var } 1 
+} :
   + v_flow[p, sink, source, t]
   + sum {r in reserve : (p, r, sink, source) in process_reserve_source_sink} v_reserve[p, r, sink, source, t]
   <=
-  + p_process_source_flow_unitsize[p, sink] 
+  + p_process_source_flow_unitsize[p, source] 
     * ( + p_process[p, 'existing']
+	    + p_process[p, 'invest_forced']
         + sum {(p, t_invest) in pt_invest : t_invest <= t} v_invest[p, t_invest]
 #        - sum {(p, t_invest) in pt_divest : t_invest <= t} v_divest[p, t_invest]
 	  )	
@@ -359,7 +378,8 @@ s.t. maxToSource {(p, source, sink) in process_source_sink, t in step_in_use
 
 s.t. minToSource {(p, source, sink) in process_source_sink, t in step_in_use 
      : (p, sink) in process_sink 
-	 && sum{(p,m) in process_method : m in method_2way_2var } 1 } :
+	 && sum{(p,m) in process_method : m in method_2way_2var } 1 
+} :
   + v_flow[p, sink, source, t]
   >=
   + 0

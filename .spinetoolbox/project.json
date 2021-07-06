@@ -254,8 +254,8 @@
         "FlexTool3_data": {
             "type": "Data Store",
             "description": "",
-            "x": -361.6201593809845,
-            "y": 153.6999176567399,
+            "x": -350.4203913484724,
+            "y": 151.66359619628324,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -273,8 +273,8 @@
         "InputDataXlsx": {
             "type": "Data Connection",
             "description": "",
-            "x": -349.94494268064153,
-            "y": -76.44659101987077,
+            "x": -366.2355143642954,
+            "y": -83.57371613146938,
             "references": [
                 {
                     "type": "path",
@@ -304,8 +304,8 @@
         "FlexTool": {
             "type": "Tool",
             "description": "",
-            "x": 238.99973776739967,
-            "y": -137.59214086419047,
+            "x": 244.09054141854156,
+            "y": -140.64662305487562,
             "specification": "FlexTool",
             "execute_in_work": false,
             "cmd_line_args": []
@@ -313,8 +313,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 142.96042246126518,
-            "y": 106.27656501509432,
+            "x": 121.57904712646933,
+            "y": 99.1494399034957,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": []
@@ -394,8 +394,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -21.72310509837808,
-            "y": 106.1681693503975,
+            "x": -19.68678363792134,
+            "y": 104.13184788994076,
             "databases": [
                 {
                     "output_file_name": "inputData",
@@ -447,8 +447,8 @@
         "Import_Flex3": {
             "type": "Importer",
             "description": "",
-            "x": 261.6673076686913,
-            "y": 143.5606629622003,
+            "x": 281.0123615430304,
+            "y": 129.3064127390031,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "file_selection": [
