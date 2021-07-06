@@ -1,12 +1,11 @@
 import csv
-import re
 import math
 import subprocess
 import itertools
 import logging
 import sys
 import os
-import shutil
+from collections import OrderedDict
 
 class FlexToolRunner:
     """
@@ -225,11 +224,11 @@ class FlexToolRunner:
         :return list of stpes included in the solve:
         """
         steplist =  list(itertools.chain(*blocks))
-        self.write_steps(steplist, 'step_in_use.csv')
+        #self.write_steps(steplist, 'step_in_use.csv')
         return steplist
 
 
-    def make_step_invest(self, solve_code, step_invest):
+    def write_step_invest(self, solve_code, step_invest):
         """
         make new step_invest2.csv that has only the timestamps defined by solve_code
         :param solve_code:
@@ -308,21 +307,91 @@ class FlexToolRunner:
             writer.writerows(step_lengths)
 
 
+    def get_first_steps(self, steplists):
+        """
+        get the first step of the current solve and the next solve in execution order.
+        :param steplists: Dictionary containg steplist for each solve, in order
+        :return: Return a dictionary containing tuples of current_first, next first
+        """
+        solve_names = list(steplists.keys())
+        starts = OrderedDict()
+        for index, name in enumerate(solve_names):
+            # last key is a different case
+            if index == (len(solve_names) - 1):
+                starts[name] = (steplists[name][0],)
+            else:
+                starts[name] = (steplists[solve_names[index]][0], steplists[solve_names[index+1]][0])
+        return starts
+
+
+    def write_first_steps(self, steps):
+        """
+        write to file the first step of the model run
+        
+        write info into two separate files "solve_start.csv" & "solve_startNext.csv"
+
+        :param steps: a tuple containg the first step of current solve and the first step of next solve
+                        in case the current solve is the last one the second item is empty
+        """
+        with open("solve_start.csv", "w") as startfile:
+            startfile.write("start\n")
+            startfile.write(steps[0])
+            startfile.write("\n")
+
+        with open("solve_startNext.csv", 'w') as nextfile:
+            nextfile.write("startNext\n")
+            if len(steps) == 2:
+                nextfile.write(steps[1])
+                nextfile.write("\n")
+
+
+    def write_first_status(self, first_state):
+        """
+        make a file solve_first.csv that contains information if the current solve is the first to be run
+
+        :param first_state: boolean if the current run is the first
+
+        """
+        with open("solve_first.csv",'w') as firstfile:
+            firstfile.write("solve_first\n")
+            if first_state:
+                firstfile.write("true\n")
 
 def main():
+    """
+    first read the solve configuration from the input files, then for each solve write the files that are needed
+    By that solve into disk. separate the reading into a separate step since the input files need knowledge of multiple solves.
+    """
     runner = FlexToolRunner()
+    steplists = OrderedDict()
+    jumplists = OrderedDict()
     for solve in runner.solves:
         active_blocks = runner.get_blocks(solve, runner.blocklist)
         steplist = []
         for block in active_blocks:
             steplist.append(runner.make_block_timeline(runner.starts[block], runner.steps[block]))
         steplist = runner.make_solve_timeline(steplist)
+        steplists[solve] = steplist
         jumps  = runner.make_step_jump(steplist, runner.durations)
-        runner.write_step_jump(jumps)
-        runner.make_step_invest(solve, runner.invest)
+        jumplists[solve] = jumps
+    
+    first_steps = runner.get_first_steps(steplists)
+
+    first = True
+    for solve in runner.solves:
+        runner.write_steps(steplists[solve], 'step_in_use.csv')
+        runner.write_step_jump(jumplists[solve])
+        runner.write_step_invest(solve, runner.invest)
+        runner.write_first_steps(first_steps[solve])
+        if first:
+            runner.write_first_status(first)
+            first = False
+        else:
+            runner.write_first_status(first)
+        
+        
         model_out, model_err = runner.model_run()
         logging.info(model_out.decode("utf-8"))
-        shutil.copy("result.csv", "{0}_result.csv".format(solve))
         
 
 if __name__ == '__main__':
