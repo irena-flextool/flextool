@@ -352,10 +352,24 @@ class FlexToolRunner:
         :param first_state: boolean if the current run is the first
 
         """
-        with open("solve_first.csv",'w') as firstfile:
-            firstfile.write("solve_first\n")
+        with open("p_model.csv",'w') as firstfile:
+            firstfile.write("modelParam,p_model\n")
             if first_state:
-                firstfile.write("true\n")
+                firstfile.write("solveFirst,1\n")
+            else:
+                firstfile.write("solveFirst,0\n")
+
+
+    def write_empty_investment_file(self):
+        """
+        make a file p_process_invested.csv that will contain capacities of invested and divested processes. For the first solve it will be empty.
+
+        :param first_state: boolean if the current run is the first
+
+        """
+        with open("p_process_invested.csv",'w') as firstfile:
+            firstfile.write("process,p_process_invested\n")
+
 
 def main():
     """
@@ -386,6 +400,7 @@ def main():
         if first:
             runner.write_first_status(first)
             first = False
+            runner.write_empty_investment_file()
         else:
             runner.write_first_status(first)
         

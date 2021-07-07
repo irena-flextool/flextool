@@ -1,4 +1,4 @@
-# © International Renewable Energy Agency 2018-2021
+ # © International Renewable Energy Agency 2018-2021
 
 #The FlexTool is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License
 #as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
@@ -137,10 +137,15 @@ set processParam;
 set sourceSinkParam;
 set reserveParam;
 
-set step_in_use within time;
+set step_in_use dimen 1 within time;
 set step_invest dimen 1 within time;
 set peet := {(p, source, sink) in process_source_sink, t in step_in_use};
 set preet := {(p, r, source, sink) in process_reserve_source_sink, t in step_in_use};
+
+set startTime dimen 1 within time;
+set startNext dimen 1 within time;
+set modelParam;
+param p_model {modelParam};
 
 param p_node {n in node, nodeParam};
 param pt_node {n in node, nodeParam, t in time};
@@ -182,6 +187,14 @@ set nt_invest := {(n, t) in et_invest : n in node};
 #set et_invest := pt_invest union nt_invest;
 set et_divest := et_invest;
 
+display p_model;
+param p_process_invested {p in process : p in entityInvest};
+param p_process_all_existing {p in process} :=
+        + p_process[p, 'existing']
+		+ p_process[p, 'invest_forced']
+		+ (if not p_model['solveFirst'] && p in entityInvest then p_process_invested[p])
+;
+
 param d_obj default 0;
 param d_flow {(p, source, sink, t) in peet} default 0;
 param d_flow_1_or_2_variable {(p, source, sink, t) in peet} default 0;
@@ -220,6 +233,7 @@ table data IN 'CSV' 'pt_process.csv' : [process, processParam, time], pt_process
 table data IN 'CSV' 'p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
 table data IN 'CSV' 'p_process_sink.csv' : [process, sink, sourceSinkParam], p_process_sink;
 table data IN 'CSV' 'pt_reserve.csv' : [reserve, nodeGroup, reserveParam, time], pt_reserve;
+table data IN 'CSV' 'p_process_invested.csv' : [process], p_process_invested;
 
 #table data IN 'CSV' '.csv' :  <- [];
 
@@ -228,8 +242,12 @@ table data IN 'CSV' 'step_jump.csv' : [time], step_jump;
 table data IN 'CSV' 'step_duration.csv' : [time], step_duration;
 table data IN 'CSV' 'step_invest.csv' : step_invest <- [step_invest];
 table data IN 'CSV' 'step_in_use.csv' : step_in_use <- [step];
+table data IN 'CSV' 'solve_start.csv' : startTime <- [start];
+table data IN 'CSV' 'solve_startNext.csv' : startNext <- [startNext];
+table data IN 'CSV' 'p_model.csv' : [modelParam], p_model;
 
-display pt_entity_annual, entityInvest, step_invest, p_process_source_flow_unitsize, p_process_sink_flow_unitsize;
+display p_model;
+#display pt_entity_annual, entityInvest, step_invest, p_process_source_flow_unitsize, p_process_sink_flow_unitsize;
 #########################
 # Variable declarations
 var v_flow {(p, source, sink, t) in peet};
@@ -328,8 +346,9 @@ s.t. maxToSink {(p, source, sink) in process_source_sink, t in step_in_use : (p,
   + sum {r in reserve : (p, r, source, sink) in process_reserve_source_sink} v_reserve[p, r, source, sink, t]
   <=
   + p_process_sink_flow_unitsize[p, sink] 
-    * ( + p_process[p, 'existing']
-	    + p_process[p, 'invest_forced']
+    * ( + p_process_all_existing[p]
+	    #+ p_process[p, 'existing']
+	    #+ p_process[p, 'invest_forced']
         + sum {(p, t_invest) in pt_invest : t_invest <= t} v_invest[p, t_invest]
 #        - sum {(p, t_invest) in pt_divest : t_invest <= t} v_divest[p, t_invest]
 	  )	
@@ -389,9 +408,8 @@ s.t. minToSource {(p, source, sink) in process_source_sink, t in step_in_use
 solve;
 
 
-param process_MW{p in process, t_invest in step_invest} := 
-  + p_process[p, 'existing']
-  + p_process[p, 'invest_forced']
+param process_all_capacity{p in process, t_invest in step_invest} := 
+  + p_process_all_existing[p]
   + sum {(p, t) in pt_invest : t <= t_invest} v_invest[p, t].val
 ;
 
@@ -402,26 +420,56 @@ param process_sink_produce{(p, sink) in process_sink, t_invest in step_invest} :
   + sum {(p, source, sink) in process_source_sink, t in step_in_use : t >= t_invest} v_flow[p, source, sink, t]
 ;
 
-display process_MW, process_source_produce, process_sink_produce;
+display process_all_capacity, process_source_produce, process_sink_produce;
 #  ( + (if (g,n,u) not in (gnu_convertOutput union gnu_output2) then abs(p_unit[g,n,u,'capacity_MW']))
 #  );
 
-printf 'Write unit results...\n';
-param fn_unit symbolic := "units.csv";
-printf 'Unit,node,time_start,produce\n' >> fn_unit;
+printf 'Transfer investments to next solve...\n';
+param fn_process_invested symbolic := "p_process_invested.csv";
+printf 'process,p_process_invested\n' > fn_process_invested;
+for {p in process : p in entityInvest} 
+  {
+    printf '%s,%.8g\n', p, 
+	  + (if not p_model['solveFirst'] then p_process_invested[p])
+	  + sum {t_invest in step_invest, t_start in startTime, t_startNext in startNext 
+	         : (p, t_invest) in pt_invest && t_invest >= t_start && t_invest < t_startNext
+			} v_invest[p, t_invest].val
+	>> fn_process_invested;
+  }
+#for {p in process, t_invest in step_invest, t_start in startTime : (p, t_invest) in pt_invest && t_invest < t_start}
+#  {
+#    printf '%s,%s,%.8g\n', p, t_invest, p_process_invested[p, t_invest] >> fn_process_invested;
+#  }
+#for {p in process, t_invest in step_invest, t_start in startTime, t_startNext in startNext : (p, t_invest) in pt_invest && t_invest >= t_start && t_invest < t_startNext}
+#  {
+#    printf '%s,%s,%.8g\n', p, t_invest, v_invest[p, t_invest].val >> fn_process_invested;
+#  }
 
-# process_MW[p, t_invest]
+
+printf 'Write process investment results...\n';
+param fn_process_investment symbolic := "r_process_investment.csv";
+for {p in process, t_invest in step_invest : (p, t_invest) in pt_invest}
+  {
+    printf '%s, %s, %.8g\n', p, t_invest, v_invest[p, t_invest].val >> fn_process_investment;
+  }
+
+
+printf 'Write unit__node results...\n';
+param fn_unit__node symbolic := "r_unit__node.csv";
+#printf 'Unit,node,time_start,produce\n' >> fn_unit__node;
+
+# process_all_capacity[p, t_invest]
 	
 
 for {p in process, t_invest in step_invest}
   {
     for {(p, source) in process_source}
       {
-        printf '%s, %s, %s, %.8g\n', p, source, t_invest, process_source_produce[p, source, t_invest] >> fn_unit;
+        printf '%s, %s, %s, %.8g\n', p, source, t_invest, process_source_produce[p, source, t_invest] >> fn_unit__node;
       }
     for {(p, sink) in process_sink}
       {
-        printf '%s, %s, %s, %.8g\n', p, sink, t_invest, process_sink_produce[p, sink, t_invest] >> fn_unit;
+        printf '%s, %s, %s, %.8g, %.8g\n', p, sink, t_invest, process_sink_produce[p, sink, t_invest] >> fn_unit__node;
       }
   }  
   

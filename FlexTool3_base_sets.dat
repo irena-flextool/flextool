@@ -81,3 +81,4 @@ set sourceSinkParam := coefficient flow_unitsize var_cost;
 set nodeParam := inflow, pq_down, pq_up, existing, interest_rate, invest_cost, invest_forced, invest_max_time, invest_max_total, lifetime, retire_forced, retire_max, state_unitsize;
 set reserveParam := reserve pq_reserve;
 set invest_method := one_cost, timeseries_cost;
+set modelParam := solveFirst;
