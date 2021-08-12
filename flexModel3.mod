@@ -1,4 +1,4 @@
- # © International Renewable Energy Agency 2018-2021
+# © International Renewable Energy Agency 2018-2021
 
 #The FlexTool is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License
 #as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
@@ -144,6 +144,7 @@ set preet := {(p, r, source, sink) in process_reserve_source_sink, t in step_in_
 
 set startTime dimen 1 within time;
 set startNext dimen 1 within time;
+param startNext_index := sum{t in time, t_startNext in startNext : t <= t_startNext} 1;
 set modelParam;
 param p_model {modelParam};
 
@@ -420,11 +421,9 @@ param process_sink_produce{(p, sink) in process_sink, t_invest in step_invest} :
   + sum {(p, source, sink) in process_source_sink, t in step_in_use : t >= t_invest} v_flow[p, source, sink, t]
 ;
 
-display process_all_capacity, process_source_produce, process_sink_produce;
-#  ( + (if (g,n,u) not in (gnu_convertOutput union gnu_output2) then abs(p_unit[g,n,u,'capacity_MW']))
-#  );
+display process_all_capacity, startTime, startNext;
 
-printf 'Transfer investments to next solve...\n';
+printf 'Transfer investments to the next solve...\n';
 param fn_process_invested symbolic := "p_process_invested.csv";
 printf 'process,p_process_invested\n' > fn_process_invested;
 for {p in process : p in entityInvest} 
@@ -432,23 +431,17 @@ for {p in process : p in entityInvest}
     printf '%s,%.8g\n', p, 
 	  + (if not p_model['solveFirst'] then p_process_invested[p])
 	  + sum {t_invest in step_invest, t_start in startTime, t_startNext in startNext 
-	         : (p, t_invest) in pt_invest && t_invest >= t_start && t_invest < t_startNext
+	         : (p, t_invest) in pt_invest && t_invest >= t_start && (t_invest < t_startNext)
 			} v_invest[p, t_invest].val
 	>> fn_process_invested;
   }
-#for {p in process, t_invest in step_invest, t_start in startTime : (p, t_invest) in pt_invest && t_invest < t_start}
-#  {
-#    printf '%s,%s,%.8g\n', p, t_invest, p_process_invested[p, t_invest] >> fn_process_invested;
-#  }
-#for {p in process, t_invest in step_invest, t_start in startTime, t_startNext in startNext : (p, t_invest) in pt_invest && t_invest >= t_start && t_invest < t_startNext}
-#  {
-#    printf '%s,%s,%.8g\n', p, t_invest, v_invest[p, t_invest].val >> fn_process_invested;
-#  }
 
-
+display startNext_index;
 printf 'Write process investment results...\n';
 param fn_process_investment symbolic := "r_process_investment.csv";
-for {p in process, t_invest in step_invest : (p, t_invest) in pt_invest}
+for {i in 1..1 : p_model['solveFirst']}
+  { printf '' > fn_process_investment; }  # Clear the file on the first solve
+for {p in process, t_invest in step_invest : (p, t_invest) in pt_invest && (sum{t in time : t <= t_invest} 1 < startNext_index || not card(startNext))}
   {
     printf '%s, %s, %.8g\n', p, t_invest, v_invest[p, t_invest].val >> fn_process_investment;
   }
