@@ -436,7 +436,6 @@ for {p in process : p in entityInvest}
 	>> fn_process_invested;
   }
 
-display startNext_index;
 printf 'Write process investment results...\n';
 param fn_process_investment symbolic := "r_process_investment.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -449,11 +448,7 @@ for {p in process, t_invest in step_invest : (p, t_invest) in pt_invest && (sum{
 
 printf 'Write unit__node results...\n';
 param fn_unit__node symbolic := "r_unit__node.csv";
-#printf 'Unit,node,time_start,produce\n' >> fn_unit__node;
-
-# process_all_capacity[p, t_invest]
-	
-
+printf 'Unit,node,time_start,produce\n' > fn_unit__node;
 for {p in process, t_invest in step_invest}
   {
     for {(p, source) in process_source}
@@ -462,7 +457,7 @@ for {p in process, t_invest in step_invest}
       }
     for {(p, sink) in process_sink}
       {
-        printf '%s, %s, %s, %.8g, %.8g\n', p, sink, t_invest, process_sink_produce[p, sink, t_invest] >> fn_unit__node;
+        printf '%s, %s, %s, %.8g\n', p, sink, t_invest, process_sink_produce[p, sink, t_invest] >> fn_unit__node;
       }
   }  
   
