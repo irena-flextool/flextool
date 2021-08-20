@@ -30,8 +30,8 @@ class FlexToolRunner:
         self.timeblocks = self.get_timeblocks()
         self.timeblocks_used_by_periods = self.get_timeblocks_used_by_periods()
         self.invest = self.get_invest_period()
-        self.output_invest_period = self.get_output_invest_period()
-        #self.write_full_timeline(timelines, 'steps.csv')
+        self.realized_periods = self.get_realized_periods()
+        #self.write_full_timelines(self.timelines, 'steps.csv')
 
     def get_solves(self):
         """
@@ -134,12 +134,12 @@ class FlexToolRunner:
                     break
         return invest_period
 
-    def get_output_invest_period(self):
+    def get_realized_periods(self):
         """
         read the investment periods to be output in each solve
         :return: dict : (solve, period)
         """
-        with open('output_invest_period.csv', 'r') as blk:
+        with open('solve__realized_period.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
             solve_period = defaultdict(list)
@@ -167,19 +167,20 @@ class FlexToolRunner:
             active_step += 1
         return steps
 
-    def write_full_timelines(self, timelines, filename):
+    def write_full_timelines(self, period__timeblocks_in_this_solve, timelines, filename):
         """
-        write to file a list of timestep as defined in timelines. Use the same function to write
-        the total set and the scenario dependent one
+        write to file a list of timestep as defined in timelines.
         :param filename: filename to write to
         :param steplist: list of timestep indexes
         :return:
         """
+
         with open(filename, 'w') as outfile:
             # prepend with a header
-            outfile.write('step\n')
-            for timeline in timelines:
-                outfile.write(timeline + ',' + timelines[timeline][0] + '\n')
+            outfile.write('period,step\n')
+            for period__timeblock in period__timeblocks_in_this_solve:
+                for item in timelines[period__timeblock[1]]:
+                    outfile.write(period__timeblock[0] + ',' + item[0] + '\n')
 
     def write_active_timelines(self, timeline, filename):
         """
@@ -190,9 +191,9 @@ class FlexToolRunner:
         """
         with open(filename, 'w') as outfile:
             # prepend with a header
-            outfile.write('step\n')
+            outfile.write('period,step,step_duration\n')
             for item in timeline:
-                outfile.write(item[0] + ',' + item[1] + '\n')
+                outfile.write(item[0] + ',' + item[1] + ',' + item[3] + '\n')
 
     def make_block_timeline(self, start, length):
         """
@@ -254,11 +255,11 @@ class FlexToolRunner:
                                         for index, timestep in enumerate(timelines[timeline]):
                                             if timestep[0] == single_timeblock_def[0]:
                                                 for block_step in range(int(float(single_timeblock_def[1]))):
-                                                    active_time.append((period_timeblock[0], timelines[timeline][index + block_step][0]))
+                                                    active_time.append((period_timeblock[0], timelines[timeline][index + block_step][0], index + block_step, timelines[timeline][index + block_step][1]))
                                                 break
         return active_time
 
-    def make_step_jump(self, active_time_list, timelines, timeblocks_used_by_periods, solve):
+    def make_step_jump(self, active_time_list):
         """
         make a file that indicates the length of jump from one simulation step to next one.
         the final line should always contain a jump to the first line.
@@ -269,25 +270,20 @@ class FlexToolRunner:
         :param duration: duration of every timestep
         :return:
         """
-        # define index for every step from the reference list
-        active_steps = []
-        for timeline in timelines:
-            for period_timeblock in timeblocks_used_by_periods[solve]:
-                if timeline == period_timeblock[1]:
-                    for i, line in enumerate(timelines[timeline]):
-                        # duration lines (stepcode, duration)
-                        if line[0] in active_time_list:
-                            active_steps.append((line[0], i))
-        # calculate jump length based on step index
         step_lengths = []
-        for j, line in enumerate(active_steps):
-            # last step is different, last step index length -1
-            if j < len(active_steps) - 1:
-                jump = active_steps[j + 1][1] - active_steps[j][1]
-                step_lengths.append((line[0], jump))
-            else:
-                jump = active_steps[0][1] - active_steps[j][1]
-                step_lengths.append((line[0], jump))
+        period_start_position = active_time_list[0][2]
+        for j, step in enumerate(active_time_list):
+            if j + 1 < len(active_time_list):  # handle the last element of the active_time_list separately
+                if active_time_list[j + 1][0] == active_time_list[j][0]:
+                    jump = active_time_list[j + 1][2] - active_time_list[j][2]
+                    step_lengths.append((step[0], step[1], jump))
+                else:  # last step of the period jumps back to the start of the period
+                    jump = active_time_list[period_start_position][2] - active_time_list[j][2]
+                    step_lengths.append((step[0], step[1], jump))
+                    period_start_position = j + 1
+            else:  # last time step of the whole active_time_list is handled here
+                jump = active_time_list[period_start_position][2] - active_time_list[j][2]
+                step_lengths.append((step[0], step[1], jump))
         return step_lengths
 
     def write_step_jump(self, step_lengths):
@@ -298,7 +294,7 @@ class FlexToolRunner:
         :return:
         """
 
-        headers = ("time", "step_jump")
+        headers = ("period", "time", "step_jump")
         with open("step_jump.csv", 'w', newline='\n') as stepfile:
             writer = csv.writer(stepfile, delimiter=',')
             writer.writerow(headers)
@@ -340,17 +336,17 @@ class FlexToolRunner:
                 nextfile.write(steps[1])
                 nextfile.write("\n")
 
-    def write_realized_invest_period(self, output_invest_period):
+    def write_realized_invest_periods(self, realized_period):
         """
         write to file a list of timesteps as defined by the active timeline of the current solve
         :param filename: filename to write to
         :param timeline: list of tuples containing the period and the timestep
         :return: nothing
         """
-        with open("output_periods.csv", 'w') as outfile:
+        with open("realized_period.csv", 'w') as outfile:
             # prepend with a header
             outfile.write('period\n')
-            for item in output_invest_period:
+            for item in realized_period:
                 outfile.write(item + '\n')
 
     def write_first_status(self, first_state):
@@ -389,18 +385,18 @@ def main():
     for solve in runner.solves:
         active_time_list = runner.get_active_time(solve, runner.timeblocks_used_by_periods, runner.timeblocks, runner.timelines)
         active_time_lists[solve] = active_time_list
-        jumps = runner.make_step_jump(active_time_list, runner.timelines, runner.timeblocks_used_by_periods, solve)
+        jumps = runner.make_step_jump(active_time_list)
         jump_lists[solve] = jumps
 
     #first_steps = runner.get_first_steps(active_time_lists)
 
     first = True
     for solve in runner.solves:
-        foo = active_time_lists[solve]
-        runner.write_active_timelines(active_time_lists[solve], 'step_in_use.csv')
+        runner.write_full_timelines(runner.timeblocks_used_by_periods[solve], runner.timelines, 'steps_in_timeline.csv')
+        runner.write_active_timelines(active_time_lists[solve], 'steps_in_use.csv')
         runner.write_step_jump(jump_lists[solve])
         runner.write_step_invest(solve, runner.invest)
-        runner.write_realized_invest_period(runner.output_invest_period[solve])
+        runner.write_realized_invest_periods(runner.realized_periods[solve])
         if first:
             runner.write_first_status(first)
             first = False

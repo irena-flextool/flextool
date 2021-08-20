@@ -185,14 +185,7 @@
                 "to": [
                     "Pamam_update",
                     "left"
-                ],
-                "resource_filters": {
-                    "db_url@FlexTool3_data": {
-                        "scenario_filter": [
-                            1
-                        ]
-                    }
-                }
+                ]
             },
             {
                 "from": [
@@ -261,8 +254,8 @@
         "FlexTool3_data": {
             "type": "Data Store",
             "description": "",
-            "x": -346.57083770538003,
-            "y": 86.67210303913299,
+            "x": -347.5821034538054,
+            "y": 85.66083729070768,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -344,11 +337,7 @@
             "cancel_on_error": false,
             "file_selection": [
                 [
-                    "results/color_codes_no_grid.dat",
-                    false
-                ],
-                [
-                    "results/color_codes_csp.dat",
+                    "results/investments_D.dat",
                     false
                 ],
                 [
@@ -356,7 +345,11 @@
                     false
                 ],
                 [
-                    "results/investments_D.dat",
+                    "results/color_codes_no_grid.dat",
+                    false
+                ],
+                [
+                    "results/color_codes_csp.dat",
                     false
                 ],
                 [
@@ -392,8 +385,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -15.605698438587762,
-            "y": 47.44992217152144,
+            "x": -15.605698438587709,
+            "y": 36.32599893884261,
             "databases": [
                 {
                     "output_file_name": "inputData",
@@ -459,10 +452,10 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 119.14852758663143,
-            "y": 26.35487305049972,
+            "x": 119.14852758663145,
+            "y": 29.388670295775764,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": []
         },
         "FlexTool3_data 1": {
