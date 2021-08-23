@@ -141,6 +141,7 @@ set reserveParam;
 
 set dt dimen 2 within period_time;
 set period_invest dimen 1 within period;
+set period_realized dimen 1 within period;
 set peedt := {(p, source, sink) in process_source_sink, (d, t) in period_time};
 set preedt := {(p, r, source, sink) in process_reserve_source_sink, (d, t) in period_time};
 
@@ -246,7 +247,8 @@ table data IN 'CSV' 'debug.csv' : debug <- [debug];
 table data IN 'CSV' 'step_jump.csv' : [period, time], step_jump;
 table data IN 'CSV' 'steps_in_use.csv' : dt <- [period, step];
 table data IN 'CSV' 'steps_in_use.csv' : [period, step], step_duration;
-table data IN 'CSV' 'realized_period.csv' : period_invest <- [period];
+table data IN 'CSV' 'realized_periods_of_current_solve.csv' : period_realized <- [period];
+table data IN 'CSV' 'invest_periods_of_current_solve.csv' : period_invest <- [period];
 #table data IN 'CSV' 'solve_start.csv' : startTime <- [start];
 #table data IN 'CSV' 'solve_startNext.csv' : startNext <- [startNext];
 table data IN 'CSV' 'p_model.csv' : [modelParam], p_model;
@@ -277,8 +279,7 @@ check {(p, m) in process_method, t in time : m in method_1way_on} pt_process[p, 
 printf 'Checking: Data for 2-way linear conversions without online variables\n';
 check {(p, m) in process_method, t in time : m in method_2way_off} pt_process[p, 'efficiency', t] != 0;
 
-display ed_invest, pd_invest;
-minimize total_cost: 
+minimize total_cost:
   + sum {(d, t) in dt}
     (
       + sum {(c, n) in commodity_node} pt_commodity[c, n, 'price', t]
@@ -413,19 +414,19 @@ s.t. minToSource {(p, source, sink) in process_source_sink, (d, t) in dt
 solve;
 
 
-param process_all_capacity{p in process, d in period_invest} :=
+param process_all_capacity{p in process, d in period_realized} :=
   + p_process_all_existing[p]
   + sum {(p, d_invest) in pd_invest : d <= d_invest} v_invest[p, d_invest].val
 ;
 
-param process_source_produce{(p, source) in process_source, d in period} :=
+param process_source_produce{(p, source) in process_source, d in period_realized} :=
   + sum {(p, source, sink) in process_source_sink, (d, t) in dt} v_flow[p, source, sink, d, t]
 ;
-param process_sink_produce{(p, sink) in process_sink, d in period} :=
+param process_sink_produce{(p, sink) in process_sink, d in period_realized} :=
   + sum {(p, source, sink) in process_source_sink, (d, t) in dt} v_flow[p, source, sink, d, t]
 ;
 
-display process_all_capacity, startTime, startNext;
+display period_invest, period_realized, pd_invest;
 
 printf 'Transfer investments to the next solve...\n';
 param fn_process_invested symbolic := "p_process_invested.csv";
@@ -442,16 +443,17 @@ printf 'Write process investment results...\n';
 param fn_process_investment symbolic := "r_process_investment.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf '' > fn_process_investment; }  # Clear the file on the first solve
-for {(p, d_invest) in pd_invest}
+for {(p, d) in pd_invest : d in period_realized && d in period_invest}
   {
-    printf '%s, %s, %.8g\n', p, d_invest, v_invest[p, d_invest].val >> fn_process_investment;
+    printf '%s, %s, %.8g\n', p, d, v_invest[p, d].val >> fn_process_investment;
   }
 
 
 printf 'Write unit__node results...\n';
 param fn_unit__node symbolic := "r_unit__node.csv";
-printf 'Unit,node,period,produce\n' > fn_unit__node;
-for {p in process, d in period}
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'Unit,node,period,produce\n' > fn_unit__node; }  # Print the header on the first solve
+for {p in process, d in period_realized : d not in period_invest}
   {
     for {(p, source) in process_source}
       {

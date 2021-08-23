@@ -254,8 +254,8 @@
         "FlexTool3_data": {
             "type": "Data Store",
             "description": "",
-            "x": -347.5821034538054,
-            "y": 85.66083729070768,
+            "x": -346.5672648616232,
+            "y": 83.63116010634323,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -337,11 +337,11 @@
             "cancel_on_error": false,
             "file_selection": [
                 [
-                    "results/investments_D.dat",
+                    "results/color_codes_heat.dat",
                     false
                 ],
                 [
-                    "results/color_codes_elec.dat",
+                    "results/investments_D.dat",
                     false
                 ],
                 [
@@ -349,11 +349,11 @@
                     false
                 ],
                 [
-                    "results/color_codes_csp.dat",
+                    "results/color_codes_elec.dat",
                     false
                 ],
                 [
-                    "results/color_codes_heat.dat",
+                    "results/color_codes_csp.dat",
                     false
                 ],
                 [
@@ -385,8 +385,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -15.605698438587709,
-            "y": 36.32599893884261,
+            "x": -20.66029400048268,
+            "y": 38.34097807394494,
             "databases": [
                 {
                     "output_file_name": "inputData",
@@ -452,8 +452,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 119.14852758663145,
-            "y": 29.388670295775764,
+            "x": 117.11885040226699,
+            "y": 26.349053868983127,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": []

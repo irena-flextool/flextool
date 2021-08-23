@@ -29,8 +29,8 @@ class FlexToolRunner:
         self.solves = self.get_solves()
         self.timeblocks = self.get_timeblocks()
         self.timeblocks_used_by_periods = self.get_timeblocks_used_by_periods()
-        self.invest = self.get_invest_period()
-        self.realized_periods = self.get_realized_periods()
+        self.invest_periods = self.get_list_of_tuples('solve__invest_period.csv')
+        self.realized_periods = self.get_list_of_tuples('solve__realized_period.csv')
         #self.write_full_timelines(self.timelines, 'steps.csv')
 
     def get_solves(self):
@@ -117,39 +117,22 @@ class FlexToolRunner:
                 """
         return timeblocks
 
-    def get_invest_period(self):
+    def get_list_of_tuples(self, filename):
         """
         read in invest_period
         :return  a list of tuples that say when it's ok to invest (solve, period):
         """
-        with open('invest_period.csv', 'r') as blk:
+        with open(filename, 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
-            invest_period = []
+            tuple_list = []
             while True:
                 try:
                     datain = next(filereader)
-                    invest_period.append((datain[0], datain[1]))
+                    tuple_list.append((datain[0], datain[1]))
                 except StopIteration:
                     break
-        return invest_period
-
-    def get_realized_periods(self):
-        """
-        read the investment periods to be output in each solve
-        :return: dict : (solve, period)
-        """
-        with open('solve__realized_period.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            solve_period = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    solve_period[datain[0]].append(datain[1])
-                except StopIteration:
-                    break
-        return solve_period
+        return tuple_list
 
     def make_steps(self, start, stop):
         """
@@ -207,21 +190,6 @@ class FlexToolRunner:
         for i in range(startnum, math.ceil(startnum + float(length))):
             steplist.append(self.steplist[i])
         return steplist
-
-    def write_step_invest(self, solve_code, step_invest):
-        """
-        make new step_invest2.csv that has only the timestamps defined by solve_code
-        :param solve_code:
-        :param step_invest:
-        :return:
-        """
-        with open("step_invest.csv", 'w', newline='\n') as stepfile:
-            headers = ["solve", "step_invest"]
-            writer = csv.writer(stepfile, delimiter=',')
-            writer.writerow(headers)
-            for line in step_invest:
-                if line[0] == solve_code:
-                    writer.writerow(line)
 
     def model_run(self):
         """
@@ -336,18 +304,21 @@ class FlexToolRunner:
                 nextfile.write(steps[1])
                 nextfile.write("\n")
 
-    def write_realized_invest_periods(self, realized_period):
+    def write_periods(self, solve, periods, filename):
         """
-        write to file a list of timesteps as defined by the active timeline of the current solve
+        write to file a list of periods based on the current solve and
+        a list of tuples with the solve as the first element in the tuple
+        :param solve: current solve
         :param filename: filename to write to
-        :param timeline: list of tuples containing the period and the timestep
+        :param periods: list of tuples with solve and periods to be printed to the file
         :return: nothing
         """
-        with open("realized_period.csv", 'w') as outfile:
+        with open(filename, 'w') as outfile:
             # prepend with a header
             outfile.write('period\n')
-            for item in realized_period:
-                outfile.write(item + '\n')
+            for item in periods:
+                if item[0] == solve:
+                    outfile.write(item[1] + '\n')
 
     def write_first_status(self, first_state):
         """
@@ -395,8 +366,8 @@ def main():
         runner.write_full_timelines(runner.timeblocks_used_by_periods[solve], runner.timelines, 'steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'steps_in_use.csv')
         runner.write_step_jump(jump_lists[solve])
-        runner.write_step_invest(solve, runner.invest)
-        runner.write_realized_invest_periods(runner.realized_periods[solve])
+        runner.write_periods(solve, runner.realized_periods, 'realized_periods_of_current_solve.csv')
+        runner.write_periods(solve, runner.invest_periods, 'invest_periods_of_current_solve.csv')
         if first:
             runner.write_first_status(first)
             first = False
