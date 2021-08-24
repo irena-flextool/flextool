@@ -419,8 +419,8 @@
         "Results_F3": {
             "type": "Data Store",
             "description": "",
-            "x": 113.40108998313944,
-            "y": 188.33431668936007,
+            "x": 113.40108998313943,
+            "y": 187.3194780971778,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -438,8 +438,8 @@
         "Import_Flex3": {
             "type": "Importer",
             "description": "",
-            "x": 281.9923959548748,
-            "y": 71.07916381020897,
+            "x": 286.0517503236035,
+            "y": 72.09400240239117,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "file_selection": [
@@ -453,7 +453,7 @@
             "type": "Tool",
             "description": "",
             "x": 117.11885040226699,
-            "y": 26.349053868983127,
+            "y": 24.31937668461868,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": []

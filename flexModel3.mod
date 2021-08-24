@@ -65,6 +65,8 @@ set nodeBalance 'nodes that maintain a node balance' within node;
 set nodeState 'nodes that have a state' within node;
 set nodeInflow 'nodes that have an inflow' within node;
 set nodeGroup_node 'member nodes of a particular nodeGroup' dimen 2 within {nodeGroup, node};
+set process_unit 'processes that are unit' within process;
+set process_connection 'processes that are connections' within process;
 set process_ct_method dimen 2 within {process, ct_method};
 set process_startup_method dimen 2 within {process, startup_method};
 #set process_method dimen 2 within {process, method};
@@ -145,8 +147,6 @@ set period_realized dimen 1 within period;
 set peedt := {(p, source, sink) in process_source_sink, (d, t) in period_time};
 set preedt := {(p, r, source, sink) in process_reserve_source_sink, (d, t) in period_time};
 
-display period_time;
-
 set startTime dimen 1 within time;
 set startNext dimen 1 within time;
 param startNext_index := sum{t in time, t_startNext in startNext : t <= t_startNext} 1;
@@ -193,7 +193,6 @@ set nd_invest := {(n, d) in ed_invest : n in node};
 #set ed_invest := pd_invest union nd_invest;
 set ed_divest := ed_invest;
 
-display p_model;
 param p_process_invested {p in process : p in entityInvest};
 param p_process_all_existing {p in process} :=
         + p_process[p, 'existing']
@@ -212,6 +211,8 @@ param dq_reserve_up {(r, ng) in reserve_nodeGroup, (d, t) in dt} default 0;
 # Read parameter data (no time series yet)
 table data IN 'CSV' 'entity.csv': entity <- [entity];
 table data IN 'CSV' 'process.csv': process <- [process];
+table data IN 'CSV' 'process_unit.csv': process_unit <- [process_unit];
+table data IN 'CSV' 'process_connection.csv': process_connection <- [process_connection];
 table data IN 'CSV' 'node.csv' : node <- [node];
 table data IN 'CSV' 'nodeGroup.csv' : nodeGroup <- [nodeGroup];
 table data IN 'CSV' 'commodity.csv' : commodity <- [commodity];
@@ -253,7 +254,6 @@ table data IN 'CSV' 'invest_periods_of_current_solve.csv' : period_invest <- [pe
 #table data IN 'CSV' 'solve_startNext.csv' : startNext <- [startNext];
 table data IN 'CSV' 'p_model.csv' : [modelParam], p_model;
 
-display p_model;
 #display pt_entity_annual, entityInvest, p_process_source_flow_unitsize, p_process_sink_flow_unitsize;
 #########################
 # Variable declarations
@@ -419,14 +419,12 @@ param process_all_capacity{p in process, d in period_realized} :=
   + sum {(p, d_invest) in pd_invest : d <= d_invest} v_invest[p, d_invest].val
 ;
 
-param process_source_produce{(p, source) in process_source, d in period_realized} :=
+param process_source_flow{(p, source) in process_source, d in period_realized} :=
   + sum {(p, source, sink) in process_source_sink, (d, t) in dt} v_flow[p, source, sink, d, t]
 ;
-param process_sink_produce{(p, sink) in process_sink, d in period_realized} :=
+param process_sink_flow{(p, sink) in process_sink, d in period_realized} :=
   + sum {(p, source, sink) in process_source_sink, (d, t) in dt} v_flow[p, source, sink, d, t]
 ;
-
-display period_invest, period_realized, pd_invest;
 
 printf 'Transfer investments to the next solve...\n';
 param fn_process_invested symbolic := "p_process_invested.csv";
@@ -440,31 +438,81 @@ for {p in process : p in entityInvest}
   }
 
 printf 'Write process investment results...\n';
-param fn_process_investment symbolic := "r_process_investment.csv";
+param fn_process_investment symbolic := "r_process_investment__d.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf '' > fn_process_investment; }  # Clear the file on the first solve
+  { printf 'process,period,invested' > fn_process_investment; }  # Clear the file on the first solve
 for {(p, d) in pd_invest : d in period_realized && d in period_invest}
   {
     printf '%s, %s, %.8g\n', p, d, v_invest[p, d].val >> fn_process_investment;
   }
 
 
-printf 'Write unit__node results...\n';
-param fn_unit__node symbolic := "r_unit__node.csv";
+printf 'Write unit__sinkNode flow for periods...\n';
+param fn_unit__sinkNode__d symbolic := "r_unit__sinkNode__d.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'Unit,node,period,produce\n' > fn_unit__node; }  # Print the header on the first solve
-for {p in process, d in period_realized : d not in period_invest}
+  { printf 'unit,node,period,flow\n' > fn_unit__sinkNode__d; }  # Print the header on the first solve
+for {u in process_unit, d in period_realized : d not in period_invest}
   {
-    for {(p, source) in process_source}
+    for {(u, sink) in process_sink}
       {
-        printf '%s, %s, %s, %.8g\n', p, source, d, process_source_produce[p, source, d] >> fn_unit__node;
+        printf '%s, %s, %s, %.8g\n', u, sink, d, process_sink_flow[u, sink, d] >> fn_unit__sinkNode__d;
       }
-    for {(p, sink) in process_sink}
+  } 
+
+printf 'Write unit__sourceNode flow for periods...\n';
+param fn_unit__sourceNode__d symbolic := "r_unit__sourceNode__d.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'unit,node,period,flow\n' > fn_unit__sourceNode__d; }  # Print the header on the first solve
+for {u in process_unit, d in period_realized : d not in period_invest}
+  {
+    for {(u, source) in process_source}
       {
-        printf '%s, %s, %s, %.8g\n', p, sink, d, process_sink_produce[p, sink, d] >> fn_unit__node;
+        printf '%s, %s, %s, %.8g\n', u, source, d, process_source_flow[p, source, d] >> fn_unit__sourceNode__d;
       }
-  }  
+  } 
   
+
+#printf 'Write unit__node flow for time steps...\n';
+#param fn_unit__node__dt symbolic := "r_unit__node__dt.csv";
+#for {i in 1..1 : p_model['solveFirst']}
+#  { printf 'unit,node,period,t,flow\n' > fn_unit__node__dt; }  # Print the header on the first solve
+#for {p in process, (d, t) in dt : d in period_realized && d not in period_invest}
+#  {
+#    for {(p, source) in process_source}
+#      {
+#        printf '%s, %s, %s, %s, %.8g\n', p, source, d, t, v_flow[p, source, d, t].val >> fn_unit__node__d;
+#      }
+#    for {(p, sink) in process_sink}
+#      {
+#        printf '%s, %s, %s, %s, %.8g\n', p, sink, d, t, v_flow[p, source, d, t].val >> fn_unit__node__d;
+#      }
+#  }  
+
+  
+printf 'Write node results for periods...\n';
+param fn_node__d symbolic := "r_node__d.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'node,period,exogenous_flow,state_change,inflow,outflow,dummy\n' > fn_node__d; }  # Print the header on the first solve
+for {n in node, d in period_realized : d not in period_invest}
+  {
+    printf '%s, %s, %.8g, %.8g, %.8g, %.8g, %.8g\n'
+		, n, d
+		, (if n in nodeInflow then sum {t in time : (d, t) in dt} pt_node[n, 'inflow', t] else 0)
+        , (if n in nodeState then sum {t in time : (d, t) in dt} (v_state[n, d, t] -  v_state[n, d, t-step_jump[d,t]]) else 0)
+        , sum {(p, source, n) in process_source_sink, t in time : (d, t) in dt} v_flow[p, source, n, d, t]
+        , - sum {(p, n, sink) in process_source_sink, t in time : (d, t) in dt && sum{(p, m) in process_method : m in method_1var_per_way} 1 }
+		     ( + v_flow[p, n, sink, d, t] / pt_process[p, 'efficiency', t] )
+          - sum {(p, n, sink) in process_source_sink, t in time : (d, t) in dt && sum{(p, m) in process_method : m not in method_1var_per_way} 1 }
+		     ( + v_flow[p, n, sink, d, t] )
+        , (if n in nodeBalance then sum {t in time : (d, t) in dt} (
+		      + vq_state_up[n, d, t]
+              - vq_state_down[n, d, t]
+          ) else 0)
+		>> fn_node__d;
+  }
+
+
+
 
 
 param resultFile symbolic := "result.csv";
