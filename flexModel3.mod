@@ -467,7 +467,7 @@ for {u in process_unit, d in period_realized : d not in period_invest}
   {
     for {(u, source) in process_source}
       {
-        printf '%s, %s, %s, %.8g\n', u, source, d, process_source_flow[p, source, d] >> fn_unit__sourceNode__d;
+        printf '%s, %s, %s, %.8g\n', u, source, d, process_source_flow[u, source, d] >> fn_unit__sourceNode__d;
       }
   } 
   

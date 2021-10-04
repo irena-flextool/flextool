@@ -21,6 +21,7 @@ class FlexToolRunner:
             format='%(asctime)s %(levelname)s: %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S',
         )
+        translation = {39: None}
         # make a directory for model unit tests
         if not os.path.exists("./tests"):
             os.makedirs("./tests")
@@ -191,13 +192,15 @@ class FlexToolRunner:
             steplist.append(self.steplist[i])
         return steplist
 
+    @property
     def model_run(self):
         """
         run the model executable once
         :return the output of glpsol.exe:
         """
-        modelout = subprocess.Popen(['glpsol.exe', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat'],
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        foo = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat'] + sys.argv[1:]
+        modelout = subprocess.Popen(['glpsol.exe', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat'] +
+                                    sys.argv[1:], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         stdout, stderr = modelout.communicate()
         # print(stdout.decode("utf-8"))
         # print(stderr)
@@ -375,7 +378,7 @@ def main():
         else:
             runner.write_first_status(first)
 
-        model_out, model_err = runner.model_run()
+        model_out, model_err = runner.model_run
         logging.info(model_out.decode("utf-8"))
 
 
