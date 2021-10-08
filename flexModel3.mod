@@ -59,8 +59,9 @@ set method_1var_per_way within method;
 
 
 set invest_method 'methods available for investments';
+set invest_method_not_allowed 'method for denying investments' within invest_method;
 set entity__invest_method 'the investment method applied to an entity' dimen 2 within {entity, invest_method};
-set entityInvest := setof {(e, m) in entity__invest_method} (e);
+set entityInvest := setof {(e, m) in entity__invest_method : m not in invest_method_not_allowed} (e);
 set nodeBalance 'nodes that maintain a node balance' within node;
 set nodeState 'nodes that have a state' within node;
 set nodeInflow 'nodes that have an inflow' within node;
@@ -172,25 +173,16 @@ param pq_down {n in nodeBalance};
 param pq_reserve {(r, ng) in reserve_nodeGroup};
 param step_jump{d in period, t in time};
 param step_duration{d in period, t in time};
-param pd_entity_annual{e in entityInvest, d in period_invest} :=
+param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m = 'one_cost'}
-            (p_node[e, 'invest_cost'] * ( p_node[e, 'interest_rate'] / (1 - (1 / (1 + p_node[e, 'invest_cost'])^p_node[e, 'lifetime'] ) ) ))
+            (p_node[e, 'invest_cost'] * 1000 * ( p_node[e, 'interest_rate'] / (1 - (1 / (1 + p_node[e, 'interest_rate'])^p_node[e, 'lifetime'] ) ) ))
         + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m = 'one_cost'}
-            (p_process[e, 'invest_cost'] * ( p_process[e, 'interest_rate'] / (1 - (1 / (1 + p_process[e, 'invest_cost'])^p_process[e, 'lifetime'] ) ) ))
+            (p_process[e, 'invest_cost'] * 1000 * ( p_process[e, 'interest_rate'] / (1 - (1 / (1 + p_process[e, 'interest_rate'])^p_process[e, 'lifetime'] ) ) ))
 ; 			
-#       p_node[e, 'invest_cost'] * ( p_node[e, 'interest_rate'] / (1 - (1 / (1 + p_node[e, 'invest_cost'])^p_node[e, 'lifetime'] ) ) );
 
-set ed_invest := {e in entityInvest, d in period_invest : pd_entity_annual[e, d]};
+set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d]};
 set pd_invest := {(p, d) in ed_invest : p in process};
 set nd_invest := {(n, d) in ed_invest : n in node};
-#    p in process, d in period_invest
-#	:  p_process[p, 'invest_cost'] 
-#	|| pt_process[p, 'invest_cost', d] };
-#set nd_invest := {
-#    n in node, d in period_invest
-#	:  n in entityInvest
-#	|| pd_node[n, 'invest_cost', d] };
-#set ed_invest := pd_invest union nd_invest;
 set ed_divest := ed_invest;
 
 param p_process_invested {p in process : p in entityInvest};
@@ -267,6 +259,7 @@ var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve_up {(r, ng) in reserve_nodeGroup, (d, t) in dt} >= 0;
 
+display entityInvest, ed_invest, ed_entity_annual;
 
 #########################
 ## Data checks 
@@ -295,7 +288,7 @@ minimize total_cost:
       + sum {(r, ng) in reserve_nodeGroup} vq_reserve_up[r, ng, d, t] * p_reserve[r, ng, 'pq_reserve']
 	) * step_duration[d, t]
   + sum {(e, d) in ed_invest} v_invest[e, d]
-    * pd_entity_annual[e, d]
+    * ed_entity_annual[e, d]
 ;
 
 # Energy balance in each node  
@@ -410,9 +403,14 @@ s.t. minToSource {(p, source, sink) in process_source_sink, (d, t) in dt
   + 0
 ;
 
+s.t. maxInvest {(e, d)  in ed_invest} :
+  + v_invest[e, d]
+  <= 
+  + sum{(e, m) in entity__invest_method : m not in invest_method_not_allowed && (e,d) in pd_invest} p_process[e, 'invest_max_total']
+  + sum{(e, m) in entity__invest_method : m not in invest_method_not_allowed && (e,d) in nd_invest} p_node[e, 'invest_max_total']
+;
 
 solve;
-
 
 param process_all_capacity{p in process, d in period_realized} :=
   + p_process_all_existing[p]
@@ -459,6 +457,22 @@ for {u in process_unit, d in period_realized : d not in period_invest}
       }
   } 
 
+printf 'Write unit__sinkNode flow for time...\n';
+param fn_unit__sinkNode__dt symbolic := "r_unit__sinkNode__dt.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'unit,node,period,time,flow\n' > fn_unit__sinkNode__dt; }  # Print the header on the first solve
+for {(u, m) in process_method, (d, t) in dt : d in period_realized && d not in period_invest && u in process_unit}
+  {
+    for {(u, sink) in process_sink}
+      {
+        printf '%s, %s, %s, %s, %.8g\n', u, sink, d, t
+		   , ( if m not in method_1var_per_way then v_flow[u, u, sink, d, t].val
+		       else sum{(u, source, sink) in process_source_sink} v_flow[u, source, sink, d, t].val
+		     )
+		   >> fn_unit__sinkNode__dt;
+      }
+  } 
+
 printf 'Write unit__sourceNode flow for periods...\n';
 param fn_unit__sourceNode__d symbolic := "r_unit__sourceNode__d.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -470,6 +484,7 @@ for {u in process_unit, d in period_realized : d not in period_invest}
         printf '%s, %s, %s, %.8g\n', u, source, d, process_source_flow[u, source, d] >> fn_unit__sourceNode__d;
       }
   } 
+
   
 
 #printf 'Write unit__node flow for time steps...\n';
