@@ -74,54 +74,53 @@ set process_startup_method dimen 2 within {process, startup_method};
 set methods dimen 3; 
 set process_source dimen 2 within {process, entity};
 set process_sink dimen 2 within {process, entity};
-set process_ct_startup_method := {
-    p in process, m1 in ct_method, m2 in startup_method, m in method
-	: (m1, m2, m) in methods
-	&& (p, m1) in process_ct_method
-	&& (p, m2) in process_startup_method };
+set process_ct_startup_method := 
+    { p in process, m1 in ct_method, m2 in startup_method, m in method
+	    : (m1, m2, m) in methods
+	    && (p, m1) in process_ct_method
+	    && (p, m2) in process_startup_method 
+	};
 set process_method := setof {(p, m1, m2, m) in process_ct_startup_method} (p, m);
-set process_source_toProcess := {
-    p in process, source in node, p2 in process 
-	:  p = p2 
-	&& (p, source) in process_source 
-	&& (p2, source) in process_source 
-#	&& (p, m) in process_method;
-	&& sum{(p, m) in process_method 
-	         : m in method_indirect} 1};
-set process_process_toSink := {
-	p in process, p2 in process, sink in node 
-	:  p = p2 
-	&& (p, sink) in process_sink 
-	&& (p2, sink) in process_sink 
-#	&& (p, 'method_var') in process_method;
-	&& sum{(p, m) in process_method 
-	        : m in method_indirect} 1};
-set process_sink_toProcess := {
-    sink in node, p in process, p2 in process 
-	:  p = p2 
-	&& (p, sink) in process_sink 
-	&& (p2, sink) in process_sink 
-	&& sum{(p, m) in process_method 
-	         : m in method_2way_nvar} 1};
-set process_process_toSource := {
-    p in process, p2 in process, source in node 
-	:  p = p2 
-	&& (p, source) in process_source
-	&& (p2, source) in process_source
-	&& sum{(p, m) in process_method 
-	        : m in method_2way_nvar} 1};
-set process_source_toSink := {
-    p in process, source in node, sink in node
-	:  (p, source) in process_source
-	&& (p, sink) in process_sink
-    && sum{(p, m) in process_method 
-	       : m in method_direct} 1};
-set process_sink_toSource := {
-    p in process, sink in node, source in node
-	:  (p, source) in process_source
-	&& (p, sink) in process_sink
-	&& sum{(p, m) in process_method 
-	       : m in method_2way_2var} 1};
+set process_source_toProcess := 
+    { p in process, source in node, p2 in process 
+	    :  p = p2 
+	    && (p, source) in process_source 
+	    && (p2, source) in process_source 
+	    && sum{(p, m) in process_method : m in method_indirect} 1
+	};
+set process_process_toSink := 
+    { p in process, p2 in process, sink in node 
+	    :  p = p2 
+	    && (p, sink) in process_sink 
+	    && (p2, sink) in process_sink 
+	    && sum{(p, m) in process_method : m in method_indirect} 1
+	};
+set process_sink_toProcess := 
+    { sink in node, p in process, p2 in process 
+	    :  p = p2 
+	    && (p, sink) in process_sink 
+	    && (p2, sink) in process_sink 
+	    && sum{(p, m) in process_method : m in method_2way_nvar} 1
+	};
+set process_process_toSource := 
+    { p in process, p2 in process, source in node 
+	    :  p = p2 
+	    && (p, source) in process_source
+	    && (p2, source) in process_source
+	    && sum{(p, m) in process_method : m in method_2way_nvar} 1
+	};
+set process_source_toSink := 
+    { p in process, source in node, sink in node
+	    :  (p, source) in process_source
+	    && (p, sink) in process_sink
+        && sum{(p, m) in process_method : m in method_direct} 1
+	};
+set process_sink_toSource := 
+	{ p in process, sink in node, source in node
+	    :  (p, source) in process_source
+	    && (p, sink) in process_sink
+	    && sum{(p, m) in process_method : m in method_2way_2var} 1
+	};
 set process_source_sink := 
     process_source_toSink union 
 	process_sink_toSource union   
@@ -135,6 +134,15 @@ set process_reserve_source_sink dimen 4;
 set process_reserve_source dimen 3;
 set process_reserve_sink dimen 3;
 set commodity_node dimen 2; 
+set connection_variable_cost dimen 1 within process;
+set unit__sourceNode_variable_cost dimen 2 within process_source;
+set unit__sinkNode_variable_cost dimen 2 within process_sink;
+set process_source_sink_variable_cost :=
+    { (p, source, sink) in process_source_sink 
+	    :  (p, source) in unit__sourceNode_variable_cost 
+	    || (p, sink) in unit__sinkNode_variable_cost 
+	    || p in connection_variable_cost
+	};
 
 set commodityParam;
 set nodeParam;
@@ -179,6 +187,11 @@ param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m = 'one_cost'}
             (p_process[e, 'invest_cost'] * 1000 * ( p_process[e, 'interest_rate'] / (1 - (1 / (1 + p_process[e, 'interest_rate'])^p_process[e, 'lifetime'] ) ) ))
 ; 			
+param p_process_source_sink_variable_cost{(p, source, sink) in process_source_sink_variable_cost} :=
+        + (if (p, source) in unit__sourceNode_variable_cost then p_process_source[p, source, 'variable_cost'])
+        + (if (p, sink) in unit__sinkNode_variable_cost then p_process_sink[p, sink, 'variable_cost'])
+		+ (if p in connection_variable_cost then p_process[p, 'variable_cost'])
+;
 
 set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d]};
 set pd_invest := {(p, d) in ed_invest : p in process};
@@ -223,6 +236,9 @@ table data IN 'CSV' 'process__source.csv' : process_source <- [process,source];
 table data IN 'CSV' 'process__sink.csv' : process_sink <- [process,sink];
 table data IN 'CSV' 'process__reserve__source__sink.csv' : process_reserve_source_sink <- [process,reserve,source,sink];
 table data IN 'CSV' 'entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
+table data IN 'CSV' 'connection_variable_cost.csv' : connection_variable_cost <- [process];
+table data IN 'CSV' 'unit__sourceNode_variable_cost.csv' : unit__sourceNode_variable_cost <- [process,source];
+table data IN 'CSV' 'unit__sinkNode_variable_cost.csv' : unit__sinkNode_variable_cost <- [process,sink];
 
 table data IN 'CSV' 'p_node.csv' : [node, nodeParam], p_node;
 table data IN 'CSV' 'pt_node.csv' : [node, nodeParam, time], pt_node;
@@ -259,7 +275,8 @@ var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve_up {(r, ng) in reserve_nodeGroup, (d, t) in dt} >= 0;
 
-display entityInvest, ed_invest, ed_entity_annual;
+display process_source_sink_variable_cost;
+display p_process_source_sink_variable_cost;
 
 #########################
 ## Data checks 
@@ -283,6 +300,7 @@ minimize total_cost:
 			         v_flow[p, n, sink, d, t]
 	          + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, d, t]
 		    )
+	  + sum {(p, source, sink) in process_source_sink_variable_cost} v_flow[p, source, sink, d, t] * p_process_source_sink_variable_cost[p, source, sink]
       + sum {n in nodeBalance} vq_state_up[n, d, t] * p_node[n, 'pq_up']
       + sum {n in nodeBalance} vq_state_down[n, d, t] * p_node[n, 'pq_down']
       + sum {(r, ng) in reserve_nodeGroup} vq_reserve_up[r, ng, d, t] * p_reserve[r, ng, 'pq_reserve']

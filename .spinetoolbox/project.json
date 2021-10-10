@@ -255,8 +255,8 @@
         "FlexTool3_data": {
             "type": "Data Store",
             "description": "",
-            "x": -287.3307833150909,
-            "y": 130.5345338010668,
+            "x": -279.7294193548474,
+            "y": 129.26763980769286,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -338,6 +338,10 @@
             "cancel_on_error": false,
             "file_selection": [
                 [
+                    "results/color_codes_heat.dat",
+                    false
+                ],
+                [
                     "results/color_codes_no_grid.dat",
                     false
                 ],
@@ -346,15 +350,11 @@
                     false
                 ],
                 [
-                    "results/color_codes_heat.dat",
+                    "results/color_codes_elec.dat",
                     false
                 ],
                 [
                     "results/color_codes_csp.dat",
-                    false
-                ],
-                [
-                    "results/color_codes_elec.dat",
                     false
                 ],
                 [
@@ -461,8 +461,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 133.48214246220522,
-            "y": 78.00535759380132,
+            "x": 133.48214246220525,
+            "y": 76.7384636004274,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": [

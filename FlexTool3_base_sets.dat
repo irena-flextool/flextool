@@ -1,7 +1,8 @@
 set ct_method := 
   efficiency
   operating_area
-  no_losses
+  no_losses_no_variable_cost
+  variable_cost_only
   regular
   exact
 ;
@@ -32,8 +33,8 @@ set method :=
 #set method_1way_nvar_off := ;
 #set method_1way_nvar_LP := efficiency_and_LP_online;
 #set method_1way_nvar_MIP := efficiency_and_MIP_online;
-#set method_2way_1var_off := no_losses;
-#set method_2way_2var_off := ;
+#set method_2way_1var_off := no_losses_no_variable_cost;
+#set method_2way_2var_off := variable_cost_only;
 #set method_2way_2var_exclude := regular;
 #set method_2way_2var_MIP_exclude := exact;
 #set method_2way_nvar_off := ;
@@ -68,7 +69,8 @@ set methods :=
 (efficiency, no_startup, method_1way_1var_off)
 (efficiency, linear, method_1way_nvar_LP)
 (efficiency, binary, method_1way_nvar_MIP)
-(no_losses, no_startup, method_2way_1var_off)
+(no_losses_no_variable_cost, no_startup, method_2way_1var_off)
+(variable_cost_only, no_startup, method_2way_2var_off)
 (regular, no_startup, method_2way_2var_exclude)
 (exact, no_startup, method_2way_2var_MIP_exclude)
 ;
@@ -76,8 +78,8 @@ set methods :=
 
 
 set commodityParam := price;
-set processParam := existing efficiency fixed_cost interest_rate invest_cost invest_forced invest_max_time invest_max_total lifetime retire_forced retire_max;
-set sourceSinkParam := coefficient flow_unitsize var_cost;
+set processParam := existing efficiency fixed_cost interest_rate invest_cost invest_forced invest_max_time invest_max_total lifetime retire_forced retire_max variable_cost;
+set sourceSinkParam := coefficient flow_unitsize variable_cost;
 set nodeParam := inflow, pq_down, pq_up, existing, interest_rate, invest_cost, invest_forced, invest_max_time, invest_max_total, lifetime, retire_forced, retire_max, state_unitsize;
 set reserveParam := reserve pq_reserve;
 set invest_method := one_cost, timeseries_cost, not_allowed;
