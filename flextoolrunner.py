@@ -29,7 +29,8 @@ class FlexToolRunner:
         self.timelines = self.get_timelines()
         self.solves = self.get_solves()
         self.timeblocks = self.get_timeblocks()
-        self.timeblocks_used_by_periods = self.get_timeblocks_used_by_periods()
+        self.timeblocks__timeline = self.get_timeblocks_timelines()
+        self.timeblocks_used_by_solves = self.get_timeblocks_used_by_solves()
         self.invest_periods = self.get_list_of_tuples('solve__invest_period.csv')
         self.realized_periods = self.get_list_of_tuples('solve__realized_period.csv')
         #self.write_full_timelines(self.timelines, 'steps.csv')
@@ -44,7 +45,7 @@ class FlexToolRunner:
             solves = solvefile.readlines()
         return [solve.strip() for solve in solves]
 
-    def get_timeblocks_used_by_periods(self):
+    def get_timeblocks_used_by_solves(self):
         """
         timeblocks_in_use.csv contains three columns
         solve: name of the solve
@@ -56,11 +57,11 @@ class FlexToolRunner:
         with open('timeblocks_in_use.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
-            timeblocks_used_by_periods = defaultdict(list)
+            timeblocks_used_by_solves = defaultdict(list)
             while True:
                 try:
                     datain = next(filereader)
-                    timeblocks_used_by_periods[datain[0]].append((datain[1], datain[2]))
+                    timeblocks_used_by_solves[datain[0]].append((datain[1], datain[2]))
                     # blockname needs to be in both block_start and timeblock_lengths.csv
                     # assert datain[1] in self.starts.keys(), "Block {0} not in block_starts.csv".format(datain[1])
                     # assert datain[1] in self.steps.keys(), "Block {0} not in block_steps.csv".format(datain[1])
@@ -69,7 +70,7 @@ class FlexToolRunner:
                 #except AssertionError as e:
                 #    logging.error(e)
                 #    sys.exit(-1)
-        return timeblocks_used_by_periods
+        return timeblocks_used_by_solves
 
     def get_timelines(self):
         """
@@ -88,6 +89,24 @@ class FlexToolRunner:
                 except StopIteration:
                     break
         return timelines
+
+    def get_timeblocks_timelines(self):
+        """
+        read in the timelines including step durations for all simulation steps
+        timeline is the only inputfile that contains the full timelines for all timeblocks.
+        :return: list of tuples in a dict timeblocks : (timestep name, duration)
+        """
+        with open('timeblocks__timeline.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            timeblocks__timeline = defaultdict(list)
+            while True:
+                try:
+                    datain = next(filereader)
+                    timeblocks__timeline[datain[0]].append((datain[1]))
+                except StopIteration:
+                    break
+        return timeblocks__timeline
 
     def get_timeblocks(self):
         """
@@ -151,20 +170,23 @@ class FlexToolRunner:
             active_step += 1
         return steps
 
-    def write_full_timelines(self, period__timeblocks_in_this_solve, timelines, filename):
+    def write_full_timelines(self, period__timeblocks_in_this_solve, timeblocks__timeline, timelines, filename):
         """
         write to file a list of timestep as defined in timelines.
         :param filename: filename to write to
         :param steplist: list of timestep indexes
         :return:
         """
-
         with open(filename, 'w') as outfile:
             # prepend with a header
             outfile.write('period,step\n')
             for period__timeblock in period__timeblocks_in_this_solve:
-                for item in timelines[period__timeblock[1]]:
-                    outfile.write(period__timeblock[0] + ',' + item[0] + '\n')
+                for timeline in timelines:
+                    for timeblock_in_timeline, tt in timeblocks__timeline.items():
+                        if period__timeblock[1] == timeblock_in_timeline:
+                            if timeline == tt[0]:
+                                for item in timelines[timeline]:
+                                    outfile.write(period__timeblock[0] + ',' + item[0] + '\n')
 
     def write_active_timelines(self, timeline, filename):
         """
@@ -176,8 +198,9 @@ class FlexToolRunner:
         with open(filename, 'w') as outfile:
             # prepend with a header
             outfile.write('period,step,step_duration\n')
-            for item in timeline:
-                outfile.write(item[0] + ',' + item[1] + ',' + item[3] + '\n')
+            for period_name, period in timeline.items():
+                for item in period:
+                    outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
 
     def make_block_timeline(self, start, length):
         """
@@ -206,27 +229,29 @@ class FlexToolRunner:
         # print(stderr)
         return stdout, stderr
 
-    def get_active_time(self, solve, timeblocks_used_by_periods, timeblocks, timelines):
+    def get_active_time(self, current_solve, timeblocks_used_by_solves, timeblocks, timelines, timeblocks__timelines):
         """
         retunr all block codes that are included in solve
         :param solve:
         :param blocklist:
         :return:
         """
-        active_time = []
-        for solve_timeblock in timeblocks_used_by_periods:
-            if solve_timeblock == solve:
-                for timeline in timelines:
-                    for period_timeblock in timeblocks_used_by_periods[solve_timeblock]:
-                        if timeline == period_timeblock[1]:
-                            #timeblocks[datain[0]].append((datain[1], datain[2]))
-                            for timeblocks_def in timeblocks:
-                                if timeblocks_def == timeline:
-                                    for single_timeblock_def in timeblocks[timeblocks_def]:
+        active_time = defaultdict(list)
+        for solve in timeblocks_used_by_solves:
+            if solve == current_solve:
+                for period_timeblock in timeblocks_used_by_solves[solve]:
+                    for timeblocks__timeline_key, timeblocks__timeline_value in timeblocks__timelines.items():
+                        if timeblocks__timeline_key == period_timeblock[1]:
+                            for timeline in timelines:
+                                if timeline == timeblocks__timeline_value[0]:
+                                    for single_timeblock_def in timeblocks[timeblocks__timeline_key]:
                                         for index, timestep in enumerate(timelines[timeline]):
                                             if timestep[0] == single_timeblock_def[0]:
                                                 for block_step in range(int(float(single_timeblock_def[1]))):
-                                                    active_time.append((period_timeblock[0], timelines[timeline][index + block_step][0], index + block_step, timelines[timeline][index + block_step][1]))
+                                                    active_time[period_timeblock[0]].append((
+                                                                        timelines[timeline][index + block_step][0],
+                                                                        index + block_step,
+                                                                        timelines[timeline][index + block_step][1]))
                                                 break
         return active_time
 
@@ -242,19 +267,24 @@ class FlexToolRunner:
         :return:
         """
         step_lengths = []
-        period_start_position = active_time_list[0][2]
-        for j, step in enumerate(active_time_list):
-            if j + 1 < len(active_time_list):  # handle the last element of the active_time_list separately
-                if active_time_list[j + 1][0] == active_time_list[j][0]:
-                    jump = active_time_list[j + 1][2] - active_time_list[j][2]
-                    step_lengths.append((step[0], step[1], jump))
-                else:  # last step of the period jumps back to the start of the period
-                    jump = active_time_list[period_start_position][2] - active_time_list[j][2]
-                    step_lengths.append((step[0], step[1], jump))
-                    period_start_position = j + 1
-            else:  # last time step of the whole active_time_list is handled here
-                jump = active_time_list[period_start_position][2] - active_time_list[j][2]
-                step_lengths.append((step[0], step[1], jump))
+        period_start_pos = 0
+        for period, active_time in active_time_list.items():
+            period_last = len(active_time)
+            block_last = len(active_time) - 1
+            for i, step in enumerate(reversed(active_time)):
+                j = period_last - i - 1
+                if j > 0:  # handle the first element of the period separately below
+                    jump = active_time[j][1] - active_time[j - 1][1]
+                    if jump > 1:
+                        jump_back = active_time[j][1] - active_time[block_last][1]
+                        step_lengths.insert(period_start_pos, (period, step[0], jump, jump_back))
+                        block_last = j - 1
+                    else:
+                        step_lengths.insert(period_start_pos, (period, step[0], jump, jump))
+                else:  # first time step of the period is handled here
+                    jump = active_time[j][1] - active_time[len(active_time) - 1][1]
+                    step_lengths.insert(period_start_pos, (period, step[0], jump, jump))
+            period_start_pos = period_start_pos + period_last
         return step_lengths
 
     def write_step_jump(self, step_lengths):
@@ -265,7 +295,7 @@ class FlexToolRunner:
         :return:
         """
 
-        headers = ("period", "time", "step_jump")
+        headers = ("period", "time", "step_jump", "step_within_block")
         with open("step_jump.csv", 'w', newline='\n') as stepfile:
             writer = csv.writer(stepfile, delimiter=',')
             writer.writerow(headers)
@@ -357,7 +387,8 @@ def main():
     active_time_lists = OrderedDict()
     jump_lists = OrderedDict()
     for solve in runner.solves:
-        active_time_list = runner.get_active_time(solve, runner.timeblocks_used_by_periods, runner.timeblocks, runner.timelines)
+        active_time_list = runner.get_active_time(solve, runner.timeblocks_used_by_solves, runner.timeblocks,
+                                                  runner.timelines, runner.timeblocks__timeline)
         active_time_lists[solve] = active_time_list
         jumps = runner.make_step_jump(active_time_list)
         jump_lists[solve] = jumps
@@ -366,7 +397,7 @@ def main():
 
     first = True
     for solve in runner.solves:
-        runner.write_full_timelines(runner.timeblocks_used_by_periods[solve], runner.timelines, 'steps_in_timeline.csv')
+        runner.write_full_timelines(runner.timeblocks_used_by_solves[solve], runner.timeblocks__timeline, runner.timelines, 'steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'steps_in_use.csv')
         runner.write_step_jump(jump_lists[solve])
         runner.write_periods(solve, runner.realized_periods, 'realized_periods_of_current_solve.csv')

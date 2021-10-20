@@ -1538,7 +1538,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^timeblocks$"
+                    "filter_re": "^periods_in_horizon$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1651,12 +1651,12 @@
                 {
                     "map_type": "ObjectClass",
                     "position": "hidden",
-                    "filter_re": "^timeblocks$"
+                    "filter_re": "^timeline$"
                 },
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^timeline$"
+                    "filter_re": "^time_steps$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1666,7 +1666,7 @@
                 {
                     "map_type": "Object",
                     "position": 0,
-                    "header": "timeblocks"
+                    "header": "timeline"
                 },
                 {
                     "map_type": "Alternative",
@@ -1760,7 +1760,7 @@
                 {
                     "map_type": "ObjectClass",
                     "position": "hidden",
-                    "filter_re": "^timeblocks$"
+                    "filter_re": "^timeline$"
                 },
                 {
                     "map_type": "ParameterDefinition",
@@ -1775,7 +1775,7 @@
                 {
                     "map_type": "Object",
                     "position": 0,
-                    "header": "timeblocks"
+                    "header": "timeline"
                 },
                 {
                     "map_type": "Alternative",
@@ -2061,6 +2061,46 @@
                     "map_type": "ParameterValue",
                     "position": "hidden",
                     "filter_re": "\\d+(\\.\\d*)?"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "use_fixed_table_name": true
+        },
+        "timeblocks__timeline": {
+            "type": "relationships",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "timeblocks__timeline"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^timeblocks__timeline$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "timeblocks"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "timeline"
                 }
             ],
             "enabled": true,

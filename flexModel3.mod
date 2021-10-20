@@ -128,6 +128,7 @@ set process_source_sink :=
 	process_process_toSink union 
 	process_sink_toProcess union  # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
 	process_process_toSource;     # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
+set process_online 'processes with an online status' := setof {(p, m) in process_method : m in method_LP} p;
 
 set reserve_nodeGroup dimen 2;
 set process_reserve_source_sink dimen 4;
@@ -179,8 +180,10 @@ param pt_reserve {r in reserve, ng in nodeGroup, reserveParam, t in time};
 param pq_up {n in nodeBalance};
 param pq_down {n in nodeBalance};
 param pq_reserve {(r, ng) in reserve_nodeGroup};
-param step_jump{d in period, t in time};
-param step_duration{d in period, t in time};
+param step_jump{(d, t) in dt};
+param step_within_block{(d, t) in dt};
+param step_duration{(d, t) in dt};
+param step_period{(d, t) in dt} := 0;
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m = 'one_cost'}
             (p_node[e, 'invest_cost'] * 1000 * ( p_node[e, 'interest_rate'] / (1 - (1 / (1 + p_node[e, 'interest_rate'])^p_node[e, 'lifetime'] ) ) ))
@@ -253,7 +256,7 @@ table data IN 'CSV' 'p_process_invested.csv' : [process], p_process_invested;
 #table data IN 'CSV' '.csv' :  <- [];
 
 table data IN 'CSV' 'debug.csv' : debug <- [debug];
-table data IN 'CSV' 'step_jump.csv' : [period, time], step_jump;
+table data IN 'CSV' 'step_jump.csv' : [period, time], step_jump, step_within_block;
 table data IN 'CSV' 'steps_in_use.csv' : dt <- [period, step];
 table data IN 'CSV' 'steps_in_use.csv' : [period, step], step_duration;
 table data IN 'CSV' 'realized_periods_of_current_solve.csv' : period_realized <- [period];
@@ -268,7 +271,8 @@ table data IN 'CSV' 'p_model.csv' : [modelParam], p_model;
 var v_flow {(p, source, sink, d, t) in peedt};
 var v_reserve {(p, r, source, sink, d, t) in preedt} >= 0;
 var v_state {n in nodeState, (d, t) in dt} >= 0;
-var v_online {p in process, (d, t) in dt} >=0;
+var v_online_linear {p in process_online, (d, t) in dt} >=0;
+var v_startup_linear {p in process_online, (d, t) in dt} >=0;
 var v_invest {(e, d) in ed_invest} >= 0;
 var v_divest {(e, d) in ed_divest} >= 0;
 var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
@@ -277,6 +281,7 @@ var vq_reserve_up {(r, ng) in reserve_nodeGroup, (d, t) in dt} >= 0;
 
 display process_source_sink_variable_cost;
 display p_process_source_sink_variable_cost;
+display dt;
 
 #########################
 ## Data checks 
@@ -300,6 +305,7 @@ minimize total_cost:
 			         v_flow[p, n, sink, d, t]
 	          + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, d, t]
 		    )
+	  + sum {p in process_online} v_startup_linear[p, d, t] * p_process[p, 'startup_cost']
 	  + sum {(p, source, sink) in process_source_sink_variable_cost} v_flow[p, source, sink, d, t] * p_process_source_sink_variable_cost[p, source, sink]
       + sum {n in nodeBalance} vq_state_up[n, d, t] * p_node[n, 'pq_up']
       + sum {n in nodeBalance} vq_state_down[n, d, t] * p_node[n, 'pq_down']
@@ -421,6 +427,12 @@ s.t. minToSource {(p, source, sink) in process_source_sink, (d, t) in dt
   + 0
 ;
 
+#s.t. online__startup_Linear {p in process_online, (d, t) in dt} :
+#  + v_startup_linear[p, d, t]
+#  >=
+#  + v_online_linear[p, d, t] - v_online_linear[p, d, t - step_jump[d, t]]
+#;
+
 s.t. maxInvest {(e, d)  in ed_invest} :
   + v_invest[e, d]
   <= 
@@ -441,6 +453,60 @@ param process_source_flow{(p, source) in process_source, d in period_realized} :
 param process_sink_flow{(p, sink) in process_sink, d in period_realized} :=
   + sum {(p, source, sink) in process_source_sink, (d, t) in dt} v_flow[p, source, sink, d, t]
 ;
+
+param r_cost_commodity{(c, n) in commodity_node, (d, t) in dt} := 
+  + step_duration[d, t] * pt_commodity[c, n, 'price', t] 
+      * ( 
+	      + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } 
+		         v_flow[p, n, sink, d, t].val / pt_process[p, 'efficiency', t]
+	      + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } 
+		         v_flow[p, n, sink, d, t].val
+	      + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, d, t].val
+		)
+;
+
+param r_cost_process_variable_cost{p in process, (d, t) in dt} :=
+  + step_duration[d, t]
+	  * sum {(p, source, sink) in process_source_sink_variable_cost} 
+	         v_flow[p, source, sink, d, t].val * p_process_source_sink_variable_cost[p, source, sink]
+;
+
+param r_costPenalty_nodeState{n in nodeBalance, (d, t) in dt} :=
+  + step_duration[d, t]
+      * (
+          + vq_state_up[n, d, t] * p_node[n, 'pq_up']
+          + vq_state_down[n, d, t] * p_node[n, 'pq_down']
+		)
+;
+
+param r_costPenalty_reserve{(r, ng) in reserve_nodeGroup, (d, t) in dt} :=
+  + step_duration[d, t]
+      * (
+          + vq_reserve_up[r, ng, d, t] * p_reserve[r, ng, 'pq_reserve']
+	    )
+;
+		
+param r_cost_entity_invest{(e, d) in ed_invest} :=
+  + v_invest[e, d]
+      * ed_entity_annual[e, d]
+;
+
+param r_cost_dt{(d, t) in dt} :=
+  + sum{(c, n) in commodity_node} r_cost_commodity[c, n, d, t]
+  + sum{p in process} r_cost_process_variable_cost[p, d, t]
+;
+
+param r_costPenalty_dt{(d, t) in dt} :=
+  + sum{n in nodeBalance} r_costPenalty_nodeState[n, d, t]
+  + sum{(r, ng) in reserve_nodeGroup} r_costPenalty_reserve[r, ng, d, t]
+;
+
+param r_cost_and_penalty_dt{(d,t) in dt} :=
+  + r_cost_dt[d, t]
+  + r_costPenalty_dt[d, t]
+;
+
+
 
 printf 'Transfer investments to the next solve...\n';
 param fn_process_invested symbolic := "p_process_invested.csv";
