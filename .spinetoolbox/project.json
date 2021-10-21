@@ -479,7 +479,7 @@
         "Data structure": {
             "type": "Data Store",
             "description": "",
-            "x": -371.18959338272526,
+            "x": -519.9036173636152,
             "y": 250.383092152483,
             "url": {
                 "dialect": "sqlite",
