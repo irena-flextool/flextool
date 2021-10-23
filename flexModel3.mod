@@ -23,7 +23,7 @@ set commodity 'c - Stuff that is being processed';
 set reserve 'r - Categories for the reservation of capacity_existing';
 set period_time '(d, t) - Time steps in the time periods of the timelines in use' dimen 2;
 set period 'd - Time periods in the current timelines' := setof {(d, t) in period_time} (d);
-set time 't - Time steps in the current timelines' := setof {(d, t) in period_time} (t); 
+set time 't - Time steps in the current timelines'; 
 set method 'm - Type of process that transfers, converts or stores commodities';
 set ct_method;
 set startup_method;
@@ -152,6 +152,7 @@ set sourceSinkParam;
 set reserveParam;
 
 set dt dimen 2 within period_time;
+set dttt dimen 4;
 set period_invest dimen 1 within period;
 set period_realized dimen 1 within period;
 set peedt := {(p, source, sink) in process_source_sink, (d, t) in period_time};
@@ -180,8 +181,6 @@ param pt_reserve {r in reserve, ng in nodeGroup, reserveParam, t in time};
 param pq_up {n in nodeBalance};
 param pq_down {n in nodeBalance};
 param pq_reserve {(r, ng) in reserve_nodeGroup};
-param step_jump{(d, t) in dt};
-param step_within_block{(d, t) in dt};
 param step_duration{(d, t) in dt};
 param step_period{(d, t) in dt} := 0;
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
@@ -225,6 +224,7 @@ table data IN 'CSV' 'node.csv' : node <- [node];
 table data IN 'CSV' 'nodeGroup.csv' : nodeGroup <- [nodeGroup];
 table data IN 'CSV' 'commodity.csv' : commodity <- [commodity];
 table data IN 'CSV' 'reserve.csv' : reserve <- [reserve];
+table data IN 'CSV' 'timeline.csv' : time <- [timestep];
 table data IN 'CSV' 'steps_in_timeline.csv' : period_time <- [period,step];
 table data IN 'CSV' 'reserve__nodeGroup.csv' : reserve_nodeGroup <- [reserve,nodeGroup];
 table data IN 'CSV' 'commodity__node.csv' : commodity_node <- [commodity,node];
@@ -256,9 +256,9 @@ table data IN 'CSV' 'p_process_invested.csv' : [process], p_process_invested;
 #table data IN 'CSV' '.csv' :  <- [];
 
 table data IN 'CSV' 'debug.csv' : debug <- [debug];
-table data IN 'CSV' 'step_jump.csv' : [period, time], step_jump, step_within_block;
 table data IN 'CSV' 'steps_in_use.csv' : dt <- [period, step];
 table data IN 'CSV' 'steps_in_use.csv' : [period, step], step_duration;
+table data IN 'CSV' 'step_previous.csv' : dttt <- [period, time, previous, previous_within_block];
 table data IN 'CSV' 'realized_periods_of_current_solve.csv' : period_realized <- [period];
 table data IN 'CSV' 'invest_periods_of_current_solve.csv' : period_invest <- [period];
 #table data IN 'CSV' 'solve_start.csv' : startTime <- [start];
@@ -271,7 +271,7 @@ table data IN 'CSV' 'p_model.csv' : [modelParam], p_model;
 var v_flow {(p, source, sink, d, t) in peedt};
 var v_reserve {(p, r, source, sink, d, t) in preedt} >= 0;
 var v_state {n in nodeState, (d, t) in dt} >= 0;
-var v_online_linear {p in process_online, (d, t) in dt} >=0;
+var v_online_linear {p in process_online,(d, t) in dt} >=0;
 var v_startup_linear {p in process_online, (d, t) in dt} >=0;
 var v_invest {(e, d) in ed_invest} >= 0;
 var v_divest {(e, d) in ed_divest} >= 0;
@@ -281,7 +281,7 @@ var vq_reserve_up {(r, ng) in reserve_nodeGroup, (d, t) in dt} >= 0;
 
 display process_source_sink_variable_cost;
 display p_process_source_sink_variable_cost;
-display dt;
+display dt, dttt;
 
 #########################
 ## Data checks 
@@ -316,8 +316,8 @@ minimize total_cost:
 ;
 
 # Energy balance in each node  
-s.t. nodeBalance_eq {n in nodeBalance, (d, t) in dt} :
-  + (if n in nodeState then (v_state[n, d, t] -  v_state[n, d, t-step_jump[d,t]]))
+s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt} :
+  + (if n in nodeState then (v_state[n, d, t] -  v_state[n, d, t_previous]))
   =
   + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, d, t]
   + (if n in nodeInflow then pt_node[n, 'inflow', t])
@@ -427,11 +427,12 @@ s.t. minToSource {(p, source, sink) in process_source_sink, (d, t) in dt
   + 0
 ;
 
-#s.t. online__startup_Linear {p in process_online, (d, t) in dt} :
-#  + v_startup_linear[p, d, t]
-#  >=
-#  + v_online_linear[p, d, t] - v_online_linear[p, d, t - step_jump[d, t]]
-#;
+s.t. online__startup_Linear {p in process_online, (d, t, t_previous, t_previous_within_block) in dttt} :
+  + v_startup_linear[p, d, t]
+  >=
+  + v_online_linear[p, d, t] 
+  - v_online_linear[p, d, t_previous]
+;
 
 s.t. maxInvest {(e, d)  in ed_invest} :
   + v_invest[e, d]
@@ -597,7 +598,8 @@ for {n in node, d in period_realized : d not in period_invest}
     printf '%s, %s, %.8g, %.8g, %.8g, %.8g, %.8g\n'
 		, n, d
 		, (if n in nodeInflow then sum {t in time : (d, t) in dt} pt_node[n, 'inflow', t] else 0)
-        , (if n in nodeState then sum {t in time : (d, t) in dt} (v_state[n, d, t] -  v_state[n, d, t-step_jump[d,t]]) else 0)
+        , (if n in nodeState then sum {(d, t, t_previous, t_previous_within_block) in dttt}
+		      (v_state[n, d, t] -  v_state[n, d, t_previous]) else 0)
         , sum {(p, source, n) in process_source_sink, t in time : (d, t) in dt} v_flow[p, source, n, d, t]
         , - sum {(p, n, sink) in process_source_sink, t in time : (d, t) in dt && sum{(p, m) in process_method : m in method_1var_per_way} 1 }
 		     ( + v_flow[p, n, sink, d, t] / pt_process[p, 'efficiency', t] )

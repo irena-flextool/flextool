@@ -277,13 +277,13 @@ class FlexToolRunner:
                     jump = active_time[j][1] - active_time[j - 1][1]
                     if jump > 1:
                         jump_back = active_time[j][1] - active_time[block_last][1]
-                        step_lengths.insert(period_start_pos, (period, step[0], jump, jump_back))
+                        step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0]))
                         block_last = j - 1
                     else:
-                        step_lengths.insert(period_start_pos, (period, step[0], jump, jump))
+                        step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[j - 1][0]))
                 else:  # first time step of the period is handled here
                     jump = active_time[j][1] - active_time[len(active_time) - 1][1]
-                    step_lengths.insert(period_start_pos, (period, step[0], jump, jump))
+                    step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0]))
             period_start_pos = period_start_pos + period_last
         return step_lengths
 
@@ -295,8 +295,8 @@ class FlexToolRunner:
         :return:
         """
 
-        headers = ("period", "time", "step_jump", "step_within_block")
-        with open("step_jump.csv", 'w', newline='\n') as stepfile:
+        headers = ("period", "time", "previous", "previous_within_block")
+        with open("step_previous.csv", 'w', newline='\n') as stepfile:
             writer = csv.writer(stepfile, delimiter=',')
             writer.writerow(headers)
             writer.writerows(step_lengths)
