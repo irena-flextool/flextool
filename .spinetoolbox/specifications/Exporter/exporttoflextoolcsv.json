@@ -28,8 +28,8 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 2,
-                    "header": "gridNodeParams",
-                    "filter_re": "demand_|import_|capacity_margin|non_synchronous_share|use_|color_in_results|print_results"
+                    "filter_re": "demand_|import_|capacity_margin|non_synchronous_share|use_|color_in_results|print_results",
+                    "header": "gridNodeParams"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -62,6 +62,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "grid": {
@@ -80,6 +81,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": false
         },
         "node": {
@@ -103,6 +105,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "unit": {
@@ -121,6 +124,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": false
         },
         "fuel": {
@@ -139,6 +143,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": false
         },
         "cf_profile": {
@@ -157,6 +162,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": false
         },
         "inflow": {
@@ -175,6 +181,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": false
         },
         "gnuug_output1": {
@@ -233,6 +240,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "gnng": {
@@ -282,6 +290,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "gridNodeParams": {
@@ -330,6 +339,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "gn": {
@@ -370,6 +380,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "unitTypeParams": {
@@ -410,6 +421,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "gnu_all": {
@@ -459,6 +471,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_unittype": {
@@ -501,6 +514,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "unitParams": {
@@ -549,6 +563,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "gnuFuel": {
@@ -615,6 +630,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "gnuGrid2Node2": {
@@ -682,6 +698,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "gnuOutputGrid2Node2": {
@@ -749,6 +766,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "gnuCfprofile": {
@@ -815,6 +833,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "gnuInflow": {
@@ -881,6 +900,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "fuelParams": {
@@ -921,6 +941,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_fuel": {
@@ -963,6 +984,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "gnn_all": {
@@ -1012,6 +1034,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "nodeNodeParams": {
@@ -1060,6 +1083,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_master": {
@@ -1101,6 +1125,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "masterParams": {
@@ -1141,6 +1166,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "nodeGroupParams": {
@@ -1181,6 +1207,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "nodeGroup": {
@@ -1204,6 +1231,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "unitGroupParams": {
@@ -1244,6 +1272,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "unitGroup": {
@@ -1267,6 +1296,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_unitGroup": {
@@ -1309,6 +1339,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_nodeGroup": {
@@ -1327,8 +1358,8 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "header": "nodeGroupParams",
-                    "filter_re": "capacity|non|inertia|use|color"
+                    "filter_re": "capacity|non|inertia|use|color",
+                    "header": "nodeGroupParams"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1352,6 +1383,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "ts_time": {
@@ -1400,6 +1432,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "ts_energy": {
@@ -1468,6 +1501,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "ts_import": {
@@ -1536,6 +1570,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "ts_cf": {
@@ -1587,6 +1622,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "ts_inflow": {
@@ -1638,6 +1674,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "ts_reserve_n": {
@@ -1689,6 +1726,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "ts_reserve_ng": {
@@ -1740,6 +1778,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "ts_unit": {
@@ -1770,8 +1809,8 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 3,
-                    "header": "unit_ts_param",
-                    "filter_re": "max_generation|min_generation|fix_generation|min_online|efficiency"
+                    "filter_re": "max_generation|min_generation|fix_generation|min_online|efficiency",
+                    "header": "unit_ts_param"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1818,6 +1857,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_unit": {
@@ -1848,8 +1888,8 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 3,
-                    "header": "unitParams",
-                    "filter_re": "capacity|invested|max|storage|reserve|use|fix|inflow_multiplier|output2_eq|output2_gt|output2_lt|output2_max|fueluse_increase|color"
+                    "filter_re": "capacity|invested|max|storage|reserve|use|fix|inflow_multiplier|output2_eq|output2_gt|output2_lt|output2_max|fueluse_increase|color",
+                    "header": "unitParams"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1887,6 +1927,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_nodeNode": {
@@ -1955,6 +1996,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         }
     }

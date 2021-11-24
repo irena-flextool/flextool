@@ -25,6 +25,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "nodeGroup": {
@@ -43,6 +44,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": false
         },
         "nodeGroup__node": {
@@ -78,6 +80,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": false
         },
         "commodity": {
@@ -101,6 +104,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "reserve": {
@@ -119,6 +123,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": false
         },
         "nodeBalance": {
@@ -164,6 +169,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "nodeState": {
@@ -210,6 +216,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "commodity__node": {
@@ -250,6 +257,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "reserve__nodeGroup": {
@@ -288,6 +296,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "process__reserve__source": {
@@ -337,6 +346,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "process__reserve__sink": {
@@ -386,6 +396,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "process__reserve__source__sink": {
@@ -436,6 +447,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "nodeInflow": {
@@ -482,6 +494,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "process__sink__unit": {
@@ -522,6 +535,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "process__source__unit": {
@@ -562,6 +576,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_node_s": {
@@ -580,8 +595,8 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "header": "nodeParam",
-                    "filter_re": "^(?!has_|invest_method)"
+                    "filter_re": "^(?!has_|invest_method)",
+                    "header": "nodeParam"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -610,6 +625,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_node_t": {
@@ -628,8 +644,8 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "header": "nodeParam",
-                    "filter_re": "^(?!has_)"
+                    "filter_re": "^(?!has_)",
+                    "header": "nodeParam"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -667,6 +683,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_process__sink_s1__unit": {
@@ -731,6 +748,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_process__source_s1__unit": {
@@ -795,6 +813,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_reserve_t": {
@@ -868,6 +887,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_reserve_s": {
@@ -932,6 +952,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_commodity_t": {
@@ -1004,6 +1025,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "process": {
@@ -1027,6 +1049,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_process_s1": {
@@ -1045,8 +1068,8 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "header": "processParam",
-                    "filter_re": "^(?!conversion_method|invest_method|transfer_method|startup_method)"
+                    "filter_re": "^(?!conversion_method|invest_method|transfer_method|startup_method|ramp_method)",
+                    "header": "processParam"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1075,6 +1098,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "p_process_t1": {
@@ -1131,6 +1155,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "entity": {
@@ -1154,6 +1179,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "entityInvest__investMethod": {
@@ -1200,6 +1226,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "process__source__connection": {
@@ -1238,6 +1265,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "process__sink__connection": {
@@ -1284,6 +1312,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "debug": {
@@ -1329,6 +1358,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "solves": {
@@ -1382,6 +1412,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "process__ct_method": {
@@ -1428,6 +1459,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "process__startup_method": {
@@ -1474,6 +1506,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "solve_mode": {
@@ -1520,6 +1553,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "timeblocks_in_use": {
@@ -1583,6 +1617,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "timeblocks": {
@@ -1638,6 +1673,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "timeline": {
@@ -1693,6 +1729,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "solve__realized_period": {
@@ -1747,6 +1784,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "timeline_duration_in_years": {
@@ -1793,6 +1831,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "solve__invest_period": {
@@ -1847,6 +1886,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "process_unit": {
@@ -1870,6 +1910,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "process_connection": {
@@ -1893,6 +1934,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "connection_variable_cost": {
@@ -1939,6 +1981,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "unit__sinkNode_variable_cost": {
@@ -2002,6 +2045,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "unit__sourceNode_variable_cost": {
@@ -2065,6 +2109,7 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         },
         "timeblocks__timeline": {
@@ -2105,6 +2150,54 @@
             ],
             "enabled": true,
             "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "process__ramp_method": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "process__ramp_method"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^unit$|^connection$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^ramp_method$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 1,
+                    "header": "ramp_method"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
             "use_fixed_table_name": true
         }
     }

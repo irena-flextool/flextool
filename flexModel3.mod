@@ -27,6 +27,9 @@ set time 't - Time steps in the current timelines';
 set method 'm - Type of process that transfers, converts or stores commodities';
 set ct_method;
 set startup_method;
+set ramp_method;
+set ramp_limit_method within ramp_method;
+set ramp_cost_method within ramp_method;
 set debug 'flags to output debugging and test results';
 
 
@@ -70,7 +73,7 @@ set process_unit 'processes that are unit' within process;
 set process_connection 'processes that are connections' within process;
 set process_ct_method dimen 2 within {process, ct_method};
 set process_startup_method dimen 2 within {process, startup_method};
-#set process_method dimen 2 within {process, method};
+set process_ramp_method dimen 2 within {process, ramp_method};
 set methods dimen 3; 
 set process_source dimen 2 within {process, entity};
 set process_sink dimen 2 within {process, entity};
@@ -130,6 +133,17 @@ set process_source_sink :=
 	process_process_toSource;     # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
 set process_online 'processes with an online status' := setof {(p, m) in process_method : m in method_LP} p;
 
+set process_source_sink_ramp_limit :=
+    {(p, source, sink) in process_source_sink
+	    : sum{(p, m) in process_ramp_method : m in ramp_limit_method} 1
+	};
+set process_source_sink_ramp_cost :=
+    {(p, source, sink) in process_source_sink
+	    : sum{(p, m) in process_ramp_method : m in ramp_cost_method} 1
+	};
+set process_source_sink_ramp :=
+    process_source_sink_ramp_limit union process_source_sink_ramp_cost;
+
 set reserve_nodeGroup dimen 2;
 set process_reserve_source_sink dimen 4;
 set process_reserve_source dimen 3;
@@ -164,17 +178,44 @@ param startNext_index := sum{t in time, t_startNext in startNext : t <= t_startN
 set modelParam;
 param p_model {modelParam};
 
-param p_node {n in node, nodeParam};
+param p_node {n in node, nodeParam} default 0;
 param pt_node {n in node, nodeParam, t in time};
 param pt_commodity {(c, n) in commodity_node, commodityParam, t in time};
 param p_process {process, processParam} default 0;
 param pt_process {process, processParam, time} default 0;
+param p_entity_unitsize {e in entity} := 
+        + if e in process && p_process[e, 'virtual_unitsize']
+          then p_process[e, 'virtual_unitsize'] 
+		  else if e in process && p_process[e, 'existing']
+			   then p_process[e, 'existing']
+			   else if e in process && p_process[e, 'invest_forced']
+			        then p_process[e, 'invest_forced']
+			        else 1
+        + if e in node && p_node[e, 'virtual_unitsize'] 
+          then p_node[e, 'virtual_unitsize'] 
+		  else if e in node && p_node[e, 'existing']
+		       then p_node[e, 'existing']
+		       else if e in node && p_node[e, 'invest_forced']
+		            then p_node[e, 'invest_forced']
+		            else 1;
 param p_process_source {(p, source) in process_source, sourceSinkParam} default 0;
 param p_process_sink {(p, sink) in process_sink, sourceSinkParam} default 0;
-param p_process_source_coefficient {(p, source) in process_source} := if (p_process_source[p, source, 'coefficient']) then p_process_source[p, source, 'coefficient'] else 1;
-param p_process_sink_coefficient {(p, sink) in process_sink} := if (p_process_sink[p, sink, 'coefficient']) then p_process_sink[p, sink, 'coefficient'] else 1;
-param p_process_source_flow_unitsize {(p, source) in process_source} := if (p_process_source[p, source, 'flow_unitsize']) then p_process_source[p, source, 'flow_unitsize'] else 1;
-param p_process_sink_flow_unitsize {(p, sink) in process_sink} := if (p_process_sink[p, sink, 'flow_unitsize']) then p_process_sink[p, sink, 'flow_unitsize'] else 1;
+param p_process_source_coefficient {(p, source) in process_source} := 
+    + if (p_process_source[p, source, 'coefficient']) 
+	  then p_process_source[p, source, 'coefficient'] 
+	  else 1;
+param p_process_sink_coefficient {(p, sink) in process_sink} := 
+    + if (p_process_sink[p, sink, 'coefficient']) 
+	  then p_process_sink[p, sink, 'coefficient'] 
+	  else 1;
+param p_process_source_flow_unitsize {(p, source) in process_source} := 
+    + if (p_process_source[p, source, 'flow_unitsize']) 
+	  then p_process_source[p, source, 'flow_unitsize'] 
+	  else 1;
+param p_process_sink_flow_unitsize {(p, sink) in process_sink} := 
+    + if (p_process_sink[p, sink, 'flow_unitsize']) 
+	  then p_process_sink[p, sink, 'flow_unitsize'] 
+	  else 1;
 param p_inflow {n in nodeInflow, t in time};
 param p_reserve {r in reserve, ng in nodeGroup, reserveParam};
 param pt_reserve {r in reserve, ng in nodeGroup, reserveParam, t in time};
@@ -199,6 +240,23 @@ set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d]
 set pd_invest := {(p, d) in ed_invest : p in process};
 set nd_invest := {(n, d) in ed_invest : n in node};
 set ed_divest := ed_invest;
+
+set process_source_sink_dt_ramp_up :=
+        {(p, source, sink) in process_source_sink_ramp_limit, (d, t) in dt :
+ 		    p_process[p, 'ramp_speed_up'] * 60 < step_duration[d, t]
+			&& p_process[p, 'ramp_speed_up'] > 0
+        };
+set process_source_sink_dt_ramp_down :=
+        {(p, source, sink) in process_source_sink_ramp_limit, (d, t) in dt :
+ 		    p_process[p, 'ramp_speed_down'] * 60 < step_duration[d, t]
+			&& p_process[p, 'ramp_speed_down'] > 0
+		};
+set process_source_sink_dt_ramp :=
+        {(p, source, sink) in process_source_sink_ramp, (d, t) in dt :
+		    (p, source, sink) in process_source_sink_ramp_cost
+		    || (p, source, sink, d, t) in process_source_sink_dt_ramp_down
+            || (p, source, sink, d, t) in process_source_sink_dt_ramp_up
+        };
 
 param p_process_invested {p in process : p in entityInvest};
 param p_process_all_existing {p in process} :=
@@ -235,6 +293,7 @@ table data IN 'CSV' 'nodeInflow.csv' : nodeInflow <- [nodeInflow];
 table data IN 'CSV' 'nodeGroup__node.csv': nodeGroup_node <- [nodeGroup,node];
 table data IN 'CSV' 'process__ct_method.csv' : process_ct_method <- [process,ct_method];
 table data IN 'CSV' 'process__startup_method.csv' : process_startup_method <- [process,startup_method];
+table data IN 'CSV' 'process__ramp_method.csv' : process_ramp_method <- [process,ramp_method];
 table data IN 'CSV' 'process__source.csv' : process_source <- [process,source];
 table data IN 'CSV' 'process__sink.csv' : process_sink <- [process,sink];
 table data IN 'CSV' 'process__reserve__source__sink.csv' : process_reserve_source_sink <- [process,reserve,source,sink];
@@ -265,10 +324,10 @@ table data IN 'CSV' 'invest_periods_of_current_solve.csv' : period_invest <- [pe
 #table data IN 'CSV' 'solve_startNext.csv' : startNext <- [startNext];
 table data IN 'CSV' 'p_model.csv' : [modelParam], p_model;
 
-#display pt_entity_annual, entityInvest, p_process_source_flow_unitsize, p_process_sink_flow_unitsize;
 #########################
 # Variable declarations
 var v_flow {(p, source, sink, d, t) in peedt};
+var v_ramp {(p, source, sink, d, t) in peedt};
 var v_reserve {(p, r, source, sink, d, t) in preedt} >= 0;
 var v_state {n in nodeState, (d, t) in dt} >= 0;
 var v_online_linear {p in process_online,(d, t) in dt} >=0;
@@ -279,9 +338,7 @@ var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve_up {(r, ng) in reserve_nodeGroup, (d, t) in dt} >= 0;
 
-display process_source_sink_variable_cost;
-display p_process_source_sink_variable_cost;
-display dt, dttt;
+#display p_entity_unitsize;
 
 #########################
 ## Data checks 
@@ -306,12 +363,17 @@ minimize total_cost:
 	          + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, d, t]
 		    )
 	  + sum {p in process_online} v_startup_linear[p, d, t] * p_process[p, 'startup_cost']
-	  + sum {(p, source, sink) in process_source_sink_variable_cost} v_flow[p, source, sink, d, t] * p_process_source_sink_variable_cost[p, source, sink]
+	  + sum {(p, source, sink) in process_source_sink_variable_cost} 
+	      + v_flow[p, source, sink, d, t] 
+		    * p_process_source_sink_variable_cost[p, source, sink]
+      + sum {(p, source, sink) in process_source_sink_ramp_cost}
+          + v_ramp[p, source, sink, d, t] * p_process[p, 'ramp_cost']
       + sum {n in nodeBalance} vq_state_up[n, d, t] * p_node[n, 'pq_up']
       + sum {n in nodeBalance} vq_state_down[n, d, t] * p_node[n, 'pq_down']
       + sum {(r, ng) in reserve_nodeGroup} vq_reserve_up[r, ng, d, t] * p_reserve[r, ng, 'pq_reserve']
 	) * step_duration[d, t]
   + sum {(e, d) in ed_invest} v_invest[e, d]
+    * p_entity_unitsize[e]
     * ed_entity_annual[e, d]
 ;
 
@@ -364,17 +426,23 @@ s.t. conversion_equality_constraint {(p, m) in process_method, (d, t) in dt : m 
 	)
 ;
 
-s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt : (p, sink) in process_sink} :
+s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt 
+     : (p, sink) in process_sink
+} :
   + v_flow[p, source, sink, d, t]
   + sum {r in reserve : (p, r, source, sink) in process_reserve_source_sink} v_reserve[p, r, source, sink, d, t]
   <=
-  + p_process_sink_flow_unitsize[p, sink] 
-    * ( + p_process_all_existing[p]
-	    #+ p_process[p, 'existing']
-	    #+ p_process[p, 'invest_forced']
-        + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest]
-#        - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest]
-	  )	
+  + ( if p not in process_online then
+      + p_process_sink_flow_unitsize[p, sink]
+        * ( + p_process_all_existing[p]
+            + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#            - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+	      )	
+	)
+  + ( if p in process_online then
+      + p_process_sink_flow_unitsize[p, sink]
+        * v_online_linear[p, d, t]
+    )  
 ;
 
 s.t. minToSink {(p, source, sink) in process_source_sink, (d, t) in dt
@@ -394,10 +462,9 @@ s.t. minToSink_1var {(p, source, sink) in process_source_sink, (d, t) in dt
   + v_flow[p, source, sink, d, t]
   >=
   - p_process_sink_flow_unitsize[p, sink] 
-    * ( + p_process[p, 'existing']
-	    + p_process[p, 'invest_forced']
-        + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest]
-#        - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest]
+    * ( + p_process_all_existing[p]
+        + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#        - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
 	  )	
 
 ;
@@ -411,10 +478,9 @@ s.t. maxToSource {(p, source, sink) in process_source_sink, (d, t) in dt
   + sum {r in reserve : (p, r, sink, source) in process_reserve_source_sink} v_reserve[p, r, sink, source, d, t]
   <=
   + p_process_source_flow_unitsize[p, source] 
-    * ( + p_process[p, 'existing']
-	    + p_process[p, 'invest_forced']
-        + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest]
-#        - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest]
+    * ( + p_process_all_existing[p]
+        + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#        - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
 	  )	
 ;
 
@@ -427,6 +493,14 @@ s.t. minToSource {(p, source, sink) in process_source_sink, (d, t) in dt
   + 0
 ;
 
+s.t. maxOnline {p in process_online, (d, t) in dt} :
+  + v_online_linear[p, d, t]
+  <=
+  + p_process_all_existing[p] / p_entity_unitsize[p]
+  + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest]
+#   - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest]
+;
+
 s.t. online__startup_Linear {p in process_online, (d, t, t_previous, t_previous_within_block) in dttt} :
   + v_startup_linear[p, d, t]
   >=
@@ -434,8 +508,69 @@ s.t. online__startup_Linear {p in process_online, (d, t, t_previous, t_previous_
   - v_online_linear[p, d, t_previous]
 ;
 
+#s.t. minimum_downtime {p in process_online, t : p_process[u,'min_downtime'] >= step_duration[t]} :
+#  + v_online_linear[p, d, t]
+#  <=
+#  + p_process_all_existing[p] / p_entity_unitsize[p]
+#  + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest]
+#   - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest]
+#  - sum{(d, t_) in dt : t_ > t && t_ <= t + p_process[u,'min_downtime'] / time_period_duration} (
+#      + v_startup[g, n, u, t_]
+#	)
+#;
+
+# Minimum operational time
+#s.t. minimum_uptime {(g, n, u, t) in gnut : u in unit_online && p_unittype[u,'min_uptime_h'] >= time_period_duration / 60 && t >= p_unittype[u,'min_uptime_h'] * 60 #/ time_period_duration} :
+#  + v_online[g, n, u, t]
+#  >=
+#  + sum{t_ in time_in_use : t_ > t - 1 - p_unittype[u,'min_uptime_h'] * 60 / time_period_duration && t_ < t} (
+#      + v_startup[g, n, u, t_]
+#	)
+#;
+
+s.t. ramp {(p, source, sink) in process_source_sink_ramp, (d, t, t_previous, t_previous_within_block) in dttt} :
+  + v_ramp[p, source, sink, d, t]
+  =
+  + v_flow[p, source, sink, d, t]
+  - v_flow[p, source, sink, d, t_previous]
+;
+
+s.t. ramp_up {(p, source, sink) in process_source_sink_ramp_limit, (d, t, t_previous, t_previous_within_block) in dttt
+		: (p, source, sink, d, t) in process_source_sink_dt_ramp} :
+  + v_ramp[p, source, sink, d, t]
+  + sum {r in reserve : (p, r, source, sink) in process_reserve_source_sink} v_reserve[p, r, source, sink, d, t]
+  <=
+  + p_process[p, 'ramp_speed_up']
+    * 60
+	* step_duration[d, t]
+	* ( + if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
+        + if (p, source) in process_source then p_process_source_coefficient[p, source]
+      )
+    * ( + p_process_all_existing[p]
+	    + ( if (p, d) in ed_invest then v_invest[p, d] )
+#		- ( if (p, d) in ed_divest then v_divest[p, d] )
+	  )
+;
+
+s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit, (d, t, t_previous, t_previous_within_block) in dttt
+		: (p, source, sink, d, t) in process_source_sink_dt_ramp} :
+  + v_ramp[p, source, sink, d, t]
+#  + sum {r in reserve : (p, r, source, sink) in process_reserve_source_sink} v_reserve[p, r, source, sink, d, t]
+  >=
+  - p_process[p, 'ramp_speed_down']
+    * 60
+	* step_duration[d, t]
+	* ( + if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
+        + if (p, source) in process_source then p_process_source_coefficient[p, source]
+      )
+    * ( + p_process_all_existing[p]
+	    + ( if (p, d) in ed_invest then v_invest[p, d] )
+#		- ( if (p, d) in ed_divest then v_divest[p, d] )
+	  )
+;
+
 s.t. maxInvest {(e, d)  in ed_invest} :
-  + v_invest[e, d]
+  + v_invest[e, d] * p_entity_unitsize[e] 
   <= 
   + sum{(e, m) in entity__invest_method : m not in invest_method_not_allowed && (e,d) in pd_invest} p_process[e, 'invest_max_total']
   + sum{(e, m) in entity__invest_method : m not in invest_method_not_allowed && (e,d) in nd_invest} p_node[e, 'invest_max_total']
@@ -445,7 +580,7 @@ solve;
 
 param process_all_capacity{p in process, d in period_realized} :=
   + p_process_all_existing[p]
-  + sum {(p, d_invest) in pd_invest : d <= d_invest} v_invest[p, d_invest].val
+  + sum {(p, d_invest) in pd_invest : d <= d_invest} v_invest[p, d_invest].val * p_entity_unitsize[p]
 ;
 
 param process_source_flow{(p, source) in process_source, d in period_realized} :=
@@ -489,6 +624,7 @@ param r_costPenalty_reserve{(r, ng) in reserve_nodeGroup, (d, t) in dt} :=
 		
 param r_cost_entity_invest{(e, d) in ed_invest} :=
   + v_invest[e, d]
+      * p_entity_unitsize[e]
       * ed_entity_annual[e, d]
 ;
 
@@ -516,17 +652,17 @@ for {p in process : p in entityInvest}
   {
     printf '%s,%.8g\n', p, 
 	  + (if not p_model['solveFirst'] then p_process_invested[p])
-	  + sum {d_invest in period_invest} v_invest[p, d_invest].val
+	  + sum {d_invest in period_invest} v_invest[p, d_invest].val * p_entity_unitsize[p]
 	>> fn_process_invested;
   }
 
 printf 'Write process investment results...\n';
 param fn_process_investment symbolic := "r_process_investment__d.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'process,period,invested' > fn_process_investment; }  # Clear the file on the first solve
+  { printf 'process,period,invested\n' > fn_process_investment; }  # Clear the file on the first solve
 for {(p, d) in pd_invest : d in period_realized && d in period_invest}
   {
-    printf '%s, %s, %.8g\n', p, d, v_invest[p, d].val >> fn_process_investment;
+    printf '%s, %s, %.8g\n', p, d, v_invest[p, d].val * p_entity_unitsize[p] >> fn_process_investment;
   }
 
 
@@ -534,7 +670,7 @@ printf 'Write unit__sinkNode flow for periods...\n';
 param fn_unit__sinkNode__d symbolic := "r_unit__sinkNode__d.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'unit,node,period,flow\n' > fn_unit__sinkNode__d; }  # Print the header on the first solve
-for {u in process_unit, d in period_realized : d not in period_invest}
+for {u in process_unit, d in period_realized}
   {
     for {(u, sink) in process_sink}
       {
@@ -546,7 +682,7 @@ printf 'Write unit__sinkNode flow for time...\n';
 param fn_unit__sinkNode__dt symbolic := "r_unit__sinkNode__dt.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'unit,node,period,time,flow\n' > fn_unit__sinkNode__dt; }  # Print the header on the first solve
-for {(u, m) in process_method, (d, t) in dt : d in period_realized && d not in period_invest && u in process_unit}
+for {(u, m) in process_method, (d, t) in dt : d in period_realized && u in process_unit}
   {
     for {(u, sink) in process_sink}
       {
@@ -562,7 +698,7 @@ printf 'Write unit__sourceNode flow for periods...\n';
 param fn_unit__sourceNode__d symbolic := "r_unit__sourceNode__d.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'unit,node,period,flow\n' > fn_unit__sourceNode__d; }  # Print the header on the first solve
-for {u in process_unit, d in period_realized : d not in period_invest}
+for {u in process_unit, d in period_realized}
   {
     for {(u, source) in process_source}
       {
@@ -570,8 +706,31 @@ for {u in process_unit, d in period_realized : d not in period_invest}
       }
   } 
 
+printf 'Write unit__sourceNode flow for time...\n';
+param fn_unit__sourceNode__dt symbolic := "r_unit__sourceNode__dt.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'unit,node,period,time,flow\n' > fn_unit__sourceNode__dt; }  # Print the header on the first solve
+for {(u, m) in process_method, (d, t) in dt : d in period_realized && u in process_unit}
+  {
+    for {(u, source) in process_source}
+      {
+        printf '%s, %s, %s, %s, %.8g\n', u, source, d, t
+		   , ( if m not in method_1var_per_way then v_flow[u, source, u, d, t].val
+		       else sum{(u, source, sink) in process_source_sink} v_flow[u, source, sink, d, t].val
+		     )
+		   >> fn_unit__sourceNode__dt;
+      }
+  } 
   
-
+printf 'Write online status of units over time...\n';
+param fn_unit_online__dt symbolic := "r_unit_online__dt.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'unit,period,time,online\n' > fn_unit_online__dt; }  # Print the header on the first solve
+for {p in process_unit, (d, t) in dt : p in process_online}
+  {
+    printf '%s, %s, %s, %.8g\n', p, d, t, v_online_linear[p, d, t].val >> fn_unit_online__dt;
+  }
+ 
 #printf 'Write unit__node flow for time steps...\n';
 #param fn_unit__node__dt symbolic := "r_unit__node__dt.csv";
 #for {i in 1..1 : p_model['solveFirst']}
@@ -644,12 +803,12 @@ for {(p, source, sink) in process_source_sink, (d, t) in dt}
 
 printf '\nInvestments\n' >> resultFile;
 for {(e, d_invest) in ed_invest} {
-  printf '%s, %s, %.8g\n', e, d_invest, v_invest[e, d_invest].val >> resultFile;
+  printf '%s, %s, %.8g\n', e, d_invest, v_invest[e, d_invest].val * p_entity_unitsize[e] >> resultFile;
 }
 
 printf '\nDivestments\n' >> resultFile;
 for {(e, d_invest) in ed_divest} {
-  printf '%s, %s, %.8g\n', e, d_invest, v_divest[e, d_invest].val >> resultFile;
+  printf '%s, %s, %.8g\n', e, d_invest, v_divest[e, d_invest].val * p_entity_unitsize[e] >> resultFile;
 }
 
 

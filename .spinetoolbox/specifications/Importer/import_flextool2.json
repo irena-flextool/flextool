@@ -365,7 +365,7 @@
                             },
                             {
                                 "map_type": "ParameterDefinition",
-                                "position": -1
+                                "position": 0
                             },
                             {
                                 "map_type": "Alternative",
@@ -378,7 +378,8 @@
                             },
                             {
                                 "map_type": "ParameterValue",
-                                "position": "hidden"
+                                "position": "hidden",
+                                "value": "constant"
                             }
                         ]
                     }
@@ -1421,322 +1422,6 @@
                 }
             ]
         },
-        "table_options": {
-            "info": {},
-            "master": {
-                "header": true
-            },
-            "nodeGroup": {},
-            "gridNode": {
-                "column": 0,
-                "read_until_col": true,
-                "header": false,
-                "row": 0,
-                "read_until_row": true
-            },
-            "unit_type": {
-                "read_until_row": true
-            },
-            "fuel": {},
-            "unitGroup": {},
-            "units": {
-                "read_until_col": true,
-                "read_until_row": true
-            },
-            "nodeNode": {},
-            "ts_cf": {
-                "read_until_row": false,
-                "read_until_col": false,
-                "row": 0,
-                "header": false,
-                "column": 0
-            },
-            "ts_inflow": {
-                "read_until_row": false,
-                "read_until_col": false,
-                "row": 0,
-                "header": false,
-                "column": 0
-            },
-            "ts_energy": {
-                "read_until_row": false,
-                "read_until_col": false,
-                "row": 0,
-                "header": false,
-                "column": 0
-            },
-            "ts_import": {
-                "read_until_row": false,
-                "read_until_col": false,
-                "row": 0,
-                "header": false,
-                "column": 0
-            },
-            "ts_reserve_node": {
-                "read_until_row": false,
-                "read_until_col": false,
-                "row": 0,
-                "header": false,
-                "column": 0
-            },
-            "ts_reserve_nodeGroup": {
-                "read_until_row": false,
-                "read_until_col": false,
-                "row": 0,
-                "header": false,
-                "column": 0
-            },
-            "ts_unit": {
-                "read_until_row": false,
-                "read_until_col": false,
-                "row": 0,
-                "header": false,
-                "column": 0
-            },
-            "ts_time": {
-                "header": false
-            },
-            "calc": {}
-        },
-        "table_types": {
-            "master": {
-                "0": "string",
-                "1": "float",
-                "2": "string"
-            },
-            "nodeGroup": {
-                "0": "string",
-                "1": "float",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float"
-            },
-            "gridNode": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "string",
-                "4": "string",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "string"
-            },
-            "unit_type": {
-                "0": "string",
-                "1": "float",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "float",
-                "21": "float",
-                "22": "float",
-                "23": "float"
-            },
-            "fuel": {
-                "0": "string",
-                "1": "float",
-                "2": "float"
-            },
-            "unitGroup": {
-                "0": "string",
-                "1": "float",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float"
-            },
-            "units": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "string",
-                "4": "string",
-                "5": "string",
-                "6": "string",
-                "7": "string",
-                "8": "string",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "float",
-                "21": "float",
-                "22": "float",
-                "23": "float",
-                "24": "string",
-                "25": "string",
-                "26": "float",
-                "27": "float",
-                "28": "float",
-                "29": "float",
-                "30": "float",
-                "31": "float",
-                "32": "float",
-                "33": "float",
-                "34": "float"
-            },
-            "ts_inflow": {
-                "0": "string",
-                "1": "string",
-                "2": "float",
-                "3": "float"
-            },
-            "info": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "string",
-                "4": "string",
-                "5": "string",
-                "6": "string",
-                "7": "string",
-                "8": "string",
-                "9": "string",
-                "10": "string",
-                "11": "string"
-            },
-            "nodeNode": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float"
-            },
-            "ts_energy": {
-                "0": "string",
-                "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "float",
-                "21": "float",
-                "22": "float",
-                "23": "float",
-                "24": "float",
-                "25": "float"
-            },
-            "ts_import": {
-                "0": "string",
-                "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float"
-            },
-            "ts_reserve_node": {
-                "0": "string",
-                "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float"
-            },
-            "ts_reserve_nodeGroup": {
-                "0": "string",
-                "1": "float",
-                "2": "float"
-            },
-            "ts_unit": {
-                "0": "string",
-                "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float"
-            },
-            "ts_time": {
-                "0": "string",
-                "1": "float",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float"
-            },
-            "calc": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "string"
-            },
-            "ts_cf": {
-                "0": "string",
-                "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float"
-            }
-        },
-        "table_row_types": {
-            "ts_energy": {
-                "1": "string"
-            },
-            "ts_import": {
-                "1": "string"
-            },
-            "ts_unit": {
-                "2": "string",
-                "3": "string"
-            }
-        },
         "selected_tables": [
             "master",
             "nodeGroup",
@@ -1755,6 +1440,228 @@
             "ts_unit",
             "ts_time"
         ],
+        "table_options": {
+            "info": {},
+            "master": {},
+            "nodeGroup": {},
+            "gridNode": {},
+            "unit_type": {},
+            "fuel": {},
+            "unitGroup": {},
+            "units": {},
+            "nodeNode": {},
+            "ts_cf": {},
+            "ts_inflow": {},
+            "ts_energy": {},
+            "ts_import": {},
+            "ts_reserve_node": {},
+            "ts_reserve_nodeGroup": {},
+            "ts_unit": {},
+            "ts_time": {},
+            "calc": {}
+        },
+        "table_types": {
+            "master": {
+                "0": "string",
+                "1": "string",
+                "2": "string"
+            },
+            "gridNode": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string",
+                "6": "string",
+                "7": "string",
+                "8": "string",
+                "9": "string",
+                "10": "string",
+                "11": "string",
+                "12": "string"
+            },
+            "unit_type": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string",
+                "6": "string",
+                "7": "string",
+                "8": "string",
+                "9": "string",
+                "10": "string",
+                "11": "string",
+                "12": "string",
+                "13": "string",
+                "14": "string",
+                "15": "string",
+                "16": "string",
+                "17": "string",
+                "18": "string",
+                "19": "string",
+                "20": "string",
+                "21": "string",
+                "22": "string",
+                "23": "string"
+            },
+            "fuel": {
+                "0": "string",
+                "1": "string",
+                "2": "string"
+            },
+            "unitGroup": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string",
+                "6": "string"
+            },
+            "units": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string",
+                "6": "string",
+                "7": "string",
+                "8": "string",
+                "9": "string",
+                "10": "string",
+                "11": "string",
+                "12": "string",
+                "13": "string",
+                "14": "string",
+                "15": "string",
+                "16": "string",
+                "17": "string",
+                "18": "string",
+                "19": "string",
+                "20": "string",
+                "21": "string",
+                "22": "string",
+                "23": "string",
+                "24": "string",
+                "25": "string",
+                "26": "string",
+                "27": "string",
+                "28": "string",
+                "29": "string",
+                "30": "string",
+                "31": "string",
+                "32": "string",
+                "33": "string",
+                "34": "string",
+                "35": "string",
+                "36": "string",
+                "37": "string"
+            },
+            "nodeNode": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string",
+                "6": "string",
+                "7": "string",
+                "8": "string",
+                "9": "string",
+                "10": "string",
+                "11": "string",
+                "12": "string",
+                "13": "string"
+            },
+            "ts_cf": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string"
+            },
+            "ts_inflow": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string"
+            },
+            "ts_energy": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string",
+                "6": "string",
+                "7": "string",
+                "8": "string",
+                "9": "string",
+                "10": "string",
+                "11": "string",
+                "12": "string",
+                "13": "string",
+                "14": "string",
+                "15": "string",
+                "16": "string",
+                "17": "string",
+                "18": "string",
+                "19": "string",
+                "20": "string",
+                "21": "string",
+                "22": "string",
+                "23": "string",
+                "24": "string",
+                "25": "string"
+            },
+            "ts_import": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string",
+                "6": "string",
+                "7": "string",
+                "8": "string"
+            },
+            "ts_reserve_node": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string"
+            },
+            "ts_reserve_nodeGroup": {
+                "0": "string",
+                "1": "string",
+                "2": "string"
+            },
+            "ts_unit": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string",
+                "6": "string"
+            },
+            "ts_time": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string"
+            }
+        },
+        "table_row_types": {},
         "source_type": "ExcelConnector"
     },
     "description": ""

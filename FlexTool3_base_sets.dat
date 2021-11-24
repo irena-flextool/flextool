@@ -13,6 +13,16 @@ set startup_method :=
   binary
 ;
 
+set ramp_method :=
+  ramp_limit
+  ramp_cost
+  both
+;
+
+set ramp_cost_method := ramp_cost both;
+set ramp_limit_method := ramp_limit both;
+
+
 set method :=
   method_1way_1var_off
   method_1way_1var_LP
@@ -75,12 +85,15 @@ set methods :=
 (exact, no_startup, method_2way_2var_MIP_exclude)
 ;
 
-
-
 set commodityParam := price;
-set processParam := existing efficiency fixed_cost interest_rate invest_cost invest_forced invest_max_time invest_max_total lifetime retire_forced retire_max variable_cost startup_cost;
+set processParam := existing efficiency fixed_cost interest_rate invest_cost
+                    invest_forced invest_max_time invest_max_total lifetime
+                    retire_forced retire_max variable_cost startup_cost
+                    virtual_unitsize ramp_speed_up ramp_speed_down ramp_cost;
 set sourceSinkParam := coefficient flow_unitsize variable_cost startup_cost;
-set nodeParam := inflow, pq_down, pq_up, existing, interest_rate, invest_cost, invest_forced, invest_max_time, invest_max_total, lifetime, retire_forced, retire_max, state_unitsize;
+set nodeParam := inflow, pq_down, pq_up, existing, interest_rate, invest_cost,
+                 invest_forced, invest_max_time, invest_max_total, lifetime,
+                 retire_forced, retire_max, virtual_unitsize;
 set reserveParam := reserve pq_reserve;
 set invest_method := one_cost, timeseries_cost, not_allowed;
 set modelParam := solveFirst;
