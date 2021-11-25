@@ -1,3 +1,5 @@
+set upDown := up down;
+
 set ct_method := 
   efficiency
   operating_area
@@ -94,8 +96,11 @@ set sourceSinkParam := coefficient flow_unitsize variable_cost startup_cost;
 set nodeParam := inflow, pq_down, pq_up, existing, interest_rate, invest_cost,
                  invest_forced, invest_max_time, invest_max_total, lifetime,
                  retire_forced, retire_max, virtual_unitsize;
-set reserveParam := reserve pq_reserve;
+set reserveParam := reservation reliability penalty_reserve,
+                    increase_reserve_ratio large_failure_ratio max;
 set invest_method := one_cost, timeseries_cost, not_allowed;
 set modelParam := solveFirst;
 
 set invest_method_not_allowed := not_allowed;
+
+end;
