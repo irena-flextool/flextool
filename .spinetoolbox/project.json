@@ -226,16 +226,6 @@
                 "options": {
                     "use_datapackage": true
                 }
-            },
-            {
-                "from": [
-                    "FlexTool3_data",
-                    "bottom"
-                ],
-                "to": [
-                    "group_functions",
-                    "left"
-                ]
             }
         ],
         "jumps": []
@@ -282,8 +272,8 @@
         "FlexTool3_data": {
             "type": "Data Store",
             "description": "",
-            "x": -362.8809649225962,
-            "y": 99.92543280533762,
+            "x": -359.8413619354266,
+            "y": 99.9254328053376,
             "url": {
                 "dialect": "sqlite",
                 "username": "",
@@ -413,8 +403,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -42.92188391519818,
-            "y": 118.25544831890187,
+            "x": -40.8954819237518,
+            "y": 118.25544831890186,
             "databases": [
                 {
                     "output_file_name": "inputData",
@@ -480,7 +470,7 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 121.25124621926395,
+            "x": 124.2908492064335,
             "y": 65.91965434164533,
             "specification": "FlexTool3",
             "execute_in_work": false,
@@ -504,26 +494,6 @@
                 }
             },
             "cancel_on_error": true
-        },
-        "group_functions": {
-            "type": "Exporter",
-            "description": "",
-            "x": -265.2456322904575,
-            "y": 246.99303322838938,
-            "databases": [
-                {
-                    "output_file_name": "",
-                    "database_url": {
-                        "type": "file_url",
-                        "relative": true,
-                        "path": "FlexTool3_data.sqlite",
-                        "scheme": "sqlite"
-                    }
-                }
-            ],
-            "output_time_stamps": false,
-            "cancel_on_error": true,
-            "specification": "group_functions"
         }
     }
 }

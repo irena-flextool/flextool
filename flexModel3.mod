@@ -135,17 +135,6 @@ set process_source_sink :=
 	process_process_toSource;     # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
 set process_online 'processes with an online status' := setof {(p, m) in process_method : m in method_LP} p;
 
-set process_source_sink_ramp_limit :=
-    {(p, source, sink) in process_source_sink
-	    : sum{(p, m) in process_ramp_method : m in ramp_limit_method} 1
-	};
-set process_source_sink_ramp_cost :=
-    {(p, source, sink) in process_source_sink
-	    : sum{(p, m) in process_ramp_method : m in ramp_cost_method} 1
-	};
-set process_source_sink_ramp :=
-    process_source_sink_ramp_limit union process_source_sink_ramp_cost;
-
 set process_reserve_upDown_node dimen 4;
 set commodity_node dimen 2; 
 set connection_variable_cost dimen 1 within process;
@@ -240,15 +229,32 @@ set pd_invest := {(p, d) in ed_invest : p in process};
 set nd_invest := {(n, d) in ed_invest : n in node};
 set ed_divest := ed_invest;
 
+set process_source_sink_ramp_limit_up :=
+    {(p, source, sink) in process_source_sink
+	    : sum{(p, m) in process_ramp_method : m in ramp_limit_method} 1
+		&& p_process[p, 'ramp_speed_up'] > 0
+	};
+set process_source_sink_ramp_limit_down :=
+    {(p, source, sink) in process_source_sink
+	    : sum{(p, m) in process_ramp_method : m in ramp_limit_method} 1
+		&& p_process[p, 'ramp_speed_down'] > 0
+	};
+set process_source_sink_ramp_cost :=
+    {(p, source, sink) in process_source_sink
+	    : sum{(p, m) in process_ramp_method : m in ramp_cost_method} 1
+	};
+set process_source_sink_ramp :=
+    process_source_sink_ramp_limit_up 
+	union process_source_sink_ramp_limit_down 
+	union process_source_sink_ramp_cost;
+
 set process_source_sink_dt_ramp_up :=
-        {(p, source, sink) in process_source_sink_ramp_limit, (d, t) in dt :
+        {(p, source, sink) in process_source_sink_ramp_limit_up, (d, t) in dt :
  		    p_process[p, 'ramp_speed_up'] * 60 < step_duration[d, t]
-			&& p_process[p, 'ramp_speed_up'] > 0
         };
 set process_source_sink_dt_ramp_down :=
-        {(p, source, sink) in process_source_sink_ramp_limit, (d, t) in dt :
+        {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t) in dt :
  		    p_process[p, 'ramp_speed_down'] * 60 < step_duration[d, t]
-			&& p_process[p, 'ramp_speed_down'] > 0
 		};
 set process_source_sink_dt_ramp :=
         {(p, source, sink) in process_source_sink_ramp, (d, t) in dt :
@@ -417,7 +423,7 @@ s.t. reserveBalance_eq {(r, ud, ng) in reserve_upDown_nodeGroup, (d, t) in dt} :
 		  : sum{(p, m) in process_method : m not in method_1var_per_way} 1
 		  && (ng, n) in nodeGroup_node 
 		  && (r, ud, ng) in reserve_upDown_nodeGroup} 
-	    (v_reserve[p, r, ud, n, d, t] 
+	    ( v_reserve[p, r, ud, n, d, t] 
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
 		  / pt_process[p, 'efficiency', t]
 		)
@@ -436,6 +442,7 @@ s.t. conversion_equality_constraint {(p, m) in process_method, (d, t) in dt : m 
 	)
 ;
 
+display process_online, p_process_sink_flow_unitsize, p_entity_unitsize;
 s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt 
      : (p, sink) in process_sink
 } :
@@ -545,7 +552,8 @@ s.t. ramp {(p, source, sink) in process_source_sink_ramp, (d, t, t_previous, t_p
   - v_flow[p, source, sink, d, t_previous]
 ;
 
-s.t. ramp_up {(p, source, sink) in process_source_sink_ramp_limit, (d, t, t_previous, t_previous_within_block) in dttt
+display p_process;
+s.t. ramp_up {(p, source, sink) in process_source_sink_ramp_limit_up, (d, t, t_previous, t_previous_within_block) in dttt
 		: (p, source, sink, d, t) in process_source_sink_dt_ramp} :
   + v_ramp[p, source, sink, d, t]
   + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node} 
@@ -563,7 +571,7 @@ s.t. ramp_up {(p, source, sink) in process_source_sink_ramp_limit, (d, t, t_prev
 	  )
 ;
 
-s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit, (d, t, t_previous, t_previous_within_block) in dttt
+s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t, t_previous, t_previous_within_block) in dttt
 		: (p, source, sink, d, t) in process_source_sink_dt_ramp} :
   + v_ramp[p, source, sink, d, t]
   + sum {r in reserve : (p, r, 'down', sink) in process_reserve_upDown_node} 
