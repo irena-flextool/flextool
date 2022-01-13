@@ -2199,6 +2199,104 @@
             "always_export_header": true,
             "group_fn": "no_group",
             "use_fixed_table_name": true
+        },
+        "unitGroup": {
+            "type": "objects",
+            "mapping": [
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^unitGroup$"
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "unitGroup"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": false
+        },
+        "unitGroup__unit": {
+            "type": "relationships",
+            "mapping": [
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^unitGroup__unit$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "unitGroup"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "unit"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": false
+        },
+        "p_unitGroup_s": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^unitGroup$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 1,
+                    "header": "unitGroupParam"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "unitGroup"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "single_value"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 2,
+                    "header": "p_unitGroup"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": false
         }
     }
 }

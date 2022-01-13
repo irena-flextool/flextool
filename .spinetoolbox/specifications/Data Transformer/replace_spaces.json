@@ -12,10 +12,10 @@
                 "O&M cost/MWh": "O&M_cost_per_MWh"
             },
             "grid__node__node": {
-                "cap.leftward (MW)": "cap.leftward_MW"
+                "cap.leftward (MW)": "cap.leftward_MW",
+                "cap.rightward (MW)": "cap.rightward_MW"
             },
             "": {
-                "cap.rightward (MW)": "cap.rightward_MW",
                 "capacity (MW)": "capacity_MW",
                 "capacity margin (MW)": "capacity_margin_MW",
                 "cf profile": "cf_profile",

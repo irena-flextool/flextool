@@ -404,7 +404,6 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   - vq_state_down[n, d, t]
 ;
 
-display p_process_reserve_upDown_node;
 s.t. reserveBalance_eq {(r, ud, ng) in reserve_upDown_nodeGroup, (d, t) in dt} :
   + sum {(p, r, ud, n) in process_reserve_upDown_node_increase_reserve_ratio : (ng, n) in nodeGroup_node 
           && (r, ud, ng) in reserve_upDown_nodeGroup}
@@ -442,7 +441,6 @@ s.t. conversion_equality_constraint {(p, m) in process_method, (d, t) in dt : m 
 	)
 ;
 
-display process_online, p_process_sink_flow_unitsize, p_entity_unitsize;
 s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt 
      : (p, sink) in process_sink
 } :
@@ -552,7 +550,6 @@ s.t. ramp {(p, source, sink) in process_source_sink_ramp, (d, t, t_previous, t_p
   - v_flow[p, source, sink, d, t_previous]
 ;
 
-display p_process;
 s.t. ramp_up {(p, source, sink) in process_source_sink_ramp_limit_up, (d, t, t_previous, t_previous_within_block) in dttt
 		: (p, source, sink, d, t) in process_source_sink_dt_ramp} :
   + v_ramp[p, source, sink, d, t]
