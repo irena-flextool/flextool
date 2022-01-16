@@ -1,5 +1,10 @@
 set upDown := up down;
 
+set sense := greater_than, less_than, equal;
+set sense_greater_than := greater_than;
+set sense_less_than := less_than;
+set sense_equal := equal;
+
 set ct_method := 
   efficiency
   operating_area
@@ -37,45 +42,55 @@ set method :=
   method_2way_2var_exclude
   method_2way_2var_MIP_exclude
   method_2way_nvar_off
+  method_1way_area_off
+  method_1way_area_LP
+  method_1way_area_MIP
 ;
-
-#set method_1way_1var_off := efficiency_only;
-#set method_1way_1var_LP := ;
-#set method_1way_1var_MIP := ;
-#set method_1way_nvar_off := ;
-#set method_1way_nvar_LP := efficiency_and_LP_online;
-#set method_1way_nvar_MIP := efficiency_and_MIP_online;
-#set method_2way_1var_off := no_losses_no_variable_cost;
-#set method_2way_2var_off := variable_cost_only;
-#set method_2way_2var_exclude := regular;
-#set method_2way_2var_MIP_exclude := exact;
-#set method_2way_nvar_off := ;
 
 set method_1var := method_1way_1var_off, method_2way_1var_off;
 set method_1var_off := method_1way_1var_off, method_2way_1var_off; 
-set method_1way_off := method_1way_1var_off, method_1way_nvar_off;
+set method_1way_off := method_1way_1var_off, method_1way_nvar_off, method_1way_area_off;
 set method_2way_off := method_2way_1var_off, method_2way_2var_off, method_2way_2var_exclude, method_2way_nvar_off; 
 set method_1way_1var_on := method_1way_1var_LP, method_1way_1var_MIP; 
-set method_1way_nvar_on := method_1way_nvar_LP, method_1way_nvar_MIP; 
-set method_1way_LP := method_1way_1var_LP, method_1way_nvar_LP;
-set method_1way_MIP := method_1way_1var_MIP, method_1way_nvar_MIP;
-set method_1way := method_1way_1var_off, method_1way_1var_LP, method_1way_1var_MIP, method_1way_nvar_off, method_1way_nvar_LP, method_1way_nvar_MIP; 
-set method_2way := method_2way_1var_off, method_2way_2var_off, method_2way_2var_exclude, method_2way_2var_MIP_exclude, method_2way_nvar_off;
-set method_off := method_1way_1var_off, method_1way_nvar_off, method_2way_1var_off, method_2way_2var_exclude, method_2way_2var_off, method_2way_nvar_off;  
-set method_1way_on := method_1way_1var_LP, method_1way_1var_MIP, method_1way_nvar_off, method_1way_nvar_LP, method_1way_nvar_MIP; 
+set method_1way_nvar_on := method_1way_nvar_LP, method_1way_nvar_MIP, method_1way_area_LP, method_1way_area_MIP; 
+set method_1way_LP := method_1way_1var_LP, method_1way_nvar_LP, method_1way_area_LP;
+set method_1way_MIP := method_1way_1var_MIP, method_1way_nvar_MIP, method_1way_area_MIP;
+set method_1way := method_1way_1var_off, method_1way_1var_LP, method_1way_1var_MIP, 
+                   method_1way_nvar_off, method_1way_nvar_LP, method_1way_nvar_MIP, 
+				   method_1way_area_off, method_1way_area_LP, method_1way_area_MIP; 
+set method_2way := method_2way_1var_off, method_2way_2var_off, method_2way_2var_exclude, 
+                   method_2way_2var_MIP_exclude, method_2way_nvar_off;
+set method_off := method_1way_1var_off, method_1way_nvar_off, method_2way_1var_off, 
+                  method_2way_2var_exclude, method_2way_2var_off, method_2way_nvar_off, 
+				  method_1way_area_off;  
+set method_1way_on := method_1way_1var_LP, method_1way_1var_MIP, method_1way_nvar_off, 
+                      method_1way_nvar_LP, method_1way_nvar_MIP, method_1way_area_LP, 
+					  method_1way_area_MIP; 
 set method_2way_on := method_2way_2var_exclude, method_2way_2var_MIP_exclude;
-set method_on := method_1way_1var_LP, method_1way_1var_MIP, method_1way_nvar_LP, method_1way_nvar_MIP, method_2way_2var_MIP_exclude;
-set method_nvar := method_1way_nvar_off, method_1way_nvar_LP, method_1way_nvar_MIP, method_2way_nvar_off;
+set method_on := method_1way_1var_LP, method_1way_1var_MIP, method_1way_nvar_LP, 
+                 method_1way_nvar_MIP, method_2way_2var_MIP_exclude, method_1way_area_LP, 
+				 method_1way_area_MIP;
+set method_nvar := method_1way_nvar_off, method_1way_nvar_LP, method_1way_nvar_MIP, 
+                   method_2way_nvar_off, method_1way_area_off, method_1way_area_LP, 
+				   method_1way_area_MIP;
 
 set method_1way_1var := method_1way_1var_off, method_1way_1var_LP, method_1way_1var_MIP, method_1way_nvar_off;
 set method_2way_1var := method_2way_1var_off;
 set method_2way_2var := method_2way_2var_off, method_2way_2var_exclude, method_2way_2var_MIP_exclude;
 set method_2way_nvar := method_2way_nvar_off;
-set method_LP method_1way_1var_LP, method_1way_1var_MIP, method_1way_nvar_off, method_1way_nvar_LP;
-set method_MIP method_1way_1var_MIP, method_1way_nvar_MIP, method_2way_2var_MIP_exclude;
-set method_direct method_1way_1var_off, method_1way_1var_LP, method_1way_1var_MIP, method_2way_1var_off, method_2way_2var_off, method_2way_2var_exclude, method_2way_2var_MIP_exclude;
-set method_indirect method_1way_nvar_off, method_1way_nvar_LP, method_1way_nvar_MIP, method_2way_nvar_off;
-set method_1var_per_way method_1way_1var_off, method_1way_1var_LP, method_1way_1var_MIP, method_2way_2var_off, method_2way_2var_exclude, method_2way_2var_MIP_exclude;
+set method_LP := method_1way_1var_LP, method_1way_1var_MIP, method_1way_nvar_off, 
+                 method_1way_nvar_LP, method_1way_area_LP;
+set method_MIP := method_1way_1var_MIP, method_1way_nvar_MIP, method_2way_2var_MIP_exclude, 
+                  method_1way_area_MIP;
+set method_direct := method_1way_1var_off, method_1way_1var_LP, method_1way_1var_MIP, 
+                     method_2way_1var_off, method_2way_2var_off, method_2way_2var_exclude, 
+					 method_2way_2var_MIP_exclude;
+set method_indirect := method_1way_nvar_off, method_1way_nvar_LP, method_1way_nvar_MIP, 
+                       method_2way_nvar_off, method_1way_area_off, method_1way_area_LP, 
+					   method_1way_area_MIP;
+set method_1var_per_way := method_1way_1var_off, method_1way_1var_LP, method_1way_1var_MIP, 
+                           method_2way_2var_off, method_2way_2var_exclude, method_2way_2var_MIP_exclude;
+set method_area := method_1way_area_off, method_1way_area_LP, method_1way_area_MIP;
 
 set methods := 
 (efficiency, no_startup, method_1way_1var_off)
@@ -85,6 +100,9 @@ set methods :=
 (variable_cost_only, no_startup, method_2way_2var_off)
 (regular, no_startup, method_2way_2var_exclude)
 (exact, no_startup, method_2way_2var_MIP_exclude)
+(operating_area, no_startup, method_1way_area_off)
+(operating_area, linear, method_1way_area_LP)
+(operating_area, binary, method_1way_area_MIP)
 ;
 
 set commodityParam := price;

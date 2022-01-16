@@ -292,8 +292,8 @@
         "FlexTool3_data": {
             "type": "Data Store",
             "description": "",
-            "x": -261.02363789645864,
-            "y": 110.46697030197063,
+            "x": -260.01411413144075,
+            "y": 110.46697030197065,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -376,11 +376,11 @@
             "on_conflict": "merge",
             "file_selection": [
                 [
-                    "results/color_codes_no_grid.dat",
+                    "results/color_codes_csp.dat",
                     false
                 ],
                 [
-                    "results/color_codes_csp.dat",
+                    "results/color_codes_no_grid.dat",
                     false
                 ],
                 [
@@ -388,11 +388,11 @@
                     false
                 ],
                 [
-                    "results/color_codes_heat.dat",
+                    "results/investments_D.dat",
                     false
                 ],
                 [
-                    "results/investments_D.dat",
+                    "results/color_codes_heat.dat",
                     false
                 ],
                 [
@@ -419,8 +419,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": 46.778253688504535,
-            "y": 138.90738726498097,
+            "x": 51.82587251359435,
+            "y": 138.90738726498094,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -441,8 +441,8 @@
         "Results_F3": {
             "type": "Data Store",
             "description": "",
-            "x": 263.9286950884588,
-            "y": 242.02356047373965,
+            "x": 252.8239336732612,
+            "y": 243.03308423875757,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -457,12 +457,12 @@
         "Import_Flex3": {
             "type": "Importer",
             "description": "",
-            "x": 378.7511693502682,
-            "y": 138.82774749784087,
+            "x": 378.75116935026824,
+            "y": 138.82774749784085,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "purge_before_writing": false,
-            "on_conflict": "merge",
+            "on_conflict": "keep",
             "file_selection": [
                 [
                     "datapackage@FlexTool3",
@@ -473,7 +473,7 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 211.96458481868984,
+            "x": 212.97410858370776,
             "y": 86.57159328772443,
             "specification": "FlexTool3",
             "execute_in_work": true,

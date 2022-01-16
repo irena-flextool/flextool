@@ -2204,6 +2204,11 @@
             "type": "objects",
             "mapping": [
                 {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "unitGroup"
+                },
+                {
                     "map_type": "ObjectClass",
                     "position": "hidden",
                     "filter_re": "^unitGroup$"
@@ -2217,11 +2222,16 @@
             "enabled": true,
             "always_export_header": true,
             "group_fn": "no_group",
-            "use_fixed_table_name": false
+            "use_fixed_table_name": true
         },
         "unitGroup__unit": {
             "type": "relationships",
             "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "unitGroup__unit"
+                },
                 {
                     "map_type": "RelationshipClass",
                     "position": "hidden",
@@ -2253,11 +2263,16 @@
             "enabled": true,
             "always_export_header": true,
             "group_fn": "no_group",
-            "use_fixed_table_name": false
+            "use_fixed_table_name": true
         },
         "p_unitGroup_s": {
             "type": "object_parameter_values",
             "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "p_unitGroup"
+                },
                 {
                     "map_type": "ObjectClass",
                     "position": "hidden",
@@ -2296,7 +2311,207 @@
             "enabled": true,
             "always_export_header": true,
             "group_fn": "no_group",
-            "use_fixed_table_name": false
+            "use_fixed_table_name": true
+        },
+        "p_process_constraint": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "p_process_constraint_constant"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^unit$|^connection$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "constraint_constant"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 1,
+                    "header": "constraint"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "sense"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 3,
+                    "header": "p_process_constraint_constant"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_process__node_constraint": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "p_process_node_constraint_coefficient"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^unit__sinkNode$|^unit__sourceNode$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "constraint_coefficient"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "node"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "constraint"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 3,
+                    "header": "p_process_node_constraint_coefficient"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "constraint": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "constraint"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^unit$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "constraint_constant"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 0,
+                    "header": "constraint"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": "hidden"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "one_or_none",
+            "use_fixed_table_name": true
         }
     }
 }

@@ -34,6 +34,11 @@ set ramp_limit_method within ramp_method;
 set ramp_cost_method within ramp_method;
 set debug 'flags to output debugging and test results';
 
+set constraint 'user defined greater than, less than or equality constraints between inputs and outputs';
+set sense 'sense of user defined constraints';
+set sense_greater_than within sense;
+set sense_less_than within sense;
+set sense_equal within sense;
 
 #Method collections use in the model (abstracted methods)
 set method_1var_off within method;
@@ -60,7 +65,7 @@ set method_MIP within method;
 set method_direct within method;
 set method_indirect within method;
 set method_1var_per_way within method;
-
+set method_area;
 
 
 set invest_method 'methods available for investments';
@@ -136,7 +141,9 @@ set process_source_sink :=
 set process_online 'processes with an online status' := setof {(p, m) in process_method : m in method_LP} p;
 
 set process_reserve_upDown_node dimen 4;
-set commodity_node dimen 2; 
+set process_node_constraint dimen 3 within {process, node, constraint};
+set process_constraint_sense dimen 3 within {process, constraint, sense};
+set commodity_node dimen 2 within {commodity, node}; 
 set connection_variable_cost dimen 1 within process;
 set unit__sourceNode_variable_cost dimen 2 within process_source;
 set unit__sinkNode_variable_cost dimen 2 within process_sink;
@@ -208,6 +215,8 @@ param p_inflow {n in nodeInflow, t in time};
 param p_reserve_upDown_nodeGroup {reserve, upDown, nodeGroup, reserveParam};
 param pt_reserve_upDown_nodeGroup {reserve, upDown, nodeGroup, reserveParam, time};
 param p_process_reserve_upDown_node {process, reserve, upDown, node, reserveParam} default 0;
+param p_process_constraint_constant {process, constraint};
+param p_process_node_constraint_coefficient {process, node, constraint};
 param pq_up {n in nodeBalance};
 param pq_down {n in nodeBalance};
 param step_duration{(d, t) in dt};
@@ -323,6 +332,12 @@ table data IN 'CSV' 'pt_reserve__upDown__nodeGroup.csv' : [reserve, upDown, node
 table data IN 'CSV' 'p_process__reserve__upDown__node.csv' : [process, reserve, upDown, node, reserveParam], p_process_reserve_upDown_node;
 table data IN 'CSV' 'p_process_invested.csv' : [process], p_process_invested;
 
+table data IN 'CSV' 'constraint.csv' : constraint <- [constraint];
+table data IN 'CSV' 'p_process_constraint_constant.csv' : process_constraint_sense <- [process, constraint, sense];
+table data IN 'CSV' 'p_process_constraint_constant.csv' : [process, constraint], p_process_constraint_constant;
+table data IN 'CSV' 'p_process_node_constraint_coefficient.csv' : process_node_constraint <- [process, node, constraint];
+table data IN 'CSV' 'p_process_node_constraint_coefficient.csv' : [process, node, constraint], p_process_node_constraint_coefficient;
+
 #table data IN 'CSV' '.csv' :  <- [];
 
 table data IN 'CSV' 'debug.csv' : debug <- [debug];
@@ -349,7 +364,7 @@ var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve_upDown_nodeGroup, (d, t) in dt} >= 0;
 
-#display p_entity_unitsize;
+display sense_greater_than, process_constraint_sense, process_node_constraint, p_process_node_constraint_coefficient;
 
 #########################
 ## Data checks 
@@ -428,7 +443,7 @@ s.t. reserveBalance_eq {(r, ud, ng) in reserve_upDown_nodeGroup, (d, t) in dt} :
 		)
 ;
 
-s.t. conversion_equality_constraint {(p, m) in process_method, (d, t) in dt : m in method_indirect} :
+s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_indirect} :
   + sum {source in entity : (p, source) in process_source} 
     ( + v_flow[p, source, p, d, t] 
   	      * p_process_source_coefficient[p, source]
@@ -440,6 +455,52 @@ s.t. conversion_equality_constraint {(p, m) in process_method, (d, t) in dt : m 
 	      * p_process_sink_coefficient[p, sink]
 	)
 ;
+
+s.t. process_constraint_greater_than {(p, m) in process_method, c in constraint, s in sense, (d, t) in dt 
+     : m in method_area && (p, c, s) in process_constraint_sense && s in sense_greater_than} :
+  + sum {source in entity : (p, source) in process_source && (p, source, c) in process_node_constraint}
+    ( + v_flow[p, source, p, d, t]
+	      * p_process_node_constraint_coefficient[p, source, c]
+	)
+  + sum {sink in entity : (p, sink) in process_sink && (p, sink, c) in process_node_constraint}
+    ( + v_flow[p, p, sink, d, t]
+	      * p_process_node_constraint_coefficient[p, sink, c]
+	)
+  >=
+  + ( if p in process_online then
+      + p_process_constraint_constant[p, c]
+        * v_online_linear[p, d, t]
+    )
+;
+	
+s.t. process_constraint_less_than {(p, m) in process_method, c in constraint, s in sense, (d, t) in dt 
+     : m in method_area && (p, c, s) in process_constraint_sense && s in sense_less_than} :
+  + sum {source in entity : (p, source) in process_source && (p, source, c) in process_node_constraint}
+    ( + v_flow[p, source, p, d, t]
+	      * p_process_node_constraint_coefficient[p, source, c]
+	)
+  + sum {sink in entity : (p, sink) in process_sink && (p, sink, c) in process_node_constraint}
+    ( + v_flow[p, p, sink, d, t]
+	      * p_process_node_constraint_coefficient[p, sink, c]
+	)
+  <=
+  + p_process_constraint_constant[p, c]
+;
+
+s.t. process_constraint_equal {(p, m) in process_method, c in constraint, s in sense, (d, t) in dt 
+     : m in method_area && (p, c, s) in process_constraint_sense && s in sense_equal} :
+  + sum {source in entity : (p, source) in process_source && (p, source, c) in process_node_constraint}
+    ( + v_flow[p, source, p, d, t]
+	      * p_process_node_constraint_coefficient[p, source, c]
+	)
+  + sum {sink in entity : (p, sink) in process_sink && (p, sink, c) in process_node_constraint}
+    ( + v_flow[p, p, sink, d, t]
+	      * p_process_node_constraint_coefficient[p, sink, c]
+	)
+  =
+  + p_process_constraint_constant[p, c]
+;
+
 
 s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt 
      : (p, sink) in process_sink
@@ -742,7 +803,7 @@ for {(u, m) in process_method, (d, t) in dt : d in period_realized && u in proce
 printf 'Write reserve from processes over time...\n';
 param fn_process__reserve__upDown__node__dt symbolic := "r_process__reserve__upDown__node__dt.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'process,reserve,upDown,node\n' > fn_process__reserve__upDown__node__dt; }  # Print the header on the first solve
+  { printf 'process,reserve,upDown,node,period,time,reservation\n' > fn_process__reserve__upDown__node__dt; }  # Print the header on the first solve
 for {(p, r, ud, n) in process_reserve_upDown_node, (d, t) in dt}
   {
     printf '%s, %s, %s, %s, %s, %s, %.8g\n', p, r, ud, n, d, t, v_reserve[p, r, ud, n, d, t].val >> fn_process__reserve__upDown__node__dt;
