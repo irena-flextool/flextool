@@ -118,6 +118,7 @@ set reserveParam := reservation reliability penalty_reserve,
                     increase_reserve_ratio large_failure_ratio max;
 set invest_method := one_cost, timeseries_cost, not_allowed;
 set modelParam := solveFirst;
+set groupParam := CO2_price, invest_max, invest_min;
 
 set invest_method_not_allowed := not_allowed;
 

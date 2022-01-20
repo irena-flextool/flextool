@@ -18,12 +18,13 @@ set process 'p - Particular activity that transfers, converts or stores commodit
 set processUnit 'Unit processes' within process;
 set processTransfer 'Transfer processes' within process;
 set node 'n - Any location where a balance needs to be maintained' within entity;
-set nodeGroup 'ng - Any group of nodes that have a set of common constraints';
+set group 'g - Any group of entities that have a set of common constraints';
 set commodity 'c - Stuff that is being processed';
-set reserve_upDown_nodeGroup dimen 3;
-set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng) in reserve_upDown_nodeGroup} (r);
+set reserve_upDown_group dimen 3;
+set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng) in reserve_upDown_group} (r);
 set period_time '(d, t) - Time steps in the time periods of the timelines in use' dimen 2;
-set period 'd - Time periods in the current timelines' := setof {(d, t) in period_time} (d);
+set solve_period '(solve, d) - Time periods in the solves in order to extract periods that can be found in data' dimen 2;
+set period 'd - Time periods in data (including those currently in use)' := setof {(s, d) in solve_period} (d);
 set time 't - Time steps in the current timelines'; 
 set method 'm - Type of process that transfers, converts or stores commodities';
 set upDown 'upward and downward directions for some variables';
@@ -75,7 +76,9 @@ set entityInvest := setof {(e, m) in entity__invest_method : m not in invest_met
 set nodeBalance 'nodes that maintain a node balance' within node;
 set nodeState 'nodes that have a state' within node;
 set nodeInflow 'nodes that have an inflow' within node;
-set nodeGroup_node 'member nodes of a particular nodeGroup' dimen 2 within {nodeGroup, node};
+set group_node 'member nodes of a particular group' dimen 2 within {group, node};
+set group_process 'member processes of a particular group' dimen 2 within {group, process};
+set group_process_node 'process__nodes of a particular group' dimen 3 within {group, process, node};
 set process_unit 'processes that are unit' within process;
 set process_connection 'processes that are connections' within process;
 set process_ct_method dimen 2 within {process, ct_method};
@@ -159,6 +162,7 @@ set nodeParam;
 set processParam;
 set sourceSinkParam;
 set reserveParam;
+set groupParam;
 
 set dt dimen 2 within period_time;
 set dttt dimen 4;
@@ -173,9 +177,17 @@ param startNext_index := sum{t in time, t_startNext in startNext : t <= t_startN
 set modelParam;
 param p_model {modelParam};
 
+param pd_commodity_node {(c, n) in commodity_node, commodityParam, p in period};
+param pdt_commodity_node {(c, n) in commodity_node, commodityParam, p in period, t in time};
+param p_commodity_node {(c, n) in commodity_node, commodityParam};
+
+param p_group__process {g in group, p in process, groupParam};
+param pd_group {g in group, groupParam, d in period};
+param pdt_group {g in group, groupParam, d in period, t in time};
+param p_group {g in group, groupParam};
+
 param p_node {n in node, nodeParam} default 0;
 param pt_node {n in node, nodeParam, t in time};
-param pt_commodity {(c, n) in commodity_node, commodityParam, t in time};
 param p_process {process, processParam} default 0;
 param pt_process {process, processParam, time} default 0;
 param p_entity_unitsize {e in entity} := 
@@ -212,8 +224,8 @@ param p_process_sink_flow_unitsize {(p, sink) in process_sink} :=
 	  then p_process_sink[p, sink, 'flow_unitsize'] 
 	  else 1;
 param p_inflow {n in nodeInflow, t in time};
-param p_reserve_upDown_nodeGroup {reserve, upDown, nodeGroup, reserveParam};
-param pt_reserve_upDown_nodeGroup {reserve, upDown, nodeGroup, reserveParam, time};
+param p_reserve_upDown_group {reserve, upDown, group, reserveParam};
+param pt_reserve_upDown_group {reserve, upDown, group, reserveParam, time};
 param p_process_reserve_upDown_node {process, reserve, upDown, node, reserveParam} default 0;
 param p_process_constraint_constant {process, constraint};
 param p_process_node_constraint_coefficient {process, node, constraint};
@@ -289,66 +301,81 @@ param d_flow {(p, source, sink, d, t) in peedt} default 0;
 param d_flow_1_or_2_variable {(p, source, sink, d, t) in peedt} default 0;
 param d_flowInvest {(p, d) in pd_invest} default 0;
 param d_reserve_upDown_node {(p, r, ud, n, d, t) in prundt} default 0;
-param dq_reserve {(r, ud, ng) in reserve_upDown_nodeGroup, (d, t) in dt} default 0;
+param dq_reserve {(r, ud, ng) in reserve_upDown_group, (d, t) in dt} default 0;
 
 #########################
-# Read parameter data (no time series yet)
-table data IN 'CSV' 'entity.csv': entity <- [entity];
-table data IN 'CSV' 'process.csv': process <- [process];
-table data IN 'CSV' 'process_unit.csv': process_unit <- [process_unit];
-table data IN 'CSV' 'process_connection.csv': process_connection <- [process_connection];
-table data IN 'CSV' 'node.csv' : node <- [node];
-table data IN 'CSV' 'nodeGroup.csv' : nodeGroup <- [nodeGroup];
-table data IN 'CSV' 'commodity.csv' : commodity <- [commodity];
-table data IN 'CSV' 'timeline.csv' : time <- [timestep];
-table data IN 'CSV' 'steps_in_timeline.csv' : period_time <- [period,step];
-table data IN 'CSV' 'reserve__upDown__nodeGroup.csv' : reserve_upDown_nodeGroup <- [reserve,upDown,nodeGroup];
-table data IN 'CSV' 'commodity__node.csv' : commodity_node <- [commodity,node];
+# Read data
+#table data IN 'CSV' '.csv' :  <- [];
 
-table data IN 'CSV' 'nodeBalance.csv' : nodeBalance <- [nodeBalance];
-table data IN 'CSV' 'nodeState.csv' : nodeState <- [nodeState];
-table data IN 'CSV' 'nodeInflow.csv' : nodeInflow <- [nodeInflow];
-table data IN 'CSV' 'nodeGroup__node.csv': nodeGroup_node <- [nodeGroup,node];
-table data IN 'CSV' 'process__ct_method.csv' : process_ct_method <- [process,ct_method];
-table data IN 'CSV' 'process__startup_method.csv' : process_startup_method <- [process,startup_method];
-table data IN 'CSV' 'process__ramp_method.csv' : process_ramp_method <- [process,ramp_method];
-table data IN 'CSV' 'process__source.csv' : process_source <- [process,source];
-table data IN 'CSV' 'process__sink.csv' : process_sink <- [process,sink];
-table data IN 'CSV' 'process__reserve__upDown__node.csv' : process_reserve_upDown_node <- [process,reserve,upDown,node];
-table data IN 'CSV' 'entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
+# Domain sets
+table data IN 'CSV' 'commodity.csv' : commodity <- [commodity];
 table data IN 'CSV' 'connection_variable_cost.csv' : connection_variable_cost <- [process];
+table data IN 'CSV' 'constraint.csv' : constraint <- [constraint];
+table data IN 'CSV' 'debug.csv': debug <- [debug];
+table data IN 'CSV' 'entity.csv': entity <- [entity];
+table data IN 'CSV' 'group.csv' : group <- [group];
+table data IN 'CSV' 'node.csv' : node <- [node];
+table data IN 'CSV' 'nodeBalance.csv' : nodeBalance <- [nodeBalance];
+table data IN 'CSV' 'nodeInflow.csv' : nodeInflow <- [nodeInflow];
+table data IN 'CSV' 'nodeState.csv' : nodeState <- [nodeState];
+table data IN 'CSV' 'process.csv': process <- [process];
+table data IN 'CSV' 'timeline.csv' : time <- [timestep];
+
+# Single dimension membership sets
+table data IN 'CSV' 'process_connection.csv': process_connection <- [process_connection];
+table data IN 'CSV' 'process_unit.csv': process_unit <- [process_unit];
+
+# Multi dimension membership sets
+table data IN 'CSV' 'commodity__node.csv' : commodity_node <- [commodity,node];
+table data IN 'CSV' 'entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
+table data IN 'CSV' 'group__node.csv' : group_node <- [group,node];
+table data IN 'CSV' 'group__process.csv' : group_process <- [group,process];
+table data IN 'CSV' 'group__process__node.csv' : group_process_node <- [group,process,node];
+table data IN 'CSV' 'p_process_node_constraint_coefficient.csv' : process_node_constraint <- [process, node, constraint];
+table data IN 'CSV' 'p_process_constraint_constant.csv' : process_constraint_sense <- [process, constraint, sense];
+table data IN 'CSV' 'process__ct_method.csv' : process_ct_method <- [process,ct_method];
+table data IN 'CSV' 'process__ramp_method.csv' : process_ramp_method <- [process,ramp_method];
+table data IN 'CSV' 'process__reserve__upDown__node.csv' : process_reserve_upDown_node <- [process,reserve,upDown,node];
+table data IN 'CSV' 'process__sink.csv' : process_sink <- [process,sink];
+table data IN 'CSV' 'process__source.csv' : process_source <- [process,source];
+table data IN 'CSV' 'process__startup_method.csv' : process_startup_method <- [process,startup_method];
+table data IN 'CSV' 'reserve__upDown__group.csv' : reserve_upDown_group <- [reserve,upDown,group];
+table data IN 'CSV' 'timeblocks_in_use.csv' : solve_period <- [solve,period];
 table data IN 'CSV' 'unit__sourceNode_variable_cost.csv' : unit__sourceNode_variable_cost <- [process,source];
 table data IN 'CSV' 'unit__sinkNode_variable_cost.csv' : unit__sinkNode_variable_cost <- [process,sink];
 
+# Parameters for model data
+table data IN 'CSV' 'pd_commodity__node.csv' : [commodity, node, commodityParam, period], pd_commodity_node;
+table data IN 'CSV' 'pdt_commodity__node.csv' : [commodity, node, commodityParam, period, time], pdt_commodity_node;
+table data IN 'CSV' 'p_commodity__node.csv' : [commodity, node, commodityParam], p_commodity_node;
+table data IN 'CSV' 'p_group__process.csv' : [group, process, groupParam], p_group__process;
+table data IN 'CSV' 'pd_group.csv' : [group, groupParam, period], pd_group;
+table data IN 'CSV' 'pdt_group.csv' : [group, groupParam, period, time], pdt_group;
+table data IN 'CSV' 'p_group.csv' : [group, groupParam], p_group;
 table data IN 'CSV' 'p_node.csv' : [node, nodeParam], p_node;
 table data IN 'CSV' 'pt_node.csv' : [node, nodeParam, time], pt_node;
-table data IN 'CSV' 'pt_commodity.csv' : [commodity, node, commodityParam, time], pt_commodity;
+table data IN 'CSV' 'p_process_node_constraint_coefficient.csv' : [process, node, constraint], p_process_node_constraint_coefficient;
+table data IN 'CSV' 'p_process__reserve__upDown__node.csv' : [process, reserve, upDown, node, reserveParam], p_process_reserve_upDown_node;
+table data IN 'CSV' 'p_process_sink.csv' : [process, sink, sourceSinkParam], p_process_sink;
+table data IN 'CSV' 'p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
+table data IN 'CSV' 'p_process_constraint_constant.csv' : [process, constraint], p_process_constraint_constant;
 table data IN 'CSV' 'p_process.csv' : [process, processParam], p_process;
 table data IN 'CSV' 'pt_process.csv' : [process, processParam, time], pt_process;
-table data IN 'CSV' 'p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
-table data IN 'CSV' 'p_process_sink.csv' : [process, sink, sourceSinkParam], p_process_sink;
-table data IN 'CSV' 'p_reserve__upDown__nodeGroup.csv' : [reserve, upDown, nodeGroup, reserveParam], p_reserve_upDown_nodeGroup;
-table data IN 'CSV' 'pt_reserve__upDown__nodeGroup.csv' : [reserve, upDown, nodeGroup, reserveParam, time], pt_reserve_upDown_nodeGroup;
-table data IN 'CSV' 'p_process__reserve__upDown__node.csv' : [process, reserve, upDown, node, reserveParam], p_process_reserve_upDown_node;
-table data IN 'CSV' 'p_process_invested.csv' : [process], p_process_invested;
+table data IN 'CSV' 'p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
+table data IN 'CSV' 'pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
 
-table data IN 'CSV' 'constraint.csv' : constraint <- [constraint];
-table data IN 'CSV' 'p_process_constraint_constant.csv' : process_constraint_sense <- [process, constraint, sense];
-table data IN 'CSV' 'p_process_constraint_constant.csv' : [process, constraint], p_process_constraint_constant;
-table data IN 'CSV' 'p_process_node_constraint_coefficient.csv' : process_node_constraint <- [process, node, constraint];
-table data IN 'CSV' 'p_process_node_constraint_coefficient.csv' : [process, node, constraint], p_process_node_constraint_coefficient;
-
-#table data IN 'CSV' '.csv' :  <- [];
-
-table data IN 'CSV' 'debug.csv' : debug <- [debug];
+# Parameters from the solve loop
 table data IN 'CSV' 'steps_in_use.csv' : dt <- [period, step];
 table data IN 'CSV' 'steps_in_use.csv' : [period, step], step_duration;
+table data IN 'CSV' 'steps_in_timeline.csv' : period_time <- [period,step];
 table data IN 'CSV' 'step_previous.csv' : dttt <- [period, time, previous, previous_within_block];
 table data IN 'CSV' 'realized_periods_of_current_solve.csv' : period_realized <- [period];
 table data IN 'CSV' 'invest_periods_of_current_solve.csv' : period_invest <- [period];
-#table data IN 'CSV' 'solve_start.csv' : startTime <- [start];
-#table data IN 'CSV' 'solve_startNext.csv' : startNext <- [startNext];
 table data IN 'CSV' 'p_model.csv' : [modelParam], p_model;
+
+# After rolling forward the investment model
+table data IN 'CSV' 'p_process_invested.csv' : [process], p_process_invested;
+
 
 #########################
 # Variable declarations
@@ -362,9 +389,9 @@ var v_invest {(e, d) in ed_invest} >= 0;
 var v_divest {(e, d) in ed_divest} >= 0;
 var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
-var vq_reserve {(r, ud, ng) in reserve_upDown_nodeGroup, (d, t) in dt} >= 0;
+var vq_reserve {(r, ud, ng) in reserve_upDown_group, (d, t) in dt} >= 0;
 
-display sense_greater_than, process_constraint_sense, process_node_constraint, p_process_node_constraint_coefficient;
+display period;
 
 #########################
 ## Data checks 
@@ -380,7 +407,7 @@ check {(p, m) in process_method, t in time : m in method_2way_off} pt_process[p,
 minimize total_cost:
   + sum {(d, t) in dt}
     (
-      + sum {(c, n) in commodity_node} pt_commodity[c, n, 'price', t]
+      + sum {(c, n) in commodity_node} pd_commodity_node[c, n, 'price', d]
           * ( 
 	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } 
 			         v_flow[p, n, sink, d, t] / pt_process[p, 'efficiency', t]
@@ -396,7 +423,7 @@ minimize total_cost:
           + v_ramp[p, source, sink, d, t] * p_process[p, 'ramp_cost']
       + sum {n in nodeBalance} vq_state_up[n, d, t] * p_node[n, 'pq_up']
       + sum {n in nodeBalance} vq_state_down[n, d, t] * p_node[n, 'pq_down']
-      + sum {(r, ud, ng) in reserve_upDown_nodeGroup} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_nodeGroup[r, ud, ng, 'penalty_reserve']
+      + sum {(r, ud, ng) in reserve_upDown_group} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']
 	) * step_duration[d, t]
   + sum {(e, d) in ed_invest} v_invest[e, d]
     * p_entity_unitsize[e]
@@ -419,24 +446,24 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   - vq_state_down[n, d, t]
 ;
 
-s.t. reserveBalance_eq {(r, ud, ng) in reserve_upDown_nodeGroup, (d, t) in dt} :
-  + sum {(p, r, ud, n) in process_reserve_upDown_node_increase_reserve_ratio : (ng, n) in nodeGroup_node 
-          && (r, ud, ng) in reserve_upDown_nodeGroup}
+s.t. reserveBalance_eq {(r, ud, ng) in reserve_upDown_group, (d, t) in dt} :
+  + sum {(p, r, ud, n) in process_reserve_upDown_node_increase_reserve_ratio : (ng, n) in group_node 
+          && (r, ud, ng) in reserve_upDown_group}
 	   (v_reserve[p, r, ud, n, d, t] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'])
-  + pt_reserve_upDown_nodeGroup[r, ud, ng, 'reservation', t]
+  + pt_reserve_upDown_group[r, ud, ng, 'reservation', t]
   =
   + vq_reserve[r, ud, ng, d, t]
   + sum {(p, r, ud, n) in process_reserve_upDown_node 
 	      : sum{(p, m) in process_method : m in method_1var_per_way} 1
-		  && (ng, n) in nodeGroup_node 
-		  && (r, ud, ng) in reserve_upDown_nodeGroup} 
+		  && (ng, n) in group_node 
+		  && (r, ud, ng) in reserve_upDown_group} 
 	    ( v_reserve[p, r, ud, n, d, t] 
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
 	    )
   + sum {(p, r, ud, n) in process_reserve_upDown_node  
 		  : sum{(p, m) in process_method : m not in method_1var_per_way} 1
-		  && (ng, n) in nodeGroup_node 
-		  && (r, ud, ng) in reserve_upDown_nodeGroup} 
+		  && (ng, n) in group_node 
+		  && (r, ud, ng) in reserve_upDown_group} 
 	    ( v_reserve[p, r, ud, n, d, t] 
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
 		  / pt_process[p, 'efficiency', t]
@@ -669,7 +696,7 @@ param process_sink_flow{(p, sink) in process_sink, d in period_realized} :=
 ;
 
 param r_cost_commodity{(c, n) in commodity_node, (d, t) in dt} := 
-  + step_duration[d, t] * pt_commodity[c, n, 'price', t] 
+  + step_duration[d, t] * pd_commodity_node[c, n, 'price', d] 
       * ( 
 	      + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } 
 		         v_flow[p, n, sink, d, t].val / pt_process[p, 'efficiency', t]
@@ -693,10 +720,10 @@ param r_costPenalty_nodeState{n in nodeBalance, (d, t) in dt} :=
 		)
 ;
 
-param r_costPenalty_reserve_upDown{(r, ud, ng) in reserve_upDown_nodeGroup, (d, t) in dt} :=
+param r_costPenalty_reserve_upDown{(r, ud, ng) in reserve_upDown_group, (d, t) in dt} :=
   + step_duration[d, t]
       * (
-          + vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_nodeGroup[r, ud, ng, 'penalty_reserve']
+          + vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']
 	    )
 ;
 		
@@ -713,7 +740,7 @@ param r_cost_dt{(d, t) in dt} :=
 
 param r_costPenalty_dt{(d, t) in dt} :=
   + sum{n in nodeBalance} r_costPenalty_nodeState[n, d, t]
-  + sum{(r, ud, ng) in reserve_upDown_nodeGroup} r_costPenalty_reserve_upDown[r, ud, ng, d, t]
+  + sum{(r, ud, ng) in reserve_upDown_group} r_costPenalty_reserve_upDown[r, ud, ng, d, t]
 ;
 
 param r_cost_and_penalty_dt{(d,t) in dt} :=
@@ -877,7 +904,7 @@ for {n in nodeBalance, (d, t) in dt}
   }
 
 printf '\nReserve upward slack variable\n' >> resultFile;
-for {(r, ud, ng) in reserve_upDown_nodeGroup, (d, t) in dt}
+for {(r, ud, ng) in reserve_upDown_group, (d, t) in dt}
   {
     printf '%s, %s, %s, %s, %s, %.8g\n', r, ud, ng, d, t, vq_reserve[r, ud, ng, d, t].val >> resultFile;
   }
@@ -970,7 +997,7 @@ for {(p, r, ud, n, d, t) in prundt} {
           then 'Reserve test fails at %s, %s, %s, %s, %s, %s. Model value: %.8g, test value: %.8g\n' else ''),
 		      p, r, ud, n, d, t, v_reserve[p, r, ud, n, d, t].val, d_reserve_upDown_node[p, r, ud, n, d, t] >> unitTestFile;
 }
-for {(r, ud, ng) in reserve_upDown_nodeGroup, (d, t) in dt} {
+for {(r, ud, ng) in reserve_upDown_group, (d, t) in dt} {
   printf (if vq_reserve[r, ud, ng, d, t].val <> dq_reserve[r, ud, ng, d, t]
           then 'Reserve slack variable test fails at %s, %s, %s, %s, %s. Model value: %.8g, test value: %.8g\n' else ''),
 		      r, ud, ng, d, t, vq_reserve[r, ud, ng, d, t].val, dq_reserve[r, ud, ng, d, t] >> unitTestFile;
