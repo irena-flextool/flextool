@@ -105,7 +105,7 @@ set methods :=
 (operating_area, binary, method_1way_area_MIP)
 ;
 
-set commodityParam := price;
+set commodityParam := price, co2_content, max_invest, min_invest;
 set processParam := existing efficiency fixed_cost interest_rate invest_cost
                     invest_forced invest_max_time invest_max_total lifetime
                     retire_forced retire_max variable_cost startup_cost
@@ -118,7 +118,7 @@ set reserveParam := reservation reliability penalty_reserve,
                     increase_reserve_ratio large_failure_ratio max;
 set invest_method := one_cost, timeseries_cost, not_allowed;
 set modelParam := solveFirst;
-set groupParam := CO2_price, invest_max, invest_min;
+set groupParam := co2_price, invest_max, invest_min;
 
 set invest_method_not_allowed := not_allowed;
 

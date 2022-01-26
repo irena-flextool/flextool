@@ -177,6 +177,7 @@ param startNext_index := sum{t in time, t_startNext in startNext : t <= t_startN
 set modelParam;
 param p_model {modelParam};
 
+param p_commodity {c in commodity, commodityParam};
 param pd_commodity_node {(c, n) in commodity_node, commodityParam, p in period};
 param pdt_commodity_node {(c, n) in commodity_node, commodityParam, p in period, t in time};
 param p_commodity_node {(c, n) in commodity_node, commodityParam};
@@ -235,9 +236,11 @@ param step_duration{(d, t) in dt};
 param step_period{(d, t) in dt} := 0;
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m = 'one_cost'}
-            (p_node[e, 'invest_cost'] * 1000 * ( p_node[e, 'interest_rate'] / (1 - (1 / (1 + p_node[e, 'interest_rate'])^p_node[e, 'lifetime'] ) ) ))
+            + (p_node[e, 'invest_cost'] * 1000 * ( p_node[e, 'interest_rate'] / (1 - (1 / (1 + p_node[e, 'interest_rate'])^p_node[e, 'lifetime'] ) ) ))
+			+ p_node[e, 'fixed_cost']
         + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m = 'one_cost'}
-            (p_process[e, 'invest_cost'] * 1000 * ( p_process[e, 'interest_rate'] / (1 - (1 / (1 + p_process[e, 'interest_rate'])^p_process[e, 'lifetime'] ) ) ))
+            + (p_process[e, 'invest_cost'] * 1000 * ( p_process[e, 'interest_rate'] / (1 - (1 / (1 + p_process[e, 'interest_rate'])^p_process[e, 'lifetime'] ) ) ))
+			+ p_process[e, 'fixed_cost']
 ; 			
 param p_process_source_sink_variable_cost{(p, source, sink) in process_source_sink_variable_cost} :=
         + (if (p, source) in unit__sourceNode_variable_cost then p_process_source[p, source, 'variable_cost'])
@@ -287,6 +290,13 @@ set process_source_sink_dt_ramp :=
 set process_reserve_upDown_node_increase_reserve_ratio :=
         {(p, r, ud, n) in process_reserve_upDown_node :
 		    p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'] > 0
+		};
+
+set group_commodity_node_CO2 :=
+        {g in group, (c, n) in commodity_node : 
+		    (g, n) in group_node 
+			&& p_commodity[c, 'co2_content'] 
+			&& p_group[g, 'co2_price']
 		};
 
 param p_process_invested {p in process : p in entityInvest};
@@ -345,6 +355,7 @@ table data IN 'CSV' 'unit__sourceNode_variable_cost.csv' : unit__sourceNode_vari
 table data IN 'CSV' 'unit__sinkNode_variable_cost.csv' : unit__sinkNode_variable_cost <- [process,sink];
 
 # Parameters for model data
+table data IN 'CSV' 'p_commodity.csv' : [commodity, commodityParam], p_commodity;
 table data IN 'CSV' 'pd_commodity__node.csv' : [commodity, node, commodityParam, period], pd_commodity_node;
 table data IN 'CSV' 'pdt_commodity__node.csv' : [commodity, node, commodityParam, period, time], pdt_commodity_node;
 table data IN 'CSV' 'p_commodity__node.csv' : [commodity, node, commodityParam], p_commodity_node;
@@ -391,7 +402,7 @@ var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve_upDown_group, (d, t) in dt} >= 0;
 
-display period;
+display group_commodity_node_CO2;
 
 #########################
 ## Data checks 
@@ -415,6 +426,13 @@ minimize total_cost:
 			         v_flow[p, n, sink, d, t]
 	          + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, d, t]
 		    )
+	  + sum {(g, c, n) in group_commodity_node_CO2} p_commodity[c, 'co2_content'] * p_group[g, 'co2_price'] 
+	      * (
+	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } 
+			         v_flow[p, n, sink, d, t] / pt_process[p, 'efficiency', t]
+	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } 
+			         v_flow[p, n, sink, d, t]
+			)
 	  + sum {p in process_online} v_startup_linear[p, d, t] * p_process[p, 'startup_cost']
 	  + sum {(p, source, sink) in process_source_sink_variable_cost} 
 	      + v_flow[p, source, sink, d, t] 
@@ -615,7 +633,7 @@ s.t. online__startup_Linear {p in process_online, (d, t, t_previous, t_previous_
 #  + v_online_linear[p, d, t]
 #  <=
 #  + p_process_all_existing[p] / p_entity_unitsize[p]
-#  + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest]
+#  + sum {(p, d_invest) in pd_invest : d_invest <= d} [p, d_invest]
 #   - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest]
 #  - sum{(d, t_) in dt : t_ > t && t_ <= t + p_process[u,'min_downtime'] / time_period_duration} (
 #      + v_startup[g, n, u, t_]
@@ -651,8 +669,8 @@ s.t. ramp_up {(p, source, sink) in process_source_sink_ramp_limit_up, (d, t, t_p
         + if (p, source) in process_source then p_process_source_coefficient[p, source]
       )
     * ( + p_process_all_existing[p]
-	    + ( if (p, d) in ed_invest then v_invest[p, d] )
-#		- ( if (p, d) in ed_divest then v_divest[p, d] )
+	    + ( if (p, d) in ed_invest then v_invest[p, d] * p_entity_unitsize[p] )
+#		- ( if (p, d) in ed_divest then v_divest[p, d] * p_entity_unitsize[p] )
 	  )
 ;
 
@@ -669,8 +687,8 @@ s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t,
         + if (p, source) in process_source then p_process_source_coefficient[p, source]
       )
     * ( + p_process_all_existing[p]
-	    + ( if (p, d) in ed_invest then v_invest[p, d] )
-#		- ( if (p, d) in ed_divest then v_divest[p, d] )
+	    + ( if (p, d) in ed_invest then v_invest[p, d] * p_entity_unitsize[p] )
+#		- ( if (p, d) in ed_divest then v_divest[p, d] * p_entity_unitsize[p] )
 	  )
 ;
 
