@@ -44,6 +44,11 @@
                     "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Importer/import_flextool2_to_flextool3.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Importer/flextool3_excel_input.json"
                 }
             ],
             "Exporter": [
@@ -259,11 +264,21 @@
             },
             {
                 "from": [
-                    "FlexTool3_test_data",
-                    "bottom"
+                    "Importer 1",
+                    "right"
                 ],
                 "to": [
-                    "Structure_to_Excel",
+                    "FlexTool3_test_data",
+                    "left"
+                ]
+            },
+            {
+                "from": [
+                    "FlexTool3_Excel",
+                    "right"
+                ],
+                "to": [
+                    "Importer 1",
                     "left"
                 ]
             }
@@ -374,6 +389,10 @@
             "on_conflict": "merge",
             "file_selection": [
                 [
+                    "results/color_codes_heat.dat",
+                    false
+                ],
+                [
                     "results/color_codes_csp.dat",
                     false
                 ],
@@ -387,10 +406,6 @@
                 ],
                 [
                     "results/investments_D.dat",
-                    false
-                ],
-                [
-                    "results/color_codes_heat.dat",
                     false
                 ],
                 [
@@ -417,7 +432,7 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": 63.41467556961129,
+            "x": 65.90009009738199,
             "y": 83.8364866464043,
             "output_time_stamps": false,
             "cancel_on_error": true,
@@ -507,7 +522,7 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -253.24432680658353,
+            "x": -237.08913237607388,
             "y": 62.36330680831817,
             "url": {
                 "dialect": "sqlite",
@@ -520,20 +535,50 @@
                 }
             }
         },
-        "Structure_to_Excel": {
-            "type": "Exporter",
+        "Importer 1": {
+            "type": "Importer",
             "description": "",
-            "x": -120.04058378166803,
-            "y": 261.0240400727134,
-            "output_time_stamps": false,
-            "cancel_on_error": true,
-            "output_labels": [
+            "x": -369.0840573739521,
+            "y": 118.0571900691092,
+            "specification": "FlexTool3_Excel_input",
+            "cancel_on_error": false,
+            "purge_before_writing": false,
+            "on_conflict": "merge",
+            "file_selection": [
+                [
+                    "<project>/FlexTool3_import_template.xlsx",
+                    true
+                ]
+            ]
+        },
+        "FlexTool3_Excel": {
+            "type": "Data Connection",
+            "description": "",
+            "x": -487.1412474430611,
+            "y": 116.81448280522383,
+            "references": [
                 {
-                    "in_label": "db_url@FlexTool3_test_data",
-                    "out_label": ""
+                    "type": "path",
+                    "relative": true,
+                    "path": "FlexTool3_import_template.xlsx"
                 }
-            ],
-            "specification": "Straight_to_Excel"
+            ]
+        },
+        "FlexTool3_test_data 1": {
+            "type": "Data Store",
+            "description": "",
+            "x": -303.2205723880279,
+            "y": 331.80283945739103,
+            "url": {
+                "dialect": "sqlite",
+                "host": "",
+                "port": "",
+                "database": {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/items/flextool3_test_data_1/FlexTool3_data.sqlite"
+                }
+            }
         }
     }
 }

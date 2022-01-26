@@ -2729,24 +2729,6 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
-        "commodity": {
-            "type": "objects",
-            "mapping": [
-                {
-                    "map_type": "ObjectClass",
-                    "position": 0,
-                    "value": "commodity"
-                },
-                {
-                    "map_type": "Object",
-                    "position": 1
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "group_fn": "one_or_none",
-            "use_fixed_table_name": true
-        },
         "p_process_s": {
             "type": "object_parameter_values",
             "mapping": [
@@ -3098,6 +3080,30 @@
             "enabled": true,
             "always_export_header": true,
             "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "commodity": {
+            "type": "objects",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "commodity"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^commodity$"
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "commodity"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "one_or_none",
             "use_fixed_table_name": true
         }
     }
