@@ -293,14 +293,45 @@
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
-                                "position": "hidden"
+                                "position": "hidden",
+                                "value": "solve"
                             },
                             {
                                 "map_type": "Object",
-                                "position": "hidden"
+                                "position": 1
                             },
                             {
                                 "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
                                 "position": "hidden"
                             }
                         ]
@@ -953,7 +984,8 @@
             "timeblocks",
             "timeline_s",
             "timeblocks_timeline",
-            "solve_p"
+            "solve_p",
+            "solve_period_timeblock"
         ],
         "table_options": {
             "solve_sequence": {
@@ -1041,9 +1073,16 @@
                 "0": "string",
                 "1": "string",
                 "2": "float",
-                "3": "float",
-                "4": "float",
+                "3": "string",
+                "4": "string",
                 "5": "float"
+            },
+            "solve_period_timeblock": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "float"
             }
         },
         "table_row_types": {
@@ -1061,6 +1100,9 @@
                 "1": "string"
             },
             "solve_p": {
+                "1": "string"
+            },
+            "solve_period_timeblock": {
                 "1": "string"
             }
         },
