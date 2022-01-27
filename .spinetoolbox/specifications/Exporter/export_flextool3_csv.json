@@ -1,6 +1,6 @@
 {
     "item_type": "Exporter",
-    "output_format": "Excel",
+    "output_format": "csv",
     "name": "export_FlexTool3_csv",
     "description": "",
     "mappings": {
