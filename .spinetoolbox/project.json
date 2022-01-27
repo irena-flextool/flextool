@@ -204,16 +204,6 @@
             },
             {
                 "from": [
-                    "ExportFlexTool3ToCSV",
-                    "right"
-                ],
-                "to": [
-                    "FlexTool3",
-                    "left"
-                ]
-            },
-            {
-                "from": [
                     "FlexTool3",
                     "right"
                 ],
@@ -279,6 +269,16 @@
                 ],
                 "to": [
                     "Importer 1",
+                    "left"
+                ]
+            },
+            {
+                "from": [
+                    "ExportFlexTool3ToCSV",
+                    "right"
+                ],
+                "to": [
+                    "FlexTool3",
                     "left"
                 ]
             }
@@ -389,15 +389,11 @@
             "on_conflict": "merge",
             "file_selection": [
                 [
+                    "results/color_codes_elec.dat",
+                    false
+                ],
+                [
                     "results/investments_D.dat",
-                    false
-                ],
-                [
-                    "results/color_codes_csp.dat",
-                    false
-                ],
-                [
-                    "results/color_codes_no_grid.dat",
                     false
                 ],
                 [
@@ -405,7 +401,11 @@
                     false
                 ],
                 [
-                    "results/color_codes_elec.dat",
+                    "results/color_codes_no_grid.dat",
+                    false
+                ],
+                [
+                    "results/color_codes_csp.dat",
                     false
                 ],
                 [
@@ -432,7 +432,7 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": 85.50100248483366,
+            "x": 85.50100248483368,
             "y": 48.447086954065526,
             "output_time_stamps": false,
             "cancel_on_error": true,
@@ -486,10 +486,10 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 247.12985965982293,
-            "y": 34.19272666060499,
+            "x": 249.71382075565526,
+            "y": 34.19272666060498,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": []
         },
         "FlexTool2_to_3": {

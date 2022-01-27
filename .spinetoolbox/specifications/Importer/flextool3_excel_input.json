@@ -2373,11 +2373,7 @@
                 "20": "string",
                 "21": "float",
                 "22": "float",
-                "23": "float",
-                "24": "float",
-                "25": "string",
-                "26": "float",
-                "27": "float"
+                "23": "float"
             },
             "unit_p": {
                 "0": "string",
@@ -2418,7 +2414,7 @@
                 "3": "float",
                 "4": "float",
                 "5": "float",
-                "6": "float",
+                "6": "string",
                 "7": "float",
                 "8": "float",
                 "9": "float",
@@ -2432,7 +2428,7 @@
                 "3": "float",
                 "4": "float",
                 "5": "float",
-                "6": "float",
+                "6": "string",
                 "7": "float",
                 "8": "float",
                 "9": "float",
