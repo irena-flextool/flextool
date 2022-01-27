@@ -344,14 +344,31 @@
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
-                                "position": "hidden"
+                                "position": "hidden",
+                                "value": "node"
                             },
                             {
                                 "map_type": "Object",
-                                "position": "hidden"
+                                "position": 1
                             },
                             {
                                 "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValue",
                                 "position": "hidden"
                             }
                         ]
@@ -364,14 +381,45 @@
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
-                                "position": "hidden"
+                                "position": "hidden",
+                                "value": "node"
                             },
                             {
                                 "map_type": "Object",
-                                "position": "hidden"
+                                "position": 1
                             },
                             {
                                 "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
                                 "position": "hidden"
                             }
                         ]
@@ -384,14 +432,45 @@
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
-                                "position": "hidden"
+                                "position": "hidden",
+                                "value": "node"
                             },
                             {
                                 "map_type": "Object",
-                                "position": "hidden"
+                                "position": 1
                             },
                             {
                                 "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
                                 "position": "hidden"
                             }
                         ]
@@ -982,10 +1061,14 @@
         "selected_tables": [
             "solve_sequence",
             "timeblocks",
+            "timeline",
             "timeline_s",
             "timeblocks_timeline",
             "solve_p",
-            "solve_period_timeblock"
+            "solve_period_timeblock",
+            "node_c",
+            "node_p",
+            "node_t"
         ],
         "table_options": {
             "solve_sequence": {
@@ -1083,6 +1166,56 @@
                 "2": "string",
                 "3": "string",
                 "4": "float"
+            },
+            "node_c": {
+                "0": "string",
+                "1": "string",
+                "2": "float",
+                "3": "float",
+                "4": "float",
+                "5": "boolean",
+                "6": "string",
+                "7": "string",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "string",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float",
+                "19": "float"
+            },
+            "node_p": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float"
+            },
+            "node_t": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float",
+                "4": "float",
+                "5": "float"
+            },
+            "commodity_c": {
+                "0": "string",
+                "1": "string",
+                "2": "string"
             }
         },
         "table_row_types": {
@@ -1103,6 +1236,15 @@
                 "1": "string"
             },
             "solve_period_timeblock": {
+                "1": "string"
+            },
+            "node_c": {
+                "1": "string"
+            },
+            "node_p": {
+                "1": "string"
+            },
+            "node_t": {
                 "1": "string"
             }
         },

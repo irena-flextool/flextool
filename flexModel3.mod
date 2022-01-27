@@ -216,14 +216,6 @@ param p_process_sink_coefficient {(p, sink) in process_sink} :=
     + if (p_process_sink[p, sink, 'coefficient']) 
 	  then p_process_sink[p, sink, 'coefficient'] 
 	  else 1;
-param p_process_source_flow_unitsize {(p, source) in process_source} := 
-    + if (p_process_source[p, source, 'flow_unitsize']) 
-	  then p_process_source[p, source, 'flow_unitsize'] 
-	  else 1;
-param p_process_sink_flow_unitsize {(p, sink) in process_sink} := 
-    + if (p_process_sink[p, sink, 'flow_unitsize']) 
-	  then p_process_sink[p, sink, 'flow_unitsize'] 
-	  else 1;
 param p_inflow {n in nodeInflow, t in time};
 param p_reserve_upDown_group {reserve, upDown, group, reserveParam};
 param pt_reserve_upDown_group {reserve, upDown, group, reserveParam, time};
@@ -396,6 +388,7 @@ var v_reserve {(p, r, ud, n, d, t) in prundt} >= 0;
 var v_state {n in nodeState, (d, t) in dt} >= 0;
 var v_online_linear {p in process_online,(d, t) in dt} >=0;
 var v_startup_linear {p in process_online, (d, t) in dt} >=0;
+var v_shutdown_linear {p in process_online, (d, t) in dt} >=0;
 var v_invest {(e, d) in ed_invest} >= 0;
 var v_divest {(e, d) in ed_divest} >= 0;
 var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
@@ -554,14 +547,14 @@ s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt
   + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node} v_reserve[p, r, 'up', sink, d, t]
   <=
   + ( if p not in process_online then
-      + p_process_sink_flow_unitsize[p, sink]
+      + p_process_sink_coefficient[p, sink]
         * ( + p_process_all_existing[p]
             + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
 #            - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
 	      )	
 	)
   + ( if p in process_online then
-      + p_process_sink_flow_unitsize[p, sink]
+      + p_process_sink_coefficient[p, sink]
         * v_online_linear[p, d, t]
     )  
 ;
@@ -582,7 +575,7 @@ s.t. minToSink_1var {(p, source, sink) in process_source_sink, (d, t) in dt
 } :
   + v_flow[p, source, sink, d, t]
   >=
-  - p_process_sink_flow_unitsize[p, sink] 
+  - p_process_sink_coefficient[p, sink] 
     * ( + p_process_all_existing[p]
         + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
 #        - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
@@ -598,7 +591,7 @@ s.t. maxToSource {(p, source, sink) in process_source_sink, (d, t) in dt
   + v_flow[p, sink, source, d, t]
   + sum {r in reserve : (p, r, 'up', source) in process_reserve_upDown_node} v_reserve[p, r, 'up', source, d, t]
   <=
-  + p_process_source_flow_unitsize[p, source] 
+  + p_process_source_coefficient[p, source] 
     * ( + p_process_all_existing[p]
         + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
 #        - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
@@ -622,21 +615,28 @@ s.t. maxOnline {p in process_online, (d, t) in dt} :
 #   - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest]
 ;
 
-s.t. online__startup_Linear {p in process_online, (d, t, t_previous, t_previous_within_block) in dttt} :
+s.t. online__startup_linear {p in process_online, (d, t, t_previous, t_previous_within_block) in dttt} :
   + v_startup_linear[p, d, t]
   >=
   + v_online_linear[p, d, t] 
   - v_online_linear[p, d, t_previous]
 ;
 
+s.t. online__shutdown_linear {p in process_online, (d, t, t_previous, t_previous_within_block) in dttt} :
+  + v_shutdown_linear[p, d, t]
+  >=
+  - v_online_linear[p, d, t] 
+  + v_online_linear[p, d, t_previous]
+;
+
 #s.t. minimum_downtime {p in process_online, t : p_process[u,'min_downtime'] >= step_duration[t]} :
 #  + v_online_linear[p, d, t]
 #  <=
 #  + p_process_all_existing[p] / p_entity_unitsize[p]
-#  + sum {(p, d_invest) in pd_invest : d_invest <= d} [p, d_invest]
+#  + sum {(p, d_invest) in pd_invest : d_invest <= d} [p, d_invest]
 #   - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest]
 #  - sum{(d, t_) in dt : t_ > t && t_ <= t + p_process[u,'min_downtime'] / time_period_duration} (
-#      + v_startup[g, n, u, t_]
+#      + v_startup_linear[g, n, u, t_]
 #	)
 #;
 
@@ -645,7 +645,7 @@ s.t. online__startup_Linear {p in process_online, (d, t, t_previous, t_previous_
 #  + v_online[g, n, u, t]
 #  >=
 #  + sum{t_ in time_in_use : t_ > t - 1 - p_unittype[u,'min_uptime_h'] * 60 / time_period_duration && t_ < t} (
-#      + v_startup[g, n, u, t_]
+#      + v_startup_linear[g, n, u, t_]
 #	)
 #;
 
@@ -672,6 +672,7 @@ s.t. ramp_up {(p, source, sink) in process_source_sink_ramp_limit_up, (d, t, t_p
 	    + ( if (p, d) in ed_invest then v_invest[p, d] * p_entity_unitsize[p] )
 #		- ( if (p, d) in ed_divest then v_divest[p, d] * p_entity_unitsize[p] )
 	  )
+  + ( if p in process_online then v_startup_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
 ;
 
 s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t, t_previous, t_previous_within_block) in dttt
@@ -690,6 +691,7 @@ s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t,
 	    + ( if (p, d) in ed_invest then v_invest[p, d] * p_entity_unitsize[p] )
 #		- ( if (p, d) in ed_divest then v_divest[p, d] * p_entity_unitsize[p] )
 	  )
+  - ( if p in process_online then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
 ;
 
 s.t. maxInvest {(e, d)  in ed_invest} :

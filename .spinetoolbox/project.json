@@ -389,11 +389,15 @@
             "on_conflict": "merge",
             "file_selection": [
                 [
+                    "results/color_codes_heat.dat",
+                    false
+                ],
+                [
                     "results/color_codes_csp.dat",
                     false
                 ],
                 [
-                    "results/color_codes_elec.dat",
+                    "results/color_codes_no_grid.dat",
                     false
                 ],
                 [
@@ -401,11 +405,7 @@
                     false
                 ],
                 [
-                    "results/color_codes_heat.dat",
-                    false
-                ],
-                [
-                    "results/color_codes_no_grid.dat",
+                    "results/color_codes_elec.dat",
                     false
                 ],
                 [
@@ -538,8 +538,8 @@
         "Importer 1": {
             "type": "Importer",
             "description": "",
-            "x": -348.18790843921965,
-            "y": 82.66779037677043,
+            "x": -345.5974353446579,
+            "y": 81.37255382948956,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -554,8 +554,8 @@
         "FlexTool3_Excel": {
             "type": "Data Connection",
             "description": "",
-            "x": -466.2450985083287,
-            "y": 81.42508311288506,
+            "x": -464.94986196104776,
+            "y": 81.42508311288505,
             "references": [
                 {
                     "type": "path",
