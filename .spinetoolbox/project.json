@@ -554,8 +554,8 @@
         "FlexTool3_Excel": {
             "type": "Data Connection",
             "description": "",
-            "x": -464.94986196104776,
-            "y": 81.42508311288505,
+            "x": -463.6546254137669,
+            "y": 81.42508311288503,
             "references": [
                 {
                     "type": "path",
