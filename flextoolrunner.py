@@ -337,6 +337,21 @@ class FlexToolRunner:
                 nextfile.write(steps[1])
                 nextfile.write("\n")
 
+    def write_periods_in_all_solves(self, timeblocks_used_by_solves, filename):
+        with open(filename, 'w') as outfile:
+            periodList = []
+            uniquePeriods = []
+            outfile.write('period\n')
+            for item in timeblocks_used_by_solves:
+                solv = timeblocks_used_by_solves[item];
+                for peri in solv:
+                    periodList.append(peri[0])
+            for x in periodList:
+                if x not in uniquePeriods:
+                    uniquePeriods.append(x)
+            for x in uniquePeriods:
+                outfile.write(x + '\n')
+
     def write_periods(self, solve, periods, filename):
         """
         write to file a list of periods based on the current solve and
@@ -396,6 +411,7 @@ def main():
     #first_steps = runner.get_first_steps(active_time_lists)
 
     first = True
+    runner.write_periods_in_all_solves(runner.timeblocks_used_by_solves, 'period.csv')
     for solve in runner.solves:
         runner.write_full_timelines(runner.timeblocks_used_by_solves[solve], runner.timeblocks__timeline, runner.timelines, 'steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'steps_in_use.csv')
