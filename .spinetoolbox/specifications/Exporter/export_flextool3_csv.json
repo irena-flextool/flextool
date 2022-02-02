@@ -2470,7 +2470,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^fixed_cost$|^inflow$|^interest_rate$|^invest_cost$|^invest_forced$|^invest_max_time$|^lifetime$|^retire_forced$|^retire_max_period$",
+                    "filter_re": "^fixed_cost$|^interest_rate$|^invest_cost$|^invest_forced$|^invest_max_time$|^lifetime$|^retire_forced$|^retire_max_period$",
                     "header": "nodeParam"
                 },
                 {
@@ -2980,6 +2980,150 @@
                     "map_type": "ParameterValue",
                     "position": "hidden",
                     "filter_re": "[/S]*"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "process__profile__profile_method": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "process__profile__profile_method"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^unit__profile$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^profile_method$",
+                    "header": "param"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "profile"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 2,
+                    "header": "profile_method"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "profile": {
+            "type": "objects",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "profile"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^profile$"
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "profile"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_profile_t": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pt_profile"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^profile$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "profile"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 1,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 2,
+                    "header": "pt_profile"
                 }
             ],
             "enabled": true,

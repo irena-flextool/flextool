@@ -841,76 +841,6 @@
                     }
                 }
             ],
-            "unit_sinkNode_constraint_c": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "RelationshipClass",
-                                "position": "hidden",
-                                "value": "unit__sinkNode"
-                            },
-                            {
-                                "map_type": "RelationshipClassObjectClass",
-                                "position": "hidden",
-                                "value": "unit"
-                            },
-                            {
-                                "map_type": "RelationshipClassObjectClass",
-                                "position": "hidden",
-                                "value": "node"
-                            },
-                            {
-                                "map_type": "Relationship",
-                                "position": "hidden",
-                                "value": "relationship"
-                            },
-                            {
-                                "map_type": "RelationshipObject",
-                                "position": 1
-                            },
-                            {
-                                "map_type": "RelationshipObject",
-                                "position": 2
-                            },
-                            {
-                                "map_type": "RelationshipMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterDefinition",
-                                "position": -2
-                            },
-                            {
-                                "map_type": "Alternative",
-                                "position": 0
-                            },
-                            {
-                                "map_type": "ParameterValueMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValueType",
-                                "position": "hidden",
-                                "value": "map"
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "constraint"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 3
-                            },
-                            {
-                                "map_type": "ExpandedValue",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
             "group_c": [
                 {
                     "Mapping 1": {
@@ -1307,12 +1237,87 @@
             ],
             "reserve_group_t": [
                 {
-                    "Mapping 1": {
+                    "unit_sources": {
                         "mapping": [
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "reserve__upDown__group"
+                                "value": "unit__sourceNode",
+                                "skip_columns": [
+                                    1
+                                ]
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Relationship",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -3
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -4
+                            },
+                            {
+                                "map_type": "RelationshipMetadata",
+                                "position": -5,
+                                "filter_re": "^source$"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": -1
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "unit_sinks": {
+                        "mapping": [
+                            {
+                                "map_type": "RelationshipClass",
+                                "position": "hidden",
+                                "value": "reserve__upDown__group",
+                                "skip_columns": [
+                                    1
+                                ]
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
@@ -1336,15 +1341,15 @@
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": 1
+                                "position": -2
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": 2
+                                "position": -3
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": 3
+                                "position": -4
                             },
                             {
                                 "map_type": "RelationshipMetadata",
@@ -1352,11 +1357,11 @@
                             },
                             {
                                 "map_type": "ParameterDefinition",
-                                "position": -2
+                                "position": -5
                             },
                             {
                                 "map_type": "Alternative",
-                                "position": 0
+                                "position": -1
                             },
                             {
                                 "map_type": "ParameterValueMetadata",
@@ -1374,7 +1379,7 @@
                             },
                             {
                                 "map_type": "ParameterValueIndex",
-                                "position": 4
+                                "position": 0
                             },
                             {
                                 "map_type": "ExpandedValue",
@@ -1811,12 +1816,12 @@
             ],
             "unit_node_c": [
                 {
-                    " sources": {
+                    "sources": {
                         "mapping": [
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "unit__sinkNode",
+                                "value": "unit__sourceNode",
                                 "skip_columns": [
                                     3
                                 ]
@@ -1904,8 +1909,7 @@
                             },
                             {
                                 "map_type": "RelationshipMetadata",
-                                "position": "hidden",
-                                "value": "4",
+                                "position": 3,
                                 "filter_re": "^sink$"
                             },
                             {
@@ -2007,7 +2011,7 @@
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "unit__sourceNode",
+                                "value": "unit__sinkNode",
                                 "skip_columns": [
                                     1
                                 ]
@@ -2150,7 +2154,7 @@
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "unit__sourceNode"
+                                "value": "unit__sinkNode"
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
@@ -2233,7 +2237,6 @@
             "unit_p",
             "unit_t",
             "constraint_sense_c",
-            "unit_sinkNode_constraint_c",
             "group_c",
             "group_connection",
             "group_connection_node",
@@ -2283,7 +2286,6 @@
             "unit_p": {},
             "unit_t": {},
             "constraint_sense_c": {},
-            "unit_sinkNode_constraint_c": {},
             "group_c": {},
             "group_connection": {
                 "header": true
@@ -2344,25 +2346,23 @@
             "node_c": {
                 "0": "string",
                 "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
+                "2": "string",
+                "3": "string",
+                "4": "string",
                 "5": "string",
-                "6": "string",
-                "7": "string",
+                "6": "float",
+                "7": "float",
                 "8": "float",
                 "9": "float",
                 "10": "float",
                 "11": "float",
                 "12": "float",
-                "13": "string",
+                "13": "float",
                 "14": "float",
                 "15": "float",
                 "16": "float",
                 "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "string"
+                "18": "float"
             },
             "node_p": {
                 "0": "string",
@@ -2395,29 +2395,25 @@
                 "0": "string",
                 "1": "string",
                 "2": "float",
-                "3": "string"
+                "3": "float"
             },
             "connection_c": {
                 "0": "string",
                 "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
+                "2": "string",
+                "3": "string",
+                "4": "string",
                 "5": "string",
                 "6": "float",
                 "7": "float",
                 "8": "float",
                 "9": "float",
                 "10": "float",
-                "11": "string",
+                "11": "float",
                 "12": "float",
                 "13": "float",
                 "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "string",
-                "18": "string",
-                "19": "float"
+                "15": "float"
             },
             "connection_p": {
                 "0": "string",
@@ -2467,10 +2463,10 @@
             "unit_c": {
                 "0": "string",
                 "1": "string",
-                "2": "float",
+                "2": "string",
                 "3": "string",
-                "4": "float",
-                "5": "float",
+                "4": "string",
+                "5": "string",
                 "6": "float",
                 "7": "float",
                 "8": "float",
@@ -2478,17 +2474,16 @@
                 "10": "float",
                 "11": "float",
                 "12": "float",
-                "13": "string",
+                "13": "float",
                 "14": "float",
                 "15": "float",
                 "16": "float",
                 "17": "float",
-                "18": "string",
+                "18": "float",
                 "19": "float",
                 "20": "float",
-                "21": "string",
-                "22": "float",
-                "23": "float"
+                "21": "float",
+                "22": "float"
             },
             "unit_p": {
                 "0": "string",
@@ -2530,35 +2525,19 @@
                 "9": "float",
                 "10": "float"
             },
-            "unit_sinkNode_constraint_c": {
+            "group_c": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "string",
-                "4": "float",
+                "3": "float",
+                "4": "string",
                 "5": "float",
                 "6": "float",
-                "7": "float",
+                "7": "string",
                 "8": "float",
                 "9": "float",
                 "10": "float",
                 "11": "float"
-            },
-            "group_c": {
-                "0": "string",
-                "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "string",
-                "5": "string",
-                "6": "string",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float"
             },
             "group_connection": {
                 "0": "string",
@@ -2642,7 +2621,8 @@
                 "11": "float",
                 "12": "float",
                 "13": "float",
-                "14": "float"
+                "14": "float",
+                "15": "string"
             },
             "reserve_group_c": {
                 "0": "string",
@@ -2658,22 +2638,21 @@
                 "10": "float",
                 "11": "float",
                 "12": "float",
-                "13": "float"
+                "13": "float",
+                "14": "string"
             },
             "reserve_group_t": {
                 "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "string",
-                "4": "string",
+                "1": "float",
+                "2": "float",
+                "3": "float",
+                "4": "float",
                 "5": "float",
                 "6": "float",
                 "7": "float",
                 "8": "float",
                 "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float"
+                "10": "float"
             },
             "reserve_unit_node_c": {
                 "0": "string",
@@ -2761,13 +2740,15 @@
                 "3": "string",
                 "4": "float",
                 "5": "float",
-                "6": "float",
+                "6": "string",
                 "7": "float",
                 "8": "float",
                 "9": "float",
                 "10": "float",
                 "11": "float",
-                "12": "float"
+                "12": "float",
+                "13": "float",
+                "14": "float"
             },
             "unit_node_t": {
                 "0": "string",
@@ -2848,9 +2829,6 @@
             "constraint_sense_c": {
                 "1": "string"
             },
-            "unit_sinkNode_constraint_c": {
-                "1": "string"
-            },
             "group_c": {
                 "1": "string"
             },
@@ -2861,7 +2839,10 @@
                 "1": "string"
             },
             "reserve_group_t": {
-                "1": "string"
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string"
             },
             "reserve_unit_node_c": {
                 "1": "string"

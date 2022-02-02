@@ -1,4 +1,4 @@
-# © International Renewable Energy Agency 2018-2021
+# © International Renewable Energy Agency 2018-2022
 
 #The FlexTool is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License
 #as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
@@ -9,7 +9,7 @@
 #You should have received a copy of the GNU Lesser General Public License along with the FlexTool.  
 #If not, see <https://www.gnu.org/licenses/>.
 
-#Author: Juha Kiviluoma (2017-2021), VTT Technical Research Centre of Finland
+#Author: Juha Kiviluoma (2017-2022), VTT Technical Research Centre of Finland
 
 #########################
 # Fundamental sets of the model
@@ -33,6 +33,8 @@ set startup_method;
 set ramp_method;
 set ramp_limit_method within ramp_method;
 set ramp_cost_method within ramp_method;
+set profile;
+set profile_method;
 set debug 'flags to output debugging and test results';
 
 set constraint 'user defined greater than, less than or equality constraints between inputs and outputs';
@@ -85,6 +87,7 @@ set process_ct_method dimen 2 within {process, ct_method};
 set process_startup_method dimen 2 within {process, startup_method};
 set process_node_ramp_method dimen 3 within {process, node, ramp_method};
 set methods dimen 3; 
+set process__profile__profile_method dimen 3 within {process, profile, profile_method};
 set process_source dimen 2 within {process, entity};
 set process_sink dimen 2 within {process, entity};
 set process_ct_startup_method := 
@@ -311,6 +314,7 @@ param p_process_sink_coefficient {(p, sink) in process_sink} :=
 	  then p_process_sink[p, sink, 'coefficient'] 
 	  else 1;
 
+param pt_profile {profile, time};
 param p_reserve_upDown_group {reserve, upDown, group, reserveParam};
 param pt_reserve_upDown_group {reserve, upDown, group, reserveParam, time};
 param p_process_reserve_upDown_node {process, reserve, upDown, node, reserveParam} default 0;
@@ -321,12 +325,12 @@ param penalty_down {n in nodeBalance};
 param step_duration{(d, t) in dt};
 param step_period{(d, t) in dt} := 0;
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
-        + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m = 'one_cost'}
+        + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
           ( + (pdNode[e, 'invest_cost', d] * 1000 * ( pdNode[e, 'interest_rate', d] 
 			  / (1 - (1 / (1 + pdNode[e, 'interest_rate', d])^pdNode[e, 'lifetime', d] ) ) ))
 			+ pdNode[e, 'fixed_cost', d]
 		  )
-        + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m = 'one_cost'}
+        + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m not in invest_method_not_allowed}
 		  (
             + (pdProcess[e, 'invest_cost', d] * 1000 * ( pdProcess[e, 'interest_rate', d] 
 			  / (1 - (1 / (1 + pdProcess[e, 'interest_rate', d])^pdProcess[e, 'lifetime', d] ) ) ))
@@ -429,6 +433,7 @@ table data IN 'CSV' 'nodeBalance.csv' : nodeBalance <- [nodeBalance];
 table data IN 'CSV' 'nodeInflow.csv' : nodeInflow <- [nodeInflow];
 table data IN 'CSV' 'nodeState.csv' : nodeState <- [nodeState];
 table data IN 'CSV' 'process.csv': process <- [process];
+table data IN 'CSV' 'profile.csv': profile <- [profile];
 table data IN 'CSV' 'timeline.csv' : time <- [timestep];
 
 # Single dimension membership sets
@@ -448,13 +453,14 @@ table data IN 'CSV' 'pd_node.csv' : node__param__period <- [node, nodeParam, per
 table data IN 'CSV' 'pt_node.csv' : node__param__time <- [node, nodeParam, time];
 table data IN 'CSV' 'pd_process.csv' : process__param__period <- [process, processParam, period];
 table data IN 'CSV' 'pt_process.csv' : process__param__time <- [process, processParam, time];
-table data IN 'CSV' 'pd_group.csv' : group__param__period <- [group, processParam, period];
+table data IN 'CSV' 'pd_group.csv' : group__param__period <- [group, groupParam, period];
 table data IN 'CSV' 'process__ct_method.csv' : process_ct_method <- [process,ct_method];
 table data IN 'CSV' 'process__node__ramp_method.csv' : process_node_ramp_method <- [process,node,ramp_method];
 table data IN 'CSV' 'process__reserve__upDown__node.csv' : process_reserve_upDown_node <- [process,reserve,upDown,node];
 table data IN 'CSV' 'process__sink.csv' : process_sink <- [process,sink];
 table data IN 'CSV' 'process__source.csv' : process_source <- [process,source];
 table data IN 'CSV' 'process__startup_method.csv' : process_startup_method <- [process,startup_method];
+table data IN 'CSV' 'process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
 table data IN 'CSV' 'reserve__upDown__group.csv' : reserve_upDown_group <- [reserve,upDown,group];
 table data IN 'CSV' 'timeblocks_in_use.csv' : solve_period <- [solve,period];
 table data IN 'CSV' 'p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
@@ -482,6 +488,7 @@ table data IN 'CSV' 'p_process_constraint_constant.csv' : [process, constraint],
 table data IN 'CSV' 'p_process.csv' : [process, processParam], p_process;
 table data IN 'CSV' 'pd_process.csv' : [process, processParam, period], pd_process;
 table data IN 'CSV' 'pt_process.csv' : [process, processParam, time], pt_process;
+table data IN 'CSV' 'pt_profile.csv' : [profile, time], pt_profile;
 table data IN 'CSV' 'p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
 table data IN 'CSV' 'pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
 
@@ -513,7 +520,7 @@ var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve_upDown_group, (d, t) in dt} >= 0;
 
-display process, node, nodeInflow, nodeState, process_source_sink;
+display process, node, nodeInflow, nodeState, process_source_sink, process__source__sink__param, process_source, process_sink;
 
 #########################
 ## Data checks 
