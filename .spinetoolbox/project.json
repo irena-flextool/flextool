@@ -372,7 +372,15 @@
             "on_conflict": "merge",
             "file_selection": [
                 [
+                    "results/color_codes_no_grid.dat",
+                    false
+                ],
+                [
                     "results/color_codes_heat.dat",
+                    false
+                ],
+                [
+                    "results/investments_D.dat",
                     false
                 ],
                 [
@@ -381,14 +389,6 @@
                 ],
                 [
                     "results/color_codes_elec.dat",
-                    false
-                ],
-                [
-                    "results/investments_D.dat",
-                    false
-                ],
-                [
-                    "results/color_codes_no_grid.dat",
                     false
                 ],
                 [
@@ -461,35 +461,7 @@
             "on_conflict": "keep",
             "file_selection": [
                 [
-                    "r_node__d.csv",
-                    true
-                ],
-                [
-                    "r_unit__sourceNode__dt.csv",
-                    true
-                ],
-                [
-                    "r_unit__sinkNode__dt.csv",
-                    true
-                ],
-                [
-                    "r_unit_online__dt.csv",
-                    true
-                ],
-                [
-                    "r_process__reserve__upDown__node__dt.csv",
-                    true
-                ],
-                [
-                    "r_unit__sinkNode__d.csv",
-                    true
-                ],
-                [
-                    "r_unit__sourceNode__d.csv",
-                    true
-                ],
-                [
-                    "r_process_investment__d.csv",
+                    "datapackage@FlexTool3",
                     true
                 ]
             ]
@@ -500,7 +472,7 @@
             "x": 206.62824509611121,
             "y": 37.67955123101534,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": []
         },
         "FlexTool2_to_3": {
