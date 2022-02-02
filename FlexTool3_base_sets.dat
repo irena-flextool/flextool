@@ -115,7 +115,7 @@ set processPeriodParam := fixed_cost interest_rate invest_cost
                     invest_forced invest_max_period lifetime
                     retire_forced retire_max_period startup_cost;
 set processTimeParam := efficiency variable_cost;
-set sourceSinkParam := coefficient flow_unitsize variable_cost;
+set sourceSinkParam := coefficient flow_unitsize variable_cost, ramp_cost, ramp_limit;
 set sourceSinkTimeParam := variable_cost;
 set nodeParam := annual_flow, existing, fixed_cost, inflow, interest_rate, invest_cost,
                  invest_forced, invest_max_period, invest_max_total, lifetime,
@@ -129,7 +129,11 @@ set reserveParam := reservation reliability penalty_reserve,
                     increase_reserve_ratio large_failure_ratio max;
 set invest_method := one_cost, timeseries_cost, not_allowed;
 set modelParam := solveFirst;
-set groupParam := co2_price, invest_max, invest_min;
+set groupParam := capacity_margin, co2_price, inertia_limit, invest_max_period, 
+                  invest_max_total, invest_min_period, invest_min_total,
+				  non_synchronous_limit, penalty_inertia;
+set groupPeriodParam := capacity_margin, co2_price, inertia_limit, invest_max_period,
+                  invest_min_period, non_synchronous_limit, penalty_inertia;
 
 set invest_method_not_allowed := not_allowed;
 

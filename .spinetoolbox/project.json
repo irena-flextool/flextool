@@ -372,6 +372,10 @@
             "on_conflict": "merge",
             "file_selection": [
                 [
+                    "results/color_codes_csp.dat",
+                    false
+                ],
+                [
                     "results/color_codes_heat.dat",
                     false
                 ],
@@ -380,15 +384,11 @@
                     false
                 ],
                 [
-                    "results/color_codes_csp.dat",
+                    "results/investments_D.dat",
                     false
                 ],
                 [
                     "results/color_codes_elec.dat",
-                    false
-                ],
-                [
-                    "results/investments_D.dat",
                     false
                 ],
                 [
@@ -416,7 +416,7 @@
             "type": "Exporter",
             "description": "",
             "x": 35.13239996256243,
-            "y": 25.92890609899599,
+            "y": 27.28168335238952,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -469,8 +469,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 202.57161944925312,
-            "y": 39.032328484408865,
+            "x": 205.27717395604017,
+            "y": 37.67955123101534,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": []
@@ -514,7 +514,7 @@
         "FlexTool3_Excel": {
             "type": "Data Connection",
             "description": "",
-            "x": -485.6953414999302,
+            "x": -484.34256424653665,
             "y": 85.9315466566131,
             "references": [
                 {
@@ -555,8 +555,8 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -322.5995710771686,
-            "y": 80.08057328157342,
+            "x": -321.24679382377514,
+            "y": 80.08057328157344,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,

@@ -356,7 +356,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^(?!has_)",
+                    "filter_re": "^inflow$|^penalty_down$|^penalty_up$|^self_discharge_loss$",
                     "header": "nodeParam"
                 },
                 {
@@ -956,7 +956,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^time_steps$"
+                    "filter_re": "^duration$"
                 },
                 {
                     "map_type": "ParameterValueList",

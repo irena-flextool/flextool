@@ -166,18 +166,6 @@ set commodity_node dimen 2 within {commodity, node};
 set connection_variable_cost dimen 1 within process;
 set unit__sourceNode_variable_cost dimen 2 within process_source;
 set unit__sinkNode_variable_cost dimen 2 within process_sink;
-set connection__param dimen 2 within {process, sourceSinkParam};
-set process__source__param dimen 3 within {process_source, sourceSinkParam};
-set process__source__param__time dimen 4 within {process_source, sourceSinkTimeParam, time};
-set process__sink__param dimen 3 within {process_sink, sourceSinkParam};
-set process__sink__param__time dimen 4 within {process_sink, sourceSinkTimeParam, time};
-set process__source__sink__param :=
-    { (p, source, sink) in process_source_sink, param in sourceSinkParam
-	    :  (p, source, param) in process__sink__param
-	    || (p, sink, param) in process__source__param 
-	    || (p, param) in connection__param
-	};
-
 
 set dt dimen 2 within period_time;
 set dttt dimen 4;
@@ -224,15 +212,50 @@ param ptNode {n in node, param in nodeTimeParam, t in time} :=
 		  then pt_node[n, param, t]
 		  else p_node[n, param];
 
-set process__param__period dimen 3 within {process, nodePeriodParam, period};
-set process__param__time dimen 3 within {process, nodeTimeParam, time};
+set process__param dimen 2 within {process, processParam};
+set process__param__period dimen 3 within {process, processPeriodParam, period};
+set process__param__time dimen 3 within {process, processTimeParam, time};
+set process__param_t := setof {(p, param, t) in process__param__time} (p, param);
+
+set connection__param dimen 2 within {process, processParam};
+set connection__param__time dimen 3 within {process, sourceSinkTimeParam, time};
+set connection__param_t := setof {(connection, param, t) in connection__param__time} (connection, param);
+set process__source__param dimen 3 within {process_source, sourceSinkParam};
+set process__source__param__time dimen 4 within {process_source, sourceSinkTimeParam, time};
+set process__source__param_t := setof {(p, source, param, t) in process__source__param__time} (p, source, param);
+set process__sink__param dimen 3 within {process_sink, sourceSinkParam};
+set process__sink__param__time dimen 4 within {process_sink, sourceSinkTimeParam, time};
+set process__sink__param_t := setof {(p, sink, param, t) in process__sink__param__time} (p, sink, param);
+
+set process__source__sink__param :=
+    { (p, source, sink) in process_source_sink, param in sourceSinkParam
+	    :  (p, source, param) in process__source__param
+	    || (p, sink, param) in process__sink__param
+	    || ((p, param) in process__param && p in process_connection)
+	};
+set process__source__sink__param_t :=
+    { (p, source, sink) in process_source_sink, param in sourceSinkTimeParam
+	    :  (p, source, param) in process__source__param
+	    || (p, source, param) in process__source__param_t
+	    || (p, sink, param) in process__sink__param
+	    || (p, sink, param) in process__sink__param_t
+	    || ((p, param) in process__param && p in process_connection)
+	    || ((p, param) in process__param_t && p in process_connection)
+	};
+
+set process__source__sink__ramp_method :=
+    { (p, source, sink) in process_source_sink, m in ramp_method
+	    :  (p, source, m) in process_node_ramp_method
+		|| (p, sink, m) in process_node_ramp_method
+	};
+
 param p_process {process, processParam} default 0;
 param pd_process {process, processPeriodParam, period} default 0;
 param pt_process {process, processTimeParam, time} default 0;
 param pdProcess {p in process, param in processPeriodParam, d in period} :=
         + if (p, param, d) in process__param__period
 		  then pd_process[p, param, d]
-		  else if (p, param) in process_param
+		  else if (p, param) in process__param
 		  then p_process[p, param]
 		  else 0;
 param ptProcess {p in process, param in processTimeParam, t in time} :=
@@ -258,21 +281,23 @@ param p_entity_unitsize {e in entity} :=
 		            then p_node[e, 'invest_forced']
 		            else 1;
 
-set process__source__param__time dimen 4 within {process, node, sourceSinkTimeParam, time};
-set process__sink__param__time dimen 4 within {process, node, sourceSinkTimeParam, time};
 param p_process_source {(p, source) in process_source, sourceSinkParam} default 0;
 param pt_process_source {(p, source) in process_source, sourceSinkTimeParam, time} default 0;
 param p_process_sink {(p, sink) in process_sink, sourceSinkParam} default 0;
 param pt_process_sink {(p, sink) in process_sink, sourceSinkTimeParam, time} default 0;
-param ptProcess_source {(p, source) in process_source, param in sourceSinkTimeParam, t in time} :=
-        + if (p, source, param, t) in process__source__param__time
+param pProcess_source_sink {(p, source, sink, param) in process__source__sink__param} :=
+		+ if (p, source, param) in process__source__param
+		  then p_process_source[p, source, param]
+		  else if (p, sink, param) in process__sink__param
+		  then p_process_sink[p, sink, param]
+		  else 0;
+param ptProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, t in time} :=
+        + if (p, sink, param, t) in process__sink__param__time
+		  then pt_process_sink[p, sink, param, t]
+          else if (p, source, param, t) in process__source__param__time
 		  then pt_process_source[p, source, param, t]
 		  else if (p, source, param) in process__source__param
 		  then p_process_source[p, source, param]
-		  else 0;
-param ptProcess_sink {(p, sink) in process_sink, param in sourceSinkTimeParam, t in time} :=
-        + if (p, sink, param, t) in process__sink__param__time
-		  then pt_process_sink[p, sink, param, t]
 		  else if (p, sink, param) in process__sink__param
 		  then p_process_sink[p, sink, param]
 		  else 0;
@@ -286,29 +311,33 @@ param p_process_sink_coefficient {(p, sink) in process_sink} :=
 	  then p_process_sink[p, sink, 'coefficient'] 
 	  else 1;
 
-param p_inflow {n in nodeInflow, t in time};
 param p_reserve_upDown_group {reserve, upDown, group, reserveParam};
 param pt_reserve_upDown_group {reserve, upDown, group, reserveParam, time};
 param p_process_reserve_upDown_node {process, reserve, upDown, node, reserveParam} default 0;
 param p_process_constraint_constant {process, constraint};
 param p_process_node_constraint_coefficient {process, node, constraint};
-param pq_up {n in nodeBalance};
-param pq_down {n in nodeBalance};
+param penalty_up {n in nodeBalance};
+param penalty_down {n in nodeBalance};
 param step_duration{(d, t) in dt};
 param step_period{(d, t) in dt} := 0;
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m = 'one_cost'}
-            + (p_node[e, 'invest_cost'] * 1000 * ( p_node[e, 'interest_rate'] / (1 - (1 / (1 + p_node[e, 'interest_rate'])^p_node[e, 'lifetime'] ) ) ))
-			+ p_node[e, 'fixed_cost']
+          ( + (pdNode[e, 'invest_cost', d] * 1000 * ( pdNode[e, 'interest_rate', d] 
+			  / (1 - (1 / (1 + pdNode[e, 'interest_rate', d])^pdNode[e, 'lifetime', d] ) ) ))
+			+ pdNode[e, 'fixed_cost', d]
+		  )
         + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m = 'one_cost'}
-            + (p_process[e, 'invest_cost'] * 1000 * ( p_process[e, 'interest_rate'] / (1 - (1 / (1 + p_process[e, 'interest_rate'])^p_process[e, 'lifetime'] ) ) ))
-			+ p_process[e, 'fixed_cost']
+		  (
+            + (pdProcess[e, 'invest_cost', d] * 1000 * ( pdProcess[e, 'interest_rate', d] 
+			  / (1 - (1 / (1 + pdProcess[e, 'interest_rate', d])^pdProcess[e, 'lifetime', d] ) ) ))
+			+ pdProcess[e, 'fixed_cost', d]
+		  )
 ; 			
-param pt_process_source_sink_variable_cost{(p, source, sink) in process_source_sink_variable_cost, t in time} :=
-        + (if (p, source) in unit__sourceNode_variable_cost then ptProcess_source[p, source, 'variable_cost', t])
-        + (if (p, sink) in unit__sinkNode_variable_cost then ptProcess_sink[p, sink, 'variable_cost', t])
-		+ (if p in connection_variable_cost then ptProcess[p, 'variable_cost', t])
-;
+#param pt_process_source_sink_variable_cost{(p, source, sink) in process_source_sink_variable_cost, t in time} :=
+#        + (if (p, source) in unit__sourceNode_variable_cost then ptProcess_source[p, source, 'variable_cost', t])
+#        + (if (p, sink) in unit__sinkNode_variable_cost then ptProcess_sink[p, sink, 'variable_cost', t])
+#		+ (if p in connection_variable_cost then ptProcess[p, 'variable_cost', t])
+#;
 
 set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d]};
 set pd_invest := {(p, d) in ed_invest : p in process};
@@ -363,11 +392,11 @@ set process_reserve_upDown_node_increase_reserve_ratio :=
 		    p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'] > 0
 		};
 
-set group_commodity_node_CO2 :=
-        {g in group, (c, n) in commodity_node : 
+set group_commodity_node_period_CO2 :=
+        {g in group, (c, n) in commodity_node, d in period : 
 		    (g, n) in group_node 
 			&& p_commodity[c, 'co2_content'] 
-			&& p_group[g, 'co2_price']
+			&& pdGroup[g, 'co2_price', d]
 		};
 
 param p_process_invested {p in process : p in entityInvest};
@@ -414,6 +443,12 @@ table data IN 'CSV' 'group__process.csv' : group_process <- [group,process];
 table data IN 'CSV' 'group__process__node.csv' : group_process_node <- [group,process,node];
 table data IN 'CSV' 'p_process_node_constraint_coefficient.csv' : process_node_constraint <- [process, node, constraint];
 table data IN 'CSV' 'p_process_constraint_constant.csv' : process_constraint_sense <- [process, constraint, sense];
+table data IN 'CSV' 'p_process.csv' : process__param <- [process, processParam];
+table data IN 'CSV' 'pd_node.csv' : node__param__period <- [node, nodeParam, period];
+table data IN 'CSV' 'pt_node.csv' : node__param__time <- [node, nodeParam, time];
+table data IN 'CSV' 'pd_process.csv' : process__param__period <- [process, processParam, period];
+table data IN 'CSV' 'pt_process.csv' : process__param__time <- [process, processParam, time];
+table data IN 'CSV' 'pd_group.csv' : group__param__period <- [group, processParam, period];
 table data IN 'CSV' 'process__ct_method.csv' : process_ct_method <- [process,ct_method];
 table data IN 'CSV' 'process__node__ramp_method.csv' : process_node_ramp_method <- [process,node,ramp_method];
 table data IN 'CSV' 'process__reserve__upDown__node.csv' : process_reserve_upDown_node <- [process,reserve,upDown,node];
@@ -422,8 +457,6 @@ table data IN 'CSV' 'process__source.csv' : process_source <- [process,source];
 table data IN 'CSV' 'process__startup_method.csv' : process_startup_method <- [process,startup_method];
 table data IN 'CSV' 'reserve__upDown__group.csv' : reserve_upDown_group <- [reserve,upDown,group];
 table data IN 'CSV' 'timeblocks_in_use.csv' : solve_period <- [solve,period];
-table data IN 'CSV' 'unit__sourceNode_variable_cost.csv' : unit__sourceNode_variable_cost <- [process,source];
-table data IN 'CSV' 'unit__sinkNode_variable_cost.csv' : unit__sinkNode_variable_cost <- [process,sink];
 table data IN 'CSV' 'p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
 table data IN 'CSV' 'pt_process_source.csv' : process__source__param__time <- [process, source, sourceSinkTimeParam, time];
 table data IN 'CSV' 'p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
@@ -480,45 +513,45 @@ var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve_upDown_group, (d, t) in dt} >= 0;
 
-display process_source, process_sink, process_ct_method, process_source_sink, unit__sourceNode_variable_cost, unit__sinkNode_variable_cost, process_node_ramp_method, process_source_sink_ramp_cost;
+display process, node, nodeInflow, nodeState, process_source_sink;
 
 #########################
 ## Data checks 
 printf 'Checking: Data for 1 variable conversions directly from source to sink (and possibly back)\n';
-check {(p, m) in process_method, t in time : m in method_1var} pt_process[p, 'efficiency', t] != 0 ;
+check {(p, m) in process_method, t in time : m in method_1var} ptProcess[p, 'efficiency', t] != 0 ;
 
 printf 'Checking: Data for 1-way conversions with an online variable\n';
-check {(p, m) in process_method, t in time : m in method_1way_on} pt_process[p, 'efficiency', t] != 0;
+check {(p, m) in process_method, t in time : m in method_1way_on} ptProcess[p, 'efficiency', t] != 0;
 
 printf 'Checking: Data for 2-way linear conversions without online variables\n';
-check {(p, m) in process_method, t in time : m in method_2way_off} pt_process[p, 'efficiency', t] != 0;
+check {(p, m) in process_method, t in time : m in method_2way_off} ptProcess[p, 'efficiency', t] != 0;
 
 minimize total_cost:
   + sum {(d, t) in dt}
     (
-      + sum {(c, n) in commodity_node} pd_commodity[c, 'price', d]
-          * ( 
+      + sum {(c, n) in commodity_node} pdCommodity[c, 'price', d]
+	      * (
 	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } 
 			         v_flow[p, n, sink, d, t] / ptProcess[p, 'efficiency', t]
 	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } 
 			         v_flow[p, n, sink, d, t]
 	          + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, d, t]
 		    )
-	  + sum {(g, c, n) in group_commodity_node_CO2} p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
+	  + sum {(g, c, n, d) in group_commodity_node_period_CO2} p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
 	      * (
 	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } 
 			         v_flow[p, n, sink, d, t] / ptProcess[p, 'efficiency', t]
 	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } 
 			         v_flow[p, n, sink, d, t]
 			)
-	  + sum {p in process_online} v_startup_linear[p, d, t] * p_process[p, 'startup_cost']
-	  + sum {(p, source, sink, 'variable_cost') in process__source__sink__param} 
+	  + sum {p in process_online} v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d]
+	  + sum {(p, source, sink, 'variable_cost') in process__source__sink__param_t} 
 	      + v_flow[p, source, sink, d, t] 
-		    * p_process_source_sink[p, source, sink, 'variable_cost']
-      + sum {(p, source, sink) in process_source_sink_ramp_cost}
-          + v_ramp[p, source, sink, d, t] * p_process_sink[p, sink, 'ramp_cost']
-      + sum {n in nodeBalance} vq_state_up[n, d, t] * p_node[n, 'pq_up']
-      + sum {n in nodeBalance} vq_state_down[n, d, t] * p_node[n, 'pq_down']
+		    * ptProcess_source_sink[p, source, sink, 'variable_cost', t]
+      + sum {(p, source, sink, m) in process__source__sink__ramp_method : m in ramp_cost_method}
+          + v_ramp[p, source, sink, d, t] * pProcess_source_sink[p, source, sink, 'ramp_cost']
+      + sum {n in nodeBalance} vq_state_up[n, d, t] * ptNode[n, 'penalty_up', t]
+      + sum {n in nodeBalance} vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]
       + sum {(r, ud, ng) in reserve_upDown_group} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']
 	) * step_duration[d, t]
   + sum {(e, d) in ed_invest} v_invest[e, d]
@@ -531,10 +564,10 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   + (if n in nodeState then (v_state[n, d, t] -  v_state[n, d, t_previous]))
   =
   + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, d, t]
-  + (if n in nodeInflow then pt_node[n, 'inflow', t])
+  + (if n in nodeInflow then ptNode[n, 'inflow', t])
   + vq_state_up[n, d, t]
   - sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } (
-       + v_flow[p, n, sink, d, t] / pt_process[p, 'efficiency', t]
+       + v_flow[p, n, sink, d, t] / ptProcess[p, 'efficiency', t]
     )		
   - sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } (
        + v_flow[p, n, sink, d, t]
@@ -562,7 +595,7 @@ s.t. reserveBalance_eq {(r, ud, ng) in reserve_upDown_group, (d, t) in dt} :
 		  && (r, ud, ng) in reserve_upDown_group} 
 	    ( v_reserve[p, r, ud, n, d, t] 
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
-		  / pt_process[p, 'efficiency', t]
+		  / ptProcess[p, 'efficiency', t]
 		)
 ;
 
@@ -571,7 +604,7 @@ s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_i
     ( + v_flow[p, source, p, d, t] 
   	      * p_process_source_coefficient[p, source]
 	)
-	* pt_process[p, 'efficiency', t]
+	* ptProcess[p, 'efficiency', t]
   =
   + sum {sink in entity : (p, sink) in process_sink} 
     ( + v_flow[p, p, sink, d, t] 
@@ -801,10 +834,10 @@ param process_sink_flow{(p, sink) in process_sink, d in period_realized} :=
 ;
 
 param r_cost_commodity{(c, n) in commodity_node, (d, t) in dt} := 
-  + step_duration[d, t] * pd_commodity[c, 'price', d] 
+  + step_duration[d, t] * pdCommodity[c, 'price', d] 
       * ( 
 	      + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } 
-		         v_flow[p, n, sink, d, t].val / pt_process[p, 'efficiency', t]
+		         v_flow[p, n, sink, d, t].val / ptProcess[p, 'efficiency', t]
 	      + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } 
 		         v_flow[p, n, sink, d, t].val
 	      + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, d, t].val
@@ -813,15 +846,15 @@ param r_cost_commodity{(c, n) in commodity_node, (d, t) in dt} :=
 
 param r_cost_process_variable_cost{p in process, (d, t) in dt} :=
   + step_duration[d, t]
-	  * sum {(p, source, sink) in process_source_sink_variable_cost} 
-	         v_flow[p, source, sink, d, t].val * pt_process_source_sink_variable_cost[p, source, sink, t]
+	  * sum {(p, source, sink, 'variable_cost') in process__source__sink__param_t} 
+	         v_flow[p, source, sink, d, t].val * ptProcess_source_sink[p, source, sink, 'variable_cost', t]
 ;
 
 param r_costPenalty_nodeState{n in nodeBalance, (d, t) in dt} :=
   + step_duration[d, t]
       * (
-          + vq_state_up[n, d, t] * p_node[n, 'pq_up']
-          + vq_state_down[n, d, t] * p_node[n, 'pq_down']
+          + vq_state_up[n, d, t] * ptNode[n, 'penalty_up', t]
+          + vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]
 		)
 ;
 
@@ -854,7 +887,6 @@ param r_cost_and_penalty_dt{(d,t) in dt} :=
 ;
 
 
-display period_invest, entityInvest;
 printf 'Transfer investments to the next solve...\n';
 param fn_process_invested symbolic := "p_process_invested.csv";
 printf 'process,p_process_invested\n' > fn_process_invested;
@@ -975,12 +1007,12 @@ for {n in node, d in period_realized : d not in period_invest}
   {
     printf '%s, %s, %.8g, %.8g, %.8g, %.8g, %.8g\n'
 		, n, d
-		, (if n in nodeInflow then sum {t in time : (d, t) in dt} pt_node[n, 'inflow', t] else 0)
+		, (if n in nodeInflow then sum {t in time : (d, t) in dt} ptNode[n, 'inflow', t] else 0)
         , (if n in nodeState then sum {(d, t, t_previous, t_previous_within_block) in dttt}
 		      (v_state[n, d, t] -  v_state[n, d, t_previous]) else 0)
         , sum {(p, source, n) in process_source_sink, t in time : (d, t) in dt} v_flow[p, source, n, d, t]
         , - sum {(p, n, sink) in process_source_sink, t in time : (d, t) in dt && sum{(p, m) in process_method : m in method_1var_per_way} 1 }
-		     ( + v_flow[p, n, sink, d, t] / pt_process[p, 'efficiency', t] )
+		     ( + v_flow[p, n, sink, d, t] / ptProcess[p, 'efficiency', t] )
           - sum {(p, n, sink) in process_source_sink, t in time : (d, t) in dt && sum{(p, m) in process_method : m not in method_1var_per_way} 1 }
 		     ( + v_flow[p, n, sink, d, t] )
         , (if n in nodeBalance then sum {t in time : (d, t) in dt} (
@@ -1047,12 +1079,12 @@ for {n in node} {
   printf '\n' >> resultFile;
   for {(d, t) in dt} {
     printf '%s, %s', d, t >> resultFile;
-	printf (if n in nodeInflow then ', %.8g' else ''), pt_node[n, 'inflow', t] >> resultFile; 
+	printf (if n in nodeInflow then ', %.8g' else ''), ptNode[n, 'inflow', t] >> resultFile; 
     for {(p, source, n) in process_source_sink} {
       printf ', %.8g', v_flow[p, source, n, d, t].val >> resultFile;
 	}
     for {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } {
-      printf ', %.8g', -v_flow[p, n, sink, d, t].val / pt_process[p, 'efficiency', t] >> resultFile;
+      printf ', %.8g', -v_flow[p, n, sink, d, t].val / ptProcess[p, 'efficiency', t] >> resultFile;
 	}
     for {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } {
       printf ', %.8g', -v_flow[p, n, sink, d, t].val >> resultFile;
@@ -1084,9 +1116,9 @@ for {n in node : 'method_1way_1var' in debug || 'mini_system' in debug} {
   }
   printf 'Testing outgoing flows of node %s\n', n >> unitTestFile;
   for {(p, n, sink, d, t) in peedt : sum{(p, m) in process_method : m = 'method_1var' || m = 'method_2way_2var'} 1 } {
-    printf (if -v_flow[p, n, sink, d, t].val / pt_process[p, 'efficiency', t] <> d_flow_1_or_2_variable[p, n, sink, d, t]
+    printf (if -v_flow[p, n, sink, d, t].val / ptProcess[p, 'efficiency', t] <> d_flow_1_or_2_variable[p, n, sink, d, t]
 	        then 'Test fails at %s, %s, %s, %s, %s, model value: %.8g, test value: %.8g\n' else ''),
-	            p, n, sink, d, t, -v_flow[p, n, sink, d, t].val / pt_process[p, 'efficiency', t], d_flow_1_or_2_variable[p, n, sink, d, t] >> unitTestFile;
+	            p, n, sink, d, t, -v_flow[p, n, sink, d, t].val / ptProcess[p, 'efficiency', t], d_flow_1_or_2_variable[p, n, sink, d, t] >> unitTestFile;
   }
   for {(p, n, sink, d, t) in peedt : sum{(p, m) in process_method : m in method && (m <> 'method_1var' || m <> 'method_2way_2var')} 1 } {
     printf (if -v_flow[p, n, sink, d, t].val <> d_flow[p, n, sink, d, t] 
