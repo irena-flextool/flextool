@@ -201,13 +201,16 @@ param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} :
 
 param p_group__process {g in group, p in process, groupParam};
 
+set group__param dimen 2 within {group, groupParam};
 set group__param__period dimen 3 within {group, groupPeriodParam, period};
 param p_group {g in group, groupParam};
 param pd_group {g in group, groupPeriodParam, d in period} default 0;
 param pdGroup {g in group, param in groupPeriodParam, d in period} :=
         + if (g, param, d) in group__param__period
 		  then pd_group[g, param, d]
-		  else p_group[g, param];
+		  else if (g, param) in group__param 
+		  then p_group[g, param]
+		  else 0;
 		  
 set node__param__period dimen 3 within {node, nodePeriodParam, period};
 set node__param__time dimen 3 within {node, nodeTimeParam, time};
@@ -461,6 +464,7 @@ table data IN 'CSV' 'pd_node.csv' : node__param__period <- [node, nodeParam, per
 table data IN 'CSV' 'pt_node.csv' : node__param__time <- [node, nodeParam, time];
 table data IN 'CSV' 'pd_process.csv' : process__param__period <- [process, processParam, period];
 table data IN 'CSV' 'pt_process.csv' : process__param__time <- [process, processParam, time];
+table data IN 'CSV' 'p_group.csv' : group__param <- [group, groupParam];
 table data IN 'CSV' 'pd_group.csv' : group__param__period <- [group, groupParam, period];
 table data IN 'CSV' 'process__ct_method.csv' : process_ct_method <- [process,ct_method];
 table data IN 'CSV' 'process__node__ramp_method.csv' : process_node_ramp_method <- [process,node,ramp_method];
@@ -530,6 +534,7 @@ var vq_reserve {(r, ud, ng) in reserve_upDown_group, (d, t) in dt} >= 0;
 
 display process_method, process_source_sink, process_source, process_sink, process__profile__profile_method;
 display process_sink_toProcess, process_profile_toSink;
+display pd_invest;
 
 #########################
 ## Data checks 
@@ -883,11 +888,17 @@ s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t,
   - ( if p in process_online then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
 ;
 
-s.t. maxInvest {(e, d)  in ed_invest} :
+s.t. maxInvestGroup_process_period {g in group, d in period_invest : pdGroup[g, 'invest_max_period', d] } :
+  + sum{(g, p) in group_process : (p, d) in pd_invest} v_invest[p, d] * p_entity_unitsize[p]
+  <=
+  + pdGroup[g, 'invest_max_period', d]
+;
+
+s.t. maxInvest_entity_period {(e, d)  in ed_invest} :  # Covers both processes and nodes
   + v_invest[e, d] * p_entity_unitsize[e] 
   <= 
-  + sum{(e, m) in entity__invest_method : m not in invest_method_not_allowed && (e,d) in pd_invest} p_process[e, 'invest_max_total']
-  + sum{(e, m) in entity__invest_method : m not in invest_method_not_allowed && (e,d) in nd_invest} p_node[e, 'invest_max_total']
+  + sum{(e, m) in entity__invest_method : m not in invest_method_not_allowed && (e,d) in pd_invest} pdProcess[e, 'invest_max_period', d]
+  + sum{(e, m) in entity__invest_method : m not in invest_method_not_allowed && (e,d) in nd_invest} pdNode[e, 'invest_max_period', d]
 ;
 
 solve;
