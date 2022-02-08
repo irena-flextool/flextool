@@ -956,7 +956,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^duration$"
+                    "filter_re": "^time_steps$"
                 },
                 {
                     "map_type": "ParameterValueList",

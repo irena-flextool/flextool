@@ -81,6 +81,7 @@ set nodeInflow 'nodes that have an inflow' within node;
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
 set group_process_node 'process__nodes of a particular group' dimen 3 within {group, process, node};
+set group_entity := group_process union group_node;
 set process_unit 'processes that are unit' within process;
 set process_connection 'processes that are connections' within process;
 set process_ct_method dimen 2 within {process, ct_method};
@@ -532,9 +533,7 @@ var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve_upDown_group, (d, t) in dt} >= 0;
 
-display process_method, process_source_sink, process_source, process_sink, process__profile__profile_method;
-display process_sink_toProcess, process_profile_toSink;
-display pd_invest;
+display ptNode, dt;
 
 #########################
 ## Data checks 
@@ -888,8 +887,14 @@ s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t,
   - ( if p in process_online then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
 ;
 
-s.t. maxInvestGroup_process_period {g in group, d in period_invest : pdGroup[g, 'invest_max_period', d] } :
-  + sum{(g, p) in group_process : (p, d) in pd_invest} v_invest[p, d] * p_entity_unitsize[p]
+s.t. maxInvestGroup_entity_period {g in group, d in period_invest : pdGroup[g, 'invest_max_period', d] } :
+  + sum{(g, e) in group_entity : (e, d) in pd_invest} v_invest[e, d] * p_entity_unitsize[e]
+  <=
+  + pdGroup[g, 'invest_max_period', d]
+;
+
+s.t. minInvestGroup_entity_period {g in group, d in period_invest : pdGroup[g, 'invest_max_period', d] } :
+  + sum{(g, e) in group_entity : (e, d) in pd_invest} v_invest[e, d] * p_entity_unitsize[e]
   <=
   + pdGroup[g, 'invest_max_period', d]
 ;
