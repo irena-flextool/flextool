@@ -384,13 +384,13 @@ class FlexToolRunner:
 
     def write_empty_investment_file(self):
         """
-        make a file p_process_invested.csv that will contain capacities of invested and divested processes. For the first solve it will be empty.
+        make a file p_entity_invested.csv that will contain capacities of invested and divested processes. For the first solve it will be empty.
 
         :param first_state: boolean if the current run is the first
 
         """
-        with open("p_process_invested.csv", 'w') as firstfile:
-            firstfile.write("process,p_process_invested\n")
+        with open("p_entity_invested.csv", 'w') as firstfile:
+            firstfile.write("entity,p_entity_invested\n")
 
 
 def main():

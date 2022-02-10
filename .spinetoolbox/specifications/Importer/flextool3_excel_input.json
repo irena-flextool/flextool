@@ -95,14 +95,14 @@
                     }
                 }
             ],
-            "timeblocks": [
+            "timeblockSet": [
                 {
                     "Mapping 1": {
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
                                 "position": "hidden",
-                                "value": "timeblocks"
+                                "value": "timeblockSet"
                             },
                             {
                                 "map_type": "Object",
@@ -182,14 +182,14 @@
                     }
                 }
             ],
-            "timeblocks_timeline": [
+            "timeblockSet_timeline": [
                 {
                     "Mapping 1": {
                         "mapping": [
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "timeblocks__timeline"
+                                "value": "timeblockSet__timeline"
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
@@ -1554,14 +1554,15 @@
                     }
                 }
             ],
-            "solve": [
+            "solve_period": [
                 {
-                    "Mapping 1": {
+                    "realized_periods": {
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
                                 "position": "hidden",
-                                "value": "solve"
+                                "value": "solve",
+                                "read_start_row": 2
                             },
                             {
                                 "map_type": "Object",
@@ -1573,7 +1574,8 @@
                             },
                             {
                                 "map_type": "ParameterDefinition",
-                                "position": -2
+                                "position": "hidden",
+                                "value": "realized_periods"
                             },
                             {
                                 "map_type": "Alternative",
@@ -1581,7 +1583,8 @@
                             },
                             {
                                 "map_type": "ParameterValueMetadata",
-                                "position": "hidden"
+                                "position": 5,
+                                "filter_re": "yes"
                             },
                             {
                                 "map_type": "ParameterValueType",
@@ -1599,20 +1602,22 @@
                             },
                             {
                                 "map_type": "ExpandedValue",
-                                "position": "hidden"
+                                "position": 2
                             }
                         ]
                     }
-                }
-            ],
-            "solve_period": [
+                },
                 {
-                    "Mapping 1": {
+                    "solve_data": {
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
                                 "position": "hidden",
-                                "value": "solve"
+                                "value": "solve",
+                                "skip_columns": [
+                                    5,
+                                    6
+                                ]
                             },
                             {
                                 "map_type": "Object",
@@ -1651,6 +1656,58 @@
                             {
                                 "map_type": "ExpandedValue",
                                 "position": "hidden"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "invest_periods": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "solve",
+                                "read_start_row": 2
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "invest_periods"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": 6,
+                                "filter_re": "yes"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "array"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 2
                             }
                         ]
                     }
@@ -2217,13 +2274,33 @@
                         ]
                     }
                 }
+            ],
+            "version": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
             "solve_sequence",
-            "timeblocks",
+            "timeblockSet",
             "timeline_s",
-            "timeblocks_timeline",
+            "timeblockSet_timeline",
             "node_c",
             "node_p",
             "node_t",
@@ -2249,23 +2326,23 @@
             "reserve_unit_node_c",
             "commodity_p",
             "commodity_node",
-            "solve",
             "solve_period",
             "timeline_t",
             "group_p",
             "unit_profile_c",
             "unit_node_c",
             "unit_node_t",
-            "unit_node_constraint_c"
+            "unit_node_constraint_c",
+            "version"
         ],
         "table_options": {
             "solve_sequence": {
                 "read_until_col": false,
                 "row": 0
             },
-            "timeblocks": {},
+            "timeblockSet": {},
             "timeline_s": {},
-            "timeblocks_timeline": {
+            "timeblockSet_timeline": {
                 "row": 0,
                 "header": true
             },
@@ -2310,14 +2387,14 @@
             "commodity_node": {
                 "header": true
             },
-            "solve": {},
             "solve_period": {},
             "timeline_t": {},
             "group_p": {},
             "unit_profile_c": {},
             "unit_node_c": {},
             "unit_node_t": {},
-            "unit_node_constraint_c": {}
+            "unit_node_constraint_c": {},
+            "version": {}
         },
         "table_types": {
             "solve_sequence": {
@@ -2328,7 +2405,7 @@
                 "4": "float",
                 "5": "float"
             },
-            "timeblocks": {
+            "timeblockSet": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
@@ -2339,7 +2416,7 @@
                 "1": "string",
                 "2": "float"
             },
-            "timeblocks_timeline": {
+            "timeblockSet_timeline": {
                 "0": "string",
                 "1": "string"
             },
@@ -2690,19 +2767,14 @@
                 "9": "string",
                 "10": "string"
             },
-            "solve": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "string",
-                "4": "float"
-            },
             "solve_period": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
                 "3": "string",
-                "4": "float"
+                "4": "float",
+                "5": "string",
+                "6": "string"
             },
             "timeline_t": {
                 "0": "string",
@@ -2784,7 +2856,7 @@
                 "1": "string",
                 "0": "string"
             },
-            "timeblocks": {
+            "timeblockSet": {
                 "1": "string"
             },
             "timeline_s": {
@@ -2848,9 +2920,6 @@
                 "1": "string"
             },
             "commodity_p": {
-                "1": "string"
-            },
-            "solve": {
                 "1": "string"
             },
             "solve_period": {
