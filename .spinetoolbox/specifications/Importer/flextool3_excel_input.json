@@ -145,7 +145,7 @@
                     }
                 }
             ],
-            "timeline_s": [
+            "timeline_c": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -2294,12 +2294,144 @@
                         ]
                     }
                 }
+            ],
+            "navigate": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "node_profile_c": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "RelationshipClass",
+                                "position": "hidden",
+                                "value": "node__profile"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "profile"
+                            },
+                            {
+                                "map_type": "Relationship",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "RelationshipMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "connection_profile_c": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "RelationshipClass",
+                                "position": "hidden",
+                                "value": "connection__profile"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "connection"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "profile"
+                            },
+                            {
+                                "map_type": "Relationship",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "RelationshipMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
             "solve_sequence",
             "timeblockSet",
-            "timeline_s",
+            "timeline_c",
             "timeblockSet_timeline",
             "node_c",
             "node_p",
@@ -2333,7 +2465,8 @@
             "unit_node_c",
             "unit_node_t",
             "unit_node_constraint_c",
-            "version"
+            "node_profile_c",
+            "connection_profile_c"
         ],
         "table_options": {
             "solve_sequence": {
@@ -2341,7 +2474,7 @@
                 "row": 0
             },
             "timeblockSet": {},
-            "timeline_s": {},
+            "timeline_c": {},
             "timeblockSet_timeline": {
                 "row": 0,
                 "header": true
@@ -2394,7 +2527,10 @@
             "unit_node_c": {},
             "unit_node_t": {},
             "unit_node_constraint_c": {},
-            "version": {}
+            "version": {},
+            "navigate": {},
+            "node_profile_c": {},
+            "connection_profile_c": {}
         },
         "table_types": {
             "solve_sequence": {
@@ -2411,7 +2547,7 @@
                 "2": "string",
                 "3": "float"
             },
-            "timeline_s": {
+            "timeline_c": {
                 "0": "string",
                 "1": "string",
                 "2": "float"
@@ -2439,7 +2575,8 @@
                 "15": "float",
                 "16": "float",
                 "17": "float",
-                "18": "float"
+                "18": "float",
+                "19": "float"
             },
             "node_p": {
                 "0": "string",
@@ -2453,7 +2590,8 @@
                 "8": "float",
                 "9": "float",
                 "10": "float",
-                "11": "float"
+                "11": "float",
+                "12": "float"
             },
             "node_t": {
                 "0": "string",
@@ -2490,7 +2628,8 @@
                 "12": "float",
                 "13": "float",
                 "14": "float",
-                "15": "float"
+                "15": "float",
+                "16": "float"
             },
             "connection_p": {
                 "0": "string",
@@ -2503,7 +2642,8 @@
                 "7": "float",
                 "8": "float",
                 "9": "float",
-                "10": "float"
+                "10": "float",
+                "11": "float"
             },
             "connection_t": {
                 "0": "string",
@@ -2574,7 +2714,8 @@
                 "8": "float",
                 "9": "float",
                 "10": "float",
-                "11": "float"
+                "11": "float",
+                "12": "float"
             },
             "unit_t": {
                 "0": "string",
@@ -2689,7 +2830,7 @@
                 "2": "string",
                 "3": "string",
                 "4": "string",
-                "5": "float",
+                "5": "string",
                 "6": "float",
                 "7": "float",
                 "8": "float",
@@ -2706,7 +2847,7 @@
                 "1": "string",
                 "2": "string",
                 "3": "string",
-                "4": "float",
+                "4": "string",
                 "5": "float",
                 "6": "string",
                 "7": "float",
@@ -2737,7 +2878,7 @@
                 "2": "string",
                 "3": "string",
                 "4": "string",
-                "5": "float",
+                "5": "string",
                 "6": "float",
                 "7": "float",
                 "8": "float",
@@ -2746,7 +2887,8 @@
                 "11": "float",
                 "12": "float",
                 "13": "float",
-                "14": "float"
+                "14": "float",
+                "15": "string"
             },
             "commodity_p": {
                 "0": "string",
@@ -2814,13 +2956,15 @@
                 "5": "float",
                 "6": "string",
                 "7": "float",
-                "8": "float",
+                "8": "string",
                 "9": "float",
                 "10": "float",
                 "11": "float",
                 "12": "float",
                 "13": "float",
-                "14": "float"
+                "14": "float",
+                "15": "string",
+                "16": "string"
             },
             "unit_node_t": {
                 "0": "string",
@@ -2849,6 +2993,43 @@
                 "10": "float",
                 "11": "float",
                 "12": "float"
+            },
+            "navigate": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string"
+            },
+            "version": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string"
+            },
+            "node_profile_c": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "float",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float"
+            },
+            "connection_profile_c": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "float",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float"
             }
         },
         "table_row_types": {
@@ -2859,7 +3040,7 @@
             "timeblockSet": {
                 "1": "string"
             },
-            "timeline_s": {
+            "timeline_c": {
                 "1": "string"
             },
             "node_c": {
@@ -2944,6 +3125,12 @@
                 "1": "string"
             },
             "unit_node_constraint_c": {
+                "1": "string"
+            },
+            "node_profile_c": {
+                "1": "string"
+            },
+            "connection_profile_c": {
                 "1": "string"
             }
         },

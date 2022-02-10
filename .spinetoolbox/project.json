@@ -400,11 +400,11 @@
                     false
                 ],
                 [
-                    "results/color_codes_heat.dat",
+                    "results/color_codes_no_grid.dat",
                     false
                 ],
                 [
-                    "results/color_codes_no_grid.dat",
+                    "results/color_codes_heat.dat",
                     false
                 ],
                 [

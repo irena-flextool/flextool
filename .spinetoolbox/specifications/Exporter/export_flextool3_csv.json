@@ -2127,7 +2127,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 2,
-                    "filter_re": "^(?!ramp_method)",
+                    "filter_re": "^(?!ramp_method|is_synchronous)",
                     "header": "sourceSinkParam"
                 },
                 {
@@ -2193,7 +2193,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 2,
-                    "filter_re": "^(?!ramp_method)",
+                    "filter_re": "^(?!ramp_method|is_synchronous)",
                     "header": "sourceSinkParam"
                 },
                 {

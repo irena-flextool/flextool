@@ -115,7 +115,7 @@ set processPeriodParam := fixed_cost interest_rate invest_cost
                     invest_forced invest_max_period lifetime
                     retire_forced retire_max_period startup_cost;
 set processTimeParam := efficiency variable_cost;
-set sourceSinkParam := coefficient flow_unitsize variable_cost, ramp_cost, ramp_limit;
+set sourceSinkParam := coefficient flow_unitsize variable_cost, ramp_cost, ramp_limit, inertia_constant;
 set sourceSinkTimeParam := variable_cost;
 set nodeParam := annual_flow, existing, fixed_cost, inflow, interest_rate, invest_cost,
                  invest_forced, invest_max_period, invest_max_total, lifetime,
