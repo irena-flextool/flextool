@@ -137,5 +137,6 @@ set groupPeriodParam := capacity_margin, co2_price, inertia_limit, invest_max_pe
 
 set invest_method_not_allowed := not_allowed;
 set profile_method := upper_limit lower_limit fixed;
+set inflow_method := use_original scale_to_annual_flow;
 
 end;

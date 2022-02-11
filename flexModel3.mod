@@ -24,7 +24,8 @@ set reserve_upDown_group dimen 3;
 set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng) in reserve_upDown_group} (r);
 set period_time '(d, t) - Time steps in the time periods of the timelines in use' dimen 2;
 set solve_period '(solve, d) - Time periods in the solves in order to extract periods that can be found in data' dimen 2;
-set period 'd - Time periods in data (including those currently in use)' := setof {(s, d) in solve_period} (d);
+set periodAll 'd - Time periods in data (including those currently in use)' := setof {(s, d) in solve_period} (d);
+set period 'd - Time periods in the current solve' := setof {(d, t) in period_time} (d);
 set time 't - Time steps in the current timelines'; 
 set method 'm - Type of process that transfers, converts or stores commodities';
 set upDown 'upward and downward directions for some variables';
@@ -77,7 +78,8 @@ set entity__invest_method 'the investment method applied to an entity' dimen 2 w
 set entityInvest := setof {(e, m) in entity__invest_method : m not in invest_method_not_allowed} (e);
 set nodeBalance 'nodes that maintain a node balance' within node;
 set nodeState 'nodes that have a state' within node;
-set nodeInflow 'nodes that have an inflow' within node;
+set inflow_method 'method for scaling the inflow';
+set node__inflow_method 'method for scaling the inflow applied to a node' within {node, inflow_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
 set group_process_node 'process__nodes of a particular group' dimen 3 within {group, process, node};
@@ -192,9 +194,9 @@ param startNext_index := sum{t in time, t_startNext in startNext : t <= t_startN
 set modelParam;
 param p_model {modelParam};
 
-set commodity__param__period dimen 3 within {commodity, commodityPeriodParam, period};
+set commodity__param__period dimen 3 within {commodity, commodityPeriodParam, periodAll};
 param p_commodity {c in commodity, commodityParam};
-param pd_commodity {c in commodity, commodityPeriodParam, d in period} default 0;
+param pd_commodity {c in commodity, commodityPeriodParam, d in periodAll} default 0;
 param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} := 
         + if (c, param, d) in commodity__param__period
 		  then pd_commodity[c, param, d]
@@ -203,9 +205,9 @@ param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} :
 param p_group__process {g in group, p in process, groupParam};
 
 set group__param dimen 2 within {group, groupParam};
-set group__param__period dimen 3 within {group, groupPeriodParam, period};
+set group__param__period dimen 3 within {group, groupPeriodParam, periodAll};
 param p_group {g in group, groupParam} default 0;
-param pd_group {g in group, groupPeriodParam, d in period} default 0;
+param pd_group {g in group, groupPeriodParam, d in periodAll} default 0;
 param pdGroup {g in group, param in groupPeriodParam, d in period} :=
         + if (g, param, d) in group__param__period
 		  then pd_group[g, param, d]
@@ -213,10 +215,10 @@ param pdGroup {g in group, param in groupPeriodParam, d in period} :=
 		  then p_group[g, param]
 		  else 0;
 		  
-set node__param__period dimen 3 within {node, nodePeriodParam, period};
+set node__param__period dimen 3 within {node, nodePeriodParam, periodAll};
 set node__param__time dimen 3 within {node, nodeTimeParam, time};
 param p_node {node, nodeParam} default 0;
-param pd_node {node, nodePeriodParam, period} default 0;
+param pd_node {node, nodePeriodParam, periodAll} default 0;
 param pt_node {node, nodeTimeParam, time} default 0;
 param pdNode {n in node, param in nodePeriodParam, d in period} :=
         + if (n, param, d) in node__param__period
@@ -228,7 +230,7 @@ param ptNode {n in node, param in nodeTimeParam, t in time} :=
 		  else p_node[n, param];
 
 set process__param dimen 2 within {process, processParam};
-set process__param__period dimen 3 within {process, processPeriodParam, period};
+set process__param__period dimen 3 within {process, processPeriodParam, periodAll};
 set process__param__time dimen 3 within {process, processTimeParam, time};
 set process__param_t := setof {(p, param, t) in process__param__time} (p, param);
 
@@ -265,7 +267,7 @@ set process__source__sink__ramp_method :=
 	};
 
 param p_process {process, processParam} default 0;
-param pd_process {process, processPeriodParam, period} default 0;
+param pd_process {process, processPeriodParam, periodAll} default 0;
 param pt_process {process, processTimeParam, time} default 0;
 param pdProcess {p in process, param in processPeriodParam, d in period} :=
         + if (p, param, d) in process__param__period
@@ -335,6 +337,12 @@ param p_process_node_constraint_coefficient {process, node, constraint};
 param penalty_up {n in nodeBalance};
 param penalty_down {n in nodeBalance};
 param step_duration{(d, t) in dt};
+param hours_in_solve := sum {(d, t) in dt} (step_duration[d, t]);
+param solve_share_of_year := hours_in_solve / 8760;
+param solve_share_of_annual_flow {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
+        abs(sum{(d, t) in dt} (ptNode[n, 'inflow', t])) / pdNode[n, 'annual_flow', d];
+param annual_flow_multiplier {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
+        solve_share_of_year / solve_share_of_annual_flow[n, d];
 param step_period{(d, t) in dt} := 0;
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
@@ -444,7 +452,6 @@ table data IN 'CSV' 'entity.csv': entity <- [entity];
 table data IN 'CSV' 'group.csv' : group <- [group];
 table data IN 'CSV' 'node.csv' : node <- [node];
 table data IN 'CSV' 'nodeBalance.csv' : nodeBalance <- [nodeBalance];
-table data IN 'CSV' 'nodeInflow.csv' : nodeInflow <- [nodeInflow];
 table data IN 'CSV' 'nodeState.csv' : nodeState <- [nodeState];
 table data IN 'CSV' 'process.csv': process <- [process];
 table data IN 'CSV' 'profile.csv': profile <- [profile];
@@ -457,6 +464,7 @@ table data IN 'CSV' 'process_unit.csv': process_unit <- [process_unit];
 # Multi dimension membership sets
 table data IN 'CSV' 'commodity__node.csv' : commodity_node <- [commodity,node];
 table data IN 'CSV' 'entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
+table data IN 'CSV' 'node__inflow_method.csv' : node__inflow_method <- [node,inflow_method];
 table data IN 'CSV' 'group__node.csv' : group_node <- [group,node];
 table data IN 'CSV' 'group__process.csv' : group_process <- [group,process];
 table data IN 'CSV' 'group__process__node.csv' : group_process_node <- [group,process,node];
@@ -535,7 +543,7 @@ var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve_upDown_group, (d, t) in dt} >= 0;
 
-display pd_invest, entityInvest, period_realized, period_invest;
+display pd_invest;
 
 #########################
 ## Data checks 
@@ -586,7 +594,12 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   + (if n in nodeState then (v_state[n, d, t] -  v_state[n, d, t_previous]))
   =
   + sum {(p, source, n) in process_source_sink} v_flow[p, source, n, d, t]
-  + (if n in nodeInflow then ptNode[n, 'inflow', t])
+  + (if (n, 'no_inflow') not in node__inflow_method then 
+      + ptNode[n, 'inflow', t] *
+        ( if (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] then
+		    + annual_flow_multiplier[n, d]
+		  else 1)
+	)
   + vq_state_up[n, d, t]
   - sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } (
        + v_flow[p, n, sink, d, t] / ptProcess[p, 'efficiency', t]
@@ -1105,7 +1118,7 @@ for {n in node, d in period_realized : d not in period_invest}
   {
     printf '%s, %s, %.8g, %.8g, %.8g, %.8g, %.8g\n'
 		, n, d
-		, (if n in nodeInflow then sum {t in time : (d, t) in dt} ptNode[n, 'inflow', t] else 0)
+		, (if (n, 'scale_to_annual_flow') in node__inflow_method then sum {t in time : (d, t) in dt} ptNode[n, 'inflow', t] else 0)
         , (if n in nodeState then sum {(d, t, t_previous, t_previous_within_block) in dttt}
 		      (v_state[n, d, t] -  v_state[n, d, t_previous]) else 0)
         , sum {(p, source, n) in process_source_sink, t in time : (d, t) in dt} v_flow[p, source, n, d, t]
@@ -1164,7 +1177,7 @@ for {(e, d_invest) in ed_divest} {
 printf '\nNode balances\n' >> resultFile;
 for {n in node} {
   printf '\n%s\nPeriod, Time', n >> resultFile;
-  printf (if n in nodeInflow then ', %s' else ''), n >> resultFile;
+  printf (if (n, 'scale_to_annual_flow') in node__inflow_method then ', %s' else ''), n >> resultFile;
   for {(p, source, n) in process_source_sink} {
     printf ', %s->', source >> resultFile;
   }
@@ -1177,7 +1190,7 @@ for {n in node} {
   printf '\n' >> resultFile;
   for {(d, t) in dt} {
     printf '%s, %s', d, t >> resultFile;
-	printf (if n in nodeInflow then ', %.8g' else ''), ptNode[n, 'inflow', t] >> resultFile; 
+	printf (if (n, 'scale_to_annual_flow') in node__inflow_method then ', %.8g' else ''), ptNode[n, 'inflow', t] >> resultFile; 
     for {(p, source, n) in process_source_sink} {
       printf ', %.8g', v_flow[p, source, n, d, t].val >> resultFile;
 	}

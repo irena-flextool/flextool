@@ -162,53 +162,6 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
-        "nodeInflow": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "nodeInflow"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^node$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "has_inflow"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": 0,
-                    "header": "nodeInflow"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValue",
-                    "position": "hidden",
-                    "filter_re": "yes"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "group_fn": "no_group",
-            "use_fixed_table_name": true
-        },
         "process__sink__unit": {
             "type": "relationships",
             "mapping": [
@@ -307,7 +260,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^(?!has_|invest_method)",
+                    "filter_re": "^(?!has_|inflow_method|invest_method)",
                     "header": "nodeParam"
                 },
                 {
@@ -2251,7 +2204,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^fixed_cost$|^interest_rate$|^invest_cost$|^invest_forced$|^invest_max_period$|^lifetime$|^retire_forced$|^retire_max_period$",
+                    "filter_re": "^invest_forced$|^invest_max_period$|^retire_forced$|^retire_max_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$",
                     "header": "processParam"
                 },
                 {
@@ -2309,7 +2262,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^fixed_cost$|^interest_rate$|^invest_cost$|^invest_forced$|^invest_max_time$|^lifetime$|^retire_forced$|^retire_max_period$",
+                    "filter_re": "^annual_flow$|^invest_forced$|^invest_max_period$|^retire_forced$|^retire_max_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$",
                     "header": "nodeParam"
                 },
                 {
@@ -2837,7 +2790,7 @@
                 {
                     "map_type": "RelationshipClass",
                     "position": "hidden",
-                    "filter_re": "^unit__profile$"
+                    "filter_re": "^unit__profile$|^connection__profile$"
                 },
                 {
                     "map_type": "RelationshipClassObjectClass",
@@ -3124,6 +3077,117 @@
                     "map_type": "ExpandedValue",
                     "position": 2,
                     "header": "timeblocks"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "node__profile__profile_method": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "node__profile__profile_method"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^node__profile$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^profile_method$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "node"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "profile"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 2,
+                    "header": "profile_method"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "node__inflowMethod": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "node__inflow_method"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^node$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^inflow_method$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "node"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 1,
+                    "header": "inflow_method"
                 }
             ],
             "enabled": true,
