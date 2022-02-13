@@ -407,16 +407,44 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "RelationshipClass",
+                                "position": "hidden",
+                                "value": "connection__node__node"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
                                 "position": "hidden",
                                 "value": "connection"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Relationship",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "RelationshipObject",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "RelationshipObject",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": 3
+                            },
+                            {
+                                "map_type": "RelationshipMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -538,55 +566,6 @@
                             },
                             {
                                 "map_type": "ExpandedValue",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "connection_node_node": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "RelationshipClass",
-                                "position": "hidden",
-                                "value": "connection__node__node"
-                            },
-                            {
-                                "map_type": "RelationshipClassObjectClass",
-                                "position": "hidden",
-                                "value": "connection"
-                            },
-                            {
-                                "map_type": "RelationshipClassObjectClass",
-                                "position": "hidden",
-                                "value": "node"
-                            },
-                            {
-                                "map_type": "RelationshipClassObjectClass",
-                                "position": "hidden",
-                                "value": "node"
-                            },
-                            {
-                                "map_type": "Relationship",
-                                "position": "hidden",
-                                "value": "relationship"
-                            },
-                            {
-                                "map_type": "RelationshipObject",
-                                "position": 0
-                            },
-                            {
-                                "map_type": "RelationshipObject",
-                                "position": 1
-                            },
-                            {
-                                "map_type": "RelationshipObject",
-                                "position": 2
-                            },
-                            {
-                                "map_type": "RelationshipMetadata",
                                 "position": "hidden"
                             }
                         ]
@@ -1815,62 +1794,6 @@
                     }
                 }
             ],
-            "unit_profile_c": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "RelationshipClass",
-                                "position": "hidden",
-                                "value": "unit__profile"
-                            },
-                            {
-                                "map_type": "RelationshipClassObjectClass",
-                                "position": "hidden",
-                                "value": "unit"
-                            },
-                            {
-                                "map_type": "RelationshipClassObjectClass",
-                                "position": "hidden",
-                                "value": "profile"
-                            },
-                            {
-                                "map_type": "Relationship",
-                                "position": "hidden",
-                                "value": "relationship"
-                            },
-                            {
-                                "map_type": "RelationshipObject",
-                                "position": 1
-                            },
-                            {
-                                "map_type": "RelationshipObject",
-                                "position": 2
-                            },
-                            {
-                                "map_type": "RelationshipMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterDefinition",
-                                "position": -2
-                            },
-                            {
-                                "map_type": "Alternative",
-                                "position": 0
-                            },
-                            {
-                                "map_type": "ParameterValueMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValue",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
             "unit_node_c": [
                 {
                     "sources": {
@@ -2426,6 +2349,71 @@
                         ]
                     }
                 }
+            ],
+            "unit_node_profile_c": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "RelationshipClass",
+                                "position": "hidden",
+                                "value": "unit__node__profile"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "profile"
+                            },
+                            {
+                                "map_type": "Relationship",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": 3
+                            },
+                            {
+                                "map_type": "RelationshipMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -2440,7 +2428,6 @@
             "connection_c",
             "connection_p",
             "connection_t",
-            "connection_node_node",
             "profile_t",
             "unit_c",
             "unit_p",
@@ -2461,12 +2448,12 @@
             "solve_period",
             "timeline_t",
             "group_p",
-            "unit_profile_c",
             "unit_node_c",
             "unit_node_t",
             "unit_node_constraint_c",
             "node_profile_c",
-            "connection_profile_c"
+            "connection_profile_c",
+            "unit_node_profile_c"
         ],
         "table_options": {
             "solve_sequence": {
@@ -2486,9 +2473,6 @@
             "connection_c": {},
             "connection_p": {},
             "connection_t": {},
-            "connection_node_node": {
-                "header": true
-            },
             "profile_t": {
                 "row": 0
             },
@@ -2523,14 +2507,14 @@
             "solve_period": {},
             "timeline_t": {},
             "group_p": {},
-            "unit_profile_c": {},
             "unit_node_c": {},
             "unit_node_t": {},
             "unit_node_constraint_c": {},
             "version": {},
             "navigate": {},
             "node_profile_c": {},
-            "connection_profile_c": {}
+            "connection_profile_c": {},
+            "unit_node_profile_c": {}
         },
         "table_types": {
             "solve_sequence": {
@@ -2619,8 +2603,8 @@
                 "3": "string",
                 "4": "string",
                 "5": "string",
-                "6": "float",
-                "7": "float",
+                "6": "string",
+                "7": "string",
                 "8": "float",
                 "9": "float",
                 "10": "float",
@@ -2629,7 +2613,9 @@
                 "13": "float",
                 "14": "float",
                 "15": "float",
-                "16": "float"
+                "16": "float",
+                "17": "float",
+                "18": "float"
             },
             "connection_p": {
                 "0": "string",
@@ -2658,24 +2644,12 @@
                 "9": "float",
                 "10": "float"
             },
-            "connection_node_node": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "string",
-                "4": "string",
-                "5": "string",
-                "6": "string",
-                "7": "string",
-                "8": "string",
-                "9": "string",
-                "10": "string",
-                "11": "string"
-            },
             "profile_t": {
                 "0": "string",
-                "1": "float",
-                "2": "float"
+                "1": "string",
+                "2": "float",
+                "3": "float",
+                "4": "float"
             },
             "unit_c": {
                 "0": "string",
@@ -2935,18 +2909,6 @@
                 "7": "float",
                 "8": "float"
             },
-            "unit_profile_c": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "string",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float"
-            },
             "unit_node_c": {
                 "0": "string",
                 "1": "string",
@@ -3030,6 +2992,19 @@
                 "7": "float",
                 "8": "float",
                 "9": "float"
+            },
+            "unit_node_profile_c": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float"
             }
         },
         "table_row_types": {
@@ -3109,9 +3084,6 @@
             "timeline_t": {
                 "1": "string"
             },
-            "unit_profile_c": {
-                "1": "string"
-            },
             "unit_node_c": {
                 "1": "string"
             },
@@ -3131,6 +3103,9 @@
                 "1": "string"
             },
             "connection_profile_c": {
+                "1": "string"
+            },
+            "unit_node_profile_c": {
                 "1": "string"
             }
         },

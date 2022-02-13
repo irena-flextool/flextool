@@ -8,6 +8,7 @@ set sense_equal := equal;
 set ct_method := 
   efficiency
   operating_area
+  none
   no_losses_no_variable_cost
   variable_cost_only
   regular
@@ -103,6 +104,9 @@ set methods :=
 (operating_area, no_startup, method_1way_area_off)
 (operating_area, linear, method_1way_area_LP)
 (operating_area, binary, method_1way_area_MIP)
+(none, no_startup, method_1way_1var_off)
+(none, linear, method_1way_1var_LP)
+(none, binary, method_1way_1var_MIP)
 ;
 
 set commodityParam := price, co2_content;

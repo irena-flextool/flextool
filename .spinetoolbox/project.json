@@ -191,20 +191,6 @@
                 ]
             },
             {
-                "name": "from FlexTool3 to Import_Flex3",
-                "from": [
-                    "FlexTool3",
-                    "right"
-                ],
-                "to": [
-                    "Import_Flex3",
-                    "left"
-                ],
-                "options": {
-                    "use_datapackage": true
-                }
-            },
-            {
                 "name": "from InputDataXlsx to FlexTool2_to_3",
                 "from": [
                     "InputDataXlsx",
@@ -280,6 +266,20 @@
                     "FlexTool3",
                     "left"
                 ]
+            },
+            {
+                "name": "from FlexTool3 to Import_Flex3",
+                "from": [
+                    "FlexTool3",
+                    "right"
+                ],
+                "to": [
+                    "Import_Flex3",
+                    "left"
+                ],
+                "options": {
+                    "use_datapackage": true
+                }
             }
         ],
         "jumps": []
@@ -388,11 +388,11 @@
             "on_conflict": "merge",
             "file_selection": [
                 [
-                    "results/color_codes_elec.dat",
+                    "results/color_codes_csp.dat",
                     false
                 ],
                 [
-                    "results/color_codes_heat.dat",
+                    "results/color_codes_no_grid.dat",
                     false
                 ],
                 [
@@ -400,11 +400,11 @@
                     false
                 ],
                 [
-                    "results/color_codes_csp.dat",
+                    "results/color_codes_elec.dat",
                     false
                 ],
                 [
-                    "results/color_codes_no_grid.dat",
+                    "results/color_codes_heat.dat",
                     false
                 ],
                 [
@@ -431,7 +431,7 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -1.9293420053716943,
+            "x": -3.1269341476669297,
             "y": 47.43413031387209,
             "output_time_stamps": false,
             "cancel_on_error": true,
@@ -469,8 +469,8 @@
         "Import_Flex3": {
             "type": "Importer",
             "description": "",
-            "x": 283.2375536734084,
-            "y": 36.34250654733137,
+            "x": 283.23963644235147,
+            "y": 35.142831636093035,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -485,8 +485,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 138.14634423746702,
-            "y": 40.60465584816134,
+            "x": 135.74907718393348,
+            "y": 38.20530602568468,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": []
@@ -530,8 +530,8 @@
         "FlexTool3_Excel": {
             "type": "Data Connection",
             "description": "",
-            "x": -442.6109195733173,
-            "y": 38.339579276988204,
+            "x": -436.61462778606864,
+            "y": 37.139904365749864,
             "references": [
                 {
                     "type": "path",
@@ -543,7 +543,7 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -301.0530729424304,
+            "x": -302.2527478536688,
             "y": 57.258576799776435,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
