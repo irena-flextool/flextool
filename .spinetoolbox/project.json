@@ -232,7 +232,15 @@
                 "to": [
                     "ExportFlexTool3ToCSV",
                     "left"
-                ]
+                ],
+                "resource_filters": {
+                    "db_url@FlexTool3_test_data": {
+                        "scenario_filter": [
+                            34,
+                            36
+                        ]
+                    }
+                }
             },
             {
                 "name": "from Import_Flex3 to Results_F3",
@@ -388,14 +396,6 @@
             "on_conflict": "merge",
             "file_selection": [
                 [
-                    "results/color_codes_csp.dat",
-                    false
-                ],
-                [
-                    "results/color_codes_no_grid.dat",
-                    false
-                ],
-                [
                     "results/investments_D.dat",
                     false
                 ],
@@ -405,6 +405,14 @@
                 ],
                 [
                     "results/color_codes_heat.dat",
+                    false
+                ],
+                [
+                    "results/color_codes_no_grid.dat",
+                    false
+                ],
+                [
+                    "results/color_codes_csp.dat",
                     false
                 ],
                 [
@@ -431,8 +439,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -3.1269341476669297,
-            "y": 47.43413031387209,
+            "x": -1.6385597516255528,
+            "y": 47.434130313872096,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -485,7 +493,7 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 135.74907718393348,
+            "x": 142.6134015946925,
             "y": 38.20530602568468,
             "specification": "FlexTool3",
             "execute_in_work": false,
@@ -514,8 +522,8 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -153.60456173753266,
-            "y": 30.663955820997344,
+            "x": -155.3206428402224,
+            "y": 30.66395582099734,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
