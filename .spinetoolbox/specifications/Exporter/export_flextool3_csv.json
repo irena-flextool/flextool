@@ -1675,6 +1675,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 3,
+                    "filter_re": "^(?!reserve_method)",
                     "header": "reserveParam"
                 },
                 {
