@@ -232,15 +232,7 @@
                 "to": [
                     "ExportFlexTool3ToCSV",
                     "left"
-                ],
-                "resource_filters": {
-                    "db_url@FlexTool3_test_data": {
-                        "scenario_filter": [
-                            34,
-                            36
-                        ]
-                    }
-                }
+                ]
             },
             {
                 "name": "from Import_Flex3 to Results_F3",
@@ -396,15 +388,7 @@
             "on_conflict": "merge",
             "file_selection": [
                 [
-                    "results/investments_D.dat",
-                    false
-                ],
-                [
-                    "results/color_codes_elec.dat",
-                    false
-                ],
-                [
-                    "results/color_codes_heat.dat",
+                    "results/color_codes_csp.dat",
                     false
                 ],
                 [
@@ -412,7 +396,15 @@
                     false
                 ],
                 [
-                    "results/color_codes_csp.dat",
+                    "results/investments_D.dat",
+                    false
+                ],
+                [
+                    "results/color_codes_heat.dat",
+                    false
+                ],
+                [
+                    "results/color_codes_elec.dat",
                     false
                 ],
                 [
@@ -440,7 +432,7 @@
             "type": "Exporter",
             "description": "",
             "x": -1.6385597516255528,
-            "y": 47.434130313872096,
+            "y": 46.099554605421666,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -522,8 +514,8 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -156.8090172362638,
-            "y": 30.66395582099734,
+            "x": -162.14732007006552,
+            "y": 27.99480440409647,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
