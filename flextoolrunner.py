@@ -343,7 +343,7 @@ class FlexToolRunner:
             uniquePeriods = []
             outfile.write('period\n')
             for item in timeblocks_used_by_solves:
-                solv = timeblocks_used_by_solves[item];
+                solv = timeblocks_used_by_solves[item]
                 for peri in solv:
                     periodList.append(peri[0])
             for x in periodList:
