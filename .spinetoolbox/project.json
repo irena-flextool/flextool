@@ -63,7 +63,15 @@
                 "to": [
                     "ExportFlexTool3ToCSV",
                     "left"
-                ]
+                ],
+                "resource_filters": {
+                    "db_url@FlexTool3_test_data": {
+                        "scenario_filter": [
+                            34,
+                            38
+                        ]
+                    }
+                }
             },
             {
                 "name": "from Import_Flex3 to Results_F3",
@@ -123,7 +131,7 @@
         "Results_F3": {
             "type": "Data Store",
             "description": "",
-            "x": 325.4966084946474,
+            "x": 326.5516766206067,
             "y": 46.54380724197452,
             "url": {
                 "dialect": "sqlite",
@@ -144,7 +152,7 @@
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "purge_before_writing": false,
-            "on_conflict": "keep",
+            "on_conflict": "replace",
             "file_selection": [
                 [
                     "datapackage@FlexTool3",
