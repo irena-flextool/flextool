@@ -63,15 +63,7 @@
                 "to": [
                     "ExportFlexTool3ToCSV",
                     "left"
-                ],
-                "resource_filters": {
-                    "db_url@FlexTool3_test_data": {
-                        "scenario_filter": [
-                            34,
-                            38
-                        ]
-                    }
-                }
+                ]
             },
             {
                 "name": "from Import_Flex3 to Results_F3",
@@ -163,8 +155,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 82.9537647764248,
-            "y": 45.224086827833816,
+            "x": 84.97422503023243,
+            "y": 45.22408682783382,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": []

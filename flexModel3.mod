@@ -84,6 +84,8 @@ set group_node 'member nodes of a particular group' dimen 2 within {group, node}
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
 set group_process_node 'process__nodes of a particular group' dimen 3 within {group, process, node};
 set group_entity := group_process union group_node;
+set groupInertia 'node groups with an inertia constraint' within group;
+set groupCapacityMargin 'node groups with a capacity margin' within group;
 set process_unit 'processes that are unit' within process;
 set process_connection 'processes that are connections' within process;
 set process_ct_method dimen 2 within {process, ct_method};
@@ -479,6 +481,8 @@ table data IN 'CSV' 'group.csv' : group <- [group];
 table data IN 'CSV' 'node.csv' : node <- [node];
 table data IN 'CSV' 'nodeBalance.csv' : nodeBalance <- [nodeBalance];
 table data IN 'CSV' 'nodeState.csv' : nodeState <- [nodeState];
+table data IN 'CSV' 'groupInertia.csv' : groupInertia <- [groupInertia];
+table data IN 'CSV' 'groupCapacityMargin.csv' : groupCapacityMargin <- [groupCapacityMargin];
 table data IN 'CSV' 'process.csv': process <- [process];
 table data IN 'CSV' 'profile.csv': profile <- [profile];
 table data IN 'CSV' 'timeline.csv' : time <- [timestep];
@@ -570,8 +574,9 @@ var v_divest {(e, d) in ed_divest} >= 0;
 var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0;
+var vq_inertia {g in groupInertia, (d, t) in dt} >= 0;
 
-display method_2way;
+display method_2way, groupInertia, pdGroup;
 
 #########################
 ## Data checks 
@@ -608,6 +613,7 @@ minimize total_cost:
 		    * ptProcess_source_sink[p, source, sink, 'variable_cost', t]
       + sum {(p, source, sink, m) in process__source__sink__ramp_method : m in ramp_cost_method}
           + v_ramp[p, source, sink, d, t] * pProcess_source_sink[p, source, sink, 'ramp_cost']
+      + sum {g in groupInertia} vq_inertia[g, d, t] * pdGroup[g, 'penalty_inertia', d]
       + sum {n in nodeBalance} vq_state_up[n, d, t] * ptNode[n, 'penalty_up', t]
       + sum {n in nodeBalance} vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]
       + sum {(r, ud, ng) in reserve__upDown__group} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']
@@ -974,6 +980,20 @@ s.t. maxInvest_entity_period {(e, d)  in ed_invest} :  # Covers both processes a
   + sum{(e, m) in entity__invest_method : m not in invest_method_not_allowed && (e,d) in nd_invest} pdNode[e, 'invest_max_period', d]
 ;
 
+s.t. inertia_constraint {g in groupInertia, (d, t) in dt} :
+  + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']} 
+      + ( + (if p in process_online then v_online_linear[p, d, t]) 
+	      + (if p not in process_online then v_flow[p, source, sink, d, t])
+	    ) * p_process_source[p, source, 'inertia_constant']
+  + sum {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node && p_process_sink[p, sink, 'inertia_constant']} 
+      + ( + (if p in process_online then v_online_linear[p, d, t]) 
+	      + (if p not in process_online then v_flow[p, source, sink, d, t])
+        ) * p_process_sink[p, sink, 'inertia_constant']
+  + vq_inertia[g, d, t]
+  >=
+  pdGroup[g, 'inertia_limit', d]
+;
+
 solve;
 
 param entity_all_capacity{e in entity, d in period_realized} :=
@@ -1171,7 +1191,7 @@ for {p in process_unit, (d, t) in dt : p in process_online}
 printf 'Write node results for periods...\n';
 param fn_node__d symbolic := "r_node__d.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'node,period,exogenous_flow,state_change,inflow,outflow,dummy\n' > fn_node__d; }  # Print the header on the first solve
+  { printf 'node,period,exogenous_flow,state_change,inflow,outflow,penalty\n' > fn_node__d; }  # Print the header on the first solve
 for {n in node, d in period_realized : d not in period_invest}
   {
     printf '%s, %s, %.8g, %.8g, %.8g, %.8g, %.8g\n'
@@ -1191,8 +1211,25 @@ for {n in node, d in period_realized : d not in period_invest}
 		>> fn_node__d;
   }
 
-
-
+printf 'Write group inertia over time...\n';
+param fn_group_inertia__dt symbolic := "r_group_inertia__dt.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'group,period,inertia,penalty_variable\n' > fn_group_inertia__dt; }
+for {g in groupInertia, (d, t) in dt : d in period_realized}
+  {
+    printf '%s, %s, %s, %.8g, %.8g\n'
+	    , g, d, t
+		, + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']} 
+              + ( + (if p in process_online then v_online_linear[p, d, t]) 
+	              + (if p not in process_online then v_flow[p, source, sink, d, t])
+	            ) * p_process_source[p, source, 'inertia_constant']
+          + sum {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node && p_process_sink[p, sink, 'inertia_constant']} 
+              + ( + (if p in process_online then v_online_linear[p, d, t]) 
+	              + (if p not in process_online then v_flow[p, source, sink, d, t])
+                ) * p_process_sink[p, sink, 'inertia_constant']
+		, vq_inertia[g, d, t]
+		>> fn_group_inertia__dt;
+  }
 
 
 param resultFile symbolic := "result.csv";

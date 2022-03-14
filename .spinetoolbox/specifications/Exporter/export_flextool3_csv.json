@@ -1525,6 +1525,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
+                    "filter_re": "^(?!has_)",
                     "header": "groupParam"
                 },
                 {
@@ -3263,6 +3264,100 @@
                     "map_type": "ParameterValue",
                     "position": 3,
                     "header": "profile_method"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "groupInertia": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "groupInertia"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^group$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^has_inertia$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "groupInertia"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": "hidden",
+                    "filter_re": "yes"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "groupCapacityMargin": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "groupCapacityMargin"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^group$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^has_capacity_margin$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "groupCapacityMargin"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": "hidden",
+                    "filter_re": "yes"
                 }
             ],
             "enabled": true,

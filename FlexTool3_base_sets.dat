@@ -134,9 +134,9 @@ set reserveParam := reservation reliability penalty_reserve,
 set reserveTimeParam := reservation;
 set invest_method := only_invest, only_retire, invest_and_retire, not_allowed;
 set modelParam := solveFirst;
-set groupParam := capacity_margin, co2_price, inertia_limit, invest_max_period, 
-                  invest_max_total, invest_min_period, invest_min_total,
-				  non_synchronous_limit, penalty_inertia;
+set groupParam := has_capacity_margin, capacity_margin, has_inertia, inertia_limit, 
+                  invest_max_total, invest_min_total, invest_max_period, invest_min_period,
+				  non_synchronous_limit, co2_price, penalty_inertia;
 set groupPeriodParam := capacity_margin, co2_price, inertia_limit, invest_max_period,
                   invest_min_period, non_synchronous_limit, penalty_inertia;
 
