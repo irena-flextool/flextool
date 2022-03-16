@@ -108,8 +108,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -32.05327656093849,
-            "y": 50.77874180685443,
+            "x": -31.040855934486945,
+            "y": 42.67937679524204,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -147,43 +147,7 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "r_process__reserve__upDown__node__dt.csv",
-                    true
-                ],
-                [
-                    "r_connection__dt.csv",
-                    true
-                ],
-                [
-                    "r_unit__sinkNode__d.csv",
-                    true
-                ],
-                [
-                    "r_unit__sourceNode__dt.csv",
-                    true
-                ],
-                [
-                    "r_unit__sinkNode__dt.csv",
-                    true
-                ],
-                [
-                    "r_node__d.csv",
-                    true
-                ],
-                [
-                    "r_connection__d.csv",
-                    true
-                ],
-                [
-                    "r_unit_online__dt.csv",
-                    true
-                ],
-                [
-                    "r_process_investment__d.csv",
-                    true
-                ],
-                [
-                    "r_unit__sourceNode__d.csv",
+                    "datapackage@FlexTool3",
                     true
                 ]
             ]

@@ -966,6 +966,37 @@ s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t,
   - ( if p in process_online then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
 ;
 
+s.t. reserve_process_upward{(p, r, ud, n, d, t) in prundt : ud = 'up'} :
+  + v_reserve[p, r, ud, n, d, t]
+  <=
+  ( if p in process_online then
+      + v_online_linear[p, n, t] * p_process_reserve_upDown_node[p, r, ud, n, 'max_share']
+    else
+      + p_process_reserve_upDown_node[p, r, ud, n, 'max_share'] 
+        * (
+            + p_entity_all_existing[p]
+            + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#            - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+          )
+    	* ( if (sum{(p, prof, m) in process__profile__profile_method : m = 'upper_limit'} 1) then
+	          ( + sum{(p, prof, m) in process__profile__profile_method : m = 'upper_limit'} pt_profile[prof, t] )
+	        else 1
+	      )
+  )
+;
+
+s.t. reserve_process_downward{(p, r, ud, n, d, t) in prundt : ud = 'down'} :
+  + v_reserve[p, r, ud, n, d, t]
+  <=
+  + sum{(p, source, n) in process_source_sink} v_flow[p, source, n, d, t]
+  - ( + p_entity_all_existing[p]
+      + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#      - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+    ) * ( if (sum{(p, prof, m) in process__profile__profile_method : m = 'lower_limit'} 1) then
+	          ( + sum{(p, prof, m) in process__profile__profile_method : m = 'lower_limit'} pt_profile[prof, t] )
+	    )
+;
+
 s.t. maxInvestGroup_entity_period {g in group, d in period_invest : pdGroup[g, 'invest_max_period', d] } :
   + sum{(g, e) in group_entity : (e, d) in ed_invest} v_invest[e, d] * p_entity_unitsize[e]
   <=
