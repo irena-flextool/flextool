@@ -147,7 +147,43 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "datapackage@FlexTool3",
+                    "r_process__reserve__upDown__node__dt.csv",
+                    true
+                ],
+                [
+                    "r_connection__dt.csv",
+                    true
+                ],
+                [
+                    "r_unit__sinkNode__d.csv",
+                    true
+                ],
+                [
+                    "r_unit__sourceNode__dt.csv",
+                    true
+                ],
+                [
+                    "r_unit__sinkNode__dt.csv",
+                    true
+                ],
+                [
+                    "r_node__d.csv",
+                    true
+                ],
+                [
+                    "r_connection__d.csv",
+                    true
+                ],
+                [
+                    "r_unit_online__dt.csv",
+                    true
+                ],
+                [
+                    "r_process_investment__d.csv",
+                    true
+                ],
+                [
+                    "r_unit__sourceNode__d.csv",
                     true
                 ]
             ]
@@ -155,7 +191,7 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 84.97422503023243,
+            "x": 86.99906628313553,
             "y": 45.22408682783382,
             "specification": "FlexTool3",
             "execute_in_work": false,

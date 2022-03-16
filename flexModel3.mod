@@ -85,6 +85,7 @@ set group_process 'member processes of a particular group' dimen 2 within {group
 set group_process_node 'process__nodes of a particular group' dimen 3 within {group, process, node};
 set group_entity := group_process union group_node;
 set groupInertia 'node groups with an inertia constraint' within group;
+set groupNonSync 'node groups with a non-synchronous constraint' within group;
 set groupCapacityMargin 'node groups with a capacity margin' within group;
 set process_unit 'processes that are unit' within process;
 set process_connection 'processes that are connections' within process;
@@ -451,6 +452,15 @@ set group_commodity_node_period_CO2 :=
 			&& pdGroup[g, 'co2_price', d]
 		};
 
+set process__sink_nonSync_unit dimen 2 within {process, node};
+set process_nonSync_connection dimen 1 within {process};
+set process__sink_nonSync :=
+        {p in process, sink in node :
+		       ( (p, sink) in process_sink && (p, sink) in process__sink_nonSync_unit )
+			|| ( (p, sink) in process_sink && p in process_nonSync_connection )
+			|| ( (p, sink) in process_source && p in process_nonSync_connection )  
+	    };
+
 param p_entity_invested {e in entity : e in entityInvest};
 param p_entity_all_existing {e in entity} :=
         + (if e in process then p_process[e, 'existing'])
@@ -482,6 +492,7 @@ table data IN 'CSV' 'node.csv' : node <- [node];
 table data IN 'CSV' 'nodeBalance.csv' : nodeBalance <- [nodeBalance];
 table data IN 'CSV' 'nodeState.csv' : nodeState <- [nodeState];
 table data IN 'CSV' 'groupInertia.csv' : groupInertia <- [groupInertia];
+table data IN 'CSV' 'groupNonSync.csv' : groupNonSync <- [groupNonSync];
 table data IN 'CSV' 'groupCapacityMargin.csv' : groupCapacityMargin <- [groupCapacityMargin];
 table data IN 'CSV' 'process.csv': process <- [process];
 table data IN 'CSV' 'profile.csv': profile <- [profile];
@@ -489,6 +500,7 @@ table data IN 'CSV' 'timeline.csv' : time <- [timestep];
 
 # Single dimension membership sets
 table data IN 'CSV' 'process_connection.csv': process_connection <- [process_connection];
+table data IN 'CSV' 'process_nonSync_connection.csv': process_nonSync_connection <- [process];
 table data IN 'CSV' 'process_unit.csv': process_unit <- [process_unit];
 
 # Multi dimension membership sets
@@ -512,6 +524,7 @@ table data IN 'CSV' 'process__node__ramp_method.csv' : process_node_ramp_method 
 table data IN 'CSV' 'process__reserve__upDown__node.csv' : process_reserve_upDown_node <- [process,reserve,upDown,node];
 table data IN 'CSV' 'process__sink.csv' : process_sink <- [process,sink];
 table data IN 'CSV' 'process__source.csv' : process_source <- [process,source];
+table data IN 'CSV' 'process__sink_nonSync_unit.csv' : process__sink_nonSync_unit <- [process,sink];
 table data IN 'CSV' 'process__startup_method.csv' : process_startup_method <- [process,startup_method];
 table data IN 'CSV' 'process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
 table data IN 'CSV' 'process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
@@ -575,8 +588,9 @@ var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0;
+var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
 
-display method_2way, groupInertia, pdGroup;
+display method_2way, groupNonSync, pdGroup, process__sink_nonSync;
 
 #########################
 ## Data checks 
@@ -614,6 +628,7 @@ minimize total_cost:
       + sum {(p, source, sink, m) in process__source__sink__ramp_method : m in ramp_cost_method}
           + v_ramp[p, source, sink, d, t] * pProcess_source_sink[p, source, sink, 'ramp_cost']
       + sum {g in groupInertia} vq_inertia[g, d, t] * pdGroup[g, 'penalty_inertia', d]
+      + sum {g in groupNonSync} vq_non_synchronous[g, d, t] * pdGroup[g, 'penalty_non_synchronous', d]
       + sum {n in nodeBalance} vq_state_up[n, d, t] * ptNode[n, 'penalty_up', t]
       + sum {n in nodeBalance} vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]
       + sum {(r, ud, ng) in reserve__upDown__group} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']
@@ -993,6 +1008,19 @@ s.t. inertia_constraint {g in groupInertia, (d, t) in dt} :
   >=
   pdGroup[g, 'inertia_limit', d]
 ;
+
+s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
+  + sum {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node && (p, sink) in process__sink_nonSync}
+      + v_flow[p, source, sink, d, t]
+  <=
+  ( + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node} 
+        + v_flow[p, source, sink, d, t]
+    + sum {(g, n) in group_node} ptNode[n, 'inflow', t]
+    + vq_non_synchronous[g, d, t]
+  ) * pdGroup[g, 'non_synchronous_limit', d]
+;
+
+
 
 solve;
 

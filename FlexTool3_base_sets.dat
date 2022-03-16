@@ -136,9 +136,9 @@ set invest_method := only_invest, only_retire, invest_and_retire, not_allowed;
 set modelParam := solveFirst;
 set groupParam := has_capacity_margin, capacity_margin, has_inertia, inertia_limit, 
                   invest_max_total, invest_min_total, invest_max_period, invest_min_period,
-				  non_synchronous_limit, co2_price, penalty_inertia;
+				  non_synchronous_limit, co2_price, penalty_inertia, penalty_non_synchronous;
 set groupPeriodParam := capacity_margin, co2_price, inertia_limit, invest_max_period,
-                  invest_min_period, non_synchronous_limit, penalty_inertia;
+                  invest_min_period, non_synchronous_limit, penalty_inertia, penalty_non_synchronous;
 
 set invest_method_not_allowed := not_allowed;
 set profile_method := upper_limit lower_limit fixed;

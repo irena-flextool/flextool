@@ -407,9 +407,49 @@
                     "Mapping 1": {
                         "mapping": [
                             {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "connection",
+                                "skip_columns": [
+                                    2,
+                                    3
+                                ]
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "Mapping 2": {
+                        "mapping": [
+                            {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "connection__node__node"
+                                "value": "connection__node__node",
+                                "read_start_row": 2
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
@@ -433,37 +473,18 @@
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": 1,
-                                "import_objects": true
+                                "position": 1
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": 2,
-                                "import_objects": true
+                                "position": 2
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": 3,
-                                "import_objects": true
+                                "position": 3
                             },
                             {
                                 "map_type": "RelationshipMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterDefinition",
-                                "position": -2
-                            },
-                            {
-                                "map_type": "Alternative",
-                                "position": 0
-                            },
-                            {
-                                "map_type": "ParameterValueMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValue",
                                 "position": "hidden"
                             }
                         ]
