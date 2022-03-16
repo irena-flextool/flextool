@@ -21,7 +21,8 @@ set node 'n - Any location where a balance needs to be maintained' within entity
 set group 'g - Any group of entities that have a set of common constraints';
 set commodity 'c - Stuff that is being processed';
 set reserve__upDown__group dimen 3;
-set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng) in reserve__upDown__group} (r);
+set reserve__upDown__group__method dimen 4;
+set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng, r_m) in reserve__upDown__group__method} (r);
 set period_time '(d, t) - Time steps in the time periods of the timelines in use' dimen 2;
 set solve_period '(solve, d) - Time periods in the solves in order to extract periods that can be found in data' dimen 2;
 set periodAll 'd - Time periods in data (including those currently in use)' := setof {(s, d) in solve_period} (d);
@@ -31,6 +32,7 @@ set method 'm - Type of process that transfers, converts or stores commodities';
 set upDown 'upward and downward directions for some variables';
 set ct_method;
 set startup_method;
+set reserve_method;
 set ramp_method;
 set ramp_limit_method within ramp_method;
 set ramp_cost_method within ramp_method;
@@ -529,6 +531,7 @@ table data IN 'CSV' 'process__startup_method.csv' : process_startup_method <- [p
 table data IN 'CSV' 'process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
 table data IN 'CSV' 'process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
 table data IN 'CSV' 'reserve__upDown__group.csv' : reserve__upDown__group <- [reserve,upDown,group];
+table data IN 'CSV' 'reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
 table data IN 'CSV' 'pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time];
 table data IN 'CSV' 'timeblocks_in_use.csv' : solve_period <- [solve,period];
 table data IN 'CSV' 'p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
@@ -659,13 +662,7 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   - vq_state_down[n, d, t]
 ;
 
-s.t. reserveBalance_eq {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} :
-  + sum {(p, r, ud, n) in process_reserve_upDown_node_increase_reserve_ratio : (ng, n) in group_node 
-          && (r, ud, ng) in reserve__upDown__group}
-	   (v_reserve[p, r, ud, n, d, t] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'])
-  + ptReserve_upDown_group[r, ud, ng, 'reservation', t]
-  =
-  + vq_reserve[r, ud, ng, d, t]
+s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__method, (d, t) in dt : r_m = 'timeseries_only' || r_m = 'both'} :
   + sum {(p, r, ud, n) in process_reserve_upDown_node 
 	      : sum{(p, m) in process_method : m in method_1var_per_way} 1
 		  && (ng, n) in group_node 
@@ -681,6 +678,32 @@ s.t. reserveBalance_eq {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} :
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
 		  / ptProcess[p, 'efficiency', t]
 		)
+  + vq_reserve[r, ud, ng, d, t]
+  >=
+  + ptReserve_upDown_group[r, ud, ng, 'reservation', t]
+;
+
+s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__method, (d, t) in dt : r_m = 'dynamic_only' || r_m = 'both'} :
+  + sum {(p, r, ud, n) in process_reserve_upDown_node 
+	      : sum{(p, m) in process_method : m in method_1var_per_way} 1
+		  && (ng, n) in group_node 
+		  && (r, ud, ng) in reserve__upDown__group} 
+	    ( v_reserve[p, r, ud, n, d, t] 
+	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
+	    )
+  + sum {(p, r, ud, n) in process_reserve_upDown_node  
+		  : sum{(p, m) in process_method : m not in method_1var_per_way} 1
+		  && (ng, n) in group_node 
+		  && (r, ud, ng) in reserve__upDown__group} 
+	    ( v_reserve[p, r, ud, n, d, t] 
+	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
+		  / ptProcess[p, 'efficiency', t]
+		)
+  + vq_reserve[r, ud, ng, d, t]
+  >=
+  + sum {(p, r, ud, n) in process_reserve_upDown_node_increase_reserve_ratio : (ng, n) in group_node 
+          && (r, ud, ng) in reserve__upDown__group}
+	   (v_reserve[p, r, ud, n, d, t] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'])
 ;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's in the nodeBalance_eq.
@@ -988,13 +1011,15 @@ s.t. reserve_process_upward{(p, r, ud, n, d, t) in prundt : ud = 'up'} :
 s.t. reserve_process_downward{(p, r, ud, n, d, t) in prundt : ud = 'down'} :
   + v_reserve[p, r, ud, n, d, t]
   <=
-  + sum{(p, source, n) in process_source_sink} v_flow[p, source, n, d, t]
-  - ( + p_entity_all_existing[p]
-      + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
-#      - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
-    ) * ( if (sum{(p, prof, m) in process__profile__profile_method : m = 'lower_limit'} 1) then
-	          ( + sum{(p, prof, m) in process__profile__profile_method : m = 'lower_limit'} pt_profile[prof, t] )
-	    )
+  + p_process_reserve_upDown_node[p, r, ud, n, 'max_share']
+    * ( + sum{(p, source, n) in process_source_sink} v_flow[p, source, n, d, t]
+        - ( + p_entity_all_existing[p]
+            + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#            - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+          ) * ( if (sum{(p, prof, m) in process__profile__profile_method : m = 'lower_limit'} 1) then
+	              ( + sum{(p, prof, m) in process__profile__profile_method : m = 'lower_limit'} pt_profile[prof, t] )
+	          )
+	  )		  
 ;
 
 s.t. maxInvestGroup_entity_period {g in group, d in period_invest : pdGroup[g, 'invest_max_period', d] } :
