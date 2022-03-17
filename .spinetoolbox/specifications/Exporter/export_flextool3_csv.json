@@ -2793,7 +2793,7 @@
                 {
                     "map_type": "RelationshipClass",
                     "position": "hidden",
-                    "filter_re": "^unit__profile$|^connection__profile$"
+                    "filter_re": "^connection__profile$"
                 },
                 {
                     "map_type": "RelationshipClassObjectClass",

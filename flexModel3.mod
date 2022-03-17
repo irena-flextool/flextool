@@ -96,9 +96,7 @@ set process_startup_method dimen 2 within {process, startup_method};
 set process_node_ramp_method dimen 3 within {process, node, ramp_method};
 set methods dimen 3; 
 set process__profile__profile_method dimen 3 within {process, profile, profile_method};
-set process_profile := setof {(p, f, m) in process__profile__profile_method} p;
 set process__node__profile__profile_method dimen 4 within {process, node, profile, profile_method};
-set process__node_profile := setof {(p, n, f, m) in process__node__profile__profile_method} (p, n);
 set process_source dimen 2 within {process, entity};
 set process_sink dimen 2 within {process, entity};
 set process_ct_startup_method := 
@@ -148,18 +146,20 @@ set process_sink_toSource :=
 	    && (p, sink) in process_sink
 	    && sum{(p, m) in process_method : m in method_2way_2var} 1
 	};
-set process_profile_toSink :=
-    { p in process, p2 in process, sink in node
+set process__profileProcess__toSink__profile__profile_method :=
+    { p in process, p2 in process, sink in node, f in profile, m in profile_method
 	    :  p = p2
 		&& (p, sink) in process_sink
-		&& sum{(p2, sink, f, m) in process__node__profile__profile_method} 1
+		&& (p2, sink, f, m) in process__node__profile__profile_method
 	};
-set process_source_toProfile :=
-    { p in process, source in node, p2 in process
+set process__profileProcess__toSink := setof {(p, p2, sink, f, m) in process__profileProcess__toSink__profile__profile_method} (p, p2, sink);
+set process__source__toProfileProcess__profile__profile_method :=
+    { p in process, source in node, p2 in process, f in profile, m in profile_method
 	    :  p = p2
 		&& (p, source) in process_source
-		&& sum{(p2, source, f, m) in process__node__profile__profile_method} 1
+		&& (p2, source, f, m) in process__node__profile__profile_method
 	};
+set process__source__toProfileProcess := setof {(p, source, p2, f, m) in process__source__toProfileProcess__profile__profile_method} (p, source, p2);
 set process_source_sink := 
     process_source_toSink union 
 	process_sink_toSource union   
@@ -167,19 +167,18 @@ set process_source_sink :=
 	process_process_toSink union 
 	process_sink_toProcess union   # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
 	process_process_toSource union # Add the 'wrong' direction in 2-way processes with multiple inputs/outputs
-	process_profile_toSink union   # Add profile based inputs to process
-	process_source_toProfile;	   # Add profile based inputs to process	
+	process__profileProcess__toSink union   # Add profile based inputs to process
+	process__source__toProfileProcess;	   # Add profile based inputs to process	
 set process_online 'processes with an online status' := setof {(p, m) in process_method : m in method_LP} p;
-set process_source_sink_profileProcess :=
-    { (p, sink, source) in process_source_sink
-	    : p in process_profile
+set process__source__sink__profile__profile_method_connection :=
+    { (p, sink, source) in process_source_sink, f in profile, m in profile_method
+	    : (p, f, m) in process__profile__profile_method
 	};
-set process_source_sink_profile :=
-    process_profile_toSink union
-	process_source_toProfile union
-	process_source_sink_profileProcess
-	;
-
+set process__source__sink__profile__profile_method :=
+    process__profileProcess__toSink__profile__profile_method union
+	process__source__toProfileProcess__profile__profile_method union
+	process__source__sink__profile__profile_method_connection
+;
 
 set commodityParam;
 set commodityPeriodParam within commodityParam;
@@ -593,7 +592,7 @@ var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
 
-display method_2way, groupNonSync, pdGroup, process__sink_nonSync;
+display method_2way;
 
 #########################
 ## Data checks 
@@ -721,9 +720,8 @@ s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_i
 	)
 ;
 
-display process_source_sink_profile, process__profile__profile_method, p_process_sink_coefficient, p_process_source_coefficient;
-s.t. profile_upper_limit {(p, source, sink) in process_source_sink_profile, (d, t) in dt :
-     sum {(p, f, m) in process__profile__profile_method : m = 'upper_limit'} 1 } :
+display process__source__sink__profile__profile_method;
+s.t. profile_upper_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'upper_limit'} :
   + ( + v_flow[p, source, sink, d, t] 
   	      * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
 			  else if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
@@ -731,22 +729,19 @@ s.t. profile_upper_limit {(p, source, sink) in process_source_sink_profile, (d, 
 			)
 	)
   <=
-  + sum { (p, f, m) in process__profile__profile_method : m = 'upper_limit' }
-    ( + pt_profile[f, t]
-        * ( + ( if p not in process_online then
-                  + p_entity_all_existing[p]
-                  + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
-#                  - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
-	          )
-            + ( if p in process_online then
-                  + v_online_linear[p, d, t]
-			  )
-		  )
-    )
+  + pt_profile[f, t]
+    * ( + ( if p not in process_online then
+              + p_entity_all_existing[p]
+              + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#              - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+	      )
+        + ( if p in process_online then
+              + v_online_linear[p, d, t]
+	      )
+      )
 ;
 
-s.t. profile_lower_limit {(p, source, sink) in process_source_sink_profile, (d, t) in dt :
-     sum {(p, f, m) in process__profile__profile_method : m = 'lower_limit'} 1 } :
+s.t. profile_lower_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'lower_limit'} :
   + ( + v_flow[p, source, sink, d, t] 
   	      * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
 			  else if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
@@ -754,22 +749,19 @@ s.t. profile_lower_limit {(p, source, sink) in process_source_sink_profile, (d, 
 			)
 	)
   >=
-  + sum { (p, f, m) in process__profile__profile_method : m = 'lower_limit' }
-    ( + pt_profile[f, t]
-        * ( + ( if p not in process_online then
-                  + p_entity_all_existing[p]
-                  + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
-#                  - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
-	          )
-            + ( if p in process_online then
-                  + v_online_linear[p, d, t]
-			  )
-		  )
-    )
+  + pt_profile[f, t]
+    * ( + ( if p not in process_online then
+              + p_entity_all_existing[p]
+              + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#              - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+	      )
+        + ( if p in process_online then
+              + v_online_linear[p, d, t]
+	      )
+	  )
 ;
 
-s.t. profile_fixed_limit {(p, source, sink) in process_source_sink_profile, (d, t) in dt :
-     sum {(p, f, m) in process__profile__profile_method : m = 'fixed'} 1 } :
+s.t. profile_fixed_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'fixed'} :
   + ( + v_flow[p, source, sink, d, t] 
   	      * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
 			  else if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
@@ -777,18 +769,16 @@ s.t. profile_fixed_limit {(p, source, sink) in process_source_sink_profile, (d, 
 			)
 	)
   =
-  + sum { (p, f, m) in process__profile__profile_method : m = 'fixed' }
-    ( + pt_profile[f, t]
-        * ( + ( if p not in process_online then
-                  + p_entity_all_existing[p]
-                  + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
-#                  - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
-	          )
-            + ( if p in process_online then
-                  + v_online_linear[p, d, t]
-			  )
-		  )
-    )
+  + pt_profile[f, t]
+    * ( + ( if p not in process_online then
+              + p_entity_all_existing[p]
+              + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#              - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+	      )
+        + ( if p in process_online then
+              + v_online_linear[p, d, t]
+	    )
+	  )
 ;
 
 
