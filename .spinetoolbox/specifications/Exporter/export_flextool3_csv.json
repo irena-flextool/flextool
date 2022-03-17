@@ -789,7 +789,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^timesteps$"
+                    "filter_re": "^timestep_duration$"
                 },
                 {
                     "map_type": "ParameterValueList",
