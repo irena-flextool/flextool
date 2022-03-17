@@ -63,7 +63,18 @@
                 "to": [
                     "ExportFlexTool3ToCSV",
                     "left"
-                ]
+                ],
+                "resource_filters": {
+                    "db_url@FlexTool3_test_data": {
+                        "scenario_filter": [
+                            34,
+                            39
+                        ],
+                        "tool_filter": [
+                            1
+                        ]
+                    }
+                }
             },
             {
                 "name": "from Import_Flex3 to Results_F3",
@@ -182,13 +193,14 @@
             "description": "",
             "x": -427.36076696557774,
             "y": 79.88974437001107,
-            "references": [
+            "file_references": [
                 {
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool3_import_template.xlsx"
                 }
-            ]
+            ],
+            "db_references": []
         },
         "FlexTool3_input_importer": {
             "type": "Importer",

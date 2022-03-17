@@ -597,13 +597,13 @@ display method_2way, groupNonSync, pdGroup, process__sink_nonSync;
 
 #########################
 ## Data checks 
-printf 'Checking: Data for 1 variable conversions directly from source to sink (and possibly back)\n';
+printf 'Checking: Eff. data for 1 variable conversions directly from source to sink (and possibly back)\n';
 check {(p, m) in process_method, t in time : m in method_1var} ptProcess[p, 'efficiency', t] != 0 ;
 
-printf 'Checking: Data for 1-way conversions with an online variable\n';
+printf 'Checking: Efficiency data for 1-way conversions with an online variable\n';
 check {(p, m) in process_method, t in time : m in method_1way_on} ptProcess[p, 'efficiency', t] != 0;
 
-printf 'Checking: Data for 2-way linear conversions without online variables\n';
+printf 'Checking: Efficiency data for 2-way linear conversions without online variables\n';
 check {(p, m) in process_method, t in time : m in method_2way_off} ptProcess[p, 'efficiency', t] != 0;
 
 minimize total_cost:
@@ -659,6 +659,7 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   - sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } (
        + v_flow[p, n, sink, d, t]
     )		
+  - (if ptNode[n, 'self_discharge_loss', t] then v_state[n, d, t_previous] * ptNode[n, 'self_discharge_loss', t] * step_duration[d, t])
   - vq_state_down[n, d, t]
 ;
 

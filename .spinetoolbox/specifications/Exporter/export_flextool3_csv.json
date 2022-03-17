@@ -260,7 +260,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^(?!has_|inflow_method|invest_method)",
+                    "filter_re": "^(?!has_|inflow_method|invest_method|is_active)",
                     "header": "nodeParam"
                 },
                 {
@@ -1968,7 +1968,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^(?!conversion_method|invest_method|transfer_method|startup_method|ramp_method|minimum_time_method|is_DC)",
+                    "filter_re": "^(?!conversion_method|invest_method|transfer_method|startup_method|ramp_method|minimum_time_method|is_DC|is_active)",
                     "header": "processParam"
                 },
                 {
@@ -2149,7 +2149,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 2,
-                    "filter_re": "^(?!ramp_method|is_synchronous)",
+                    "filter_re": "^(?!ramp_method|is_non_synchronous)",
                     "header": "sourceSinkParam"
                 },
                 {

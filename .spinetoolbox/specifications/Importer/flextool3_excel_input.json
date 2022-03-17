@@ -2582,7 +2582,7 @@
                 "3": "string",
                 "4": "string",
                 "5": "string",
-                "6": "float",
+                "6": "string",
                 "7": "float",
                 "8": "float",
                 "9": "float",
@@ -2595,7 +2595,8 @@
                 "16": "float",
                 "17": "float",
                 "18": "float",
-                "19": "float"
+                "19": "float",
+                "20": "float"
             },
             "node_p": {
                 "0": "string",
@@ -2640,7 +2641,7 @@
                 "5": "string",
                 "6": "string",
                 "7": "string",
-                "8": "float",
+                "8": "string",
                 "9": "float",
                 "10": "float",
                 "11": "float",
@@ -2650,7 +2651,8 @@
                 "15": "float",
                 "16": "float",
                 "17": "float",
-                "18": "float"
+                "18": "float",
+                "19": "float"
             },
             "connection_p": {
                 "0": "string",
@@ -2693,7 +2695,7 @@
                 "3": "string",
                 "4": "string",
                 "5": "string",
-                "6": "float",
+                "6": "string",
                 "7": "float",
                 "8": "float",
                 "9": "float",
@@ -2709,7 +2711,8 @@
                 "19": "float",
                 "20": "float",
                 "21": "float",
-                "22": "float"
+                "22": "float",
+                "23": "float"
             },
             "unit_p": {
                 "0": "string",
