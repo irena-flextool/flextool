@@ -119,8 +119,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -38.153678572488744,
-            "y": 48.7760819135293,
+            "x": -36.12680563078902,
+            "y": 48.776081913529296,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -175,8 +175,8 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -162.14732007006552,
-            "y": 27.99480440409647,
+            "x": -166.5855550124082,
+            "y": 24.355384050206997,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -221,8 +221,8 @@
         "Test_basic_unit": {
             "type": "Data Store",
             "description": "",
-            "x": -162.82818872901345,
-            "y": 142.17679517347577,
+            "x": -152.7443453147943,
+            "y": 141.74178482025303,
             "url": {
                 "dialect": "sqlite",
                 "host": "",

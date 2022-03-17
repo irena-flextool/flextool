@@ -184,17 +184,17 @@ set process_source_sink_profile :=
 set commodityParam;
 set commodityPeriodParam within commodityParam;
 set nodeParam;
-set nodePeriodParam within nodeParam;
+set nodePeriodParam;
 set nodeTimeParam within nodeParam;
 set processParam;
-set processPeriodParam within processParam;
+set processPeriodParam;
 set processTimeParam within processParam;
 set sourceSinkParam;
 set sourceSinkTimeParam within sourceSinkParam;
 set reserveParam;
 set reserveTimeParam within reserveParam;
 set groupParam;
-set groupPeriodParam within groupParam;
+set groupPeriodParam;
 set groupTimeParam within groupParam;
 
 set process_reserve_upDown_node dimen 4;
@@ -721,6 +721,7 @@ s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_i
 	)
 ;
 
+display process_source_sink_profile, process__profile__profile_method, p_process_sink_coefficient, p_process_source_coefficient;
 s.t. profile_upper_limit {(p, source, sink) in process_source_sink_profile, (d, t) in dt :
      sum {(p, f, m) in process__profile__profile_method : m = 'upper_limit'} 1 } :
   + ( + v_flow[p, source, sink, d, t] 
