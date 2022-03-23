@@ -198,7 +198,7 @@ set groupTimeParam within groupParam;
 
 set process_reserve_upDown_node dimen 4;
 set process_node_constraint dimen 3 within {process, node, constraint};
-set process_constraint_sense dimen 3 within {process, constraint, sense};
+set constraint__sense dimen 2 within {constraint, sense};
 set commodity_node dimen 2 within {commodity, node}; 
 set connection_variable_cost dimen 1 within process;
 set unit__sourceNode_variable_cost dimen 2 within process_source;
@@ -362,7 +362,7 @@ param ptReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in res
 		  else p_reserve_upDown_group[r, ud, g, param];
 param p_process_reserve_upDown_node {process, reserve, upDown, node, reserveParam} default 0;
 
-param p_process_constraint_constant {process, constraint};
+param p_constraint_constant {constraint};
 param p_process_node_constraint_coefficient {process, node, constraint};
 param penalty_up {n in nodeBalance};
 param penalty_down {n in nodeBalance};
@@ -485,7 +485,7 @@ param dq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} default 0
 # Domain sets
 table data IN 'CSV' 'commodity.csv' : commodity <- [commodity];
 table data IN 'CSV' 'connection_variable_cost.csv' : connection_variable_cost <- [process];
-table data IN 'CSV' 'constraint.csv' : constraint <- [constraint];
+table data IN 'CSV' 'constraint__sense.csv' : constraint <- [constraint];
 table data IN 'CSV' 'debug.csv': debug <- [debug];
 table data IN 'CSV' 'entity.csv': entity <- [entity];
 table data IN 'CSV' 'group.csv' : group <- [group];
@@ -512,7 +512,7 @@ table data IN 'CSV' 'group__node.csv' : group_node <- [group,node];
 table data IN 'CSV' 'group__process.csv' : group_process <- [group,process];
 table data IN 'CSV' 'group__process__node.csv' : group_process_node <- [group,process,node];
 table data IN 'CSV' 'p_process_node_constraint_coefficient.csv' : process_node_constraint <- [process, node, constraint];
-table data IN 'CSV' 'p_process_constraint_constant.csv' : process_constraint_sense <- [process, constraint, sense];
+table data IN 'CSV' 'constraint__sense.csv' : constraint__sense <- [constraint, sense];
 table data IN 'CSV' 'p_process.csv' : process__param <- [process, processParam];
 table data IN 'CSV' 'pd_node.csv' : node__param__period <- [node, nodeParam, period];
 table data IN 'CSV' 'pt_node.csv' : node__param__time <- [node, nodeParam, time];
@@ -554,7 +554,7 @@ table data IN 'CSV' 'p_process_sink.csv' : [process, sink, sourceSinkParam], p_p
 table data IN 'CSV' 'pt_process_sink.csv' : [process, sink, sourceSinkTimeParam, time], pt_process_sink;
 table data IN 'CSV' 'p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
 table data IN 'CSV' 'pt_process_source.csv' : [process, source, sourceSinkTimeParam, time], pt_process_source;
-table data IN 'CSV' 'p_process_constraint_constant.csv' : [process, constraint], p_process_constraint_constant;
+table data IN 'CSV' 'p_constraint_constant.csv' : [constraint], p_constraint_constant;
 table data IN 'CSV' 'p_process.csv' : [process, processParam], p_process;
 table data IN 'CSV' 'pd_process.csv' : [process, processParam, period], pd_process;
 table data IN 'CSV' 'pt_process.csv' : [process, processParam, time], pt_process;
@@ -781,50 +781,46 @@ s.t. profile_fixed_limit {(p, source, sink, f, m) in process__source__sink__prof
 	  )
 ;
 
-
-s.t. process_constraint_greater_than {(p, m) in process_method, c in constraint, s in sense, (d, t) in dt 
-     : m in method_area && (p, c, s) in process_constraint_sense && s in sense_greater_than} :
-  + sum {source in entity : (p, source) in process_source && (p, source, c) in process_node_constraint}
-    ( + v_flow[p, source, p, d, t]
+s.t. process_constraint_greater_than {(c, s) in constraint__sense, (d, t) in dt 
+     : s in sense_greater_than} :
+  + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_constraint}
+    ( + v_flow[p, source, sink, d, t]
 	      * p_process_node_constraint_coefficient[p, source, c]
 	)
-  + sum {sink in entity : (p, sink) in process_sink && (p, sink, c) in process_node_constraint}
-    ( + v_flow[p, p, sink, d, t]
+  + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_constraint}
+    ( + v_flow[p, source, sink, d, t]
 	      * p_process_node_constraint_coefficient[p, sink, c]
 	)
   >=
-  + ( if p in process_online then
-      + p_process_constraint_constant[p, c]
-        * v_online_linear[p, d, t]
-    )
+  + p_constraint_constant[c]
 ;
 	
-s.t. process_constraint_less_than {(p, m) in process_method, c in constraint, s in sense, (d, t) in dt 
-     : m in method_area && (p, c, s) in process_constraint_sense && s in sense_less_than} :
-  + sum {source in entity : (p, source) in process_source && (p, source, c) in process_node_constraint}
-    ( + v_flow[p, source, p, d, t]
+s.t. process_constraint_less_than {(c, s) in constraint__sense, (d, t) in dt 
+     : s in sense_less_than} :
+  + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_constraint}
+    ( + v_flow[source, source, p, d, t]
 	      * p_process_node_constraint_coefficient[p, source, c]
 	)
-  + sum {sink in entity : (p, sink) in process_sink && (p, sink, c) in process_node_constraint}
-    ( + v_flow[p, p, sink, d, t]
+  + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_constraint}
+    ( + v_flow[p, source, sink, d, t]
 	      * p_process_node_constraint_coefficient[p, sink, c]
 	)
   <=
-  + p_process_constraint_constant[p, c]
+  + p_constraint_constant[c]
 ;
 
-s.t. process_constraint_equal {(p, m) in process_method, c in constraint, s in sense, (d, t) in dt 
-     : m in method_area && (p, c, s) in process_constraint_sense && s in sense_equal} :
-  + sum {source in entity : (p, source) in process_source && (p, source, c) in process_node_constraint}
-    ( + v_flow[p, source, p, d, t]
+s.t. process_constraint_equal {(c, s) in constraint__sense, (d, t) in dt 
+     : s in sense_equal} :
+  + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_constraint}
+    ( + v_flow[p, source, sink, d, t]
 	      * p_process_node_constraint_coefficient[p, source, c]
 	)
-  + sum {sink in entity : (p, sink) in process_sink && (p, sink, c) in process_node_constraint}
-    ( + v_flow[p, p, sink, d, t]
+  + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_constraint}
+    ( + v_flow[p, source, sink, d, t]
 	      * p_process_node_constraint_coefficient[p, sink, c]
 	)
   =
-  + p_process_constraint_constant[p, c]
+  + p_constraint_constant[c]
 ;
 
 

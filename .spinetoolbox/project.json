@@ -67,8 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            34,
-                            39
+                            34
                         ],
                         "tool_filter": [
                             1
@@ -119,8 +118,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -36.12680563078902,
-            "y": 48.776081913529296,
+            "x": -36.126805630789015,
+            "y": 47.764611916773944,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -158,7 +157,43 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "datapackage@FlexTool3",
+                    "r_unit__sinkNode__d.csv",
+                    true
+                ],
+                [
+                    "r_node__d.csv",
+                    true
+                ],
+                [
+                    "r_process_investment__d.csv",
+                    true
+                ],
+                [
+                    "r_unit__sourceNode__d.csv",
+                    true
+                ],
+                [
+                    "r_connection__d.csv",
+                    true
+                ],
+                [
+                    "r_connection__dt.csv",
+                    true
+                ],
+                [
+                    "r_unit__sinkNode__dt.csv",
+                    true
+                ],
+                [
+                    "r_process__reserve__upDown__node__dt.csv",
+                    true
+                ],
+                [
+                    "r_unit__sourceNode__dt.csv",
+                    true
+                ],
+                [
+                    "r_unit_online__dt.csv",
                     true
                 ]
             ]
@@ -166,10 +201,10 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 86.99906628313553,
-            "y": 45.22408682783382,
+            "x": 86.99906628313555,
+            "y": 43.20114683432311,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": []
         },
         "FlexTool3_test_data": {
@@ -205,8 +240,8 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -302.2527478536688,
-            "y": 57.258576799776435,
+            "x": -301.2412778569135,
+            "y": 56.24710680302109,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,

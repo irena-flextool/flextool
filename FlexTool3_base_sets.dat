@@ -6,9 +6,9 @@ set sense_less_than := less_than;
 set sense_equal := equal;
 
 set ct_method := 
-  efficiency
-  operating_area
   none
+  constant_efficiency
+  min_load_efficiency
   no_losses_no_variable_cost
   variable_cost_only
   regular
@@ -94,9 +94,9 @@ set method_1var_per_way := method_1way_1var_off, method_1way_1var_LP, method_1wa
 set method_area := method_1way_area_off, method_1way_area_LP, method_1way_area_MIP;
 
 set methods := 
-(efficiency, no_startup, method_1way_1var_off)
-(efficiency, linear, method_1way_nvar_LP)
-(efficiency, binary, method_1way_nvar_MIP)
+(constant_efficiency, no_startup, method_1way_1var_off)
+(constant_efficiency, linear, method_1way_nvar_LP)
+(constant_efficiency, binary, method_1way_nvar_MIP)
 (no_losses_no_variable_cost, no_startup, method_2way_1var_off)
 (variable_cost_only, no_startup, method_2way_2var_off)
 (regular, no_startup, method_2way_2var_exclude)
