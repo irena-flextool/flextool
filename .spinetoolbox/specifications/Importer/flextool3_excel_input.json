@@ -2511,6 +2511,43 @@
                         ]
                     }
                 }
+            ],
+            "scenario": [
+                {
+                    "Mapping 2": {
+                        "mapping": [
+                            {
+                                "map_type": "Scenario",
+                                "position": 0,
+                                "read_start_row": 2
+                            },
+                            {
+                                "map_type": "ScenarioActiveFlag",
+                                "position": "hidden",
+                                "value": "false"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "Scenario",
+                                "position": 0,
+                                "read_start_row": 2
+                            },
+                            {
+                                "map_type": "ScenarioAlternative",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ScenarioBeforeAlternative",
+                                "position": 2
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -2613,7 +2650,8 @@
             "navigate": {},
             "node_profile_c": {},
             "connection_profile_c": {},
-            "unit_node_profile_c": {}
+            "unit_node_profile_c": {},
+            "scenario": {}
         },
         "table_types": {
             "solve_sequence": {
@@ -3108,6 +3146,11 @@
                 "8": "float",
                 "9": "float",
                 "10": "float"
+            },
+            "scenario": {
+                "0": "string",
+                "1": "string",
+                "2": "string"
             }
         },
         "table_row_types": {
@@ -3209,6 +3252,11 @@
                 "1": "string"
             },
             "unit_node_profile_c": {
+                "1": "string"
+            },
+            "scenario": {
+                "2": "string",
+                "0": "string",
                 "1": "string"
             }
         },

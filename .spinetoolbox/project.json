@@ -133,8 +133,8 @@
         "Results_F3": {
             "type": "Data Store",
             "description": "",
-            "x": 326.5516766206067,
-            "y": 46.54380724197452,
+            "x": 326.55167662060666,
+            "y": 44.52086724846384,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -157,43 +157,7 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "r_unit__sinkNode__d.csv",
-                    true
-                ],
-                [
-                    "r_node__d.csv",
-                    true
-                ],
-                [
-                    "r_process_investment__d.csv",
-                    true
-                ],
-                [
-                    "r_unit__sourceNode__d.csv",
-                    true
-                ],
-                [
-                    "r_connection__d.csv",
-                    true
-                ],
-                [
-                    "r_connection__dt.csv",
-                    true
-                ],
-                [
-                    "r_unit__sinkNode__dt.csv",
-                    true
-                ],
-                [
-                    "r_process__reserve__upDown__node__dt.csv",
-                    true
-                ],
-                [
-                    "r_unit__sourceNode__dt.csv",
-                    true
-                ],
-                [
-                    "r_unit_online__dt.csv",
+                    "datapackage@FlexTool3",
                     true
                 ]
             ]
@@ -202,7 +166,7 @@
             "type": "Tool",
             "description": "",
             "x": 86.99906628313555,
-            "y": 43.20114683432311,
+            "y": 41.17820684081241,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": []
@@ -210,8 +174,8 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -166.5855550124082,
-            "y": 24.355384050206997,
+            "x": -170.6314349994296,
+            "y": 27.389794040473042,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -226,8 +190,8 @@
         "FlexTool3_Excel": {
             "type": "Data Connection",
             "description": "",
-            "x": -427.36076696557774,
-            "y": 79.88974437001107,
+            "x": -435.4525269396205,
+            "y": 78.87827437325569,
             "file_references": [
                 {
                     "type": "path",
@@ -240,8 +204,8 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -301.2412778569135,
-            "y": 56.24710680302109,
+            "x": -300.2298078601582,
+            "y": 55.235636806265745,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -256,8 +220,8 @@
         "Test_basic_unit": {
             "type": "Data Store",
             "description": "",
-            "x": -152.7443453147943,
-            "y": 141.74178482025303,
+            "x": -168.92786526287986,
+            "y": 130.61561485594416,
             "url": {
                 "dialect": "sqlite",
                 "host": "",

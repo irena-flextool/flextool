@@ -43,55 +43,45 @@ set method :=
   method_2way_2var_exclude
   method_2way_2var_MIP_exclude
   method_2way_nvar_off
-  method_1way_area_off
-  method_1way_area_LP
-  method_1way_area_MIP
+  not_applicable
 ;
 
 set method_1var := method_1way_1var_off, method_2way_1var_off;
 set method_1var_off := method_1way_1var_off, method_2way_1var_off; 
-set method_1way_off := method_1way_1var_off, method_1way_nvar_off, method_1way_area_off;
+set method_1way_off := method_1way_1var_off, method_1way_nvar_off;
 set method_2way_off := method_2way_1var_off, method_2way_2var_off, method_2way_2var_exclude, method_2way_nvar_off; 
 set method_1way_1var_on := method_1way_1var_LP, method_1way_1var_MIP; 
-set method_1way_nvar_on := method_1way_nvar_LP, method_1way_nvar_MIP, method_1way_area_LP, method_1way_area_MIP; 
-set method_1way_LP := method_1way_1var_LP, method_1way_nvar_LP, method_1way_area_LP;
-set method_1way_MIP := method_1way_1var_MIP, method_1way_nvar_MIP, method_1way_area_MIP;
+set method_1way_nvar_on := method_1way_nvar_LP, method_1way_nvar_MIP; 
+set method_1way_LP := method_1way_1var_LP, method_1way_nvar_LP;
+set method_1way_MIP := method_1way_1var_MIP, method_1way_nvar_MIP;
 set method_1way := method_1way_1var_off, method_1way_1var_LP, method_1way_1var_MIP, 
-                   method_1way_nvar_off, method_1way_nvar_LP, method_1way_nvar_MIP, 
-				   method_1way_area_off, method_1way_area_LP, method_1way_area_MIP; 
+                   method_1way_nvar_off, method_1way_nvar_LP, method_1way_nvar_MIP; 
 set method_2way := method_2way_1var_off, method_2way_2var_off, method_2way_2var_exclude, 
                    method_2way_2var_MIP_exclude, method_2way_nvar_off;
 set method_off := method_1way_1var_off, method_1way_nvar_off, method_2way_1var_off, 
-                  method_2way_2var_exclude, method_2way_2var_off, method_2way_nvar_off, 
-				  method_1way_area_off;  
+                  method_2way_2var_exclude, method_2way_2var_off, method_2way_nvar_off;  
 set method_1way_on := method_1way_1var_LP, method_1way_1var_MIP, method_1way_nvar_off, 
-                      method_1way_nvar_LP, method_1way_nvar_MIP, method_1way_area_LP, 
-					  method_1way_area_MIP; 
+                      method_1way_nvar_LP, method_1way_nvar_MIP; 
 set method_2way_on := method_2way_2var_exclude, method_2way_2var_MIP_exclude;
 set method_on := method_1way_1var_LP, method_1way_1var_MIP, method_1way_nvar_LP, 
-                 method_1way_nvar_MIP, method_2way_2var_MIP_exclude, method_1way_area_LP, 
-				 method_1way_area_MIP;
+                 method_1way_nvar_MIP, method_2way_2var_MIP_exclude;
 set method_nvar := method_1way_nvar_off, method_1way_nvar_LP, method_1way_nvar_MIP, 
-                   method_2way_nvar_off, method_1way_area_off, method_1way_area_LP, 
-				   method_1way_area_MIP;
+                   method_2way_nvar_off;
 
 set method_1way_1var := method_1way_1var_off, method_1way_1var_LP, method_1way_1var_MIP, method_1way_nvar_off;
 set method_2way_1var := method_2way_1var_off;
 set method_2way_2var := method_2way_2var_off, method_2way_2var_exclude, method_2way_2var_MIP_exclude;
 set method_2way_nvar := method_2way_nvar_off;
 set method_LP := method_1way_1var_LP, method_1way_1var_MIP, method_1way_nvar_off, 
-                 method_1way_nvar_LP, method_1way_area_LP;
-set method_MIP := method_1way_1var_MIP, method_1way_nvar_MIP, method_2way_2var_MIP_exclude, 
-                  method_1way_area_MIP;
+                 method_1way_nvar_LP;
+set method_MIP := method_1way_1var_MIP, method_1way_nvar_MIP, method_2way_2var_MIP_exclude;
 set method_direct := method_1way_1var_off, method_1way_1var_LP, method_1way_1var_MIP, 
                      method_2way_1var_off, method_2way_2var_off, method_2way_2var_exclude, 
 					 method_2way_2var_MIP_exclude;
 set method_indirect := method_1way_nvar_off, method_1way_nvar_LP, method_1way_nvar_MIP, 
-                       method_2way_nvar_off, method_1way_area_off, method_1way_area_LP, 
-					   method_1way_area_MIP;
+                       method_2way_nvar_off;
 set method_1var_per_way := method_1way_1var_off, method_1way_1var_LP, method_1way_1var_MIP, 
                            method_2way_2var_off, method_2way_2var_exclude, method_2way_2var_MIP_exclude;
-set method_area := method_1way_area_off, method_1way_area_LP, method_1way_area_MIP;
 
 set methods := 
 (constant_efficiency, no_startup, method_1way_1var_off)
@@ -101,9 +91,9 @@ set methods :=
 (variable_cost_only, no_startup, method_2way_2var_off)
 (regular, no_startup, method_2way_2var_exclude)
 (exact, no_startup, method_2way_2var_MIP_exclude)
-(operating_area, no_startup, method_1way_area_off)
-(operating_area, linear, method_1way_area_LP)
-(operating_area, binary, method_1way_area_MIP)
+(min_load_efficiency, no_startup, not_applicable)
+(min_load_efficiency, linear, method_1way_nvar_LP)
+(min_load_efficiency, binary, method_1way_nvar_MIP)
 (none, no_startup, method_1way_1var_off)
 (none, linear, method_1way_1var_LP)
 (none, binary, method_1way_1var_MIP)
@@ -119,9 +109,9 @@ set processParam := efficiency existing fixed_cost interest_rate invest_cost sal
 set processPeriodParam := fixed_cost interest_rate invest_cost salvage_value
                     invest_forced invest_max_period lifetime variable_cost
                     retire_forced retire_max_period startup_cost;
-set processTimeParam := efficiency variable_cost;
-set sourceSinkParam := coefficient flow_unitsize variable_cost, ramp_cost, ramp_limit, inertia_constant;
-set sourceSinkTimeParam := variable_cost;
+set processTimeParam := efficiency efficiency_at_min_load min_load variable_cost;
+set sourceSinkParam := efficiency, efficiency_at_min_load, min_load, coefficient, flow_unitsize, variable_cost, ramp_cost, ramp_limit, inertia_constant;
+set sourceSinkTimeParam := efficiency, efficiency_at_min_load, min_load, variable_cost;
 set nodeParam := annual_flow, existing, fixed_cost, inflow, interest_rate, invest_cost, salvage_value,
                  invest_forced, invest_max_total, invest_min_total, lifetime,
                  penalty_down, penalty_up, retire_forced, retire_min_total, 
@@ -145,4 +135,6 @@ set profile_method := upper_limit lower_limit fixed;
 set inflow_method := use_original scale_to_annual_flow;
 set reserve_method := no_reserve timeseries_only dynamic_only both;
 
+
+set test_dt := (p2020, t0001) (p2020, t0009) (p2020, t0015) (p2020, t0020) (p2020, t0024);
 end;
