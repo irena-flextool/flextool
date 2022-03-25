@@ -2543,7 +2543,7 @@
                             },
                             {
                                 "map_type": "ScenarioBeforeAlternative",
-                                "position": 2
+                                "position": "hidden"
                             }
                         ]
                     }
@@ -2587,7 +2587,8 @@
             "unit_node_constraint_c",
             "node_profile_c",
             "connection_profile_c",
-            "unit_node_profile_c"
+            "unit_node_profile_c",
+            "scenario"
         ],
         "table_options": {
             "solve_sequence": {
@@ -3149,8 +3150,7 @@
             },
             "scenario": {
                 "0": "string",
-                "1": "string",
-                "2": "string"
+                "1": "string"
             }
         },
         "table_row_types": {

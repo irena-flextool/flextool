@@ -67,7 +67,11 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            34
+                            50,
+                            51,
+                            52,
+                            53,
+                            54
                         ],
                         "tool_filter": [
                             1
