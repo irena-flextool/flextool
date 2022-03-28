@@ -67,11 +67,11 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            50,
-                            51,
-                            52,
-                            53,
-                            54
+                            55,
+                            56,
+                            57,
+                            58,
+                            59
                         ],
                         "tool_filter": [
                             1
@@ -122,7 +122,7 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -36.126805630789015,
+            "x": -35.11143423178166,
             "y": 47.764611916773944,
             "output_time_stamps": false,
             "cancel_on_error": true,
@@ -172,7 +172,7 @@
             "x": 86.99906628313555,
             "y": 41.17820684081241,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": []
         },
         "FlexTool3_test_data": {
