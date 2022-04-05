@@ -67,12 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            71,
-                            72,
-                            73,
-                            74,
-                            75,
-                            76
+                            79
                         ],
                         "tool_filter": [
                             1
@@ -138,8 +133,8 @@
         "Results_F3": {
             "type": "Data Store",
             "description": "",
-            "x": 326.55167662060666,
-            "y": 44.52086724846384,
+            "x": 323.3488272411875,
+            "y": 50.92656600730221,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -154,8 +149,8 @@
         "Import_Flex3": {
             "type": "Importer",
             "description": "",
-            "x": 224.74979642444197,
-            "y": 46.840799639674934,
+            "x": 216.20886474599087,
+            "y": 53.24649839851332,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -170,8 +165,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 89.1487264522052,
-            "y": 41.178206840812415,
+            "x": 80.60779477375405,
+            "y": 47.5839055996508,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": []
@@ -195,13 +190,13 @@
         "FlexTool3_Excel": {
             "type": "Data Connection",
             "description": "",
-            "x": -435.4525269396205,
-            "y": 78.87827437325569,
+            "x": -432.2496775602013,
+            "y": 78.8782743732557,
             "file_references": [
                 {
                     "type": "path",
                     "relative": true,
-                    "path": "FlexTool3_import_template.xlsx"
+                    "path": "FlexTool3_import_template_Iaonnis.xlsx"
                 }
             ],
             "db_references": []
@@ -217,7 +212,7 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "<project>/FlexTool3_import_template.xlsx",
+                    "<project>/FlexTool3_import_template_Iaonnis.xlsx",
                     true
                 ]
             ]
