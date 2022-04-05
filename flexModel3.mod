@@ -442,6 +442,26 @@ set pd_invest := {(p, d) in ed_invest : p in process};
 set nd_invest := {(n, d) in ed_invest : n in node};
 set ed_divest := ed_invest;
 
+param e_invest_max_total{e in entityInvest} :=
+  + (if e in process then p_process[e, 'invest_max_total'])
+  + (if e in node then p_node[e, 'invest_max_total'])
+;  
+
+param e_invest_min_total{e in entityInvest} :=
+  + (if e in process then p_process[e, 'invest_min_total'])
+  + (if e in node then p_node[e, 'invest_min_total'])
+;  
+
+param ed_invest_max_period{(e, d) in ed_invest} :=
+  + (if e in process then pdProcess[e, 'invest_max_period', d])
+  + (if e in node then pdNode[e, 'invest_max_period', d])
+;  
+
+param ed_invest_min_period{(e, d) in ed_invest} :=
+  + (if e in process then pdProcess[e, 'invest_min_period', d])
+  + (if e in node then pdNode[e, 'invest_min_period', d])
+;  
+
 set process_source_sink_ramp_limit_up :=
     {(p, source, sink) in process_source_sink
 	    : ( sum{(p, source, m) in process_node_ramp_method : m in ramp_limit_method} 1
@@ -616,7 +636,6 @@ table data IN 'CSV' 'p_model.csv' : [modelParam], p_model;
 
 # After rolling forward the investment model
 table data IN 'CSV' 'p_entity_invested.csv' : [entity], p_entity_invested;
-
 
 #########################
 # Variable declarations
@@ -1128,11 +1147,40 @@ s.t. maxInvestGroup_entity_total {g in group : p_group[g, 'invest_max_total'] } 
   + p_group[g, 'invest_max_total']
 ;
 
-s.t. maxInvest_entity_period {(e, d)  in ed_invest} :  # Covers both processes and nodes
+s.t. minInvestGroup_entity_total {g in group : p_group[g, 'invest_min_total'] } :
+  + sum{(g, e) in group_entity, d in period : (e, d) in ed_invest}
+    (
+      + v_invest[e, d]
+      + (if not p_model['solveFirst'] && e in entityInvest then p_entity_invested[e])
+	)
+  >=
+  + p_group[g, 'invest_min_total']
+;
+
+s.t. maxInvest_entity_period {(e, d)  in ed_invest : ed_invest_max_period[e, d]} :  # Covers both processes and nodes
   + v_invest[e, d] * p_entity_unitsize[e] 
   <= 
-  + sum{(e, m) in entity__invest_method : m not in invest_method_not_allowed && (e,d) in pd_invest} pdProcess[e, 'invest_max_period', d]
-  + sum{(e, m) in entity__invest_method : m not in invest_method_not_allowed && (e,d) in nd_invest} pdNode[e, 'invest_max_period', d]
+  + ed_invest_max_period[e, d]
+;
+
+s.t. minInvest_entity_period {(e, d)  in ed_invest : ed_invest_min_period[e, d]} :  # Covers both processes and nodes
+  + v_invest[e, d] * p_entity_unitsize[e] 
+  >= 
+  + ed_invest_min_period[e, d]
+;
+
+s.t. maxInvest_entity_total {e  in entityInvest : e_invest_max_total[e] && sum{(e, d) in ed_invest} 1} :  # Covers both processes and nodes
+  + sum{(e, d) in ed_invest} v_invest[e, d] * p_entity_unitsize[e] 
+  <= 
+  + e_invest_max_total[e]
+  + (if not p_model['solveFirst'] then p_entity_invested[e])
+;
+
+s.t. minInvest_entity_total {e  in entityInvest : e_invest_min_total[e] && sum{(e, d) in ed_invest} 1} :  # Covers both processes and nodes
+  + sum{(e, d) in ed_invest} v_invest[e, d] * p_entity_unitsize[e] 
+  >= 
+  + e_invest_min_total[e]
+  + (if not p_model['solveFirst'] then p_entity_invested[e])
 ;
 
 s.t. inertia_constraint {g in groupInertia, (d, t) in dt} :
