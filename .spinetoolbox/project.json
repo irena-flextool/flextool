@@ -67,11 +67,12 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            55,
-                            56,
-                            57,
-                            58,
-                            59
+                            71,
+                            72,
+                            73,
+                            74,
+                            75,
+                            76
                         ],
                         "tool_filter": [
                             1
@@ -169,8 +170,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 86.99906628313555,
-            "y": 41.17820684081241,
+            "x": 89.1487264522052,
+            "y": 41.178206840812415,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": []
@@ -208,8 +209,8 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -300.2298078601582,
-            "y": 55.235636806265745,
+            "x": -303.45429811376255,
+            "y": 55.23563680626575,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,
