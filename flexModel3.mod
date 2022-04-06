@@ -1212,7 +1212,7 @@ param entity_all_capacity{e in entity, d in period_realized} :=
   + p_entity_all_existing[e]
   + sum {(e, d_invest) in ed_invest : d <= d_invest} v_invest[e, d_invest].val * p_entity_unitsize[e]
 ;
-
+display process_source_toSink, process_sink_toSource;
 param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
   + sum {(p, m) in process_method : m in method_1var_per_way}
       + sum {(p, source, sink2) in process_source_toSink} 
@@ -1229,6 +1229,10 @@ param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alw
 	    )
       + sum {(p, source2, sink) in process_sink_toSource} 
           + v_flow[p, source2, sink, d, t].val 
+      + (if (p, source, sink) in process__profileProcess__toSink then 
+	      + v_flow[p, source, sink, d, t].val)
+      + (if (p, source, sink) in process__source__toProfileProcess then 
+	      + v_flow[p, source, sink, d, t].val)
   + sum {(p, m) in process_method : m not in method_1var_per_way} (
       + v_flow[p, source, sink, d, t].val 
 	)
@@ -1571,6 +1575,4 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {g in groupInertia, (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
 display p_entity_invested, p_entity_unitsize, v_invest;
-display entityInvest, period_invest;
-
 end;

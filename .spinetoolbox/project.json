@@ -67,12 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            78,
-                            79,
-                            80,
-                            81,
-                            82,
-                            83
+                            84
                         ],
                         "tool_filter": [
                             1
@@ -173,14 +168,14 @@
             "x": 82.74302769336684,
             "y": 44.381056220231606,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": []
         },
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -170.6314349994296,
-            "y": 27.389794040473042,
+            "x": -168.49620207981678,
+            "y": 26.322177580666644,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -196,7 +191,7 @@
             "type": "Data Connection",
             "description": "",
             "x": -432.2496775602013,
-            "y": 78.8782743732557,
+            "y": 77.81065791344929,
             "file_references": [
                 {
                     "type": "path",
