@@ -1929,7 +1929,7 @@
                             {
                                 "map_type": "RelationshipMetadata",
                                 "position": 3,
-                                "filter_re": "^source$"
+                                "filter_re": "^input$"
                             },
                             {
                                 "map_type": "ParameterDefinition",
@@ -1987,7 +1987,7 @@
                             {
                                 "map_type": "RelationshipMetadata",
                                 "position": 3,
-                                "filter_re": "^sink$"
+                                "filter_re": "^output$"
                             },
                             {
                                 "map_type": "ParameterDefinition",
@@ -2047,7 +2047,7 @@
                             {
                                 "map_type": "RelationshipMetadata",
                                 "position": -5,
-                                "filter_re": "^source$"
+                                "filter_re": "^input$"
                             },
                             {
                                 "map_type": "ParameterDefinition",
@@ -2119,7 +2119,7 @@
                             {
                                 "map_type": "RelationshipMetadata",
                                 "position": -5,
-                                "filter_re": "^sink$"
+                                "filter_re": "^output$"
                             },
                             {
                                 "map_type": "ParameterDefinition",
@@ -2190,7 +2190,7 @@
                             {
                                 "map_type": "RelationshipMetadata",
                                 "position": 3,
-                                "filter_re": "^source$"
+                                "filter_re": "^input$"
                             },
                             {
                                 "map_type": "ParameterDefinition",
@@ -2259,7 +2259,7 @@
                             {
                                 "map_type": "RelationshipMetadata",
                                 "position": 3,
-                                "filter_re": "^sink$"
+                                "filter_re": "^output$"
                             },
                             {
                                 "map_type": "ParameterDefinition",
@@ -2701,7 +2701,9 @@
                 "17": "float",
                 "18": "float",
                 "19": "float",
-                "20": "float"
+                "20": "float",
+                "21": "string",
+                "22": "string"
             },
             "node_p": {
                 "0": "string",
@@ -2716,7 +2718,8 @@
                 "9": "float",
                 "10": "float",
                 "11": "float",
-                "12": "float"
+                "12": "float",
+                "13": "string"
             },
             "node_t": {
                 "0": "string",
@@ -2757,7 +2760,9 @@
                 "16": "float",
                 "17": "float",
                 "18": "float",
-                "19": "float"
+                "19": "float",
+                "20": "string",
+                "21": "string"
             },
             "connection_p": {
                 "0": "string",
@@ -2873,7 +2878,10 @@
                 "8": "float",
                 "9": "float",
                 "10": "float",
-                "11": "float"
+                "11": "float",
+                "12": "string",
+                "13": "string",
+                "14": "string"
             },
             "group_connection": {
                 "0": "string",
@@ -3051,7 +3059,9 @@
                 "5": "float",
                 "6": "float",
                 "7": "float",
-                "8": "float"
+                "8": "float",
+                "9": "string",
+                "10": "string"
             },
             "unit_node_c": {
                 "0": "string",
@@ -3157,7 +3167,8 @@
                 "3": "string",
                 "4": "string",
                 "5": "string",
-                "6": "string"
+                "6": "string",
+                "7": "string"
             }
         },
         "table_row_types": {

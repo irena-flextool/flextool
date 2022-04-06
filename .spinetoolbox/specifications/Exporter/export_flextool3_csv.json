@@ -1242,7 +1242,7 @@
                 {
                     "map_type": "RelationshipClass",
                     "position": "hidden",
-                    "filter_re": "$group__unit__node^|$group__connection__node^"
+                    "filter_re": "^group__unit__node$|^group__connection__node$"
                 },
                 {
                     "map_type": "RelationshipClassObjectClass",

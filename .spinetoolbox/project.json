@@ -67,7 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            84
+                            98
                         ],
                         "tool_filter": [
                             1
@@ -118,7 +118,7 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -35.11143423178165,
+            "x": -32.97620131216885,
             "y": 45.62937899716115,
             "output_time_stamps": false,
             "cancel_on_error": true,
@@ -165,8 +165,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 82.74302769336684,
-            "y": 44.381056220231606,
+            "x": 84.87826061297962,
+            "y": 43.31343976042522,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": []
@@ -174,8 +174,8 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -168.49620207981678,
-            "y": 26.322177580666644,
+            "x": -167.42858562001035,
+            "y": 25.25456112086025,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -197,11 +197,6 @@
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool3_import_template.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_template_Ioannis.xlsx"
                 }
             ],
             "db_references": []
@@ -219,10 +214,6 @@
                 [
                     "<project>/FlexTool3_import_template.xlsx",
                     true
-                ],
-                [
-                    "<project>/FlexTool3_import_template_Ioannis.xlsx",
-                    false
                 ]
             ]
         },
