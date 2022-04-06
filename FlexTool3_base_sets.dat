@@ -102,24 +102,25 @@ set methods :=
 set commodityParam := price, co2_content;
 set commodityPeriodParam := price;
 set processParam := efficiency existing fixed_cost interest_rate invest_cost salvage_value
-                    invest_forced invest_max_period invest_max_total lifetime
+                    invest_max_period invest_max_total lifetime
 					invest_min_period invest_min_total
                     retire_forced retire_max_period retire_max_total variable_cost 
 					efficiency_at_min_load min_load min_downtime min_uptime
 					startup_cost virtual_unitsize;
 set processPeriodParam := fixed_cost interest_rate invest_cost salvage_value
-                    invest_forced invest_max_period lifetime variable_cost
-                    retire_forced retire_max_period startup_cost;
+                    invest_max_period invest_min_period
+					lifetime variable_cost startup_cost
+                    retire_forced retire_max_period retire_min_period;
 set processTimeParam := efficiency efficiency_at_min_load min_load variable_cost;
 set sourceSinkParam := efficiency, efficiency_at_min_load, min_load, coefficient, flow_unitsize, variable_cost, ramp_cost, ramp_limit, inertia_constant;
 set sourceSinkTimeParam := efficiency, efficiency_at_min_load, min_load, variable_cost;
 set nodeParam := annual_flow, existing, fixed_cost, inflow, interest_rate, invest_cost, salvage_value,
-                 invest_forced, invest_max_total, invest_min_total, lifetime,
+                 invest_max_total, invest_min_total, lifetime,
 				 invest_max_period, invest_min_period,
                  penalty_down, penalty_up, retire_forced, retire_min_total, 
 				 retire_max_total, self_discharge_loss, virtual_unitsize;
 set nodePeriodParam := annual_flow, fixed_cost, interest_rate, invest_cost, salvage_value,
-                 invest_forced, invest_max_period, invest_min_period, lifetime,
+                 invest_max_period, invest_min_period, lifetime,
                  retire_forced, retire_max_period, retire_min_period, virtual_unitsize;
 set nodeTimeParam := inflow, penalty_down, penalty_up, self_discharge_loss;
 set reserveParam := reservation reliability penalty_reserve,

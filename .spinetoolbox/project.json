@@ -67,7 +67,12 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            80
+                            78,
+                            79,
+                            80,
+                            81,
+                            82,
+                            83
                         ],
                         "tool_filter": [
                             1
@@ -118,8 +123,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -35.11143423178166,
-            "y": 47.764611916773944,
+            "x": -35.11143423178165,
+            "y": 45.62937899716115,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -133,8 +138,8 @@
         "Results_F3": {
             "type": "Data Store",
             "description": "",
-            "x": 323.3488272411875,
-            "y": 50.92656600730221,
+            "x": 323.34882724118745,
+            "y": 49.85894954749581,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -149,8 +154,8 @@
         "Import_Flex3": {
             "type": "Importer",
             "description": "",
-            "x": 216.20886474599087,
-            "y": 53.24649839851332,
+            "x": 216.20886474599084,
+            "y": 52.17888193870691,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -165,8 +170,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 80.60779477375405,
-            "y": 47.5839055996508,
+            "x": 82.74302769336684,
+            "y": 44.381056220231606,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": []
@@ -196,7 +201,12 @@
                 {
                     "type": "path",
                     "relative": true,
-                    "path": "FlexTool3_import_template_Iaonnis.xlsx"
+                    "path": "FlexTool3_import_template.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "FlexTool3_import_template_Ioannis.xlsx"
                 }
             ],
             "db_references": []
@@ -212,8 +222,12 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "<project>/FlexTool3_import_template_Iaonnis.xlsx",
+                    "<project>/FlexTool3_import_template.xlsx",
                     true
+                ],
+                [
+                    "<project>/FlexTool3_import_template_Ioannis.xlsx",
+                    false
                 ]
             ]
         },

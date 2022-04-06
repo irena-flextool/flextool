@@ -40,10 +40,10 @@ class FlexToolRunner:
         read in the list of solves return it as a list of strings
         :return:
         """
-        with open("solves.csv", 'r') as solvefile:
+        with open("solve_mode.csv", 'r') as solvefile:
             header = solvefile.readline()
             solves = solvefile.readlines()
-        return [solve.strip() for solve in solves]
+        return [solve.split(",")[0] for solve in solves]
 
     def get_timeblocks_used_by_solves(self):
         """

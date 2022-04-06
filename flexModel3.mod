@@ -293,7 +293,7 @@ set process__param__period dimen 3 within {process, processPeriodParam, periodAl
 set process__param__time dimen 3 within {process, processTimeParam, time};
 set process__param_t := setof {(p, param, t) in process__param__time} (p, param);
 
-set connection__param dimen 2 within {process, processParam};
+set connection__param := {(p, param) in process__param : p in process_connection};
 set connection__param__time := { (p, param, t) in process__param__time : (p in process_connection)};
 set connection__param_t := setof {(connection, param, t) in connection__param__time} (connection, param);
 set process__source__param dimen 3 within {process_source, sourceSinkParam};
@@ -342,20 +342,20 @@ param ptProcess {p in process, param in processTimeParam, t in time} :=
 		  else 0;
 
 param p_entity_unitsize {e in entity} := 
-        + if e in process && p_process[e, 'virtual_unitsize']
-          then p_process[e, 'virtual_unitsize'] 
-		  else if e in process && p_process[e, 'existing']
-			   then p_process[e, 'existing']
-			   else if e in process && p_process[e, 'invest_forced']
-			        then p_process[e, 'invest_forced']
-			        else 1
-        + if e in node && p_node[e, 'virtual_unitsize'] 
-          then p_node[e, 'virtual_unitsize'] 
-		  else if e in node && p_node[e, 'existing']
-		       then p_node[e, 'existing']
-		       else if e in node && p_node[e, 'invest_forced']
-		            then p_node[e, 'invest_forced']
-		            else 1;
+        + if e in process 
+		  then ( if p_process[e, 'virtual_unitsize']
+                 then p_process[e, 'virtual_unitsize'] 
+		         else if e in process && p_process[e, 'existing']
+			          then p_process[e, 'existing']
+					  else 1
+			   )			 
+          else if e in node 
+		  then ( if p_node[e, 'virtual_unitsize'] 
+                 then p_node[e, 'virtual_unitsize'] 
+		         else if e in node && p_node[e, 'existing']
+		              then p_node[e, 'existing']
+					  else 1
+			   );
 
 param p_process_source {(p, source) in process_source, sourceSinkParam} default 0;
 param pt_process_source {(p, source) in process_source, sourceSinkTimeParam, time} default 0;
@@ -529,9 +529,7 @@ set process__sink_nonSync :=
 param p_entity_invested {e in entity : e in entityInvest};
 param p_entity_all_existing {e in entity} :=
         + (if e in process then p_process[e, 'existing'])
-		+ (if e in process then p_process[e, 'invest_forced'])
         + (if e in node then p_node[e, 'existing'])
-		+ (if e in node then p_node[e, 'invest_forced'])
 		+ (if not p_model['solveFirst'] && e in entityInvest then p_entity_invested[e])
 ;
 
@@ -1572,6 +1570,7 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_up[n, d, t].val;
 #display {g in groupInertia, (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
-display v_invest;
+display p_entity_invested, p_entity_unitsize, v_invest;
+display entityInvest, period_invest;
 
 end;
