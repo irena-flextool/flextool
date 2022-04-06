@@ -72,7 +72,6 @@
         "p_commodity.csv",
         "nodeState.csv",
         "pt_process_source.csv",
-        "solves.csv",
         "debug.csv"
     ],
     "inputfiles_opt": [],
