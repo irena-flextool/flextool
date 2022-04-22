@@ -67,7 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            98
+                            109
                         ],
                         "tool_filter": [
                             1
@@ -166,7 +166,7 @@
             "type": "Tool",
             "description": "",
             "x": 84.87826061297962,
-            "y": 43.31343976042522,
+            "y": 40.39857307734354,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": []
@@ -197,6 +197,11 @@
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool3_import_template.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "FlexTool3_input_Ioannis.xlsx"
                 }
             ],
             "db_references": []
@@ -204,8 +209,8 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -303.45429811376255,
-            "y": 55.23563680626575,
+            "x": -292.7781335156984,
+            "y": 58.43848618568493,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -214,6 +219,10 @@
                 [
                     "<project>/FlexTool3_import_template.xlsx",
                     true
+                ],
+                [
+                    "<project>/FlexTool3_input_Ioannis.xlsx",
+                    false
                 ]
             ]
         },
@@ -232,6 +241,15 @@
                     "path": ".spinetoolbox/items/test_basic_unit/FlexTool3_data.sqlite"
                 }
             }
+        },
+        "Run SpineOpt 1": {
+            "type": "Tool",
+            "description": "",
+            "x": 107.8292624404461,
+            "y": 168.68340064941074,
+            "specification": "Run SpineOpt",
+            "execute_in_work": true,
+            "cmd_line_args": []
         }
     }
 }
