@@ -73,7 +73,6 @@ set method_direct within method;
 set method_indirect within method;
 set method_1var_per_way within method;
 
-
 set invest_method 'methods available for investments';
 set invest_method_not_allowed 'method for denying investments' within invest_method;
 set entity__invest_method 'the investment method applied to an entity' dimen 2 within {entity, invest_method};
@@ -559,7 +558,7 @@ set process_reserve_upDown_node_increase_reserve_ratio :=
 		    p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'] > 0
 		};
 
-set group_commodity_node_period_CO2 :=
+set group_commodity_node_period_co2 :=
         {g in group, (c, n) in commodity_node, d in period : 
 		    (g, n) in group_node 
 			&& p_commodity[c, 'co2_content'] 
@@ -739,7 +738,7 @@ minimize total_cost:
 			      + v_flow[p, source, n, d, t]
 				)  
 		    )
-	  + sum {(g, c, n, d) in group_commodity_node_period_CO2} p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
+	  + sum {(g, c, n, d) in group_commodity_node_period_co2} p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
 	      * (
 		      # Paying for CO2 (increases the objective function)
 			  + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } 
@@ -1419,7 +1418,7 @@ param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alw
 	)
 ;
 
-param r_process_source_sink_flow_d{(p, source, sink) in process_source_sink_alwaysProcess, d in period_realized} :=
+param r_process_source_sink_flow_d{(p, source, sink) in process_source_sink_alwaysProcess, d in period} :=
   + sum {(d, t) in dt} r_process_source_sink_flow_dt[p, source, sink, d, t]
 ;
 param r_process_source_flow_d{(p, source) in process_source, d in period_realized} := 
@@ -1427,6 +1426,15 @@ param r_process_source_flow_d{(p, source) in process_source, d in period_realize
 ;
 param r_process_sink_flow_d{(p, sink) in process_sink, d in period_realized} := 
   + sum {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} r_process_source_sink_flow_d[p, source, sink, d]
+;
+
+param r_nodeState_change_dt{n in nodeState, (d, t) in dt} := sum {(d, t, t_previous, t_previous_within_block) in dttt}
+		      (v_state[n, d, t] -  v_state[n, d, t_previous]);
+param r_nodeState_change_d{n in nodeState, d in period} := sum {(d, t) in dt} r_nodeState_change_dt[n, d, t];
+
+param r_nodePenalty_upDown_d{n in nodeBalance, ud in upDown, d in period} := 
+  + sum{(d, t) in dt : ud = 'up'} vq_state_up[n, d, t]
+  + sum{(d, t) in dt : ud = 'down'} vq_state_down[n, d, t]
 ;
 
 param r_cost_commodity_dt{(c, n) in commodity_node, (d, t) in dt} := 
@@ -1439,15 +1447,22 @@ param r_cost_commodity_dt{(c, n) in commodity_node, (d, t) in dt} :=
 	    )
 ;
 
-param r_cost_co2_dt{(g, c, n, d) in group_commodity_node_period_CO2, t in time : (d, t) in dt} := 
+param r_emissions_co2_dt{(g, c, n, d) in group_commodity_node_period_co2, t in time : (d, t) in dt} := 
   + step_duration[d, t] 
       * p_commodity[c, 'co2_content'] 
-	  * pdGroup[g, 'co2_price', d]
       * ( + sum{(p, n, sink) in process_source_sink_alwaysProcess}
               + r_process_source_sink_flow_dt[p, n, sink, d, t]
 	      - sum{(p, source, n) in process_source_sink_alwaysProcess}	  
               + r_process_source_sink_flow_dt[p, source, n, d, t]
         )
+;	  
+
+param r_emissions_co2_commodity_d{c in commodity, d in period} :=
+  + sum{(g, c, n, d) in group_commodity_node_period_co2, t in time : (d, t) in dt} r_emissions_co2_dt[g, c, n, d, t];
+
+param r_cost_co2_dt{(g, c, n, d) in group_commodity_node_period_co2, t in time : (d, t) in dt} := 
+  + r_emissions_co2_dt[g, c, n, d, t] 
+    * pdGroup[g, 'co2_price', d]
 ;	  
 #display process_source_sink, process_source_sink_alwaysProcess, process__source__sink__param_t, ptProcess_source_sink, process_source, process_sink;
 param r_cost_process_variable_cost_dt{p in process, (d, t) in dt} :=
@@ -1505,7 +1520,7 @@ param r_cost_entity_invest_d{(e, d) in ed_invest} :=
 
 param r_costOper_dt{(d, t) in dt} :=
   + sum{(c, n) in commodity_node} r_cost_commodity_dt[c, n, d, t]
-  + sum{(g, c, n, d) in group_commodity_node_period_CO2} r_cost_co2_dt[g, c, n, d, t]
+  + sum{(g, c, n, d) in group_commodity_node_period_co2} r_cost_co2_dt[g, c, n, d, t]
   + sum{p in process} r_cost_process_variable_cost_dt[p, d, t]
   + sum{(p, source, sink, m) in process__source__sink__ramp_method : m in ramp_cost_method}
       + r_cost_process_ramp_cost_dt[p, d, t]
@@ -1523,7 +1538,7 @@ param r_costOper_and_penalty_dt{(d,t) in dt} :=
   + r_costPenalty_dt[d, t]
 ;
 
-param r_cost_co2_d{d in period} := sum{(g, c, n, d) in group_commodity_node_period_CO2, (d, t) in dt} r_cost_co2_dt[g, c, n, d, t];
+param r_cost_co2_d{d in period} := sum{(g, c, n, d) in group_commodity_node_period_co2, (d, t) in dt} r_cost_co2_dt[g, c, n, d, t];
 param r_cost_commodity_d{d in period} := sum{(c, n) in commodity_node, (d, t) in dt} r_cost_commodity_dt[c, n, d, t];
 param r_cost_variable_d{d in period} := sum{p in process, (d, t) in dt} r_cost_process_variable_cost_dt[p, d, t];
 param r_cost_ramp_d{d in period} := sum{(p, source, sink, m) in process__source__sink__ramp_method, (d, t) in dt : m in ramp_cost_method} r_cost_process_ramp_cost_dt[p, d, t];
@@ -1581,9 +1596,25 @@ printf '"...Penalty costs for removing reserves (M CUR)",%.12g,\n', sum{d in per
 printf '"Time in use in years",%.12g,"The amount of time model covers calculated in years"', solve_share_of_year >> fn_summary;
 printf '\n' >> fn_summary;
 
-#printf '\nEmissions\n' >> fn_summary;
-#printf '"CO2 (Mt)",%.6g,,"System-wide annualized CO2 emissions"\n\n', sum {(g,n,u,f) in gnuFuel : (g,n,u) in gnu} unitFuel[g,n,u] * p_fuel[f, 'CO2_content_t_per_MWh'] / 1000000 >> fn_summary;
+printf '\nEmissions\n' >> fn_summary;
+printf '"CO2 (Mt)",%.6g,,"System-wide annualized CO2 emissions"\n\n', sum{c in commodity, d in period} (r_emissions_co2_commodity_d[c, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
 
+printf '\n"Node results"\n' >> fn_summary;
+printf '"Node", "Inflow", "From units", "From connections", "To units", "To connections",' >> fn_summary;
+printf '"State change", "Self discharge", "Create with penalty", "Remove with penalty"\n' >> fn_summary;
+for {n in node}
+  {
+    printf '%s, %.8g, %.8g, %.8g, %.8g, %.8g\n', n,
+	  sum{(p, source, n) in process_source_sink_alwaysProcess, d in period : p in process_unit} r_process_source_sink_flow_d[p, source, n, d],
+	  sum{(p, source, n) in process_source_sink_alwaysProcess, d in period : p in process_connection} r_process_source_sink_flow_d[p, source, n, d],
+  	  sum{(p, n, sink) in process_source_sink_alwaysProcess, d in period : p in process_unit} r_process_source_sink_flow_d[p, n, sink, d],
+  	  sum{(p, n, sink) in process_source_sink_alwaysProcess, d in period : p in process_connection} r_process_source_sink_flow_d[p, n, sink, d],
+	  (if n in nodeState then sum{d in period} r_nodeState_change_d[n, d] else 0)
+#	  sum{ud in upDown, d in period : ud = 'up'} r_nodePenalty_upDown_d[n, ud, d],
+#	  sum{ud in upDown, d in period : ud = 'down'} r_nodePenalty_upDown_d[n, ud, d]
+	>> fn_summary;
+  } 
+	
 
 printf 'Write unit__sinkNode flow for periods...\n';
 param fn_unit__sinkNode__d symbolic := "r_unit__sinkNode__d.csv";
@@ -1680,8 +1711,7 @@ for {n in node, d in period_realized : d not in period_invest}
     printf '%s, %s, %.8g, %.8g, %.8g, %.8g, %.8g\n'
 		, n, d
 		, (if (n, 'scale_to_annual_flow') in node__inflow_method then sum {t in time : (d, t) in dt} ptNode[n, 'inflow', t] else 0)
-        , (if n in nodeState then sum {(d, t, t_previous, t_previous_within_block) in dttt}
-		      (v_state[n, d, t] -  v_state[n, d, t_previous]) else 0)
+        , (if n in nodeState then r_nodeState_change_d[n, d] else 0)
         , sum {(p, source, n) in process_source_sink_alwaysProcess} r_process_source_sink_flow_d[p, source, n, d]
         , - sum {(p, n, sink) in process_source_sink_alwaysProcess} r_process_source_sink_flow_d[p, n, sink, d]
         , (if n in nodeBalance then sum {t in time : (d, t) in dt} (
