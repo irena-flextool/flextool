@@ -456,11 +456,12 @@ param penalty_down {n in nodeBalance};
 param step_duration{(d, t) in dt};
 param hours_in_period{d in period} := sum {(d, t) in dt} (step_duration[d, t]);
 param hours_in_solve := sum {(d, t) in dt} (step_duration[d, t]);
+param period_share_of_year{d in period} := hours_in_period[d] / 8760;
 param solve_share_of_year := hours_in_solve / 8760;
-param solve_share_of_annual_flow {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
+param period_share_of_annual_flow {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
         abs(sum{(d, t) in dt} (ptNode[n, 'inflow', t])) / pdNode[n, 'annual_flow', d];
-param annual_flow_multiplier {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
-        solve_share_of_year / solve_share_of_annual_flow[n, d];
+param period_flow_multiplier {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
+        period_share_of_year[d] / period_share_of_annual_flow[n, d];
 param step_period{(d, t) in dt} := 0;
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
@@ -808,7 +809,7 @@ minimize total_cost:
       + sum {n in nodeBalance} vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]
       + sum {(r, ud, ng) in reserve__upDown__group} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']
 	) * step_duration[d, t]
-#	  / solve_share_of_year;
+	  / period_share_of_year[d]
   + sum {(e, d) in ed_invest} v_invest[e, d]
     * p_entity_unitsize[e]
     * ed_entity_annual[e, d]
@@ -837,7 +838,7 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   + (if (n, 'no_inflow') not in node__inflow_method then 
       + ptNode[n, 'inflow', t] *
         ( if (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] then
-		    + annual_flow_multiplier[n, d]
+		    + period_flow_multiplier[n, d]
 		  else 1)
 	)
   - (if ptNode[n, 'self_discharge_loss', t] then 
@@ -1473,13 +1474,9 @@ param r_cost_process_ramp_cost_dt{p in process, (d, t) in dt :
               * v_ramp[p, source, sink, d, t].val
 ;
 
-param r_costPenalty_nodeState_dt{n in nodeBalance, (d, t) in dt} :=
-  + step_duration[d, t]
-      * (
-          + vq_state_up[n, d, t] * ptNode[n, 'penalty_up', t]
-          + vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]
-		)
-;
+param r_costPenalty_nodeState_upDown_dt{n in nodeBalance, ud in upDown, (d, t) in dt} :=
+  + (if ud = 'up'   then step_duration[d, t] * vq_state_up[n, d, t] * ptNode[n, 'penalty_up', t])
+  + (if ud = 'down' then step_duration[d, t] * vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]) ;
 
 param r_costPenalty_inertia_dt{g in groupInertia, (d, t) in dt} :=
   + step_duration[d, t]
@@ -1515,7 +1512,7 @@ param r_costOper_dt{(d, t) in dt} :=
 ;
 
 param r_costPenalty_dt{(d, t) in dt} :=
-  + sum{n in nodeBalance} r_costPenalty_nodeState_dt[n, d, t]
+  + sum{n in nodeBalance, ud in upDown} r_costPenalty_nodeState_upDown_dt[n, ud, d, t]
   + sum{g in groupInertia} r_costPenalty_inertia_dt[g, d, t]
   + sum{g in groupNonSync} r_costPenalty_non_synchronous_dt[g, d, t]
   + sum{(r, ud, ng) in reserve__upDown__group} r_costPenalty_reserve_upDown_dt[r, ud, ng, d, t]
@@ -1525,6 +1522,16 @@ param r_costOper_and_penalty_dt{(d,t) in dt} :=
   + r_costOper_dt[d, t]
   + r_costPenalty_dt[d, t]
 ;
+
+param r_cost_co2_d{d in period} := sum{(g, c, n, d) in group_commodity_node_period_CO2, (d, t) in dt} r_cost_co2_dt[g, c, n, d, t];
+param r_cost_commodity_d{d in period} := sum{(c, n) in commodity_node, (d, t) in dt} r_cost_commodity_dt[c, n, d, t];
+param r_cost_variable_d{d in period} := sum{p in process, (d, t) in dt} r_cost_process_variable_cost_dt[p, d, t];
+param r_cost_ramp_d{d in period} := sum{(p, source, sink, m) in process__source__sink__ramp_method, (d, t) in dt : m in ramp_cost_method} r_cost_process_ramp_cost_dt[p, d, t];
+
+param r_costPenalty_nodeState_upDown_d{ud in upDown, d in period} := sum{n in nodeBalance, (d, t) in dt} r_costPenalty_nodeState_upDown_dt[n, ud, d, t];
+param r_costPenalty_inertia_d{d in period} := sum{g in groupInertia, (d, t) in dt} r_costPenalty_inertia_dt[g, d, t];
+param r_costPenalty_non_synchronous_d{d in period} := sum{g in groupInertia, (d, t) in dt} r_costPenalty_non_synchronous_dt[g, d, t];
+param r_costPenalty_reserve_upDown_d{ud in upDown, d in period} := sum{(r, ud, ng) in reserve__upDown__group, (d, t) in dt} r_costPenalty_reserve_upDown_dt[r, ud, ng, d, t];
 
 param r_costOper_d{d in period} := sum{(d, t) in dt} r_costOper_dt[d, t];
 param r_costPenalty_d{d in period} := sum{(d, t) in dt} r_costPenalty_dt[d, t];
@@ -1554,15 +1561,24 @@ for {(p, d) in pd_invest : d in period_realized && d in period_invest}
     printf '%s, %s, %.8g\n', p, d, v_invest[p, d].val * p_entity_unitsize[p] >> fn_process_investment;
   }
 
+display period_share_of_year;
 printf 'Write summary results...\n';
 param fn_summary symbolic := "summary.csv";
-printf '"Total cost obj. function (M CUR)",%.12g,,"Minimized total system cost as ', (total_cost.val / 1000000) > fn_summary;
-printf 'given by the solver (includes all penalty costs)\n' >> fn_summary;
-printf '"Total cost calculated (M CUR)",%.12g,,\n', sum{d in period} (r_costOper_and_penalty_d[d] + r_costInvest_d[d]) / 1000000 >> fn_summary;
-printf '"...Operational cost of units and connections (M CUR)",%.12g,,\n', sum{d in period} r_costOper_d[d] / 1000000 >> fn_summary;
-printf '"...Investment cost of units and connections (M CUR)",%.12g,,\n', sum{d in period} r_costInvest_d[d] / 1000000 >> fn_summary;
-printf '"...Penalty costs (M CUR)",%.12g,,\n', sum{d in period} r_costPenalty_d[d] / 1000000 >> fn_summary;
-printf '"Time in use in years",%.12g,,"The amount of time model covers calculated in years"', solve_share_of_year >> fn_summary;
+printf '"Total cost obj. function (M CUR)",%.12g,"Minimized total system cost as ', (total_cost.val / 1000000) > fn_summary;
+printf 'given by the solver (includes all penalty costs)"\n' >> fn_summary;
+printf '"Total cost calculated (M CUR)",%.12g,"Annualized operational, penalty and investment costs"\n', sum{d in period} (r_costOper_and_penalty_d[d] / period_share_of_year[d] + r_costInvest_d[d]) / 1000000 >> fn_summary;
+printf '"...Investment cost of units and connections (M CUR)",%.12g,\n', sum{d in period} (r_costInvest_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Cost of commodities (M CUR)",%.12g,\n', sum{d in period} (r_cost_commodity_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Cost of CO2 emissions (M CUR)",%.12g,\n', sum{d in period} (r_cost_co2_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Cost of variable O&M (M CUR)",%.12g,\n', sum{d in period} (r_cost_variable_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Cost of ramping (M CUR)",%.12g,\n', sum{d in period} (r_cost_ramp_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Penalty costs for creating matter or energy (M CUR)",%.12g,\n', sum{d in period} (r_costPenalty_nodeState_upDown_d['up', d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Penalty costs for removing matter or energy (M CUR)",%.12g,\n', sum{d in period} (r_costPenalty_nodeState_upDown_d['down', d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Penalty costs for lack of inertia (M CUR)",%.12g,\n', sum{d in period} (r_costPenalty_inertia_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Penalty costs for non-synchronous constraint (M CUR)",%.12g,\n', sum{d in period} (r_costPenalty_non_synchronous_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Penalty costs for creating reserves (M CUR)",%.12g,\n', sum{d in period} (r_costPenalty_reserve_upDown_d['up',d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Penalty costs for removing reserves (M CUR)",%.12g,\n', sum{d in period} (r_costPenalty_reserve_upDown_d['down',d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"Time in use in years",%.12g,"The amount of time model covers calculated in years"', solve_share_of_year >> fn_summary;
 printf '\n' >> fn_summary;
 
 #printf '\nEmissions\n' >> fn_summary;
