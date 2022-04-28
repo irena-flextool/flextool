@@ -1448,7 +1448,7 @@ param r_cost_co2_dt{(g, c, n, d) in group_commodity_node_period_CO2, t in time :
               + r_process_source_sink_flow_dt[p, source, n, d, t]
         )
 ;	  
-display process_source_sink, process_source_sink_alwaysProcess, process__source__sink__param_t, ptProcess_source_sink, process_source, process_sink;
+#display process_source_sink, process_source_sink_alwaysProcess, process__source__sink__param_t, ptProcess_source_sink, process_source, process_sink;
 param r_cost_process_variable_cost_dt{p in process, (d, t) in dt} :=
   + step_duration[d, t]
       * sum{(p, source, sink) in process_source_sink_alwaysProcess}
@@ -1464,7 +1464,7 @@ param r_cost_process_variable_cost_dt{p in process, (d, t) in dt} :=
 #			)
 #		)
 ;
-display process__source__sink__ramp_method;
+#display process__source__sink__ramp_method;
 param r_cost_process_ramp_cost_dt{p in process, (d, t) in dt :
   sum {(p, source, sink, m) in process__source__sink__ramp_method : m in ramp_cost_method} 1 } :=
   + step_duration[d, t]
@@ -1526,11 +1526,11 @@ param r_costOper_and_penalty_dt{(d,t) in dt} :=
   + r_costPenalty_dt[d, t]
 ;
 
-param r_costOper_and_penalty_d{d in period} :=
-  + sum{(d, t) in dt} r_costOper_and_penalty_dt[d, t]
-;
+param r_costOper_d{d in period} := sum{(d, t) in dt} r_costOper_dt[d, t];
+param r_costPenalty_d{d in period} := sum{(d, t) in dt} r_costPenalty_dt[d, t];
+param r_costOper_and_penalty_d{d in period} := + r_costOper_d[d] + r_costPenalty_d[d];
 
-param r_costInvest{d in period_invest} :=
+param r_costInvest_d{d in period_invest} :=
   + sum{(e, d) in ed_invest} r_cost_entity_invest_d[e, d]
 ;
 
@@ -1558,7 +1558,15 @@ printf 'Write summary results...\n';
 param fn_summary symbolic := "summary.csv";
 printf '"Total cost obj. function (M CUR)",%.12g,,"Minimized total system cost as ', (total_cost.val / 1000000) > fn_summary;
 printf 'given by the solver (includes all penalty costs)\n' >> fn_summary;
-printf '"Total cost calculated (M CUR)",%.12g,,\n', sum{d in period} (r_costOper_and_penalty_d[d] + r_costInvest[d]) / 1000000 >> fn_summary;
+printf '"Total cost calculated (M CUR)",%.12g,,\n', sum{d in period} (r_costOper_and_penalty_d[d] + r_costInvest_d[d]) / 1000000 >> fn_summary;
+printf '"...Operational cost of units and connections (M CUR)",%.12g,,\n', sum{d in period} r_costOper_d[d] / 1000000 >> fn_summary;
+printf '"...Investment cost of units and connections (M CUR)",%.12g,,\n', sum{d in period} r_costInvest_d[d] / 1000000 >> fn_summary;
+printf '"...Penalty costs (M CUR)",%.12g,,\n', sum{d in period} r_costPenalty_d[d] / 1000000 >> fn_summary;
+printf '"Time in use in years",%.12g,,"The amount of time model covers calculated in years"', solve_share_of_year >> fn_summary;
+printf '\n' >> fn_summary;
+
+#printf '\nEmissions\n' >> fn_summary;
+#printf '"CO2 (Mt)",%.6g,,"System-wide annualized CO2 emissions"\n\n', sum {(g,n,u,f) in gnuFuel : (g,n,u) in gnu} unitFuel[g,n,u] * p_fuel[f, 'CO2_content_t_per_MWh'] / 1000000 >> fn_summary;
 
 
 printf 'Write unit__sinkNode flow for periods...\n';
@@ -1809,13 +1817,13 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 #}
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
-display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
-display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
-display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
-display {n in nodeBalance, (d, t) in test_dt}: vq_state_up[n, d, t].val;
-display {n in nodeBalance, (d, t) in test_dt}: vq_state_down[n, d, t].val;
-display {g in groupInertia, (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
-display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
-display r_costOper_and_penalty_d;
+#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+#display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
+#display {n in nodeBalance, (d, t) in test_dt}: vq_state_up[n, d, t].val;
+#display {n in nodeBalance, (d, t) in test_dt}: vq_state_down[n, d, t].val;
+#display {g in groupInertia, (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
+#display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
+#display r_costOper_and_penalty_d;
 display v_invest;
 end;
