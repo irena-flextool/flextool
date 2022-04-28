@@ -286,6 +286,8 @@ param ptNode {n in node, param in nodeTimeParam, t in time} :=
         + if (n, param, t) in node__param__time
 		  then pt_node[n, param, t]
 		  else p_node[n, param];
+set nodeSelfDischarge :=  {n in nodeState : sum{(d, t) in dt : ptNode[n, 'self_discharge_loss', t]} 1};
+		  
 
 set process__param dimen 2 within {process, processParam};
 set process__param__period dimen 3 within {process, processPeriodParam, periodAll};
@@ -461,6 +463,12 @@ param period_share_of_annual_flow {n in node, d in period : (n, 'scale_to_annual
         abs(sum{(d, t) in dt} (ptNode[n, 'inflow', t])) / pdNode[n, 'annual_flow', d];
 param period_flow_multiplier {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
         period_share_of_year[d] / period_share_of_annual_flow[n, d];
+param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  := 
+        + ptNode[n, 'inflow', t] *
+        ( if (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] then
+		    + period_flow_multiplier[n, d]
+		  else 1);
+
 param step_period{(d, t) in dt} := 0;
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
@@ -714,8 +722,8 @@ check {(p, m) in process_method, t in time : m in method_2way_off} ptProcess[p, 
 
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
 check {(p, ct_m, s_m, m) in process_ct_startup_method} : not (p, ct_m, s_m, 'not_applicable') in process_ct_startup_method;
-display commodity_node, process_source_sink, process_source, process_sink;
-display ptProcess__source__sink__t_varCost, ptProcess__source__sink__t_varCost_alwaysProcess;
+#display commodity_node, process_source_sink, process_source, process_sink;
+#display ptProcess__source__sink__t_varCost, ptProcess__source__sink__t_varCost_alwaysProcess;
 minimize total_cost:
   + sum {(d, t) in dt}
     (
@@ -834,14 +842,9 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
     )		
   - sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1} 
       + v_flow[p, n, sink, d, t] 
-  + (if (n, 'no_inflow') not in node__inflow_method then 
-      + ptNode[n, 'inflow', t] *
-        ( if (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] then
-		    + period_flow_multiplier[n, d]
-		  else 1)
-	)
-  - (if ptNode[n, 'self_discharge_loss', t] then 
-      + v_state[n, d, t_previous] 
+  + (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
+  - (if n in nodeSelfDischarge then 
+      + v_state[n, d, t] 
 	      * ptNode[n, 'self_discharge_loss', t] 
 		  * step_duration[d, t])
   + vq_state_up[n, d, t]
@@ -1427,10 +1430,12 @@ param r_process_source_flow_d{(p, source) in process_source, d in period_realize
 param r_process_sink_flow_d{(p, sink) in process_sink, d in period_realized} := 
   + sum {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} r_process_source_sink_flow_d[p, source, sink, d]
 ;
-
-param r_nodeState_change_dt{n in nodeState, (d, t) in dt} := sum {(d, t, t_previous, t_previous_within_block) in dttt}
+display dttt;
+param r_nodeState_change_dt{n in nodeState, (d, t_previous) in dt} := sum {(d, t, t_previous, t_previous_within_block) in dttt}
 		      (v_state[n, d, t] -  v_state[n, d, t_previous]);
 param r_nodeState_change_d{n in nodeState, d in period} := sum {(d, t) in dt} r_nodeState_change_dt[n, d, t];
+param r_selfDischargeLoss_dt{n in nodeSelfDischarge, (d, t) in dt} := v_state[n, d, t] * ptNode[n, 'self_discharge_loss', t] * step_duration[d, t];
+param r_selfDischargeLoss_d{n in nodeSelfDischarge, d in period} := sum{(d, t) in dt} r_selfDischargeLoss_dt[n, d, t];
 
 param r_nodePenalty_upDown_d{n in nodeBalance, ud in upDown, d in period} := 
   + sum{(d, t) in dt : ud = 'up'} vq_state_up[n, d, t]
@@ -1604,14 +1609,16 @@ printf '"Node", "Inflow", "From units", "From connections", "To units", "To conn
 printf '"State change", "Self discharge", "Create with penalty", "Remove with penalty"\n' >> fn_summary;
 for {n in node}
   {
-    printf '%s, %.8g, %.8g, %.8g, %.8g, %.8g\n', n,
-	  sum{(p, source, n) in process_source_sink_alwaysProcess, d in period : p in process_unit} r_process_source_sink_flow_d[p, source, n, d],
-	  sum{(p, source, n) in process_source_sink_alwaysProcess, d in period : p in process_connection} r_process_source_sink_flow_d[p, source, n, d],
-  	  sum{(p, n, sink) in process_source_sink_alwaysProcess, d in period : p in process_unit} r_process_source_sink_flow_d[p, n, sink, d],
-  	  sum{(p, n, sink) in process_source_sink_alwaysProcess, d in period : p in process_connection} r_process_source_sink_flow_d[p, n, sink, d],
-	  (if n in nodeState then sum{d in period} r_nodeState_change_d[n, d] else 0)
-#	  sum{ud in upDown, d in period : ud = 'up'} r_nodePenalty_upDown_d[n, ud, d],
-#	  sum{ud in upDown, d in period : ud = 'down'} r_nodePenalty_upDown_d[n, ud, d]
+    printf '%s, %.8g, %.8g, %.8g, %.8g, %.8g, %.8g, %.8g, %.8g, %.8g\n', n,
+      + (if (n, 'no_inflow') not in node__inflow_method then sum{(d, t) in dt : d in period_realized} pdtNodeInflow[n, d, t]),
+	  + sum{(p, source, n) in process_source_sink_alwaysProcess, d in period_realized : p in process_unit} r_process_source_sink_flow_d[p, source, n, d],
+	  + sum{(p, source, n) in process_source_sink_alwaysProcess, d in period_realized : p in process_connection} r_process_source_sink_flow_d[p, source, n, d],
+  	  + sum{(p, n, sink) in process_source_sink_alwaysProcess, d in period_realized : p in process_unit} -r_process_source_sink_flow_d[p, n, sink, d],
+  	  + sum{(p, n, sink) in process_source_sink_alwaysProcess, d in period_realized : p in process_connection} -r_process_source_sink_flow_d[p, n, sink, d],
+	  + (if n in nodeState then sum{d in period_realized} r_nodeState_change_d[n, d] else 0),
+      + (if n in nodeSelfDischarge then sum {d in period_realized} r_selfDischargeLoss_d[n, d] else 0),
+	  + sum{ud in upDown, d in period_realized : ud = 'up' && n in nodeBalance} r_nodePenalty_upDown_d[n, ud, d],
+	  + sum{ud in upDown, d in period_realized : ud = 'down' && n in nodeBalance} -r_nodePenalty_upDown_d[n, ud, d]
 	>> fn_summary;
   } 
 	
@@ -1705,13 +1712,14 @@ for {p in process_unit, (d, t) in dt : p in process_online}
 printf 'Write node results for periods...\n';
 param fn_node__d symbolic := "r_node__d.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'node,period,exogenous_flow,state_change,inflow,outflow,penalty\n' > fn_node__d; }  # Print the header on the first solve
+  { printf 'node,period,inflow,state_change,self_discharge_loss,to_node,from_node,penalty\n' > fn_node__d; }  # Print the header on the first solve
 for {n in node, d in period_realized : d not in period_invest}
   {
-    printf '%s, %s, %.8g, %.8g, %.8g, %.8g, %.8g\n'
+    printf '%s, %s, %.8g, %.8g, %.8g, %.8g, %.8g, %.8g\n'
 		, n, d
 		, (if (n, 'scale_to_annual_flow') in node__inflow_method then sum {t in time : (d, t) in dt} ptNode[n, 'inflow', t] else 0)
         , (if n in nodeState then r_nodeState_change_d[n, d] else 0)
+		, (if n in nodeSelfDischarge then r_selfDischargeLoss_d[n, d] else 0)
         , sum {(p, source, n) in process_source_sink_alwaysProcess} r_process_source_sink_flow_d[p, source, n, d]
         , - sum {(p, n, sink) in process_source_sink_alwaysProcess} r_process_source_sink_flow_d[p, n, sink, d]
         , (if n in nodeBalance then sum {t in time : (d, t) in dt} (
@@ -1720,6 +1728,21 @@ for {n in node, d in period_realized : d not in period_invest}
           ) else 0)
 		>> fn_node__d;
   }
+
+printf 'Write nodal prices for time...\n';
+param fn_nodal_prices__dt symbolic := "r_node_prices__dt.csv";
+printf 'period, time' > fn_nodal_prices__dt;
+for {n in nodeBalance}
+  { printf ', %s', n >> fn_nodal_prices__dt; }
+for {(d, t, t_previous, t_previous_within_block) in dttt : d in period_realized}
+  {
+    printf '\n%s, %s', d, t >> fn_nodal_prices__dt;
+    for {n in nodeBalance}
+	  {
+	    printf ', %8g', nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual * period_share_of_year[d] >> fn_nodal_prices__dt;
+      }
+  }
+
 
 printf 'Write group inertia over time...\n';
 param fn_group_inertia__dt symbolic := "r_group_inertia__dt.csv";
