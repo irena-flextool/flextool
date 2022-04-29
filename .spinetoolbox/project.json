@@ -118,7 +118,7 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -32.97620131216885,
+            "x": -31.806656038092875,
             "y": 45.62937899716115,
             "output_time_stamps": false,
             "cancel_on_error": true,
@@ -150,12 +150,16 @@
             "type": "Importer",
             "description": "",
             "x": 216.20886474599084,
-            "y": 52.17888193870691,
+            "y": 53.34842721278288,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "purge_before_writing": false,
             "on_conflict": "replace",
             "file_selection": [
+                [
+                    "r_node_prices_dt.csv",
+                    false
+                ],
                 [
                     "datapackage@FlexTool3",
                     true
@@ -165,8 +169,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 84.87826061297962,
-            "y": 40.39857307734354,
+            "x": 86.04780588705559,
+            "y": 41.56811835141952,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": []
@@ -174,8 +178,8 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -167.42858562001035,
-            "y": 25.25456112086025,
+            "x": -167.42858562001038,
+            "y": 24.16817158874839,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -190,18 +194,18 @@
         "FlexTool3_Excel": {
             "type": "Data Connection",
             "description": "",
-            "x": -432.2496775602013,
-            "y": 77.81065791344929,
+            "x": -432.24967756020123,
+            "y": 76.72426838133742,
             "file_references": [
                 {
                     "type": "path",
                     "relative": true,
-                    "path": "FlexTool3_import_template.xlsx"
+                    "path": "FlexTool3_input_Ioannis.xlsx"
                 },
                 {
                     "type": "path",
                     "relative": true,
-                    "path": "FlexTool3_input_Ioannis.xlsx"
+                    "path": "FlexTool3_import_template.xlsx"
                 }
             ],
             "db_references": []
@@ -217,12 +221,12 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "<project>/FlexTool3_import_template.xlsx",
-                    true
-                ],
-                [
                     "<project>/FlexTool3_input_Ioannis.xlsx",
                     false
+                ],
+                [
+                    "<project>/FlexTool3_import_template.xlsx",
+                    true
                 ]
             ]
         },

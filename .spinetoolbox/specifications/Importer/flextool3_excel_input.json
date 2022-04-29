@@ -2870,18 +2870,21 @@
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float",
-                "4": "string",
-                "5": "float",
+                "3": "string",
+                "4": "float",
+                "5": "string",
                 "6": "float",
-                "7": "string",
-                "8": "float",
+                "7": "float",
+                "8": "string",
                 "9": "float",
                 "10": "float",
                 "11": "float",
-                "12": "string",
-                "13": "string",
-                "14": "string"
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float"
             },
             "group_connection": {
                 "0": "string",
@@ -3060,8 +3063,10 @@
                 "6": "float",
                 "7": "float",
                 "8": "float",
-                "9": "string",
-                "10": "string"
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float"
             },
             "unit_node_c": {
                 "0": "string",
