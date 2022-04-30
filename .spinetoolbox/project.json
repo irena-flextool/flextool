@@ -67,7 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            109
+                            180
                         ],
                         "tool_filter": [
                             1
@@ -170,7 +170,7 @@
             "type": "Tool",
             "description": "",
             "x": 86.04780588705559,
-            "y": 41.56811835141952,
+            "y": 40.48172881930766,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": []

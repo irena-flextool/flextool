@@ -88,6 +88,7 @@ set group_entity := group_process union group_node;
 set groupInertia 'node groups with an inertia constraint' within group;
 set groupNonSync 'node groups with a non-synchronous constraint' within group;
 set groupCapacityMargin 'node groups with a capacity margin' within group;
+set groupOutput 'groups that will output aggregated results' within group;
 set process_unit 'processes that are unit' within process;
 set process_connection 'processes that are connections' within process;
 set process_ct_method dimen 2 within {process, ct_method};
@@ -589,6 +590,10 @@ param p_entity_all_existing {e in entity} :=
 		+ (if not p_model['solveFirst'] && e in entityInvest then p_entity_invested[e])
 ;
 
+
+set process_VRE := {p in process_unit : not (sum{(p, source) in process_source} 1)
+                                        && (sum{(p, n, prof, m) in process__node__profile__profile_method : m = 'upper_limit'} 1)};
+
 param d_obj default 0;
 param d_flow {(p, source, sink, d, t) in peedt} default 0;
 param d_flow_1_or_2_variable {(p, source, sink, d, t) in peedt} default 0;
@@ -612,6 +617,7 @@ table data IN 'CSV' 'nodeState.csv' : nodeState <- [nodeState];
 table data IN 'CSV' 'groupInertia.csv' : groupInertia <- [groupInertia];
 table data IN 'CSV' 'groupNonSync.csv' : groupNonSync <- [groupNonSync];
 table data IN 'CSV' 'groupCapacityMargin.csv' : groupCapacityMargin <- [groupCapacityMargin];
+table data IN 'CSV' 'groupOutput.csv' : groupOutput <- [groupOutput];
 table data IN 'CSV' 'process.csv': process <- [process];
 table data IN 'CSV' 'profile.csv': profile <- [profile];
 table data IN 'CSV' 'timeline.csv' : time <- [timestep];
@@ -724,6 +730,7 @@ printf 'Checking: Invalid combinations between conversion/transfer methods and t
 check {(p, ct_m, s_m, m) in process_ct_startup_method} : not (p, ct_m, s_m, 'not_applicable') in process_ct_startup_method;
 #display commodity_node, process_source_sink, process_source, process_sink;
 #display ptProcess__source__sink__t_varCost, ptProcess__source__sink__t_varCost_alwaysProcess;
+display pdGroup;
 minimize total_cost:
   + sum {(d, t) in dt}
     (
@@ -731,7 +738,7 @@ minimize total_cost:
 	      * (
 		      # Buying a commodity (increases the objective function)
 	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1way_1var} 1 } 
-			      + v_flow[p, n, sink, d, t]
+			    ( + v_flow[p, n, sink, d, t] )
 	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } (
 			      + v_flow[p, n, sink, d, t]
          	          * (if (p, 'min_load_efficiency') in process_ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
@@ -750,7 +757,7 @@ minimize total_cost:
 	      * (
 		      # Paying for CO2 (increases the objective function)
 			  + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1 } 
-			      + v_flow[p, n, sink, d, t]
+			    ( + v_flow[p, n, sink, d, t] )
 	          + sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m in method_1var_per_way} 1 } (
 			      + v_flow[p, n, sink, d, t]
          	          * (if (p, 'min_load_efficiency') in process_ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
@@ -767,7 +774,7 @@ minimize total_cost:
 			)
 	 + sum {p in process_online} v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d]
      + sum {(p, source, sink) in process_source_sink : ptProcess__source__sink__t_varCost[p, source, sink, t]}
-	     + ptProcess__source__sink__t_varCost[p, source, sink, t]
+	   ( + ptProcess__source__sink__t_varCost[p, source, sink, t]
 		   * 
 			 ( + sum{(p, m) in process_method : m in method_1var_per_way && (p, source) in process_source} (
 		             + v_flow[p, source, sink, d, t]
@@ -782,9 +789,9 @@ minimize total_cost:
 				     + v_flow[p, source, sink, d, t]
                    )					 
 			  )   
-                 			 
+       )         			 
 #	  + sum {(p, source, 'variable_cost') in process__source__timeParam} 
-#          + ptProcess_source[p, source, 'variable_cost', t]
+#       ( + ptProcess_source[p, source, 'variable_cost', t]
 #	          * ( + sum {(p, source, sink) in process_source_sink, m in method : (p, m) in process_method && m in method_1var_per_way} (
 #		              + v_flow[p, source, sink, d, t]
 #         	              * (if (p, 'min_load_efficiency') in process_ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
@@ -798,18 +805,21 @@ minimize total_cost:
 #				      + v_flow[p, source, sink, d, t]
 #					)  
 #                )
+#       )
 #	  + sum {(p, sink, 'variable_cost') in process__sink__timeParam} 
-#          + ptProcess_sink[p, sink, 'variable_cost', t]
+#       ( + ptProcess_sink[p, sink, 'variable_cost', t]
 #		      * ( + sum {(p, source, sink) in process_source_sink, m in method : (p, m) in process_method} (
 #				      + v_flow[p, source, sink, d, t]
 #					)  
 #                )
+#       )
 #	  + sum {(p, 'variable_cost') in process__timeParam : p in process_connection} 
-#          + ptProcess[p, 'variable_cost', t]
+#       ( + ptProcess[p, 'variable_cost', t]
 #		      * sum {(p, source, sink) in process_source_sink}
 #			      + v_flow[p, source, sink, d, t]
+#       )
       + sum {(p, source, sink, m) in process__source__sink__ramp_method : m in ramp_cost_method}
-          + v_ramp[p, source, sink, d, t] * pProcess_source_sink[p, source, sink, 'ramp_cost']
+        ( + v_ramp[p, source, sink, d, t] * pProcess_source_sink[p, source, sink, 'ramp_cost'] )
       + sum {g in groupInertia} vq_inertia[g, d, t] * pdGroup[g, 'penalty_inertia', d]
       + sum {g in groupNonSync} vq_non_synchronous[g, d, t] * pdGroup[g, 'penalty_non_synchronous', d]
       + sum {n in nodeBalance} vq_state_up[n, d, t] * ptNode[n, 'penalty_up', t]
@@ -841,7 +851,7 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
 		)
     )		
   - sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1} 
-      + v_flow[p, n, sink, d, t] 
+    ( + v_flow[p, n, sink, d, t] )
   + (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
   - (if n in nodeSelfDischarge then 
       + v_state[n, d, t] 
@@ -1356,8 +1366,9 @@ s.t. minCumulative_flow_period {g in group, d in period : pd_group[g, 'min_cumul
 			    	* p_entity_unitsize[p]
 		    )
         )		
-      - sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1} 
+      - sum {(p, n, sink) in process_source_sink : sum{(p, m) in process_method : m not in method_1var_per_way} 1} (
           + v_flow[p, n, sink, d, t] 
+		)
 	)
 	>=
   + pd_group[g, 'min_cumulative_flow', d] 
@@ -1366,26 +1377,26 @@ s.t. minCumulative_flow_period {g in group, d in period : pd_group[g, 'min_cumul
 
 s.t. inertia_constraint {g in groupInertia, (d, t) in dt} :
   + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']} 
-      + ( + (if p in process_online then v_online_linear[p, d, t]) 
-	      + (if p not in process_online then v_flow[p, source, sink, d, t])
-	    ) * p_process_source[p, source, 'inertia_constant']
+    ( + (if p in process_online then v_online_linear[p, d, t]) 
+	  + (if p not in process_online then v_flow[p, source, sink, d, t])
+	) * p_process_source[p, source, 'inertia_constant']
   + sum {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node && p_process_sink[p, sink, 'inertia_constant']} 
-      + ( + (if p in process_online then v_online_linear[p, d, t]) 
-	      + (if p not in process_online then v_flow[p, source, sink, d, t])
-        ) * p_process_sink[p, sink, 'inertia_constant']
+    ( + (if p in process_online then v_online_linear[p, d, t]) 
+	  + (if p not in process_online then v_flow[p, source, sink, d, t])
+    ) * p_process_sink[p, sink, 'inertia_constant']
   + vq_inertia[g, d, t]
   >=
-  pdGroup[g, 'inertia_limit', d]
+  + pdGroup[g, 'inertia_limit', d]
 ;
 
 s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
-  + sum {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node && (p, sink) in process__sink_nonSync}
-      + v_flow[p, source, sink, d, t]
+  + sum {(p, source, sink) in process_source_sink : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
+    ( + v_flow[p, source, sink, d, t] )
+  - vq_non_synchronous[g, d, t]
   <=
   ( + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node} 
         + v_flow[p, source, sink, d, t]
     + sum {(g, n) in group_node} ptNode[n, 'inflow', t]
-    + vq_non_synchronous[g, d, t]
   ) * pdGroup[g, 'non_synchronous_limit', d]
 ;
 
@@ -1430,17 +1441,12 @@ param r_process_source_flow_d{(p, source) in process_source, d in period_realize
 param r_process_sink_flow_d{(p, sink) in process_sink, d in period_realized} := 
   + sum {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} r_process_source_sink_flow_d[p, source, sink, d]
 ;
-display dttt;
+
 param r_nodeState_change_dt{n in nodeState, (d, t_previous) in dt} := sum {(d, t, t_previous, t_previous_within_block) in dttt}
 		      (v_state[n, d, t] -  v_state[n, d, t_previous]);
 param r_nodeState_change_d{n in nodeState, d in period} := sum {(d, t) in dt} r_nodeState_change_dt[n, d, t];
 param r_selfDischargeLoss_dt{n in nodeSelfDischarge, (d, t) in dt} := v_state[n, d, t] * ptNode[n, 'self_discharge_loss', t] * step_duration[d, t];
 param r_selfDischargeLoss_d{n in nodeSelfDischarge, d in period} := sum{(d, t) in dt} r_selfDischargeLoss_dt[n, d, t];
-
-param r_nodePenalty_upDown_d{n in nodeBalance, ud in upDown, d in period} := 
-  + sum{(d, t) in dt : ud = 'up'} vq_state_up[n, d, t]
-  + sum{(d, t) in dt : ud = 'down'} vq_state_down[n, d, t]
-;
 
 param r_cost_commodity_dt{(c, n) in commodity_node, (d, t) in dt} := 
   + step_duration[d, t] 
@@ -1498,6 +1504,10 @@ param r_costPenalty_nodeState_upDown_dt{n in nodeBalance, ud in upDown, (d, t) i
   + (if ud = 'up'   then step_duration[d, t] * vq_state_up[n, d, t] * ptNode[n, 'penalty_up', t])
   + (if ud = 'down' then step_duration[d, t] * vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]) ;
 
+param r_penalty_nodeState_upDown_d{n in nodeBalance, ud in upDown, d in period} :=
+  + sum {(d, t) in dt : ud = 'up'} step_duration[d, t] * vq_state_up[n, d, t]
+  + sum {(d, t) in dt : ud = 'down'} step_duration[d, t] * vq_state_down[n, d, t] ;
+
 param r_costPenalty_inertia_dt{g in groupInertia, (d, t) in dt} :=
   + step_duration[d, t]
       * vq_inertia[g, d, t] 
@@ -1548,10 +1558,10 @@ param r_cost_commodity_d{d in period} := sum{(c, n) in commodity_node, (d, t) in
 param r_cost_variable_d{d in period} := sum{p in process, (d, t) in dt} r_cost_process_variable_cost_dt[p, d, t];
 param r_cost_ramp_d{d in period} := sum{(p, source, sink, m) in process__source__sink__ramp_method, (d, t) in dt : m in ramp_cost_method} r_cost_process_ramp_cost_dt[p, d, t];
 
-param r_costPenalty_nodeState_upDown_d{ud in upDown, d in period} := sum{n in nodeBalance, (d, t) in dt} r_costPenalty_nodeState_upDown_dt[n, ud, d, t];
-param r_costPenalty_inertia_d{d in period} := sum{g in groupInertia, (d, t) in dt} r_costPenalty_inertia_dt[g, d, t];
-param r_costPenalty_non_synchronous_d{d in period} := sum{g in groupInertia, (d, t) in dt} r_costPenalty_non_synchronous_dt[g, d, t];
-param r_costPenalty_reserve_upDown_d{ud in upDown, d in period} := sum{(r, ud, ng) in reserve__upDown__group, (d, t) in dt} r_costPenalty_reserve_upDown_dt[r, ud, ng, d, t];
+param r_costPenalty_nodeState_upDown_d{n in nodeBalance, ud in upDown, d in period} := sum{(d, t) in dt} r_costPenalty_nodeState_upDown_dt[n, ud, d, t];
+param r_costPenalty_inertia_d{g in groupInertia, d in period} := sum{(d, t) in dt} r_costPenalty_inertia_dt[g, d, t];
+param r_costPenalty_non_synchronous_d{g in groupNonSync, d in period} := sum{(d, t) in dt} r_costPenalty_non_synchronous_dt[g, d, t];
+param r_costPenalty_reserve_upDown_d{(r, ud, ng) in reserve__upDown__group, d in period} := sum{(d, t) in dt} r_costPenalty_reserve_upDown_dt[r, ud, ng, d, t];
 
 param r_costOper_d{d in period} := sum{(d, t) in dt} r_costOper_dt[d, t];
 param r_costPenalty_d{d in period} := sum{(d, t) in dt} r_costPenalty_dt[d, t];
@@ -1560,6 +1570,12 @@ param r_costOper_and_penalty_d{d in period} := + r_costOper_d[d] + r_costPenalty
 param r_costInvest_d{d in period_invest} :=
   + sum{(e, d) in ed_invest} r_cost_entity_invest_d[e, d]
 ;
+
+param pdNodeInflow{n in node, d in period} := sum{(d, t) in dt} pdtNodeInflow[n, d, t];
+
+param potentialVREgen{(p, n) in process_sink, d in period_realized : p in process_VRE} :=
+  + sum{(p, source, n, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'upper_limit'} 
+      + pt_profile[f, t] * entity_all_capacity[p, d];
 
 printf 'Transfer investments to the next solve...\n';
 param fn_entity_invested symbolic := "p_entity_invested.csv";
@@ -1586,23 +1602,81 @@ printf 'Write summary results...\n';
 param fn_summary symbolic := "summary.csv";
 printf '"Total cost obj. function (M CUR)",%.12g,"Minimized total system cost as ', (total_cost.val / 1000000) > fn_summary;
 printf 'given by the solver (includes all penalty costs)"\n' >> fn_summary;
-printf '"Total cost calculated (M CUR)",%.12g,"Annualized operational, penalty and investment costs"\n', sum{d in period} (r_costOper_and_penalty_d[d] / period_share_of_year[d] + r_costInvest_d[d]) / 1000000 >> fn_summary;
-printf '"...Investment cost of units and connections (M CUR)",%.12g,\n', sum{d in period} (r_costInvest_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Cost of commodities (M CUR)",%.12g,\n', sum{d in period} (r_cost_commodity_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Cost of CO2 emissions (M CUR)",%.12g,\n', sum{d in period} (r_cost_co2_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Cost of variable O&M (M CUR)",%.12g,\n', sum{d in period} (r_cost_variable_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Cost of ramping (M CUR)",%.12g,\n', sum{d in period} (r_cost_ramp_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Penalty costs for creating matter or energy (M CUR)",%.12g,\n', sum{d in period} (r_costPenalty_nodeState_upDown_d['up', d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Penalty costs for removing matter or energy (M CUR)",%.12g,\n', sum{d in period} (r_costPenalty_nodeState_upDown_d['down', d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Penalty costs for lack of inertia (M CUR)",%.12g,\n', sum{d in period} (r_costPenalty_inertia_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Penalty costs for non-synchronous constraint (M CUR)",%.12g,\n', sum{d in period} (r_costPenalty_non_synchronous_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Penalty costs for creating reserves (M CUR)",%.12g,\n', sum{d in period} (r_costPenalty_reserve_upDown_d['up',d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Penalty costs for removing reserves (M CUR)",%.12g,\n', sum{d in period} (r_costPenalty_reserve_upDown_d['down',d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"Time in use in years",%.12g,"The amount of time model covers calculated in years"', solve_share_of_year >> fn_summary;
+printf '"Total cost calculated full horizon (M CUR)",%.12g,', sum{d in period} (r_costOper_and_penalty_d[d] / period_share_of_year[d] + r_costInvest_d[d]) / 1000000 >> fn_summary;
+printf '"Annualized operational, penalty and investment costs"\n' >> fn_summary;
+printf '"Total cost calculated realized periods (M CUR)",%.12g,', sum{d in period_realized} (r_costOper_and_penalty_d[d] / period_share_of_year[d] + r_costInvest_d[d]) / 1000000 >> fn_summary;
+printf '"Annualized operational, penalty and investment costs"\n' >> fn_summary;
+printf '"...Investment cost of units and connections (M CUR)",%.12g,\n', sum{d in period_realized} (r_costInvest_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Cost of commodities (M CUR)",%.12g,\n', sum{d in period_realized} (r_cost_commodity_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Cost of CO2 emissions (M CUR)",%.12g,\n', sum{d in period_realized} (r_cost_co2_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Cost of variable O&M (M CUR)",%.12g,\n', sum{d in period_realized} (r_cost_variable_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Cost of ramping (M CUR)",%.12g,\n', sum{d in period_realized} (r_cost_ramp_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Penalty costs for creating matter or energy (M CUR)",%.12g,\n', sum{n in nodeBalance, d in period_realized} (r_costPenalty_nodeState_upDown_d[n, 'up', d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Penalty costs for removing matter or energy (M CUR)",%.12g,\n', sum{n in nodeBalance, d in period_realized} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Penalty costs for lack of inertia (M CUR)",%.12g,\n', sum{g in groupInertia, d in period_realized} (r_costPenalty_inertia_d[g, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Penalty costs for non-synchronous constraint (M CUR)",%.12g,\n', sum{g in groupNonSync, d in period_realized} (r_costPenalty_non_synchronous_d[g, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Penalty costs for creating reserves (M CUR)",%.12g,\n', sum{(r, ud, ng) in reserve__upDown__group, d in period_realized : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"...Penalty costs for removing reserves (M CUR)",%.12g,\n', sum{(r, ud, ng) in reserve__upDown__group, d in period_realized : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"Time in use in years",%.12g,"The amount of time realized periods cover calculated in years"', sum{d in period_realized} period_share_of_year[d] >> fn_summary;
 printf '\n' >> fn_summary;
 
 printf '\nEmissions\n' >> fn_summary;
-printf '"CO2 (Mt)",%.6g,,"System-wide annualized CO2 emissions"\n\n', sum{c in commodity, d in period} (r_emissions_co2_commodity_d[c, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"CO2 (Mt)",%.6g,,"System-wide annualized CO2 emissions for realized periods"\n', sum{c in commodity, d in period_realized} (r_emissions_co2_commodity_d[c, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"CO2 (Mt)",%.6g,,"System-wide annualized CO2 emissions for all periods"\n', sum{c in commodity, d in period} (r_emissions_co2_commodity_d[c, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+
+printf '\nPossible issues (creating or removing energy/matter, creating inertia, ' >> fn_summary;
+printf 'changing non-synchronous generation to synchronous)\n' >> fn_summary;
+for {n in nodeBalance}
+  {  
+    for {d in period : r_penalty_nodeState_upDown_d[n, 'up', d]}
+      {
+	    printf 'Created, %s, %s, %.5g\n', n, d, r_penalty_nodeState_upDown_d[n, 'up', d] >> fn_summary;
+      }
+  }
+
+for {n in nodeBalance}
+  {  
+    for {d in period : r_penalty_nodeState_upDown_d[n, 'down', d]}
+      {
+	    printf 'Removed, %s, %s, %.5g\n', n, d, r_penalty_nodeState_upDown_d[n, 'down', d] >> fn_summary;
+      }
+  }
+
+for {g in groupInertia}
+  {
+    for {d in period : r_costPenalty_inertia_d[g, d]}
+	  {
+        printf 'Inertia, %s, %s, %.5g\n', g, d, r_costPenalty_inertia_d[g, d] / pdGroup[g, 'penalty_inertia', d] >> fn_summary;
+	  }
+  }
+
+for {g in groupNonSync}
+  {
+    for {d in period : r_costPenalty_non_synchronous_d[g, d]}
+	  {
+        printf 'NonSync, %s, %s, %.5g\n', g, d, r_costPenalty_non_synchronous_d[g, d] / pdGroup[g, 'penalty_non_synchronous', d] >> fn_summary;
+	  }
+  }
+
+printf '\nGroup results for nodes\n' >> fn_summary;
+for {g in groupOutput : sum{(g, n) in group_node, d in period_realized} pdNodeInflow[n, d]}
+  {
+    printf '"Group name", %s\n', g >> fn_summary;
+	printf '"Sum of inflows", %.8g\n', sum{(g, n) in group_node, d in period_realized} pdNodeInflow[n, d] >> fn_summary;
+    printf '"Share of VRE generation (\% of annual inflow)", %.5g\n',
+	  ( sum{(p, source, n) in process_source_sink_alwaysProcess, d in period_realized : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} r_process_source_sink_flow_d[p, source, n, d] ) /
+	  ( - sum{(g, n) in group_node, d in period_realized} pdNodeInflow[n, d] ) * 100 >> fn_summary;
+	printf '"Share of curtailed VRE  (\% of annual inflow)", %.5g\n',
+	  ( + sum{(p, n) in process_sink, d in period_realized : p in process_VRE} potentialVREgen[p, n, d]
+	    - sum{(p, source, n) in process_source_sink_alwaysProcess, d in period_realized : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} r_process_source_sink_flow_d[p, source, n, d]
+	  ) / ( - sum{(g, n) in group_node, d in period_realized} pdNodeInflow[n, d] ) * 100 >> fn_summary;
+	printf '"Share of created energy or matter (\% of annual inflow)", %.5g\n',
+	  ( sum{(g, n) in group_node, d in period_realized} r_penalty_nodeState_upDown_d[n, 'up', d] ) /
+	  ( - sum{(g, n) in group_node, d in period_realized} pdNodeInflow[n, d] ) * 100 >> fn_summary;
+	printf '"Share of removed energy or matter (\% of annual inflow)", %.5g\n',
+	  ( sum{(g, n) in group_node, d in period_realized} r_penalty_nodeState_upDown_d[n, 'down', d] ) /
+	  ( - sum{(g, n) in group_node, d in period_realized} pdNodeInflow[n, d] ) * 100 >> fn_summary;
+  }
 
 printf '\n"Node results"\n' >> fn_summary;
 printf '"Node", "Inflow", "From units", "From connections", "To units", "To connections",' >> fn_summary;
@@ -1617,11 +1691,12 @@ for {n in node}
   	  + sum{(p, n, sink) in process_source_sink_alwaysProcess, d in period_realized : p in process_connection} -r_process_source_sink_flow_d[p, n, sink, d],
 	  + (if n in nodeState then sum{d in period_realized} r_nodeState_change_d[n, d] else 0),
       + (if n in nodeSelfDischarge then sum {d in period_realized} r_selfDischargeLoss_d[n, d] else 0),
-	  + sum{ud in upDown, d in period_realized : ud = 'up' && n in nodeBalance} r_nodePenalty_upDown_d[n, ud, d],
-	  + sum{ud in upDown, d in period_realized : ud = 'down' && n in nodeBalance} -r_nodePenalty_upDown_d[n, ud, d]
+	  + sum{ud in upDown, d in period_realized : ud = 'up' && n in nodeBalance} r_penalty_nodeState_upDown_d[n, ud, d],
+	  + sum{ud in upDown, d in period_realized : ud = 'down' && n in nodeBalance} -r_penalty_nodeState_upDown_d[n, ud, d]
 	>> fn_summary;
   } 
 	
+
 
 printf 'Write unit__sinkNode flow for periods...\n';
 param fn_unit__sinkNode__d symbolic := "r_unit__sinkNode__d.csv";
@@ -1721,7 +1796,7 @@ for {n in node, d in period_realized : d not in period_invest}
         , (if n in nodeState then r_nodeState_change_d[n, d] else 0)
 		, (if n in nodeSelfDischarge then r_selfDischargeLoss_d[n, d] else 0)
         , sum {(p, source, n) in process_source_sink_alwaysProcess} r_process_source_sink_flow_d[p, source, n, d]
-        , - sum {(p, n, sink) in process_source_sink_alwaysProcess} r_process_source_sink_flow_d[p, n, sink, d]
+        , sum {(p, n, sink) in process_source_sink_alwaysProcess} -r_process_source_sink_flow_d[p, n, sink, d]
         , (if n in nodeBalance then sum {t in time : (d, t) in dt} (
 		      + vq_state_up[n, d, t]
               - vq_state_down[n, d, t]
@@ -1753,13 +1828,13 @@ for {g in groupInertia, (d, t) in dt : d in period_realized}
     printf '%s, %s, %s, %.8g, %.8g\n'
 	    , g, d, t
 		, + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']} 
-              + ( + (if p in process_online then v_online_linear[p, d, t]) 
-	              + (if p not in process_online then v_flow[p, source, sink, d, t])
-	            ) * p_process_source[p, source, 'inertia_constant']
+            ( + (if p in process_online then v_online_linear[p, d, t]) 
+	          + (if p not in process_online then v_flow[p, source, sink, d, t])
+	        ) * p_process_source[p, source, 'inertia_constant']
           + sum {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node && p_process_sink[p, sink, 'inertia_constant']} 
-              + ( + (if p in process_online then v_online_linear[p, d, t]) 
-	              + (if p not in process_online then v_flow[p, source, sink, d, t])
-                ) * p_process_sink[p, sink, 'inertia_constant']
+            ( + (if p in process_online then v_online_linear[p, d, t]) 
+	          + (if p not in process_online then v_flow[p, source, sink, d, t])
+            ) * p_process_sink[p, sink, 'inertia_constant']
 		, vq_inertia[g, d, t]
 		>> fn_group_inertia__dt;
   }
@@ -1895,4 +1970,5 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
 #display r_costOper_and_penalty_d;
 display v_invest;
+display v_flow;
 end;

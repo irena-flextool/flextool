@@ -1297,7 +1297,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^(?!has_)",
+                    "filter_re": "^(?!has_|^output_results$)",
                     "header": "groupParam"
                 },
                 {
@@ -3462,17 +3462,23 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
-        "Mapping 1": {
+        "groupOutput": {
             "type": "object_parameter_values",
             "mapping": [
                 {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "groupOutput"
+                },
+                {
                     "map_type": "ObjectClass",
-                    "position": 0,
-                    "filter_re": "node"
+                    "position": "hidden",
+                    "filter_re": "^group$"
                 },
                 {
                     "map_type": "ParameterDefinition",
-                    "position": 2
+                    "position": "hidden",
+                    "filter_re": "^output_results$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -3481,26 +3487,27 @@
                 },
                 {
                     "map_type": "Object",
-                    "position": 1
+                    "position": 0,
+                    "header": "groupOutput"
                 },
                 {
                     "map_type": "Alternative",
-                    "position": 3
+                    "position": "hidden"
                 },
                 {
                     "map_type": "ParameterValueType",
-                    "position": "hidden",
-                    "filter_re": "single_value"
+                    "position": "hidden"
                 },
                 {
                     "map_type": "ParameterValue",
-                    "position": 4
+                    "position": "hidden",
+                    "filter_re": "yes"
                 }
             ],
             "enabled": true,
             "always_export_header": true,
             "group_fn": "no_group",
-            "use_fixed_table_name": false
+            "use_fixed_table_name": true
         }
     }
 }
