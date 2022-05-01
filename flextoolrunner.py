@@ -337,21 +337,6 @@ class FlexToolRunner:
                 nextfile.write(steps[1])
                 nextfile.write("\n")
 
-    def write_periods_in_all_solves(self, timeblocks_used_by_solves, filename):
-        with open(filename, 'w') as outfile:
-            periodList = []
-            uniquePeriods = []
-            outfile.write('period\n')
-            for item in timeblocks_used_by_solves:
-                solv = timeblocks_used_by_solves[item]
-                for peri in solv:
-                    periodList.append(peri[0])
-            for x in periodList:
-                if x not in uniquePeriods:
-                    uniquePeriods.append(x)
-            for x in uniquePeriods:
-                outfile.write(x + '\n')
-
     def write_periods(self, solve, periods, filename):
         """
         write to file a list of periods based on the current solve and
@@ -382,6 +367,14 @@ class FlexToolRunner:
             else:
                 firstfile.write("solveFirst,0\n")
 
+    def write_currentSolve(self, solve, filename):
+        """
+        make a file with the current solve name
+        """
+        with open(filename, 'w') as solvefile:
+            solvefile.write("solve\n")
+            solvefile.write(solve + "\n")
+
     def write_empty_investment_file(self):
         """
         make a file p_entity_invested.csv that will contain capacities of invested and divested processes. For the first solve it will be empty.
@@ -411,13 +404,13 @@ def main():
     #first_steps = runner.get_first_steps(active_time_lists)
 
     first = True
-    runner.write_periods_in_all_solves(runner.timeblocks_used_by_solves, 'period.csv')
     for solve in runner.solves:
         runner.write_full_timelines(runner.timeblocks_used_by_solves[solve], runner.timeblocks__timeline, runner.timelines, 'steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'steps_in_use.csv')
         runner.write_step_jump(jump_lists[solve])
         runner.write_periods(solve, runner.realized_periods, 'realized_periods_of_current_solve.csv')
         runner.write_periods(solve, runner.invest_periods, 'invest_periods_of_current_solve.csv')
+        runner.write_currentSolve(solve, 'solve_current.csv')
         if first:
             runner.write_first_status(first)
             first = False

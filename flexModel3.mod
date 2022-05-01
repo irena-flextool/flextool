@@ -24,8 +24,10 @@ set reserve__upDown__group dimen 3;
 set reserve__upDown__group__method dimen 4;
 set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng, r_m) in reserve__upDown__group__method} (r);
 set period_time '(d, t) - Time steps in the time periods of the timelines in use' dimen 2;
-set solve_period '(solve, d) - Time periods in the solves in order to extract periods that can be found in data' dimen 2;
+set solve_period_timeblockset '(solve, d, tb) - All solve, period, timeblockset combinations in the model instance' dimen 3;
+set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeblockset} (s, d);
 set periodAll 'd - Time periods in data (including those currently in use)' := setof {(s, d) in solve_period} (d);
+set solve_current 'current solve name' dimen 1;
 set period 'd - Time periods in the current solve' := setof {(d, t) in period_time} (d);
 set time 't - Time steps in the current timelines'; 
 set method 'm - Type of process that transfers, converts or stores commodities';
@@ -655,7 +657,8 @@ table data IN 'CSV' 'process__node__profile__profile_method.csv' : process__node
 table data IN 'CSV' 'reserve__upDown__group.csv' : reserve__upDown__group <- [reserve,upDown,group];
 table data IN 'CSV' 'reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
 table data IN 'CSV' 'pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time];
-table data IN 'CSV' 'timeblocks_in_use.csv' : solve_period <- [solve,period];
+table data IN 'CSV' 'timeblocks_in_use.csv' : solve_period_timeblockset <- [solve,period,timeblocks];
+table data IN 'CSV' 'solve_current.csv' : solve_current <- [solve];
 table data IN 'CSV' 'p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
 table data IN 'CSV' 'pt_process_source.csv' : process__source__param__time <- [process, source, sourceSinkTimeParam, time];
 table data IN 'CSV' 'p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
@@ -1600,7 +1603,10 @@ for {(p, d) in pd_invest : d in period_realized && d in period_invest}
 display period_share_of_year;
 printf 'Write summary results...\n';
 param fn_summary symbolic := "summary.csv";
-printf '"Total cost obj. function (M CUR)",%.12g,"Minimized total system cost as ', (total_cost.val / 1000000) > fn_summary;
+for {i in 1..1 : p_model['solveFirst']}
+  { printf '"Diagnostic results from all solves"' > fn_summary; }
+for {s in solve_current} { printf '\n\n"Solve",%s\n', s >> fn_summary; }
+printf '"Total cost obj. function (M CUR)",%.12g,"Minimized total system cost as ', (total_cost.val / 1000000) >> fn_summary;
 printf 'given by the solver (includes all penalty costs)"\n' >> fn_summary;
 printf '"Total cost calculated full horizon (M CUR)",%.12g,', sum{d in period} (r_costOper_and_penalty_d[d] / period_share_of_year[d] + r_costInvest_d[d]) / 1000000 >> fn_summary;
 printf '"Annualized operational, penalty and investment costs"\n' >> fn_summary;
@@ -1624,8 +1630,8 @@ printf '\nEmissions\n' >> fn_summary;
 printf '"CO2 (Mt)",%.6g,,"System-wide annualized CO2 emissions for realized periods"\n', sum{c in commodity, d in period_realized} (r_emissions_co2_commodity_d[c, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
 printf '"CO2 (Mt)",%.6g,,"System-wide annualized CO2 emissions for all periods"\n', sum{c in commodity, d in period} (r_emissions_co2_commodity_d[c, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
 
-printf '\nPossible issues (creating or removing energy/matter, creating inertia, ' >> fn_summary;
-printf 'changing non-synchronous generation to synchronous)\n' >> fn_summary;
+printf '\n"Possible issues (creating or removing energy/matter, creating inertia, ' >> fn_summary;
+printf 'changing non-synchronous generation to synchronous)"\n' >> fn_summary;
 for {n in nodeBalance}
   {  
     for {d in period : r_penalty_nodeState_upDown_d[n, 'up', d]}
@@ -1658,7 +1664,7 @@ for {g in groupNonSync}
 	  }
   }
 
-printf '\nGroup results for nodes\n' >> fn_summary;
+printf '\n"Group results for nodes"\n' >> fn_summary;
 for {g in groupOutput : sum{(g, n) in group_node, d in period_realized} pdNodeInflow[n, d]}
   {
     printf '"Group name", %s\n', g >> fn_summary;
