@@ -716,6 +716,8 @@ var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
+#var vq_online_linear_pos {p in process_online, (d, t) in dt} >=0;
+#var vq_online_linear_neg {p in process_online, (d, t) in dt} >=0;
 
 
 #########################
@@ -733,7 +735,6 @@ printf 'Checking: Invalid combinations between conversion/transfer methods and t
 check {(p, ct_m, s_m, m) in process_ct_startup_method} : not (p, ct_m, s_m, 'not_applicable') in process_ct_startup_method;
 #display commodity_node, process_source_sink, process_source, process_sink;
 #display ptProcess__source__sink__t_varCost, ptProcess__source__sink__t_varCost_alwaysProcess;
-display pdGroup;
 minimize total_cost:
   + sum {(d, t) in dt}
     (
@@ -775,7 +776,7 @@ minimize total_cost:
 			      + v_flow[p, source, n, d, t]
 				)  
 			)
-	 + sum {p in process_online} v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d]
+ 	 + sum {p in process_online : pdProcess[p, 'startup_cost', d]} v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d]
      + sum {(p, source, sink) in process_source_sink : ptProcess__source__sink__t_varCost[p, source, sink, t]}
 	   ( + ptProcess__source__sink__t_varCost[p, source, sink, t]
 		   * 
@@ -793,6 +794,7 @@ minimize total_cost:
                    )					 
 			  )   
        )         			 
+
 #	  + sum {(p, source, 'variable_cost') in process__source__timeParam} 
 #       ( + ptProcess_source[p, source, 'variable_cost', t]
 #	          * ( + sum {(p, source, sink) in process_source_sink, m in method : (p, m) in process_method && m in method_1var_per_way} (
@@ -828,6 +830,8 @@ minimize total_cost:
       + sum {n in nodeBalance} vq_state_up[n, d, t] * ptNode[n, 'penalty_up', t]
       + sum {n in nodeBalance} vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]
       + sum {(r, ud, ng) in reserve__upDown__group} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']
+#      + sum {p in process_online} vq_online_linear_pos[p, d, t] * 1000000
+#      + sum {p in process_online} vq_online_linear_neg[p, d, t] * 1000000
 	) * step_duration[d, t]
 	  / period_share_of_year[d]
   + sum {(e, d) in ed_invest} v_invest[e, d]
@@ -848,7 +852,8 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
       + v_flow[p, n, sink, d, t] 
 	       * (if (p, 'min_load_efficiency') in process_ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
       + (if (p, 'min_load_efficiency') in process_ct_method then 
-	        + v_online_linear[p, d, t] 
+#	        + (v_online_linear[p, d, t] + vq_online_linear_pos[p, d, t] - vq_online_linear_neg[p, d, t])
+	        + v_online_linear[p, d, t]
 			    * ptProcess_section[p, t]
 				* p_entity_unitsize[p]
 		)
@@ -1024,8 +1029,7 @@ s.t. process_constraint_equal {(c, s) in constraint__sense, (d, t) in dt
   =
   + p_constraint_constant[c]
 ;
-
-
+display process_source_sink, process_sink, process_online;
 s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt 
      : (p, sink) in process_sink } :
   + v_flow[p, source, sink, d, t]
@@ -1040,9 +1044,10 @@ s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt
 	)
   + ( if p in process_online then
       + p_process_sink_coefficient[p, sink]
-        * v_online_linear[p, d, t] 
+        * v_online_linear[p, d, t]
+#        * (v_online_linear[p, d, t] + vq_online_linear_pos[p, d, t] - vq_online_linear_neg[p, d, t])
 		* p_entity_unitsize[p]
-    )  
+    ) 
 ;
 
 s.t. minToSink {(p, source, sink) in process_source_sink, (d, t) in dt
@@ -1053,7 +1058,7 @@ s.t. minToSink {(p, source, sink) in process_source_sink, (d, t) in dt
   >=
   + 0
 ;
-
+display process_method;
 # Special equation to limit the 1variable connection on the negative transfer
 s.t. minToSink_1var {(p, source, sink) in process_source_sink, (d, t) in dt
      : (p, sink) in process_sink 
@@ -1089,6 +1094,7 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt} :
 	)
   + ( if p in process_online then
       + p_process_sink_coefficient[p, sink]
+#        * (v_online_linear[p, d, t] + vq_online_linear_pos[p, d, t] - vq_online_linear_neg[p, d, t]) 
         * v_online_linear[p, d, t] 
 		* p_entity_unitsize[p]
     )  
@@ -1118,11 +1124,25 @@ s.t. online__startup_linear {p in process_online, (d, t, t_previous, t_previous_
   - v_online_linear[p, d, t_previous]
 ;
 
+s.t. maxStartup {p in process_online, (d, t) in dt} :
+  + v_startup_linear[p, d, t]
+  <=
+  + p_entity_all_existing[p] / p_entity_unitsize[p]
+  + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest]
+;
+
 s.t. online__shutdown_linear {p in process_online, (d, t, t_previous, t_previous_within_block) in dttt} :
   + v_shutdown_linear[p, d, t]
   >=
   - v_online_linear[p, d, t] 
   + v_online_linear[p, d, t_previous]
+;
+
+s.t. maxShutdown {p in process_online, (d, t) in dt} :
+  + v_shutdown_linear[p, d, t]
+  <=
+  + p_entity_all_existing[p] / p_entity_unitsize[p]
+  + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest]
 ;
 
 #s.t. minimum_downtime {p in process_online, t : p_process[u,'min_downtime'] >= step_duration[t]} :
@@ -1570,9 +1590,17 @@ param r_costOper_d{d in period} := sum{(d, t) in dt} r_costOper_dt[d, t];
 param r_costPenalty_d{d in period} := sum{(d, t) in dt} r_costPenalty_dt[d, t];
 param r_costOper_and_penalty_d{d in period} := + r_costOper_d[d] + r_costPenalty_d[d];
 
-param r_costInvest_d{d in period_invest} :=
-  + sum{(e, d) in ed_invest} r_cost_entity_invest_d[e, d]
+param r_costInvestUnit_d{d in period} :=
+  + sum{(e, d) in ed_invest : e in process_unit} r_cost_entity_invest_d[e, d]
 ;
+param r_costInvestConnection_d{d in period} :=
+  + sum{(e, d) in ed_invest : e in process_connection} r_cost_entity_invest_d[e, d]
+;
+param r_costInvestState_d{d in period} :=
+  + sum{(e, d) in ed_invest : e in nodeState} r_cost_entity_invest_d[e, d]
+;
+
+param r_costInvest_d{d in period} := r_costInvestUnit_d[d] + r_costInvestConnection_d[d] + r_costInvestState_d[d];
 
 param pdNodeInflow{n in node, d in period} := sum{(d, t) in dt} pdtNodeInflow[n, d, t];
 
@@ -1600,9 +1628,8 @@ for {(p, d) in pd_invest : d in period_realized && d in period_invest}
     printf '%s, %s, %.8g\n', p, d, v_invest[p, d].val * p_entity_unitsize[p] >> fn_process_investment;
   }
 
-display period_share_of_year;
 printf 'Write summary results...\n';
-param fn_summary symbolic := "summary.csv";
+param fn_summary symbolic := "r_summary.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf '"Diagnostic results from all solves"' > fn_summary; }
 for {s in solve_current} { printf '\n\n"Solve",%s\n', s >> fn_summary; }
@@ -1610,25 +1637,13 @@ printf '"Total cost obj. function (M CUR)",%.12g,"Minimized total system cost as
 printf 'given by the solver (includes all penalty costs)"\n' >> fn_summary;
 printf '"Total cost calculated full horizon (M CUR)",%.12g,', sum{d in period} (r_costOper_and_penalty_d[d] / period_share_of_year[d] + r_costInvest_d[d]) / 1000000 >> fn_summary;
 printf '"Annualized operational, penalty and investment costs"\n' >> fn_summary;
-printf '"Total cost calculated realized periods (M CUR)",%.12g,', sum{d in period_realized} (r_costOper_and_penalty_d[d] / period_share_of_year[d] + r_costInvest_d[d]) / 1000000 >> fn_summary;
-printf '"Annualized operational, penalty and investment costs"\n' >> fn_summary;
-printf '"...Investment cost of units and connections (M CUR)",%.12g,\n', sum{d in period_realized} (r_costInvest_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Cost of commodities (M CUR)",%.12g,\n', sum{d in period_realized} (r_cost_commodity_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Cost of CO2 emissions (M CUR)",%.12g,\n', sum{d in period_realized} (r_cost_co2_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Cost of variable O&M (M CUR)",%.12g,\n', sum{d in period_realized} (r_cost_variable_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Cost of ramping (M CUR)",%.12g,\n', sum{d in period_realized} (r_cost_ramp_d[d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Penalty costs for creating matter or energy (M CUR)",%.12g,\n', sum{n in nodeBalance, d in period_realized} (r_costPenalty_nodeState_upDown_d[n, 'up', d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Penalty costs for removing matter or energy (M CUR)",%.12g,\n', sum{n in nodeBalance, d in period_realized} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Penalty costs for lack of inertia (M CUR)",%.12g,\n', sum{g in groupInertia, d in period_realized} (r_costPenalty_inertia_d[g, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Penalty costs for non-synchronous constraint (M CUR)",%.12g,\n', sum{g in groupNonSync, d in period_realized} (r_costPenalty_non_synchronous_d[g, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Penalty costs for creating reserves (M CUR)",%.12g,\n', sum{(r, ud, ng) in reserve__upDown__group, d in period_realized : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"...Penalty costs for removing reserves (M CUR)",%.12g,\n', sum{(r, ud, ng) in reserve__upDown__group, d in period_realized : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"Time in use in years",%.12g,"The amount of time realized periods cover calculated in years"', sum{d in period_realized} period_share_of_year[d] >> fn_summary;
+printf '"Total cost calculated realized periods (M CUR)",%.12g\n', sum{d in period_realized} (r_costOper_and_penalty_d[d] / period_share_of_year[d] + r_costInvest_d[d]) / 1000000 >> fn_summary;
+printf '"Time in use in years",%.12g,"The amount of time the solve includes - calculated in years"', sum{d in period} period_share_of_year[d] >> fn_summary;
 printf '\n' >> fn_summary;
 
 printf '\nEmissions\n' >> fn_summary;
-printf '"CO2 (Mt)",%.6g,,"System-wide annualized CO2 emissions for realized periods"\n', sum{c in commodity, d in period_realized} (r_emissions_co2_commodity_d[c, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"CO2 (Mt)",%.6g,,"System-wide annualized CO2 emissions for all periods"\n', sum{c in commodity, d in period} (r_emissions_co2_commodity_d[c, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for realized periods"\n', sum{c in commodity, d in period_realized} (r_emissions_co2_commodity_d[c, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for all periods"\n', sum{c in commodity, d in period} (r_emissions_co2_commodity_d[c, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
 
 printf '\n"Possible issues (creating or removing energy/matter, creating inertia, ' >> fn_summary;
 printf 'changing non-synchronous generation to synchronous)"\n' >> fn_summary;
@@ -1703,6 +1718,34 @@ for {n in node}
   } 
 	
 
+printf 'Write cost summary for realized periods...\n';
+param fn_summary_cost symbolic := "r_summary_cost_realized.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { 
+    printf ',,Investments,,,"Operational costs",,,,"Penalty costs",,,,,\nPeriod,' > fn_summary_cost;
+    printf 'Total,Unit,Connection,Storage,Commodity,CO2,O&M,Ramping,"Created matter or energy","Removed ' >> fn_summary_cost;
+	printf '"matter or energy","Lack of inertia","Non-synchronous","Created reserves","Removed reserves"\n' >> fn_summary_cost;
+  }
+for {d in period_realized}
+  { 
+    printf '%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
+      d,
+	  (r_costOper_and_penalty_d[d] / period_share_of_year[d] + r_costInvest_d[d]) / 1000000,
+      r_costInvestUnit_d[d] / 1000000,
+      r_costInvestConnection_d[d] / 1000000,
+      r_costInvestState_d[d] / 1000000,
+	  r_cost_commodity_d[d] / period_share_of_year[d] / 1000000,
+	  r_cost_co2_d[d] / period_share_of_year[d] / 1000000,
+	  r_cost_variable_d[d] / period_share_of_year[d] / 1000000,
+	  r_cost_ramp_d[d] / period_share_of_year[d] / 1000000,
+	  sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'up', d] / period_share_of_year[d]) / 1000000,
+	  sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / period_share_of_year[d]) / 1000000,
+	  sum{g in groupInertia} (r_costPenalty_inertia_d[g, d] / period_share_of_year[d]) / 1000000,
+	  sum{g in groupNonSync} (r_costPenalty_non_synchronous_d[g, d] / period_share_of_year[d]) / 1000000,
+	  sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d]) / 1000000,
+	  sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d]) / 1000000
+	>> fn_summary_cost;
+  } 
 
 printf 'Write unit__sinkNode flow for periods...\n';
 param fn_unit__sinkNode__d symbolic := "r_unit__sinkNode__d.csv";
@@ -1976,5 +2019,6 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
 #display r_costOper_and_penalty_d;
 display v_invest;
-display v_flow;
+#display v_flow;
+#display vq_online_linear_pos;
 end;

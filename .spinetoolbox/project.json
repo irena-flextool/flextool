@@ -67,7 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            180
+                            186
                         ],
                         "tool_filter": [
                             1
@@ -118,7 +118,7 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -31.806656038092875,
+            "x": -30.796404397229246,
             "y": 45.62937899716115,
             "output_time_stamps": false,
             "cancel_on_error": true,
@@ -169,7 +169,7 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 86.04780588705559,
+            "x": 87.05805752791922,
             "y": 40.48172881930766,
             "specification": "FlexTool3",
             "execute_in_work": false,
@@ -179,7 +179,7 @@
             "type": "Data Store",
             "description": "",
             "x": -167.42858562001038,
-            "y": 24.16817158874839,
+            "y": 23.157919947884764,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
