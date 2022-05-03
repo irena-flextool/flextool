@@ -67,14 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            179,
-                            180,
-                            181,
-                            182,
-                            183,
-                            184,
-                            185,
-                            186
+                            187
                         ],
                         "tool_filter": [
                             1
@@ -125,8 +118,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -32.1274008499865,
-            "y": 45.62937899716114,
+            "x": -28.883114302036006,
+            "y": 28.326517408091867,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -181,8 +174,8 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -166.34219608789854,
-            "y": 23.157919947884768,
+            "x": -154.19691114197292,
+            "y": 12.26038072238634,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -203,11 +196,6 @@
                 {
                     "type": "path",
                     "relative": true,
-                    "path": "FlexTool3_input_Ioannis.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
                     "path": "FlexTool3_import_template.xlsx"
                 }
             ],
@@ -223,10 +211,6 @@
             "purge_before_writing": false,
             "on_conflict": "replace",
             "file_selection": [
-                [
-                    "<project>/FlexTool3_input_Ioannis.xlsx",
-                    false
-                ],
                 [
                     "<project>/FlexTool3_import_template.xlsx",
                     true

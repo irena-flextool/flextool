@@ -1314,7 +1314,7 @@
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "unit__sourceNode",
+                                "value": "reserve__upDown__group",
                                 "skip_columns": [
                                     1
                                 ]
@@ -1322,17 +1322,26 @@
                             {
                                 "map_type": "RelationshipClassObjectClass",
                                 "position": "hidden",
-                                "value": "unit"
+                                "value": "reserve"
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
                                 "position": "hidden",
-                                "value": "node"
+                                "value": "upDown"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "group"
                             },
                             {
                                 "map_type": "Relationship",
                                 "position": "hidden",
                                 "value": "relationship"
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -2
                             },
                             {
                                 "map_type": "RelationshipObject",
@@ -1344,12 +1353,12 @@
                             },
                             {
                                 "map_type": "RelationshipMetadata",
-                                "position": -5,
+                                "position": "hidden",
                                 "filter_re": "^source$"
                             },
                             {
                                 "map_type": "ParameterDefinition",
-                                "position": -2
+                                "position": -5
                             },
                             {
                                 "map_type": "Alternative",
@@ -1898,7 +1907,7 @@
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "unit__sourceNode",
+                                "value": "unit__inputNode",
                                 "skip_columns": [
                                     3
                                 ]
@@ -1956,7 +1965,7 @@
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "unit__sinkNode",
+                                "value": "unit__outputNode",
                                 "skip_columns": [
                                     3
                                 ]
@@ -2016,7 +2025,7 @@
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "unit__sourceNode",
+                                "value": "unit__inputNode",
                                 "skip_columns": [
                                     1
                                 ]
@@ -2088,7 +2097,7 @@
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "unit__sinkNode",
+                                "value": "unit__outputNode",
                                 "skip_columns": [
                                     1
                                 ]
@@ -2162,7 +2171,7 @@
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "unit__sourceNode"
+                                "value": "unit__inputNode"
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
@@ -2231,7 +2240,7 @@
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "unit__sinkNode"
+                                "value": "unit__outputNode"
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
@@ -3075,17 +3084,17 @@
                 "3": "string",
                 "4": "float",
                 "5": "float",
-                "6": "string",
+                "6": "float",
                 "7": "float",
-                "8": "string",
+                "8": "float",
                 "9": "float",
                 "10": "float",
                 "11": "float",
                 "12": "float",
                 "13": "float",
                 "14": "float",
-                "15": "string",
-                "16": "string"
+                "15": "float",
+                "16": "float"
             },
             "unit_node_t": {
                 "0": "string",
