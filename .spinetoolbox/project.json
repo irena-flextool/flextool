@@ -67,6 +67,13 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
+                            179,
+                            180,
+                            181,
+                            182,
+                            183,
+                            184,
+                            185,
                             186
                         ],
                         "tool_filter": [
@@ -118,8 +125,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -30.796404397229246,
-            "y": 45.62937899716115,
+            "x": -32.1274008499865,
+            "y": 45.62937899716114,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -149,17 +156,13 @@
         "Import_Flex3": {
             "type": "Importer",
             "description": "",
-            "x": 216.20886474599084,
-            "y": 53.34842721278288,
+            "x": 218.87085765150536,
+            "y": 53.59303413342829,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "purge_before_writing": false,
             "on_conflict": "replace",
             "file_selection": [
-                [
-                    "r_node_prices_dt.csv",
-                    false
-                ],
                 [
                     "datapackage@FlexTool3",
                     true
@@ -169,17 +172,17 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 87.05805752791922,
-            "y": 40.48172881930766,
+            "x": 87.05805752791923,
+            "y": 41.81272527206491,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": []
         },
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -167.42858562001038,
-            "y": 23.157919947884764,
+            "x": -166.34219608789854,
+            "y": 23.157919947884768,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -245,15 +248,6 @@
                     "path": ".spinetoolbox/items/test_basic_unit/FlexTool3_data.sqlite"
                 }
             }
-        },
-        "Run SpineOpt 1": {
-            "type": "Tool",
-            "description": "",
-            "x": 107.8292624404461,
-            "y": 168.68340064941074,
-            "specification": "Run SpineOpt",
-            "execute_in_work": true,
-            "cmd_line_args": []
         }
     }
 }

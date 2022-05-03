@@ -37,7 +37,8 @@ class FlexToolRunner:
 
     def get_solves(self):
         """
-        read in the list of solves return it as a list of strings
+        read in
+        the list of solves return it as a list of strings
         :return:
         """
         with open("solve_mode.csv", 'r') as solvefile:
