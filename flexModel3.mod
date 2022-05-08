@@ -457,7 +457,7 @@ param p_process_sink_coefficient {(p, sink) in process_sink} :=
 param pt_profile {profile, time};
 
 set reserve__upDown__group__reserveParam__time dimen 5 within {reserve, upDown, group, reserveTimeParam, time};
-param p_reserve_upDown_group {reserve, upDown, group, reserveParam};
+param p_reserve_upDown_group {reserve, upDown, group, reserveParam} default 0;
 param pt_reserve_upDown_group {reserve, upDown, group, reserveTimeParam, time};
 param ptReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, t in time} :=
         + if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
@@ -920,6 +920,9 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
   + sum {(p, r, ud, n) in process_reserve_upDown_node_increase_reserve_ratio : (ng, n) in group_node 
           && (r, ud, ng) in reserve__upDown__group}
 	   (v_reserve[p, r, ud, n, d, t] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'])
+#  + sum {(r, ud, ng) in reserve__upDown__group : p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio']
+#	    sum {(n, ng) in group_node}
+#	        (pdtNodeInflow[n, d, t] * p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio'])
 ;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
@@ -1920,6 +1923,27 @@ for {n in node, d in period_realized : d not in period_invest}
 	  >> fn_node__d;
   }
 
+printf 'Write node results for time...\n';
+param fn_node__dt symbolic := "r_node__period__t.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'Node,Period,Time,Inflow,"From units","From connections","To units","To connections",' > fn_node__dt;
+    printf '"State","Self discharge","Create with penalty","Remove with penalty"\n' >> fn_node__dt; }  # Print the header on the first solve
+for {n in node, (d, t) in dt: d in period_realized && d not in period_invest}
+  {
+    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
+		, n, d, t
+        , (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
+	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_unit} r_process_source_sink_flow_dt[p, source, n, d, t]
+	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_connection} r_process_source_sink_flow_dt[p, source, n, d, t]
+  	    , sum{(p, n, sink) in process_source_sink_alwaysProcess : p in process_unit} -r_process_source_sink_flow_dt[p, n, sink, d, t]
+  	    , sum{(p, n, sink) in process_source_sink_alwaysProcess : p in process_connection} -r_process_source_sink_flow_dt[p, n, sink, d, t]
+	    , (if n in nodeState then v_state[n, d, t].val else 0)
+        , (if n in nodeSelfDischarge then r_selfDischargeLoss_dt[n, d, t] else 0)
+	    , sum{ud in upDown : n in nodeBalance} vq_state_up[n, d, t].val
+	    , sum{ud in upDown : n in nodeBalance} -vq_state_down[n, d, t].val
+	  >> fn_node__dt;
+  }
+
 printf 'Write nodal prices for time...\n';
 param fn_nodal_prices__dt symbolic := "r_node_prices__period__t.csv";
 printf 'period,time' > fn_nodal_prices__dt;
@@ -1933,6 +1957,22 @@ for {(d, t, t_previous, t_previous_within_block) in dttt : d in period_realized}
 	    printf ',%8g', nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual * period_share_of_year[d] >> fn_nodal_prices__dt;
       }
   }
+
+printf 'Write node state for time..\n';
+param fn_nodeState__dt symbolic := "r_nodeState__dt.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'period,time' > fn_nodeState__dt;
+    for {n in nodeState}
+      { printf ',%s', n >> fn_nodeState__dt; }
+  }
+for {(d, t) in dt : d in period_realized && d not in period_invest}
+  { printf '\n%s,%s', d, t >> fn_nodeState__dt;
+    for {n in nodeState} 
+      {
+	    printf ',%.8g', v_state[n, d, t].val >> fn_nodeState__dt;
+      }
+  }
+		
 
 
 printf 'Write group inertia over time...\n';
@@ -2078,7 +2118,7 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
 #display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_up[n, d, t].val;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_down[n, d, t].val;
