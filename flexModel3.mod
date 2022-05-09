@@ -630,97 +630,97 @@ param dq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} default 0
 #table data IN 'CSV' '.csv' :  <- [];
 
 # Domain sets
-table data IN 'CSV' 'commodity.csv' : commodity <- [commodity];
-table data IN 'CSV' 'constraint__sense.csv' : constraint <- [constraint];
-table data IN 'CSV' 'debug.csv': debug <- [debug];
-table data IN 'CSV' 'entity.csv': entity <- [entity];
-table data IN 'CSV' 'group.csv' : group <- [group];
-table data IN 'CSV' 'node.csv' : node <- [node];
-table data IN 'CSV' 'nodeBalance.csv' : nodeBalance <- [nodeBalance];
-table data IN 'CSV' 'nodeState.csv' : nodeState <- [nodeState];
-table data IN 'CSV' 'groupInertia.csv' : groupInertia <- [groupInertia];
-table data IN 'CSV' 'groupNonSync.csv' : groupNonSync <- [groupNonSync];
-table data IN 'CSV' 'groupCapacityMargin.csv' : groupCapacityMargin <- [groupCapacityMargin];
-table data IN 'CSV' 'groupOutput.csv' : groupOutput <- [groupOutput];
-table data IN 'CSV' 'process.csv': process <- [process];
-table data IN 'CSV' 'profile.csv': profile <- [profile];
-table data IN 'CSV' 'timeline.csv' : time <- [timestep];
+table data IN 'CSV' 'input/commodity.csv' : commodity <- [commodity];
+table data IN 'CSV' 'input/constraint__sense.csv' : constraint <- [constraint];
+table data IN 'CSV' 'input/debug.csv': debug <- [debug];
+table data IN 'CSV' 'input/entity.csv': entity <- [entity];
+table data IN 'CSV' 'input/group.csv' : group <- [group];
+table data IN 'CSV' 'input/node.csv' : node <- [node];
+table data IN 'CSV' 'input/nodeBalance.csv' : nodeBalance <- [nodeBalance];
+table data IN 'CSV' 'input/nodeState.csv' : nodeState <- [nodeState];
+table data IN 'CSV' 'input/groupInertia.csv' : groupInertia <- [groupInertia];
+table data IN 'CSV' 'input/groupNonSync.csv' : groupNonSync <- [groupNonSync];
+table data IN 'CSV' 'input/groupCapacityMargin.csv' : groupCapacityMargin <- [groupCapacityMargin];
+table data IN 'CSV' 'input/groupOutput.csv' : groupOutput <- [groupOutput];
+table data IN 'CSV' 'input/process.csv': process <- [process];
+table data IN 'CSV' 'input/profile.csv': profile <- [profile];
+table data IN 'CSV' 'input/timeline.csv' : time <- [timestep];
 
 # Single dimension membership sets
-table data IN 'CSV' 'process_connection.csv': process_connection <- [process_connection];
-table data IN 'CSV' 'process_nonSync_connection.csv': process_nonSync_connection <- [process];
-table data IN 'CSV' 'process_unit.csv': process_unit <- [process_unit];
+table data IN 'CSV' 'input/process_connection.csv': process_connection <- [process_connection];
+table data IN 'CSV' 'input/process_nonSync_connection.csv': process_nonSync_connection <- [process];
+table data IN 'CSV' 'input/process_unit.csv': process_unit <- [process_unit];
 
 # Multi dimension membership sets
-table data IN 'CSV' 'commodity__node.csv' : commodity_node <- [commodity,node];
-table data IN 'CSV' 'entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
-table data IN 'CSV' 'node__inflow_method.csv' : node__inflow_method <- [node,inflow_method];
-table data IN 'CSV' 'group__node.csv' : group_node <- [group,node];
-table data IN 'CSV' 'group__process.csv' : group_process <- [group,process];
-table data IN 'CSV' 'group__process__node.csv' : group_process_node <- [group,process,node];
-table data IN 'CSV' 'p_process_node_constraint_coefficient.csv' : process_node_constraint <- [process, node, constraint];
-table data IN 'CSV' 'constraint__sense.csv' : constraint__sense <- [constraint, sense];
-table data IN 'CSV' 'p_process.csv' : process__param <- [process, processParam];
-table data IN 'CSV' 'pd_node.csv' : node__param__period <- [node, nodeParam, period];
-table data IN 'CSV' 'pt_node.csv' : node__param__time <- [node, nodeParam, time];
-table data IN 'CSV' 'pd_process.csv' : process__param__period <- [process, processParam, period];
-table data IN 'CSV' 'pt_process.csv' : process__param__time <- [process, processParam, time];
-table data IN 'CSV' 'p_group.csv' : group__param <- [group, groupParam];
-table data IN 'CSV' 'pd_group.csv' : group__param__period <- [group, groupParam, period];
-table data IN 'CSV' 'process__ct_method.csv' : process_ct_method <- [process,ct_method];
-table data IN 'CSV' 'process__node__ramp_method.csv' : process_node_ramp_method <- [process,node,ramp_method];
-table data IN 'CSV' 'process__reserve__upDown__node.csv' : process_reserve_upDown_node <- [process,reserve,upDown,node];
-table data IN 'CSV' 'process__sink.csv' : process_sink <- [process,sink];
-table data IN 'CSV' 'process__source.csv' : process_source <- [process,source];
-table data IN 'CSV' 'process__sink_nonSync_unit.csv' : process__sink_nonSync_unit <- [process,sink];
-table data IN 'CSV' 'process__startup_method.csv' : process_startup_method <- [process,startup_method];
-table data IN 'CSV' 'process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
-table data IN 'CSV' 'process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
-table data IN 'CSV' 'reserve__upDown__group.csv' : reserve__upDown__group <- [reserve,upDown,group];
-table data IN 'CSV' 'reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
-table data IN 'CSV' 'pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time];
-table data IN 'CSV' 'timeblocks_in_use.csv' : solve_period_timeblockset <- [solve,period,timeblocks];
-table data IN 'CSV' 'solve_current.csv' : solve_current <- [solve];
-table data IN 'CSV' 'p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
-table data IN 'CSV' 'pt_process_source.csv' : process__source__param__time <- [process, source, sourceSinkTimeParam, time];
-table data IN 'CSV' 'p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
-table data IN 'CSV' 'pt_process_sink.csv' : process__sink__param__time <- [process, sink, sourceSinkTimeParam, time];
-table data IN 'CSV' 'pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
+table data IN 'CSV' 'input/commodity__node.csv' : commodity_node <- [commodity,node];
+table data IN 'CSV' 'input/entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
+table data IN 'CSV' 'input/node__inflow_method.csv' : node__inflow_method <- [node,inflow_method];
+table data IN 'CSV' 'input/group__node.csv' : group_node <- [group,node];
+table data IN 'CSV' 'input/group__process.csv' : group_process <- [group,process];
+table data IN 'CSV' 'input/group__process__node.csv' : group_process_node <- [group,process,node];
+table data IN 'CSV' 'input/p_process_node_constraint_coefficient.csv' : process_node_constraint <- [process, node, constraint];
+table data IN 'CSV' 'input/constraint__sense.csv' : constraint__sense <- [constraint, sense];
+table data IN 'CSV' 'input/p_process.csv' : process__param <- [process, processParam];
+table data IN 'CSV' 'input/pd_node.csv' : node__param__period <- [node, nodeParam, period];
+table data IN 'CSV' 'input/pt_node.csv' : node__param__time <- [node, nodeParam, time];
+table data IN 'CSV' 'input/pd_process.csv' : process__param__period <- [process, processParam, period];
+table data IN 'CSV' 'input/pt_process.csv' : process__param__time <- [process, processParam, time];
+table data IN 'CSV' 'input/p_group.csv' : group__param <- [group, groupParam];
+table data IN 'CSV' 'input/pd_group.csv' : group__param__period <- [group, groupParam, period];
+table data IN 'CSV' 'input/process__ct_method.csv' : process_ct_method <- [process,ct_method];
+table data IN 'CSV' 'input/process__node__ramp_method.csv' : process_node_ramp_method <- [process,node,ramp_method];
+table data IN 'CSV' 'input/process__reserve__upDown__node.csv' : process_reserve_upDown_node <- [process,reserve,upDown,node];
+table data IN 'CSV' 'input/process__sink.csv' : process_sink <- [process,sink];
+table data IN 'CSV' 'input/process__source.csv' : process_source <- [process,source];
+table data IN 'CSV' 'input/process__sink_nonSync_unit.csv' : process__sink_nonSync_unit <- [process,sink];
+table data IN 'CSV' 'input/process__startup_method.csv' : process_startup_method <- [process,startup_method];
+table data IN 'CSV' 'input/process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
+table data IN 'CSV' 'input/process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
+table data IN 'CSV' 'input/reserve__upDown__group.csv' : reserve__upDown__group <- [reserve,upDown,group];
+table data IN 'CSV' 'input/reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
+table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time];
+table data IN 'CSV' 'input/timeblocks_in_use.csv' : solve_period_timeblockset <- [solve,period,timeblocks];
+table data IN 'CSV' 'solve_data/solve_current.csv' : solve_current <- [solve];
+table data IN 'CSV' 'input/p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
+table data IN 'CSV' 'input/pt_process_source.csv' : process__source__param__time <- [process, source, sourceSinkTimeParam, time];
+table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
+table data IN 'CSV' 'input/pt_process_sink.csv' : process__sink__param__time <- [process, sink, sourceSinkTimeParam, time];
+table data IN 'CSV' 'input/pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
 
 # Parameters for model data
-table data IN 'CSV' 'p_commodity.csv' : [commodity, commodityParam], p_commodity;
-table data IN 'CSV' 'pd_commodity.csv' : [commodity, commodityParam, period], pd_commodity;
-table data IN 'CSV' 'p_group__process.csv' : [group, process, groupParam], p_group__process;
-table data IN 'CSV' 'p_group.csv' : [group, groupParam], p_group;
-table data IN 'CSV' 'pd_group.csv' : [group, groupParam, period], pd_group;
-table data IN 'CSV' 'p_node.csv' : [node, nodeParam], p_node;
-table data IN 'CSV' 'pd_node.csv' : [node, nodeParam, period], pd_node;
-table data IN 'CSV' 'pt_node.csv' : [node, nodeParam, time], pt_node;
-table data IN 'CSV' 'p_process_node_constraint_coefficient.csv' : [process, node, constraint], p_process_node_constraint_coefficient;
-table data IN 'CSV' 'p_process__reserve__upDown__node.csv' : [process, reserve, upDown, node, reserveParam], p_process_reserve_upDown_node;
-table data IN 'CSV' 'p_process_sink.csv' : [process, sink, sourceSinkParam], p_process_sink;
-table data IN 'CSV' 'pt_process_sink.csv' : [process, sink, sourceSinkTimeParam, time], pt_process_sink;
-table data IN 'CSV' 'p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
-table data IN 'CSV' 'pt_process_source.csv' : [process, source, sourceSinkTimeParam, time], pt_process_source;
-table data IN 'CSV' 'p_constraint_constant.csv' : [constraint], p_constraint_constant;
-table data IN 'CSV' 'p_process.csv' : [process, processParam], p_process;
-table data IN 'CSV' 'pd_process.csv' : [process, processParam, period], pd_process;
-table data IN 'CSV' 'pt_process.csv' : [process, processParam, time], pt_process;
-table data IN 'CSV' 'pt_profile.csv' : [profile, time], pt_profile;
-table data IN 'CSV' 'p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
-table data IN 'CSV' 'pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
+table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_commodity;
+table data IN 'CSV' 'input/pd_commodity.csv' : [commodity, commodityParam, period], pd_commodity;
+table data IN 'CSV' 'input/p_group__process.csv' : [group, process, groupParam], p_group__process;
+table data IN 'CSV' 'input/p_group.csv' : [group, groupParam], p_group;
+table data IN 'CSV' 'input/pd_group.csv' : [group, groupParam, period], pd_group;
+table data IN 'CSV' 'input/p_node.csv' : [node, nodeParam], p_node;
+table data IN 'CSV' 'input/pd_node.csv' : [node, nodeParam, period], pd_node;
+table data IN 'CSV' 'input/pt_node.csv' : [node, nodeParam, time], pt_node;
+table data IN 'CSV' 'input/p_process_node_constraint_coefficient.csv' : [process, node, constraint], p_process_node_constraint_coefficient;
+table data IN 'CSV' 'input/p_process__reserve__upDown__node.csv' : [process, reserve, upDown, node, reserveParam], p_process_reserve_upDown_node;
+table data IN 'CSV' 'input/p_process_sink.csv' : [process, sink, sourceSinkParam], p_process_sink;
+table data IN 'CSV' 'input/pt_process_sink.csv' : [process, sink, sourceSinkTimeParam, time], pt_process_sink;
+table data IN 'CSV' 'input/p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
+table data IN 'CSV' 'input/pt_process_source.csv' : [process, source, sourceSinkTimeParam, time], pt_process_source;
+table data IN 'CSV' 'input/p_constraint_constant.csv' : [constraint], p_constraint_constant;
+table data IN 'CSV' 'input/p_process.csv' : [process, processParam], p_process;
+table data IN 'CSV' 'input/pd_process.csv' : [process, processParam, period], pd_process;
+table data IN 'CSV' 'input/pt_process.csv' : [process, processParam, time], pt_process;
+table data IN 'CSV' 'input/pt_profile.csv' : [profile, time], pt_profile;
+table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
+table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
 
 # Parameters from the solve loop
-table data IN 'CSV' 'steps_in_use.csv' : dt <- [period, step];
-table data IN 'CSV' 'steps_in_use.csv' : [period, step], step_duration;
-table data IN 'CSV' 'steps_in_timeline.csv' : period_time <- [period,step];
-table data IN 'CSV' 'step_previous.csv' : dttt <- [period, time, previous, previous_within_block];
-table data IN 'CSV' 'realized_periods_of_current_solve.csv' : period_realized <- [period];
-table data IN 'CSV' 'invest_periods_of_current_solve.csv' : period_invest <- [period];
-table data IN 'CSV' 'p_model.csv' : [modelParam], p_model;
+table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
+table data IN 'CSV' 'solve_data/steps_in_use.csv' : [period, step], step_duration;
+table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,step];
+table data IN 'CSV' 'solve_data/step_previous.csv' : dttt <- [period, time, previous, previous_within_block];
+table data IN 'CSV' 'solve_data/realized_periods_of_current_solve.csv' : period_realized <- [period];
+table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
+table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
 
 # After rolling forward the investment model
-table data IN 'CSV' 'p_entity_invested.csv' : [entity], p_entity_invested;
+table data IN 'CSV' 'solve_data/p_entity_invested.csv' : [entity], p_entity_invested;
 
 #########################
 # Variable declarations
@@ -1684,7 +1684,7 @@ param potentialVREgen{(p, n) in process_sink, d in period_realized : p in proces
       + pt_profile[f, t] * entity_all_capacity[p, d];
 
 printf 'Transfer investments to the next solve...\n';
-param fn_entity_invested symbolic := "p_entity_invested.csv";
+param fn_entity_invested symbolic := "solve_data/p_entity_invested.csv";
 printf 'entity,p_entity_invested\n' > fn_entity_invested;
 for {e in entity: e in entityInvest} 
   {

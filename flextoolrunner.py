@@ -31,8 +31,8 @@ class FlexToolRunner:
         self.timeblocks = self.get_timeblocks()
         self.timeblocks__timeline = self.get_timeblocks_timelines()
         self.timeblocks_used_by_solves = self.get_timeblocks_used_by_solves()
-        self.invest_periods = self.get_list_of_tuples('solve__invest_period.csv')
-        self.realized_periods = self.get_list_of_tuples('solve__realized_period.csv')
+        self.invest_periods = self.get_list_of_tuples('input/solve__invest_period.csv')
+        self.realized_periods = self.get_list_of_tuples('input/solve__realized_period.csv')
         #self.write_full_timelines(self.timelines, 'steps.csv')
 
     def get_solves(self):
@@ -41,7 +41,7 @@ class FlexToolRunner:
         the list of solves return it as a list of strings
         :return:
         """
-        with open("solve_mode.csv", 'r') as solvefile:
+        with open("input/solve_mode.csv", 'r') as solvefile:
             header = solvefile.readline()
             solves = solvefile.readlines()
         return [solve.split(",")[0] for solve in solves]
@@ -55,7 +55,7 @@ class FlexToolRunner:
 
         :return list of tuples in a dict of solves : (period name, timeblock name)
         """
-        with open('timeblocks_in_use.csv', 'r') as blk:
+        with open('input/timeblocks_in_use.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
             timeblocks_used_by_solves = defaultdict(list)
@@ -79,7 +79,7 @@ class FlexToolRunner:
         timeline is the only inputfile that contains the full timelines for all timeblocks.
         :return: list of tuples in a dict timeblocks : (timestep name, duration)
         """
-        with open('timeline.csv', 'r') as blk:
+        with open('input/timeline.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
             timelines = defaultdict(list)
@@ -97,7 +97,7 @@ class FlexToolRunner:
         timeline is the only inputfile that contains the full timelines for all timeblocks.
         :return: list of tuples in a dict timeblocks : (timestep name, duration)
         """
-        with open('timeblocks__timeline.csv', 'r') as blk:
+        with open('input/timeblocks__timeline.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
             timeblocks__timeline = defaultdict(list)
@@ -115,7 +115,7 @@ class FlexToolRunner:
         :return: list of tuples in a dict of timeblocks : (start timestep name, timeblock length in timesteps)
         :return: list of tuples that hold the timeblock length in timesteps
         """
-        with open('timeblocks.csv', 'r') as blk:
+        with open('input/timeblocks.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
             timeblocks = defaultdict(list)
@@ -297,7 +297,7 @@ class FlexToolRunner:
         """
 
         headers = ("period", "time", "previous", "previous_within_block")
-        with open("step_previous.csv", 'w', newline='\n') as stepfile:
+        with open("solve_data/step_previous.csv", 'w', newline='\n') as stepfile:
             writer = csv.writer(stepfile, delimiter=',')
             writer.writerow(headers)
             writer.writerows(step_lengths)
@@ -361,7 +361,7 @@ class FlexToolRunner:
         :param first_state: boolean if the current run is the first
 
         """
-        with open("p_model.csv", 'w') as firstfile:
+        with open("input/p_model.csv", 'w') as firstfile:
             firstfile.write("modelParam,p_model\n")
             if first_state:
                 firstfile.write("solveFirst,1\n")
@@ -383,7 +383,7 @@ class FlexToolRunner:
         :param first_state: boolean if the current run is the first
 
         """
-        with open("p_entity_invested.csv", 'w') as firstfile:
+        with open("solve_data/p_entity_invested.csv", 'w') as firstfile:
             firstfile.write("entity,p_entity_invested\n")
 
 
@@ -406,12 +406,12 @@ def main():
 
     first = True
     for solve in runner.solves:
-        runner.write_full_timelines(runner.timeblocks_used_by_solves[solve], runner.timeblocks__timeline, runner.timelines, 'steps_in_timeline.csv')
-        runner.write_active_timelines(active_time_lists[solve], 'steps_in_use.csv')
+        runner.write_full_timelines(runner.timeblocks_used_by_solves[solve], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
+        runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
         runner.write_step_jump(jump_lists[solve])
-        runner.write_periods(solve, runner.realized_periods, 'realized_periods_of_current_solve.csv')
-        runner.write_periods(solve, runner.invest_periods, 'invest_periods_of_current_solve.csv')
-        runner.write_currentSolve(solve, 'solve_current.csv')
+        runner.write_periods(solve, runner.realized_periods, 'solve_data/realized_periods_of_current_solve.csv')
+        runner.write_periods(solve, runner.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
+        runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
         if first:
             runner.write_first_status(first)
             first = False
