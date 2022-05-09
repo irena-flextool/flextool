@@ -2487,15 +2487,18 @@
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": 1
+                                "position": 1,
+                                "import_objects": true
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": 2
+                                "position": 2,
+                                "import_objects": true
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": 3
+                                "position": 3,
+                                "import_objects": true
                             },
                             {
                                 "map_type": "RelationshipMetadata",
@@ -2805,7 +2808,8 @@
                 "1": "string",
                 "2": "float",
                 "3": "float",
-                "4": "float"
+                "4": "float",
+                "5": "string"
             },
             "unit_c": {
                 "0": "string",
@@ -2987,7 +2991,7 @@
                 "3": "string",
                 "4": "string",
                 "5": "float",
-                "6": "string",
+                "6": "float",
                 "7": "float",
                 "8": "float",
                 "9": "float",

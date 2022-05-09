@@ -67,7 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            187
+                            205
                         ],
                         "tool_filter": [
                             1
@@ -118,8 +118,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -28.883114302036006,
-            "y": 28.326517408091867,
+            "x": -27.873139083615314,
+            "y": 27.316542189671186,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -165,17 +165,17 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 87.05805752791923,
+            "x": 88.06803274633992,
             "y": 41.81272527206491,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": []
         },
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -154.19691114197292,
-            "y": 12.26038072238634,
+            "x": -162.2835070626223,
+            "y": 4.172814205553595,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -190,7 +190,7 @@
         "FlexTool3_Excel": {
             "type": "Data Connection",
             "description": "",
-            "x": -432.24967756020123,
+            "x": -435.28251500401353,
             "y": 76.72426838133742,
             "file_references": [
                 {
@@ -204,8 +204,8 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -292.7781335156984,
-            "y": 58.43848618568493,
+            "x": -307.94232073475996,
+            "y": 62.4822694441013,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -231,6 +231,18 @@
                     "relative": true,
                     "path": ".spinetoolbox/items/test_basic_unit/FlexTool3_data.sqlite"
                 }
+            }
+        },
+        "Data Store 1": {
+            "type": "Data Store",
+            "description": "",
+            "x": 192.07970477477767,
+            "y": 194.10159640398587,
+            "url": {
+                "dialect": "",
+                "host": "",
+                "port": "",
+                "database": ""
             }
         }
     }

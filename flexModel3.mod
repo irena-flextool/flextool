@@ -34,6 +34,9 @@ set method 'm - Type of process that transfers, converts or stores commodities';
 set upDown 'upward and downward directions for some variables';
 set ct_method;
 set startup_method;
+set fork_method;
+set fork_method_yes within fork_method;
+set fork_method_no within fork_method;
 set reserve_method;
 set ramp_method;
 set ramp_limit_method within ramp_method;
@@ -96,18 +99,23 @@ set process_connection 'processes that are connections' within process;
 set process_ct_method dimen 2 within {process, ct_method};
 set process_startup_method dimen 2 within {process, startup_method};
 set process_node_ramp_method dimen 3 within {process, node, ramp_method};
-set methods dimen 3; 
+set methods dimen 4; 
 set process__profile__profile_method dimen 3 within {process, profile, profile_method};
 set process__node__profile__profile_method dimen 4 within {process, node, profile, profile_method};
 set process_source dimen 2 within {process, entity};
 set process_sink dimen 2 within {process, entity};
-set process_ct_startup_method := 
-    { p in process, m1 in ct_method, m2 in startup_method, m in method
-	    : (m1, m2, m) in methods
+set process_fork_method{p in process, m in fork_method} dimen 2 within {process, fork_method} := 
+    if (sum{(p, source) in process_source} 1 > 1 || sum{(p, sink) in process_sink} 1 > 1)
+	then process cross fork_method_yes
+	else process cross fork_method_no;
+set process_ct_startup_fork_method := 
+    { p in process, m1 in ct_method, m2 in startup_method, m3 in fork_method, m in method
+	    : (m1, m2, m3, m) in methods
 	    && (p, m1) in process_ct_method
 	    && (p, m2) in process_startup_method 
+		&& (p, m3) in process_fork_method[p,m3]
 	};
-set process_method := setof {(p, m1, m2, m) in process_ct_startup_method} (p, m);
+set process_method := setof {(p, m1, m2, m3, m) in process_ct_startup_fork_method} (p, m);
 set process_source_toProcess := 
     { p in process, source in node, p2 in process 
 	    :  p = p2 
@@ -446,13 +454,15 @@ param ptProcess__source__sink__t_varCost_alwaysProcess {(p, source, sink) in pro
 ;
 
 param p_process_source_coefficient {(p, source) in process_source} := 
-    + if (p_process_source[p, source, 'coefficient']) 
-	  then p_process_source[p, source, 'coefficient'] 
-	  else 1;
+   p_process_source[p, source, 'coefficient'] ;
+#    + if (p_process_source[p, source, 'coefficient']) 
+#	  then p_process_source[p, source, 'coefficient'] 
+#	  else 1;
 param p_process_sink_coefficient {(p, sink) in process_sink} := 
-    + if (p_process_sink[p, sink, 'coefficient']) 
-	  then p_process_sink[p, sink, 'coefficient'] 
-	  else 1;
+   p_process_sink[p, sink, 'coefficient'];
+#	+ if (p_process_sink[p, sink, 'coefficient']) 
+#	  then p_process_sink[p, sink, 'coefficient'] 
+#	  else 1;
 
 param pt_profile {profile, time};
 
@@ -744,7 +754,7 @@ printf 'Checking: Efficiency data for 2-way linear conversions without online va
 check {(p, m) in process_method, t in time : m in method_2way_off} ptProcess[p, 'efficiency', t] != 0;
 
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
-check {(p, ct_m, s_m, m) in process_ct_startup_method} : not (p, ct_m, s_m, 'not_applicable') in process_ct_startup_method;
+check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
 #display commodity_node, process_source_sink, process_source, process_sink;
 #display ptProcess__source__sink__t_varCost, ptProcess__source__sink__t_varCost_alwaysProcess;
 minimize total_cost:
@@ -859,7 +869,7 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   # n is source
   - sum {(p, n, sink) in process_source_sink_eff } ( 
       + v_flow[p, n, sink, d, t] 
-	       * (if (p, 'min_load_efficiency') in process_ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	      * (if (p, 'min_load_efficiency') in process_ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
       + (if (p, 'min_load_efficiency') in process_ct_method then 
 #	        + (v_online_linear[p, d, t] + vq_online_linear_pos[p, d, t] - vq_online_linear_neg[p, d, t])
 	        + v_online_linear[p, d, t]
@@ -868,7 +878,8 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
 		)
     )		
   - sum {(p, n, sink) in process_source_sink_noEff} 
-    ( + v_flow[p, n, sink, d, t] )
+    ( + v_flow[p, n, sink, d, t] 
+    )
   + (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
   - (if n in nodeSelfDischarge then 
       + v_state[n, d, t] 
@@ -952,6 +963,7 @@ s.t. profile_upper_limit {(p, source, sink, f, m) in process__source__sink__prof
     * ( + ( if p not in process_online then
               + p_entity_all_existing[p]
               + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#              - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
 #              - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
 	      )
         + ( if p in process_online then
@@ -1761,7 +1773,7 @@ for {g in groupNonSync}
 	  }
   }
 
-printf '\n"Group results for nodes"\n';
+printf 'Write group results for nodes...\n';
 param fn_groupNode__d symbolic := "r_group_node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
@@ -2118,7 +2130,7 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
 #display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
-display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_up[n, d, t].val;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_down[n, d, t].val;
