@@ -3,7 +3,7 @@
     "item_type": "Importer",
     "mapping": {
         "table_mappings": {
-            "r_investment_unit__period": [
+            "nvestment_unit__period": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -55,7 +55,7 @@
                     }
                 }
             ],
-            "r_node__period": [
+            "node__period": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -106,7 +106,7 @@
                     }
                 }
             ],
-            "r_unit__sinkNode__period": [
+            "unit__sinkNode__period": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -179,7 +179,7 @@
                     }
                 }
             ],
-            "r_unit__sourceNode__period": [
+            "unit__sourceNode__period": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -252,7 +252,7 @@
                     }
                 }
             ],
-            "r_process__reserve__upDown__node__period__t": [
+            "process__reserve__upDown__node__period__t": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -354,7 +354,7 @@
                     }
                 }
             ],
-            "r_unit__sourceNode__period__t": [
+            "unit__sourceNode__period__t": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -436,7 +436,7 @@
                     }
                 }
             ],
-            "r_unit_online__period__t": [
+            "unit_online__period__t": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -456,7 +456,7 @@
                     }
                 }
             ],
-            "r_unit__sinkNode__period__t": [
+            "unit__sinkNode__period__t": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -538,7 +538,7 @@
                     }
                 }
             ],
-            "r_connection__period__t": [
+            "connection__period__t": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -630,7 +630,7 @@
                     }
                 }
             ],
-            "r_connection__period": [
+            "connection__period": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -713,7 +713,7 @@
                     }
                 }
             ],
-            "r_costs__period": [
+            "costs__period": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -765,7 +765,7 @@
                     }
                 }
             ],
-            "r_investment_node__period": [
+            "investment_node__period": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -817,7 +817,7 @@
                     }
                 }
             ],
-            "r_summary_solve": [
+            "summary_solve": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -837,7 +837,7 @@
                     }
                 }
             ],
-            "r_node_prices__period__t": [
+            "node_prices__period__t": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -898,7 +898,7 @@
                     }
                 }
             ],
-            "r_group_node__period": [
+            "group_node__period": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -950,7 +950,7 @@
                     }
                 }
             ],
-            "r_investment_connection__period": [
+            "investment_connection__period": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -1004,72 +1004,72 @@
             ]
         },
         "selected_tables": [
-            "r_investment_unit__period",
-            "r_node__period",
-            "r_unit__sinkNode__period",
-            "r_unit__sourceNode__period",
-            "r_process__reserve__upDown__node__period__t",
-            "r_unit__sourceNode__period__t",
-            "r_unit__sinkNode__period__t",
-            "r_connection__period__t",
-            "r_connection__period",
-            "r_costs__period",
-            "r_investment_node__period",
-            "r_node_prices__period__t",
-            "r_group_node__period",
-            "r_investment_connection__period"
+            "investment_unit__period",
+            "node__period",
+            "unit__sinkNode__period",
+            "unit__sourceNode__period",
+            "process__reserve__upDown__node__period__t",
+            "unit__sourceNode__period__t",
+            "unit__sinkNode__period__t",
+            "connection__period__t",
+            "connection__period",
+            "costs__period",
+            "investment_node__period",
+            "node_prices__period__t",
+            "group_node__period",
+            "investment_connection__period"
         ],
         "table_options": {
-            "r_unit__sinkNode__period": {},
-            "r_unit__sourceNode__period": {},
-            "r_process__reserve__upDown__node__period__t": {},
-            "r_unit__sourceNode__period__t": {},
-            "r_unit_online__period__t": {},
-            "r_node__period": {},
-            "r_unit__sinkNode__period__t": {},
-            "r_investment_unit__period": {},
-            "r_connection__period__t": {},
-            "r_connection__period": {},
-            "r_costs__period": {},
-            "r_investment_node__period": {},
-            "r_summary_solve": {},
-            "r_node_prices__period__t": {},
-            "r_group_node__period": {},
-            "r_investment_connection__period": {}
+            "output/unit__sinkNode__period": {},
+            "output/unit__sourceNode__period": {},
+            "output/process__reserve__upDown__node__period__t": {},
+            "output/unit__sourceNode__period__t": {},
+            "output/unit_online__period__t": {},
+            "output/node__period": {},
+            "output/unit__sinkNode__period__t": {},
+            "output/investment_unit__period": {},
+            "output/connection__period__t": {},
+            "output/connection__period": {},
+            "output/costs__period": {},
+            "output/investment_node__period": {},
+            "output/summary_solve": {},
+            "output/node_prices__period__t": {},
+            "output/group_node__period": {},
+            "output/investment_connection__period": {}
         },
         "table_types": {
-            "r_unit__sinkNode__period": {
+            "unit__sinkNode__period": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
                 "3": "float"
             },
-            "r_unit__sourceNode__period": {
+            "unit__sourceNode__period": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
                 "3": "float"
             },
-            "r_unit__sourceNode__period__t": {
+            "unit__sourceNode__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
                 "3": "string",
                 "4": "float"
             },
-            "r_unit__sinkNode__period__t": {
+            "unit__sinkNode__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
                 "3": "string",
                 "4": "float"
             },
-            "r_investment_unit__period": {
+            "investment_unit__period": {
                 "0": "string",
                 "1": "string",
                 "2": "float"
             },
-            "r_node__period": {
+            "node__period": {
                 "0": "string",
                 "1": "string",
                 "2": "float",
@@ -1082,7 +1082,7 @@
                 "9": "float",
                 "10": "float"
             },
-            "r_process__reserve__upDown__node__period__t": {
+            "process__reserve__upDown__node__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
@@ -1091,7 +1091,7 @@
                 "5": "string",
                 "6": "float"
             },
-            "r_connection__period__t": {
+            "connection__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
@@ -1099,14 +1099,14 @@
                 "4": "string",
                 "5": "float"
             },
-            "r_connection__period": {
+            "connection__period": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
                 "3": "string",
                 "4": "float"
             },
-            "r_costs__period": {
+            "costs__period": {
                 "0": "string",
                 "1": "float",
                 "2": "float",
@@ -1123,16 +1123,16 @@
                 "13": "float",
                 "14": "float"
             },
-            "r_investment_node__period": {
+            "investment_node__period": {
                 "2": "float"
             },
-            "r_node_prices__period__t": {
+            "node_prices__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "float",
                 "3": "float"
             },
-            "r_group_node__period": {
+            "group_node__period": {
                 "0": "string",
                 "1": "string",
                 "2": "float",
@@ -1141,7 +1141,7 @@
                 "5": "float",
                 "6": "float"
             },
-            "r_investment_connection__period": {
+            "investment_connection__period": {
                 "0": "string",
                 "1": "string",
                 "2": "float"
