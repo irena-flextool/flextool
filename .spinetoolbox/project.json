@@ -133,8 +133,8 @@
         "Results_F3": {
             "type": "Data Store",
             "description": "",
-            "x": 323.34882724118745,
-            "y": 49.85894954749581,
+            "x": 324.4970174481724,
+            "y": 48.71075934051084,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -149,8 +149,8 @@
         "Import_Flex3": {
             "type": "Importer",
             "description": "",
-            "x": 216.57447723753543,
-            "y": 53.59303413342828,
+            "x": 216.57601801881154,
+            "y": 52.44330314516716,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "purge_before_writing": false,

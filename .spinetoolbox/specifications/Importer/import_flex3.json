@@ -3,58 +3,6 @@
     "item_type": "Importer",
     "mapping": {
         "table_mappings": {
-            "nvestment_unit__period": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden",
-                                "value": "unit"
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": 0
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterDefinition",
-                                "position": "hidden",
-                                "value": "invested"
-                            },
-                            {
-                                "map_type": "Alternative",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValueMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValueType",
-                                "position": "hidden",
-                                "value": "map"
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "period"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 1
-                            },
-                            {
-                                "map_type": "ExpandedValue",
-                                "position": 2
-                            }
-                        ]
-                    }
-                }
-            ],
             "node__period": [
                 {
                     "Mapping 1": {
@@ -442,14 +390,55 @@
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
-                                "position": "hidden"
+                                "position": "hidden",
+                                "value": "node"
                             },
                             {
                                 "map_type": "Object",
-                                "position": "hidden"
+                                "position": "header"
                             },
                             {
                                 "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "price"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
                                 "position": "hidden"
                             }
                         ]
@@ -1001,15 +990,176 @@
                         ]
                     }
                 }
+            ],
+            "node__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "header"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "node_state__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "header"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "price"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "group_inertia__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "investment_unit__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
-            "investment_unit__period",
             "node__period",
             "unit__sinkNode__period",
             "unit__sourceNode__period",
             "process__reserve__upDown__node__period__t",
             "unit__sourceNode__period__t",
+            "unit_online__period__t",
             "unit__sinkNode__period__t",
             "connection__period__t",
             "connection__period",
@@ -1017,25 +1167,32 @@
             "investment_node__period",
             "node_prices__period__t",
             "group_node__period",
-            "investment_connection__period"
+            "investment_connection__period",
+            "node__period__t",
+            "node_state__period__t",
+            "group_inertia__period__t",
+            "investment_unit__period"
         ],
         "table_options": {
-            "output/unit__sinkNode__period": {},
-            "output/unit__sourceNode__period": {},
-            "output/process__reserve__upDown__node__period__t": {},
-            "output/unit__sourceNode__period__t": {},
-            "output/unit_online__period__t": {},
-            "output/node__period": {},
-            "output/unit__sinkNode__period__t": {},
-            "output/investment_unit__period": {},
-            "output/connection__period__t": {},
-            "output/connection__period": {},
-            "output/costs__period": {},
-            "output/investment_node__period": {},
-            "output/summary_solve": {},
-            "output/node_prices__period__t": {},
-            "output/group_node__period": {},
-            "output/investment_connection__period": {}
+            "node__period": {},
+            "investment_connection__period": {},
+            "process__reserve__upDown__node__period__t": {},
+            "node_prices__period__t": {},
+            "summary_solve": {},
+            "node__period__t": {},
+            "node_state__period__t": {},
+            "unit__sourceNode__period__t": {},
+            "costs__period": {},
+            "unit_online__period__t": {},
+            "group_node__period": {},
+            "unit__sinkNode__period__t": {},
+            "investment_node__period": {},
+            "connection__period": {},
+            "group_inertia__period__t": {},
+            "investment_unit__period": {},
+            "unit__sinkNode__period": {},
+            "connection__period__t": {},
+            "unit__sourceNode__period": {}
         },
         "table_types": {
             "unit__sinkNode__period": {
@@ -1130,7 +1287,8 @@
                 "0": "string",
                 "1": "string",
                 "2": "float",
-                "3": "float"
+                "3": "float",
+                "4": "string"
             },
             "group_node__period": {
                 "0": "string",
@@ -1145,6 +1303,37 @@
                 "0": "string",
                 "1": "string",
                 "2": "float"
+            },
+            "node__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float"
+            },
+            "node_state__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "float"
+            },
+            "unit_online__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "float"
+            },
+            "group_inertia__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string"
             }
         },
         "table_row_types": {},
