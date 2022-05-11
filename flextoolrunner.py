@@ -395,6 +395,11 @@ def main():
     runner = FlexToolRunner()
     active_time_lists = OrderedDict()
     jump_lists = OrderedDict()
+    try:
+        os.mkdir('solve_data')
+    except FileExistsError:
+        print("solve_data folder existed")
+
     for solve in runner.solves:
         active_time_list = runner.get_active_time(solve, runner.timeblocks_used_by_solves, runner.timeblocks,
                                                   runner.timelines, runner.timeblocks__timeline)
