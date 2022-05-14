@@ -499,13 +499,13 @@ param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
           ( + (pdNode[e, 'invest_cost', d] * 1000 * ( pdNode[e, 'interest_rate', d] 
 			  / (1 - (1 / (1 + pdNode[e, 'interest_rate', d])^pdNode[e, 'lifetime', d] ) ) ))
-			+ pdNode[e, 'fixed_cost', d]
+			+ pdNode[e, 'fixed_cost', d] * 1000
 		  )
         + sum{m in invest_method : (e, m) in entity__invest_method && e in process && m not in invest_method_not_allowed}
 		  (
             + (pdProcess[e, 'invest_cost', d] * 1000 * ( pdProcess[e, 'interest_rate', d] 
 			  / (1 - (1 / (1 + pdProcess[e, 'interest_rate', d])^pdProcess[e, 'lifetime', d] ) ) ))
-			+ pdProcess[e, 'fixed_cost', d]
+			+ pdProcess[e, 'fixed_cost', d] * 1000
 		  )
 ; 			
 
