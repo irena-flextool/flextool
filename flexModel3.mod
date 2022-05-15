@@ -1926,7 +1926,7 @@ param fn_node__d symbolic := "output/node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'Node,Period,Inflow,"From units","From connections","To units","To connections",' > fn_node__d;
     printf '"State change","Self discharge","Create with penalty","Remove with penalty"\n' >> fn_node__d; }  # Print the header on the first solve
-for {n in node, d in period_realized : d not in period_invest}
+for {n in node, d in period_realized}
   {
     printf '%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
 		, n, d
@@ -1947,7 +1947,7 @@ param fn_node__dt symbolic := "output/node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'Node,Period,Time,Inflow,"From units","From connections","To units","To connections",' > fn_node__dt;
     printf '"State","Self discharge","Create with penalty","Remove with penalty"\n' >> fn_node__dt; }  # Print the header on the first solve
-for {n in node, (d, t) in dt: d in period_realized && d not in period_invest}
+for {n in node, (d, t) in dt : d in period_realized}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
 		, n, d, t
@@ -2136,8 +2136,8 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 #}
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
-#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_up[n, d, t].val;
