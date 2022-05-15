@@ -67,7 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            205
+                            236
                         ],
                         "tool_filter": [
                             1
@@ -174,7 +174,7 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -166.41238388966804,
+            "x": -168.62595022592535,
             "y": -4.08493944853781,
             "url": {
                 "dialect": "sqlite",
@@ -205,7 +205,7 @@
             "type": "Importer",
             "description": "",
             "x": -312.0711975618058,
-            "y": 12.935747519552814,
+            "y": 10.722181183295538,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,

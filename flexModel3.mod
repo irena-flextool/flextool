@@ -20,8 +20,8 @@ set processTransfer 'Transfer processes' within process;
 set node 'n - Any location where a balance needs to be maintained' within entity;
 set group 'g - Any group of entities that have a set of common constraints';
 set commodity 'c - Stuff that is being processed';
-set reserve__upDown__group dimen 3;
 set reserve__upDown__group__method dimen 4;
+set reserve__upDown__group := setof {(r, ud, g, m) in reserve__upDown__group__method : m <> 'no_reserve'} (r, ud, g);
 set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng, r_m) in reserve__upDown__group__method} (r);
 set period_time '(d, t) - Time steps in the time periods of the timelines in use' dimen 2;
 set solve_period_timeblockset '(solve, d, tb) - All solve, period, timeblockset combinations in the model instance' dimen 3;
@@ -267,7 +267,6 @@ set dttt dimen 4;
 set period_invest dimen 1 within period;
 set period_realized dimen 1 within period;
 set peedt := {(p, source, sink) in process_source_sink, (d, t) in period_time};
-set prundt := {(p, r, ud, n) in process_reserve_upDown_node, (d, t) in period_time};
 
 set startTime dimen 1 within time;
 set startNext dimen 1 within time;
@@ -474,6 +473,8 @@ param ptReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in res
 		  then pt_reserve_upDown_group[r, ud, g, param, t]
 		  else p_reserve_upDown_group[r, ud, g, param];
 param p_process_reserve_upDown_node {process, reserve, upDown, node, reserveParam} default 0;
+set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group} 1};
+set prundt := {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in period_time};
 
 param p_constraint_constant {constraint};
 param p_process_node_constraint_coefficient {process, node, constraint};
@@ -587,7 +588,7 @@ set process_source_sink_dt_ramp :=
         };
 
 set process_reserve_upDown_node_increase_reserve_ratio :=
-        {(p, r, ud, n) in process_reserve_upDown_node :
+        {(p, r, ud, n) in process_reserve_upDown_node_active :
 		    p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'] > 0
 		};
 
@@ -676,7 +677,7 @@ table data IN 'CSV' 'input/process__sink_nonSync_unit.csv' : process__sink_nonSy
 table data IN 'CSV' 'input/process__startup_method.csv' : process_startup_method <- [process,startup_method];
 table data IN 'CSV' 'input/process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
 table data IN 'CSV' 'input/process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
-table data IN 'CSV' 'input/reserve__upDown__group.csv' : reserve__upDown__group <- [reserve,upDown,group];
+#table data IN 'CSV' 'input/reserve__upDown__group.csv' : reserve__upDown__group <- [reserve,upDown,group];
 table data IN 'CSV' 'input/reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
 table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time];
 table data IN 'CSV' 'input/timeblocks_in_use.csv' : solve_period_timeblockset <- [solve,period,timeblocks];
@@ -726,7 +727,7 @@ table data IN 'CSV' 'solve_data/p_entity_invested.csv' : [entity], p_entity_inve
 # Variable declarations
 var v_flow {(p, source, sink, d, t) in peedt};
 var v_ramp {(p, source, sink, d, t) in peedt};
-var v_reserve {(p, r, ud, n, d, t) in prundt} >= 0;
+var v_reserve {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } >= 0;
 var v_state {n in nodeState, (d, t) in dt} >= 0;
 var v_online_linear {p in process_online,(d, t) in dt} >=0;
 var v_startup_linear {p in process_online, (d, t) in dt} >=0;
@@ -890,15 +891,15 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
 ;
 
 s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__method, (d, t) in dt : r_m = 'timeseries_only' || r_m = 'both'} :
-  + sum {(p, r, ud, n) in process_reserve_upDown_node 
-	      : sum{(p, m) in process_method : m not in method_1var_per_way || (p, n) in process_sink} 1
+  + sum {(p, r, ud, n) in process_reserve_upDown_node_active 
+	      :  (sum{(p, m) in process_method : m not in method_1var_per_way} 1 || (p, n) in process_sink)
 		  && (ng, n) in group_node 
 		  && (r, ud, ng) in reserve__upDown__group} 
 	    ( v_reserve[p, r, ud, n, d, t] 
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
 	    )
-  + sum {(p, r, ud, n) in process_reserve_upDown_node  
-		  : sum{(p, m) in process_method : m in method_1var_per_way && (p, n) in process_source} 1
+  + sum {(p, r, ud, n) in process_reserve_upDown_node_active  
+		  :  (sum{(p, m) in process_method : m in method_1var_per_way} 1 && (p, n) in process_source)
 		  && (ng, n) in group_node 
 		  && (r, ud, ng) in reserve__upDown__group} 
 	    ( v_reserve[p, r, ud, n, d, t] 
@@ -911,14 +912,14 @@ s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__m
 ;
 
 s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__method, (d, t) in dt : r_m = 'dynamic_only' || r_m = 'both'} :
-  + sum {(p, r, ud, n) in process_reserve_upDown_node 
+  + sum {(p, r, ud, n) in process_reserve_upDown_node_active 
 	      : sum{(p, m) in process_method : m in method_1var_per_way} 1
 		  && (ng, n) in group_node 
 		  && (r, ud, ng) in reserve__upDown__group} 
 	    ( v_reserve[p, r, ud, n, d, t] 
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
 	    )
-  + sum {(p, r, ud, n) in process_reserve_upDown_node  
+  + sum {(p, r, ud, n) in process_reserve_upDown_node_active
 		  : sum{(p, m) in process_method : m not in method_1var_per_way} 1
 		  && (ng, n) in group_node 
 		  && (r, ud, ng) in reserve__upDown__group} 
@@ -1056,7 +1057,7 @@ s.t. process_constraint_equal {(c, s) in constraint__sense, (d, t) in dt
 s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt 
      : (p, sink) in process_sink } :
   + v_flow[p, source, sink, d, t]
-  + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node} v_reserve[p, r, 'up', sink, d, t]
+  + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node_active} v_reserve[p, r, 'up', sink, d, t]
   <=
   + ( if p not in process_online then
       + p_process_sink_coefficient[p, sink]
@@ -1068,7 +1069,6 @@ s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt
   + ( if p in process_online then
       + p_process_sink_coefficient[p, sink]
         * v_online_linear[p, d, t]
-#        * (v_online_linear[p, d, t] + vq_online_linear_pos[p, d, t] - vq_online_linear_neg[p, d, t])
 		* p_entity_unitsize[p]
     ) 
 ;
@@ -1106,7 +1106,7 @@ s.t. minToSink_1var {(p, source, sink) in process_source_sink, (d, t) in dt
 # Special equations for the method with 2 variables presenting a direct 2way connection between source and sink (without the process)
 s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt} :
   + v_flow[p, sink, source, d, t]
-  + sum {r in reserve : (p, r, 'up', source) in process_reserve_upDown_node} v_reserve[p, r, 'up', source, d, t]
+  + sum {r in reserve : (p, r, 'up', source) in process_reserve_upDown_node_active} v_reserve[p, r, 'up', source, d, t]
   <=
   + ( if p not in process_online then
       + p_process_source_coefficient[p, source] 
@@ -1117,7 +1117,6 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt} :
 	)
   + ( if p in process_online then
       + p_process_sink_coefficient[p, sink]
-#        * (v_online_linear[p, d, t] + vq_online_linear_pos[p, d, t] - vq_online_linear_neg[p, d, t]) 
         * v_online_linear[p, d, t] 
 		* p_entity_unitsize[p]
     )  
@@ -1198,7 +1197,7 @@ s.t. ramp_up_variable {(p, source, sink) in process_source_sink_ramp, (d, t, t_p
 s.t. ramp_up_constraint {(p, source, sink) in process_source_sink_ramp_limit_up, (d, t, t_previous, t_previous_within_block) in dttt
 		: (p, source, sink, d, t) in process_source_sink_dt_ramp} :
   + v_ramp[p, source, sink, d, t]
-  + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node} 
+  + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'up', sink, d, t] / step_duration[d, t])
   <=
   + p_process[p, 'ramp_speed_up']
@@ -1217,7 +1216,7 @@ s.t. ramp_up_constraint {(p, source, sink) in process_source_sink_ramp_limit_up,
 s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t, t_previous, t_previous_within_block) in dttt
 		: (p, source, sink, d, t) in process_source_sink_dt_ramp} :
   + v_ramp[p, source, sink, d, t]
-  + sum {r in reserve : (p, r, 'down', sink) in process_reserve_upDown_node} 
+  + sum {r in reserve : (p, r, 'down', sink) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'down', sink, d, t] / step_duration[d, t])
   >=
   - p_process[p, 'ramp_speed_down']
@@ -1232,12 +1231,14 @@ s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t,
 	  )
   - ( if p in process_online then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
 ;
-
+display process_reserve_upDown_node, process_reserve_upDown_node_active, reserve__upDown__group, p_process_reserve_upDown_node, process_online;
 s.t. reserve_process_upward{(p, r, ud, n, d, t) in prundt : ud = 'up'} :
   + v_reserve[p, r, ud, n, d, t]
   <=
   ( if p in process_online then
-      + v_online_linear[p, n, t] * p_process_reserve_upDown_node[p, r, ud, n, 'max_share']
+      + v_online_linear[p, d, t] 
+	    * p_process_reserve_upDown_node[p, r, ud, n, 'max_share']
+		* p_entity_unitsize[p]
     else
       + p_process_reserve_upDown_node[p, r, ud, n, 'max_share'] 
         * (
@@ -1899,7 +1900,7 @@ printf 'Write reserve from processes over time...\n';
 param fn_process__reserve__upDown__node__dt symbolic := "output/process__reserve__upDown__node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'process,reserve,upDown,node,period,time,reservation\n' > fn_process__reserve__upDown__node__dt; }  # Print the header on the first solve
-for {(p, r, ud, n) in process_reserve_upDown_node, (d, t) in dt}
+for {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt}
   {
     printf '%s,%s,%s,%s,%s,%s,%.8g\n', p, r, ud, n, d, t, v_reserve[p, r, ud, n, d, t].val >> fn_process__reserve__upDown__node__dt;
   }
@@ -2137,7 +2138,8 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 
 #display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
-#display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
+display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
+display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_up[n, d, t].val;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_down[n, d, t].val;
 #display {g in groupInertia, (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
