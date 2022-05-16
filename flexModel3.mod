@@ -1505,7 +1505,7 @@ param entity_all_capacity{e in entity, d in period_realized} :=
 
 param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
   + sum {(p, m) in process_method : m in method_1var_per_way}
-      + sum {(p, source, sink2) in process_source_toSink} 
+    ( + sum {(p, source, sink2) in process_source_toSink} 
         ( + v_flow[p, source, sink2, d, t].val 
 	          * (if (p, 'min_load_efficiency') in process_ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
           + (if (p, 'min_load_efficiency') in process_ct_method then v_online_linear[p, d, t] * ptProcess_section[p, t] * p_entity_unitsize[p])
@@ -1523,6 +1523,7 @@ param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alw
 	      + v_flow[p, source, sink, d, t].val)
       + (if (p, source, sink) in process__source__toProfileProcess then 
 	      + v_flow[p, source, sink, d, t].val)
+   )
   + sum {(p, m) in process_method : m not in method_1var_per_way} (
       + v_flow[p, source, sink, d, t].val 
 	)
@@ -2138,8 +2139,8 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 
 display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
-display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
-display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
+#display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
+#display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_up[n, d, t].val;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_down[n, d, t].val;
 #display {g in groupInertia, (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
