@@ -391,7 +391,7 @@
                             {
                                 "map_type": "ObjectClass",
                                 "position": "hidden",
-                                "value": "node"
+                                "value": "unit"
                             },
                             {
                                 "map_type": "Object",
@@ -1169,9 +1169,7 @@
             "group_node__period",
             "investment_connection__period",
             "node__period__t",
-            "node_state__period__t",
-            "group_inertia__period__t",
-            "investment_unit__period"
+            "node_state__period__t"
         ],
         "table_options": {
             "node__period": {},
@@ -1288,7 +1286,9 @@
                 "1": "string",
                 "2": "float",
                 "3": "float",
-                "4": "string"
+                "4": "string",
+                "5": "string",
+                "6": "string"
             },
             "group_node__period": {
                 "0": "string",
@@ -1321,12 +1321,15 @@
             "node_state__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "float"
+                "2": "float",
+                "3": "string"
             },
             "unit_online__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "float"
+                "2": "float",
+                "3": "float",
+                "4": "float"
             },
             "group_inertia__period__t": {
                 "0": "string",
