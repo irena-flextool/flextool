@@ -226,7 +226,7 @@ class FlexToolRunner:
         #highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--wmps', 'instance.mps']
         #highs_step2 = ['highs instance.mps']
         #highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--wmps', 'instance.mps']
-        modelout = subprocess.Popen(['glpsol.exe', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat'] +
+        modelout = subprocess.Popen(['glpsol.exe', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg'] +
                                     sys.argv[1:], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         stdout, stderr = modelout.communicate()
         # print(stdout.decode("utf-8"))
