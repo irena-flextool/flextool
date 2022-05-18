@@ -26,7 +26,6 @@ set reserve 'r - Categories for the reservation of capacity_existing' := setof {
 set period_time '(d, t) - Time steps in the time periods of the timelines in use' dimen 2;
 set solve_period_timeblockset '(solve, d, tb) - All solve, period, timeblockset combinations in the model instance' dimen 3;
 set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeblockset} (s, d);
-set periodAll 'd - Time periods in data (including those currently in use)' := setof {(s, d) in solve_period} (d);
 set solve_current 'current solve name' dimen 1;
 set period 'd - Time periods in the current solve' := setof {(d, t) in period_time} (d);
 set time 't - Time steps in the current timelines'; 
@@ -51,6 +50,19 @@ set sense 'sense of user defined constraints';
 set sense_greater_than within sense;
 set sense_less_than within sense;
 set sense_equal within sense;
+
+set node__param__period dimen 3; # within {node, nodePeriodParam, periodAll};
+set process__param__period dimen 3; # within {process, processPeriodParam, periodAll};
+set commodity__param__period dimen 3; # within {commodity, commodityPeriodParam, periodAll};
+set group__param__period dimen 3; # within {group, groupPeriodParam, periodAll};
+
+set period_group 'picking up periods from group data' := setof {(n, param, d) in group__param__period} (d);
+set period_node 'picking up periods from node data' := setof {(n, param, d) in node__param__period} (d);
+set period_commodity 'picking up periods from commodity data' := setof {(n, param, d) in commodity__param__period} (d);
+set period_process 'picking up periods from process data' := setof {(n, param, d) in process__param__period} (d);
+
+set periodAll 'd - Time periods in data (including those currently in use)' := period_group union period_node union period_commodity union period_process;
+
 
 #Method collections use in the model (abstracted methods)
 set method_1var_off within method;
@@ -274,7 +286,6 @@ param startNext_index := sum{t in time, t_startNext in startNext : t <= t_startN
 set modelParam;
 param p_model {modelParam};
 
-set commodity__param__period dimen 3 within {commodity, commodityPeriodParam, periodAll};
 param p_commodity {c in commodity, commodityParam};
 param pd_commodity {c in commodity, commodityPeriodParam, d in periodAll} default 0;
 param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} := 
@@ -285,7 +296,6 @@ param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} :
 param p_group__process {g in group, p in process, groupParam};
 
 set group__param dimen 2 within {group, groupParam};
-set group__param__period dimen 3 within {group, groupPeriodParam, periodAll};
 param p_group {g in group, groupParam} default 0;
 param pd_group {g in group, groupPeriodParam, d in periodAll} default 0;
 param pdGroup {g in group, param in groupPeriodParam, d in period} :=
@@ -295,7 +305,6 @@ param pdGroup {g in group, param in groupPeriodParam, d in period} :=
 		  then p_group[g, param]
 		  else 0;
 		  
-set node__param__period dimen 3 within {node, nodePeriodParam, periodAll};
 set node__param__time dimen 3 within {node, nodeTimeParam, time};
 param p_node {node, nodeParam} default 0;
 param pd_node {node, nodePeriodParam, periodAll} default 0;
@@ -312,7 +321,6 @@ set nodeSelfDischarge :=  {n in nodeState : sum{(d, t) in dt : ptNode[n, 'self_d
 		  
 
 set process__param dimen 2 within {process, processParam};
-set process__param__period dimen 3 within {process, processPeriodParam, periodAll};
 set process__param__time dimen 3 within {process, processTimeParam, time};
 set process__param_t := setof {(p, param, t) in process__param__time} (p, param);
 
@@ -677,7 +685,6 @@ table data IN 'CSV' 'input/process__sink_nonSync_unit.csv' : process__sink_nonSy
 table data IN 'CSV' 'input/process__startup_method.csv' : process_startup_method <- [process,startup_method];
 table data IN 'CSV' 'input/process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
 table data IN 'CSV' 'input/process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
-#table data IN 'CSV' 'input/reserve__upDown__group.csv' : reserve__upDown__group <- [reserve,upDown,group];
 table data IN 'CSV' 'input/reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
 table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time];
 table data IN 'CSV' 'input/timeblocks_in_use.csv' : solve_period_timeblockset <- [solve,period,timeblocks];
@@ -756,8 +763,7 @@ check {(p, m) in process_method, t in time : m in method_2way_off} ptProcess[p, 
 
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
 check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
-#display commodity_node, process_source_sink, process_source, process_sink;
-#display ptProcess__source__sink__t_varCost, ptProcess__source__sink__t_varCost_alwaysProcess;
+
 minimize total_cost:
   + sum {(d, t) in dt}
     (
@@ -1231,7 +1237,7 @@ s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t,
 	  )
   - ( if p in process_online then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
 ;
-display process_reserve_upDown_node, process_reserve_upDown_node_active, reserve__upDown__group, p_process_reserve_upDown_node, process_online;
+
 s.t. reserve_process_upward{(p, r, ud, n, d, t) in prundt : ud = 'up'} :
   + v_reserve[p, r, ud, n, d, t]
   <=
@@ -2137,8 +2143,8 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 #}
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
-display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
-display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_up[n, d, t].val;

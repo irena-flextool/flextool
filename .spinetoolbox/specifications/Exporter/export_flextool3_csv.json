@@ -1394,56 +1394,6 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
-        "reserve__upDown__group": {
-            "type": "relationships",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "reserve__upDown__group"
-                },
-                {
-                    "map_type": "RelationshipClass",
-                    "position": "hidden",
-                    "filter_re": "^reserve__upDown__group$"
-                },
-                {
-                    "map_type": "RelationshipClassObjectClass",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "RelationshipClassObjectClass",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "RelationshipClassObjectClass",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "Relationship",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "RelationshipObject",
-                    "position": 0,
-                    "header": "reserve"
-                },
-                {
-                    "map_type": "RelationshipObject",
-                    "position": 1,
-                    "header": "upDown"
-                },
-                {
-                    "map_type": "RelationshipObject",
-                    "position": 2,
-                    "header": "group"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "group_fn": "no_group",
-            "use_fixed_table_name": true
-        },
         "p_reserve__upDown__group_s": {
             "type": "relationship_parameter_values",
             "mapping": [
@@ -2002,7 +1952,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^invest_forced$|^invest_max_period$|^retire_forced$|^retire_max_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$",
+                    "filter_re": "^invest_forced$|^invest_max_period$|^invest_min_period$|^retire_forced$|^retire_max_period$|^retire_min_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$",
                     "header": "processParam"
                 },
                 {
@@ -2060,7 +2010,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^annual_flow$|^invest_forced$|^invest_max_period$|^retire_forced$|^retire_max_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$",
+                    "filter_re": "^annual_flow$|^invest_forced$|^invest_max_period$|^invest_min_period$|^retire_forced$|^retire_max_period$|^retire_min_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$",
                     "header": "nodeParam"
                 },
                 {

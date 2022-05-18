@@ -1796,6 +1796,68 @@
                             }
                         ]
                     }
+                },
+                {
+                    "periodAll": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "model",
+                                "read_start_row": 2
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "hidden",
+                                "value": "from_template"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden",
+                                "value": "Base"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "alternative"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 2
+                            }
+                        ]
+                    }
                 }
             ],
             "timeline_t": [
@@ -3088,9 +3150,9 @@
                 "3": "string",
                 "4": "float",
                 "5": "float",
-                "6": "float",
+                "6": "string",
                 "7": "float",
-                "8": "float",
+                "8": "string",
                 "9": "float",
                 "10": "float",
                 "11": "float",
@@ -3186,7 +3248,10 @@
                 "4": "string",
                 "5": "string",
                 "6": "string",
-                "7": "string"
+                "7": "string",
+                "8": "string",
+                "9": "string",
+                "10": "string"
             }
         },
         "table_row_types": {
