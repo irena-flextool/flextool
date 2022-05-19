@@ -222,16 +222,27 @@ class FlexToolRunner:
         run the model executable once
         :return the output of glpsol.exe:
         """
-        foo = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg'] + sys.argv[1:]
-        #highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--wmps', 'instance.mps']
-        #highs_step2 = ['highs instance.mps']
-        #highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--wmps', 'instance.mps']
-        modelout = subprocess.Popen(['glpsol.exe', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg'] +
-                                    sys.argv[1:], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        stdout, stderr = modelout.communicate()
+        #only_glpsol = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg'] + sys.argv[1:]
+        highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--wfreemps', 'flexModel3.mps']
+        command = " ".join(highs_step1 + sys.argv[1:])
+        print(command)
+        did_fail = os.system(command)
+        if did_fail != 0:
+            logging.error(f'glpsol mps writing failed: {did_fail}')
+            exit(did_fail)
+        highs_step2 = ['highs flexModel3.mps', '--options_file=highs.opt']
+        did_fail2 = os.system(" ".join(highs_step2))
+        if did_fail2 != 0:
+            logging.error(f'Highs solver failed: {did_fail2}')
+            exit(did_fail2)
+        highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r', 'flexModel3.sol']
+        did_fail3 = os.system(" ".join(highs_step3 + sys.argv[1:]))
+        #modelout = subprocess.Popen(only_glpsol +
+        #                            sys.argv[1:], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        #stdout, stderr = modelout.communicate()
         # print(stdout.decode("utf-8"))
         # print(stderr)
-        return stdout, stderr
+        return did_fail3
 
     def get_active_time(self, current_solve, timeblocks_used_by_solves, timeblocks, timelines, timeblocks__timelines):
         """
@@ -427,8 +438,11 @@ def main():
         else:
             runner.write_first_status(first)
 
-        model_out, model_err = runner.model_run
-        logging.info(model_out.decode("utf-8"))
+        exit_status = runner.model_run
+        if exit_status == 0:
+            logging.info('Success!')
+        else:
+            logging.error(f'Error: {exit_status}')
 
 
 if __name__ == '__main__':

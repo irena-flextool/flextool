@@ -67,16 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            277,
-                            278,
-                            279,
-                            280,
-                            281,
-                            282,
-                            283,
-                            284,
-                            285,
-                            286
+                            297
                         ],
                         "tool_filter": [
                             1
@@ -174,10 +165,10 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 88.06803274633992,
+            "x": 90.09904214565384,
             "y": 41.81272527206491,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": []
         },
         "FlexTool3_test_data": {
@@ -206,6 +197,21 @@
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool3_import_template.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "FlexTool3_import_Ukraine.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "FlexTool3_import_template_multi.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "FlexTool3_import_Ukraine_reserves.xlsx"
                 }
             ],
             "db_references": []
@@ -213,7 +219,7 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -313.30327693764707,
+            "x": -320.6086347064475,
             "y": 10.722181183295538,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
@@ -222,7 +228,19 @@
             "file_selection": [
                 [
                     "<project>/FlexTool3_import_template.xlsx",
+                    false
+                ],
+                [
+                    "<project>/FlexTool3_import_Ukraine.xlsx",
                     true
+                ],
+                [
+                    "<project>/FlexTool3_import_template_multi.xlsx",
+                    false
+                ],
+                [
+                    "<project>/FlexTool3_import_Ukraine_reserves.xlsx",
+                    false
                 ]
             ]
         }

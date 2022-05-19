@@ -26,6 +26,7 @@ set reserve 'r - Categories for the reservation of capacity_existing' := setof {
 set period_time '(d, t) - Time steps in the time periods of the timelines in use' dimen 2;
 set solve_period_timeblockset '(solve, d, tb) - All solve, period, timeblockset combinations in the model instance' dimen 3;
 set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeblockset} (s, d);
+set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
 set solve_current 'current solve name' dimen 1;
 set period 'd - Time periods in the current solve' := setof {(d, t) in period_time} (d);
 set time 't - Time steps in the current timelines'; 
@@ -61,7 +62,7 @@ set period_node 'picking up periods from node data' := setof {(n, param, d) in n
 set period_commodity 'picking up periods from commodity data' := setof {(n, param, d) in commodity__param__period} (d);
 set period_process 'picking up periods from process data' := setof {(n, param, d) in process__param__period} (d);
 
-set periodAll 'd - Time periods in data (including those currently in use)' := period_group union period_node union period_commodity union period_process;
+set periodAll 'd - Time periods in data (including those currently in use)' := period_group union period_node union period_commodity union period_process union period_solve;
 
 
 #Method collections use in the model (abstracted methods)
@@ -763,7 +764,7 @@ check {(p, m) in process_method, t in time : m in method_2way_off} ptProcess[p, 
 
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
 check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
-
+display periodAll;
 minimize total_cost:
   + sum {(d, t) in dt}
     (
@@ -1237,7 +1238,7 @@ s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t,
 	  )
   - ( if p in process_online then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
 ;
-
+display p_process_reserve_upDown_node, process_online, p_entity_all_existing;
 s.t. reserve_process_upward{(p, r, ud, n, d, t) in prundt : ud = 'up'} :
   + v_reserve[p, r, ud, n, d, t]
   <=
