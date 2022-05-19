@@ -67,7 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            297
+                            287
                         ],
                         "tool_filter": [
                             1
@@ -200,18 +200,8 @@
                 },
                 {
                     "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_Ukraine.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_template_multi.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_Ukraine_reserves.xlsx"
+                    "relative": false,
+                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_import_Ukraine.xlsx"
                 }
             ],
             "db_references": []
@@ -231,16 +221,8 @@
                     false
                 ],
                 [
-                    "<project>/FlexTool3_import_Ukraine.xlsx",
+                    "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_import_Ukraine.xlsx",
                     true
-                ],
-                [
-                    "<project>/FlexTool3_import_template_multi.xlsx",
-                    false
-                ],
-                [
-                    "<project>/FlexTool3_import_Ukraine_reserves.xlsx",
-                    false
                 ]
             ]
         }

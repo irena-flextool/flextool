@@ -1,0 +1,18 @@
+Running HiGHS 1.2.2 [date: , git hash: ]
+Copyright (c) 2022 ERGO-Code under MIT licence terms
+LP   flexModel3 has 9768 rows; 9576 cols; 10848 nonzeros
+Presolving model
+360 rows, 512 cols, 1088 nonzeros
+168 rows, 456 cols, 696 nonzeros
+168 rows, 456 cols, 696 nonzeros
+Presolve : Reductions: rows 168(-9600); columns 456(-9120); elements 696(-10152)
+Solving the presolved LP
+Using EKK dual simplex solver - serial
+  Iteration        Objective     Infeasibilities num(sum)
+          0     0.0000000000e+00 Pr: 96(4428.02) 0s
+        158     4.3279501952e+07 Pr: 0(0) 0s
+Solving the original LP from the solution after postsolve
+Model   status      : Optimal
+Simplex   iterations: 158
+Objective value     :  4.3279501952e+07
+HiGHS run time      :          0.03

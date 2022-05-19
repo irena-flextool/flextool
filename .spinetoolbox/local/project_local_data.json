@@ -1,0 +1,19 @@
+{
+    "items": {
+        "Results_F3": {
+            "url": {
+                "username": "",
+                "password": ""
+            }
+        },
+        "FlexTool3_test_data": {
+            "url": {
+                "username": "",
+                "password": ""
+            }
+        },
+        "FlexTool3_Excel": {
+            "db_credentials": {}
+        }
+    }
+}
