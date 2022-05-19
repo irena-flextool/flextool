@@ -764,7 +764,7 @@ check {(p, m) in process_method, t in time : m in method_2way_off} ptProcess[p, 
 
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
 check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
-display periodAll;
+
 minimize total_cost:
   + sum {(d, t) in dt}
     (
@@ -1238,7 +1238,7 @@ s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t,
 	  )
   - ( if p in process_online then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
 ;
-display p_process_reserve_upDown_node, process_online, p_entity_all_existing;
+
 s.t. reserve_process_upward{(p, r, ud, n, d, t) in prundt : ud = 'up'} :
   + v_reserve[p, r, ud, n, d, t]
   <=
@@ -1540,10 +1540,10 @@ param r_process_source_sink_flow_d{(p, source, sink) in process_source_sink_alwa
   + sum {(d, t) in dt} r_process_source_sink_flow_dt[p, source, sink, d, t]
 ;
 param r_process_source_flow_d{(p, source) in process_source, d in period_realized} := 
-  + sum {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} r_process_source_sink_flow_d[p, source, sink, d]
+  + sum {(p, source, sink) in process_source_sink_alwaysProcess} r_process_source_sink_flow_d[p, source, sink, d]
 ;
 param r_process_sink_flow_d{(p, sink) in process_sink, d in period_realized} := 
-  + sum {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} r_process_source_sink_flow_d[p, source, sink, d]
+  + sum {(p, source, sink) in process_source_sink_alwaysProcess} r_process_source_sink_flow_d[p, source, sink, d]
 ;
 
 param r_nodeState_change_dt{n in nodeState, (d, t_previous) in dt} := sum {(d, t, t_previous, t_previous_within_block) in dttt}
@@ -2144,14 +2144,19 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 #}
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
-#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_up[n, d, t].val;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_down[n, d, t].val;
 #display {g in groupInertia, (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
-#display r_costOper_and_penalty_d;
+display r_costOper_and_penalty_d;
+display r_cost_co2_dt;
+display r_cost_co2_d;
+display r_process_source_sink_flow_d;
+display r_process_source_flow_d, r_process_sink_flow_d;
 display v_invest;
+display process_source_sink_alwaysProcess, process_source;
 end;
