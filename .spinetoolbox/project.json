@@ -67,7 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            297
+                            324
                         ],
                         "tool_filter": [
                             1
@@ -165,7 +165,7 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 91.11370410282143,
+            "x": 90.09904214565384,
             "y": 41.8127252720649,
             "specification": "FlexTool3",
             "execute_in_work": false,
@@ -174,7 +174,7 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -167.39387085008406,
+            "x": -161.30589910707837,
             "y": -7.034675248147767,
             "url": {
                 "dialect": "sqlite",
@@ -197,6 +197,11 @@
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool3_import_template.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "FlexTool3_import_template_multi.xlsx"
                 }
             ],
             "db_references": []
@@ -214,6 +219,10 @@
                 [
                     "<project>/FlexTool3_import_template.xlsx",
                     true
+                ],
+                [
+                    "<project>/FlexTool3_import_template_multi.xlsx",
+                    false
                 ]
             ]
         }
