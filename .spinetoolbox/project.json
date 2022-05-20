@@ -165,8 +165,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 90.09904214565384,
-            "y": 41.81272527206491,
+            "x": 91.11370410282143,
+            "y": 41.8127252720649,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": []
@@ -197,21 +197,6 @@
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool3_import_template.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_Ukraine.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_template_multi.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_Ukraine_reserves.xlsx"
                 }
             ],
             "db_references": []
@@ -228,19 +213,7 @@
             "file_selection": [
                 [
                     "<project>/FlexTool3_import_template.xlsx",
-                    false
-                ],
-                [
-                    "<project>/FlexTool3_import_Ukraine.xlsx",
                     true
-                ],
-                [
-                    "<project>/FlexTool3_import_template_multi.xlsx",
-                    false
-                ],
-                [
-                    "<project>/FlexTool3_import_Ukraine_reserves.xlsx",
-                    false
                 ]
             ]
         }
