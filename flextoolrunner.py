@@ -28,6 +28,7 @@ class FlexToolRunner:
         # read the data in
         self.timelines = self.get_timelines()
         self.solves = self.get_solves()
+        self.solvers = self.get_solver()
         self.timeblocks = self.get_timeblocks()
         self.timeblocks__timeline = self.get_timeblocks_timelines()
         self.timeblocks_used_by_solves = self.get_timeblocks_used_by_solves()
@@ -45,6 +46,31 @@ class FlexToolRunner:
             header = solvefile.readline()
             solves = solvefile.readlines()
         return [solve.split(",")[0] for solve in solves]
+
+    def get_solver(self):
+        """
+        read in
+        the list of solvers for each solve. return it as a list of strings
+        :return:
+        """
+        with open('input/solver.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            solver_dict = defaultdict()
+            while True:
+                try:
+                    datain = next(filereader)
+                    solver_dict[datain[0]] = datain[1]
+                except StopIteration:
+                    break
+
+        #with open("input/solver.csv", 'r') as solvefile:
+        #    header = solvefile.readline()
+        #    solvers = solvefile.readlines()
+        #    for solver in solvers:
+        #        solve__period = solver.split(",")
+        #        solver_dict[solve__period[0]] = solve__period[1]
+        return solver_dict
 
     def get_timeblocks_used_by_solves(self):
         """
@@ -216,33 +242,38 @@ class FlexToolRunner:
             steplist.append(self.steplist[i])
         return steplist
 
-    @property
-    def model_run(self):
+    #@property
+    def model_run(self, current_solve):
         """
         run the model executable once
         :return the output of glpsol.exe:
         """
-        #only_glpsol = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg'] + sys.argv[1:]
-        highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--wfreemps', 'flexModel3.mps']
-        command = " ".join(highs_step1 + sys.argv[1:])
-        print(command)
-        did_fail = os.system(command)
-        if did_fail != 0:
-            logging.error(f'glpsol mps writing failed: {did_fail}')
-            exit(did_fail)
-        highs_step2 = ['highs flexModel3.mps', '--options_file=highs.opt']
-        did_fail2 = os.system(" ".join(highs_step2))
-        if did_fail2 != 0:
-            logging.error(f'Highs solver failed: {did_fail2}')
-            exit(did_fail2)
-        highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r', 'flexModel3.sol']
-        did_fail3 = os.system(" ".join(highs_step3 + sys.argv[1:]))
-        #modelout = subprocess.Popen(only_glpsol +
-        #                            sys.argv[1:], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        #stdout, stderr = modelout.communicate()
-        # print(stdout.decode("utf-8"))
-        # print(stderr)
-        return did_fail3
+        if self.solvers[current_solve] == "glpsol":
+            only_glpsol = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg'] + sys.argv[1:]
+            did_fail = os.system(" ".join(only_glpsol))
+            if did_fail != 0:
+                logging.error(f'glpsol failed: {did_fail}')
+                exit(did_fail)
+        else:
+            highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--wfreemps', 'flexModel3.mps']
+            command = " ".join(highs_step1 + sys.argv[1:])
+            did_fail = os.system(command)
+            if did_fail != 0:
+                logging.error(f'glpsol mps writing failed: {did_fail}')
+                exit(did_fail)
+            highs_step2 = ['highs flexModel3.mps', '--options_file=highs.opt']
+            did_fail = os.system(" ".join(highs_step2))
+            if did_fail != 0:
+                logging.error(f'Highs solver failed: {did_fail}')
+                exit(did_fail)
+            highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r', 'flexModel3.sol']
+            did_fail = os.system(" ".join(highs_step3 + sys.argv[1:]))
+            #modelout = subprocess.Popen(only_glpsol +
+            #                            sys.argv[1:], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            #stdout, stderr = modelout.communicate()
+            # print(stdout.decode("utf-8"))
+            # print(stderr)
+        return did_fail
 
     def get_active_time(self, current_solve, timeblocks_used_by_solves, timeblocks, timelines, timeblocks__timelines):
         """
@@ -438,7 +469,7 @@ def main():
         else:
             runner.write_first_status(first)
 
-        exit_status = runner.model_run
+        exit_status = runner.model_run(solve)
         if exit_status == 0:
             logging.info('Success!')
         else:
