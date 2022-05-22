@@ -279,7 +279,7 @@ set dt dimen 2 within period_time;
 set dttt dimen 4;
 set period_invest dimen 1 within period;
 set period_realized dimen 1 within period;
-set peedt := {(p, source, sink) in process_source_sink, (d, t) in period_time};
+set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
 
 set startTime dimen 1 within time;
 set startNext dimen 1 within time;
@@ -483,7 +483,7 @@ param ptReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in res
 		  else p_reserve_upDown_group[r, ud, g, param];
 param p_process_reserve_upDown_node {process, reserve, upDown, node, reserveParam} default 0;
 set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group} 1};
-set prundt := {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in period_time};
+set prundt := {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt};
 
 param p_constraint_constant {constraint};
 param p_process_node_constraint_coefficient {process, node, constraint};
@@ -1789,7 +1789,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '"Removed energy or matter"\nGroup,Period,"MWh","\% of annual inflow","\% of annual inflow",' >> fn_groupNode__d;
 	printf '"\% of annual inflow","\% of annual inflow"\n' >> fn_groupNode__d;
   }
-for {g in groupOutput, d in period_realized}
+for {g in groupOutput, d in period_realized : sum{(g, n) in group_node} pdNodeInflow[n, d]}
   {
     printf '%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g\n', g, d 
        , sum{(g, n) in group_node} pdNodeInflow[n, d]
