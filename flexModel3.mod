@@ -449,18 +449,6 @@ param ptProcess_source_sink {(p, source, sink, param) in process__source__sink__
 		  else 0;
 
 
-param ptProcess__source__sink__t_varCost {(p, source, sink) in process_source_sink, t in time : sum{d in period : (d, t) in dt} 1} :=
-  + (if (p, source) in process_source then ptProcess_source[p, source, 'variable_cost', t])
-  + (if (p, sink) in process_sink then ptProcess_sink[p, sink, 'variable_cost', t])
-  + (if (p, source, sink) in process_source_sink then ptProcess[p, 'variable_cost', t])
-;
-
-param ptProcess__source__sink__t_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, t in time : sum{d in period : (d, t) in dt} 1} :=
-  + (if (p, source) in process_source then ptProcess_source[p, source, 'variable_cost', t])
-  + (if (p, sink) in process_sink then ptProcess_sink[p, sink, 'variable_cost', t])
-  + (if (p, source, sink) in process_source_sink then ptProcess[p, 'variable_cost', t])
-;
-
 param p_process_source_coefficient {(p, source) in process_source} := 
    p_process_source[p, source, 'coefficient'] ;
 #    + if (p_process_source[p, source, 'coefficient']) 
@@ -527,6 +515,21 @@ param ptProcess_section{p in process, t in time : (p, 'min_load_efficiency') in 
 param ptProcess_slope{p in process, t in time : (p, 'min_load_efficiency') in process_ct_method} := 
         1 / ptProcess[p, 'efficiency', t] - ptProcess_section[p, t];
 
+param ptProcess__source__sink__t_varCost {(p, source, sink) in process_source_sink, t in time : sum{d in period : (d, t) in dt} 1} :=
+  + (if (p, source) in process_source then ptProcess_source[p, source, 'variable_cost', t])
+      * (if (p, source, sink) in process_source_sink_eff
+	        then (if (p, 'min_load_efficiency') in process_ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+			else 1
+		)	
+  + (if (p, sink) in process_sink then ptProcess_sink[p, sink, 'variable_cost', t])
+  + (if (p, source, sink) in process_source_sink then ptProcess[p, 'variable_cost', t])
+;
+
+param ptProcess__source__sink__t_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, t in time : sum{d in period : (d, t) in dt} 1} :=
+  + (if (p, source) in process_source then ptProcess_source[p, source, 'variable_cost', t])
+  + (if (p, sink) in process_sink then ptProcess_sink[p, sink, 'variable_cost', t])
+  + (if (p, source, sink) in process_source_sink then ptProcess[p, 'variable_cost', t])
+;
 
 set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d]};
 set pd_invest := {(p, d) in ed_invest : p in process};
@@ -747,8 +750,6 @@ var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
-#var vq_online_linear_pos {p in process_online, (d, t) in dt} >=0;
-#var vq_online_linear_neg {p in process_online, (d, t) in dt} >=0;
 
 
 #########################
@@ -814,12 +815,12 @@ minimize total_cost:
      + sum {(p, source, sink) in process_source_sink_eff : ptProcess__source__sink__t_varCost[p, source, sink, t]}
 	   ( + ptProcess__source__sink__t_varCost[p, source, sink, t]
 	       * ( + v_flow[p, source, sink, d, t]
-           	       * (if (p, 'min_load_efficiency') in process_ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
-               + (if (p, 'min_load_efficiency') in process_ct_method then 
-	               + v_online_linear[p, d, t] 
-   			          * ptProcess_section[p, t]
-			          * p_entity_unitsize[p]
-    			 )	  
+#           	       * (if (p, 'min_load_efficiency') in process_ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+#               + (if (p, 'min_load_efficiency') in process_ct_method then 
+#	               + v_online_linear[p, d, t] 
+#   			          * ptProcess_section[p, t]
+#			          * p_entity_unitsize[p]
+#    			 )	  
 			 )
 	   ) 
 #	  + sum {(p, source, 'variable_cost') in process__source__timeParam} 
@@ -857,8 +858,6 @@ minimize total_cost:
       + sum {n in nodeBalance} vq_state_up[n, d, t] * ptNode[n, 'penalty_up', t]
       + sum {n in nodeBalance} vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]
       + sum {(r, ud, ng) in reserve__upDown__group} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']
-#      + sum {p in process_online} vq_online_linear_pos[p, d, t] * 1000000
-#      + sum {p in process_online} vq_online_linear_neg[p, d, t] * 1000000
 	) * step_duration[d, t]
 	  / period_share_of_year[d]
   + sum {(e, d) in ed_invest} v_invest[e, d]
@@ -879,7 +878,6 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
       + v_flow[p, n, sink, d, t] 
 	      * (if (p, 'min_load_efficiency') in process_ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
       + (if (p, 'min_load_efficiency') in process_ct_method then 
-#	        + (v_online_linear[p, d, t] + vq_online_linear_pos[p, d, t] - vq_online_linear_neg[p, d, t])
 	        + v_online_linear[p, d, t]
 			    * ptProcess_section[p, t]
 				* p_entity_unitsize[p]
