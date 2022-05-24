@@ -174,8 +174,8 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -177.5404904217601,
-            "y": -12.10798503398582,
+            "x": -177.54159716473254,
+            "y": -14.13620220534855,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -197,6 +197,11 @@
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool3_import_template.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "FlexTool3_import_Ukraine.xlsx"
                 }
             ],
             "db_references": []
@@ -204,8 +209,8 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -320.6086347064475,
-            "y": 10.722181183295538,
+            "x": -320.60863470644745,
+            "y": 11.734629654518196,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -214,6 +219,10 @@
                 [
                     "<project>/FlexTool3_import_template.xlsx",
                     true
+                ],
+                [
+                    "<project>/FlexTool3_import_Ukraine.xlsx",
+                    false
                 ]
             ]
         }
