@@ -2,8 +2,12 @@
 FlexTool2D_data.sqlite
 Results.sqlite
 paramNotWritten.dat
+.spinetoolbox/local/
 .spinetoolbox/items/flextool/output/
 .spinetoolbox/items/exporttocsv/exported.json
 .spinetoolbox/items/
 results/
 *.bak
+*.log
+*.mps
+*.sol
