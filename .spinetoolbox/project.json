@@ -67,7 +67,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            311
+                            335
                         ],
                         "tool_filter": [
                             1
@@ -165,17 +165,17 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 90.09904214565385,
-            "y": 42.8230768054154,
+            "x": 91.11370410282146,
+            "y": 41.812725272064895,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": []
         },
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -180.50257824073782,
-            "y": -7.034675248147769,
+            "x": -177.5404904217601,
+            "y": -12.10798503398582,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -202,11 +202,6 @@
                     "type": "path",
                     "relative": false,
                     "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_import_Ukraine_reserves.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": false,
-                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_import_Ukraine.xlsx"
                 }
             ],
             "db_references": []
@@ -214,8 +209,8 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -320.6086347064475,
-            "y": 10.722181183295538,
+            "x": -321.61898623979795,
+            "y": 10.72218118329554,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -227,10 +222,6 @@
                 ],
                 [
                     "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_import_Ukraine_reserves.xlsx",
-                    false
-                ],
-                [
-                    "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_import_Ukraine.xlsx",
                     true
                 ]
             ]
