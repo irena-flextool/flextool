@@ -1,0 +1,21 @@
+© International Renewable Energy Agency 2018-2022
+
+The FlexTool is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License
+as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+The FlexTool is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; 
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License along with the FlexTool.  
+If not, see <https://www.gnu.org/licenses/>.
+
+Author: Juha Kiviluoma (2017-2022), VTT Technical Research Centre of Finland
+
+
+
+
+-----------------------------------------------
+IRENA FlexTool uses GLPSOL (part of the GLPK package) and HiGHS solver. Each of them have their own licenses. 
+GLPK source code, license information, is included as it the GNU General Public License requires that. 
+IRENA FlexTool is using GLPK version from https://github.com/mingodad/GLPK/.
+HiGHS is licensed with MIT license. Please see https://github.com/ERGO-Code/HiGHS for more information.
