@@ -14,12 +14,15 @@ set ct_method :=
   regular
   exact
 ;
+set ct_method_constant := constant_efficiency;
+set ct_method_regular := regular;
 
 set startup_method :=
   no_startup
   linear
   binary
 ;
+set startup_method_no := no_startup;
 
 set ramp_method :=
   ramp_limit
@@ -160,9 +163,10 @@ set groupPeriodParam := capacity_margin, co2_price, inertia_limit, invest_max_pe
 set invest_method_not_allowed := not_allowed;
 set profile_method := upper_limit lower_limit fixed;
 set inflow_method := use_original scale_to_annual_flow no_inflow;
+set inflow_method_original := use_original;
 set reserve_method := no_reserve timeseries_only dynamic_only both;
 
 
-set test_dt := (p2020, t0000);
+set test_dt := (p2020, t0001);
 #set test_dt := (p2020, t0001) (p2020, t0009) (p2020, t0015) (p2020, t0020) (p2020, t0024);
 end;
