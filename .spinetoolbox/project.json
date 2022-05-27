@@ -67,7 +67,8 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            335
+                            74,
+                            75
                         ],
                         "tool_filter": [
                             1
@@ -133,8 +134,8 @@
         "Results_F3": {
             "type": "Data Store",
             "description": "",
-            "x": 323.2649380723311,
-            "y": 47.47867996466954,
+            "x": 324.2752896056816,
+            "y": 47.47867996466953,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -153,7 +154,7 @@
             "y": 52.44330314516716,
             "specification": "Import_flex3",
             "cancel_on_error": false,
-            "purge_before_writing": true,
+            "purge_before_writing": false,
             "on_conflict": "replace",
             "file_selection": [
                 [
@@ -165,7 +166,7 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 91.11370410282146,
+            "x": 92.12405563617196,
             "y": 41.812725272064895,
             "specification": "FlexTool3",
             "execute_in_work": true,
@@ -174,8 +175,8 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -177.54159716473254,
-            "y": -14.13620220534855,
+            "x": -176.53124563138206,
+            "y": -14.134785489386616,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -200,8 +201,13 @@
                 },
                 {
                     "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_Ukraine.xlsx"
+                    "relative": false,
+                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_import_Ukraine_reserves.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": false,
+                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_UA_DR_water.xlsx"
                 }
             ],
             "db_references": []
@@ -209,8 +215,8 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -320.60863470644745,
-            "y": 11.734629654518196,
+            "x": -319.59828317309706,
+            "y": 10.724278121167698,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -218,11 +224,15 @@
             "file_selection": [
                 [
                     "<project>/FlexTool3_import_template.xlsx",
-                    true
+                    false
                 ],
                 [
-                    "<project>/FlexTool3_import_Ukraine.xlsx",
+                    "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_import_Ukraine_reserves.xlsx",
                     false
+                ],
+                [
+                    "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_UA_DR_water.xlsx",
+                    true
                 ]
             ]
         }
