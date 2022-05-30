@@ -162,11 +162,11 @@ set groupPeriodParam := capacity_margin, co2_price, inertia_limit, invest_max_pe
 				  max_instant_flow, min_instant_flow;
 set invest_method_not_allowed := not_allowed;
 set profile_method := upper_limit lower_limit fixed;
-set inflow_method := use_original scale_to_annual_flow no_inflow;
+set inflow_method := use_original scale_to_annual_flow no_inflow scale_in_proportion;
 set inflow_method_original := use_original;
 set reserve_method := no_reserve timeseries_only dynamic_only both;
 
 
-set test_dt := (p2020, t0001);
+set test_dt := (p2020, t0020);
 #set test_dt := (p2020, t0001) (p2020, t0009) (p2020, t0015) (p2020, t0020) (p2020, t0024);
 end;
