@@ -52,6 +52,7 @@ set profile;
 set profile_method;
 set debug 'flags to output debugging and test results';
 set test_dt 'a shorter set of time steps for printing out test results' dimen 2;
+set model 'dummy set because has to load a table';
 
 set constraint 'user defined greater than, less than or equality constraints between inputs and outputs';
 set sense 'sense of user defined constraints';
@@ -526,6 +527,10 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 		);
 
 param step_period{(d, t) in dt} := 0;
+param p_discount_years{d in period} default 0;
+param p_discount_rate{model} default 0;
+param p_disc_rate := max{m in model} p_discount_rate[m];
+param p_discount_factor{d in period} := 1/(1 + p_disc_rate) ^ p_discount_years[d];
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
           ( + (pdNode[e, 'invest_cost', d] * 1000 * ( pdNode[e, 'interest_rate', d] 
@@ -759,6 +764,9 @@ table data IN 'CSV' 'input/pt_profile.csv' : [profile, time], pt_profile;
 table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
 table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
 table data IN 'CSV' 'input/timeline_duration_in_years.csv' : [timeline], p_timeline_duration_in_years;
+table data IN 'CSV' 'solve_data/p_discount_years.csv' : [period], p_discount_years;
+table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
+table data IN 'CSV' 'input/p_discount_rate.csv' : [model], p_discount_rate;
 
 # Parameters from the solve loop
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
@@ -914,10 +922,13 @@ minimize total_cost:
       + sum {n in nodeBalance} vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]
       + sum {(r, ud, ng) in reserve__upDown__group} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']
 	) * step_duration[d, t]
+ 	  * p_discount_factor[d]
 	  / period_share_of_year[d]
-  + sum {(e, d) in ed_invest} v_invest[e, d]
-    * p_entity_unitsize[e]
-    * ed_entity_annual[e, d]
+  + sum {(e, d) in ed_invest} 
+    + v_invest[e, d]
+      * p_entity_unitsize[e]
+      * ed_entity_annual[e, d]
+	  * p_discount_factor[d]
 ;
 
 # Energy balance in each node  
@@ -2225,5 +2236,5 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in test_dt : m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
-display v_invest, period_flow_annual_multiplier, period_flow_proportional_multiplier, period_share_of_year, pdNode, period_share_of_annual_flow;
+display v_invest;
 end;

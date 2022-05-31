@@ -29,6 +29,7 @@ class FlexToolRunner:
         self.timelines = self.get_timelines()
         self.model_solve = self.get_solves()
         self.solve_modes = self.get_solve_modes()
+        self.solve_period_discount_years = self.get_solve_period_discount_years()
         self.solvers = self.get_solver()
         self.timeblocks = self.get_timeblocks()
         self.timeblocks__timeline = self.get_timeblocks_timelines()
@@ -65,6 +66,24 @@ class FlexToolRunner:
             header = solvefile.readline()
             solves = solvefile.readlines()
         return [solve.split(",")[0] for solve in solves]
+
+    def get_solve_period_discount_years(self):
+        """
+        read in the timelines including step durations for all simulation steps
+        timeline is the only inputfile that contains the full timelines for all timeblocks.
+        :return: list of tuples in a dict timeblocks : (timestep name, duration)
+        """
+        with open('input/solve__period__discount_years.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            discount_years = defaultdict(list)
+            while True:
+                try:
+                    datain = next(filereader)
+                    discount_years[datain[0]].append((datain[1], datain[2]))
+                except StopIteration:
+                    break
+        return discount_years
 
     def get_solver(self):
         """
@@ -247,6 +266,19 @@ class FlexToolRunner:
             for period_name, period in timeline.items():
                 for item in period:
                     outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
+
+    def write_discount_years(self, discount_years, filename):
+        """
+        write to file a list of timesteps as defined by the active timeline of the current solve
+        :param filename: filename to write to
+        :param timeline: list of tuples containing the period and the timestep
+        :return: nothing
+        """
+        with open(filename, 'w') as outfile:
+            # prepend with a header
+            outfile.write('period,p_discount_years\n')
+            for period__discount_year in discount_years:
+                outfile.write(period__discount_year[0] + ',' + period__discount_year[1] + '\n')
 
     def make_block_timeline(self, start, length):
         """
@@ -507,6 +539,7 @@ def main():
             runner.write_step_jump(jump_lists[solve])
             runner.write_periods(solve, runner.realized_periods, 'solve_data/realized_periods_of_current_solve.csv')
             runner.write_periods(solve, runner.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
+            runner.write_discount_years(runner.solve_period_discount_years[solve], 'solve_data/p_discount_years.csv')
             runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
             if first:
                 runner.write_first_status(first)
