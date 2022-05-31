@@ -29,8 +29,11 @@ set solve_period '(solve, d) - Time periods in the solves to extract periods tha
 set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
 set solve_current 'current solve name' dimen 1;
 set period 'd - Time periods in the current solve' := setof {(d, t) in period_time} (d);
-set timeline dimen 3;
-set time 't - Time steps in the current timelines' := setof {(tl, t, duration) in timeline} (t); 
+set timeline__timestep__duration dimen 3;
+set time 't - Time steps in the current timelines' := setof {(tl, t, duration) in timeline__timestep__duration} (t); 
+set timeblockset__timeline dimen 2;
+set timeline := setof{(tb, tl) in timeblockset__timeline} (tl);
+set period__timeline := {d in period, tl in timeline : sum{(s, d, tb) in solve_period_timeblockset : s in solve_current && (tb, tl) in timeblockset__timeline} 1};
 set method 'm - Type of process that transfers, converts or stores commodities';
 set upDown 'upward and downward directions for some variables';
 set ct_method;
@@ -505,13 +508,14 @@ param hours_in_period{d in period} := sum {(d, t) in dt} (step_duration[d, t]);
 param hours_in_solve := sum {(d, t) in dt} (step_duration[d, t]);
 param period_share_of_year{d in period} := hours_in_period[d] / 8760;
 param solve_share_of_year := hours_in_solve / 8760;
+param p_timeline_duration_in_years{timeline};
 
 param period_share_of_annual_flow {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
         abs(sum{(d, t) in dt} (ptNode[n, 'inflow', t])) / pdNode[n, 'annual_flow', d];
 param period_flow_annual_multiplier {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
         period_share_of_year[d] / period_share_of_annual_flow[n, d];
 param period_flow_proportional_multiplier {n in node, d in period : (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d]} :=
-        pdNode[n, 'annual_flow', d] / (abs(sum{t in time} (ptNode[n, 'inflow', t])) / period_share_of_year[d]);
+        pdNode[n, 'annual_flow', d] / (abs(sum{t in time} (ptNode[n, 'inflow', t])) / sum{(d, tl) in period__timeline} p_timeline_duration_in_years[tl]);
 param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  := 
         + ptNode[n, 'inflow', t] *
         ( if (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] then
@@ -723,13 +727,14 @@ table data IN 'CSV' 'input/process__node__profile__profile_method.csv' : process
 table data IN 'CSV' 'input/reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
 table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time];
 table data IN 'CSV' 'input/timeblocks_in_use.csv' : solve_period_timeblockset <- [solve,period,timeblocks];
+table data IN 'CSV' 'input/timeblocks__timeline.csv' : timeblockset__timeline <- [timeblocks,timeline];
 table data IN 'CSV' 'solve_data/solve_current.csv' : solve_current <- [solve];
 table data IN 'CSV' 'input/p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
 table data IN 'CSV' 'input/pt_process_source.csv' : process__source__param__time <- [process, source, sourceSinkTimeParam, time];
 table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
 table data IN 'CSV' 'input/pt_process_sink.csv' : process__sink__param__time <- [process, sink, sourceSinkTimeParam, time];
 table data IN 'CSV' 'input/pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
-table data IN 'CSV' 'input/timeline.csv' : timeline <- [timeline,timestep,duration];
+table data IN 'CSV' 'input/timeline.csv' : timeline__timestep__duration <- [timeline,timestep,duration];
 
 # Parameters for model data
 table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_commodity;
@@ -753,7 +758,7 @@ table data IN 'CSV' 'input/pt_process.csv' : [process, processParam, time], pt_p
 table data IN 'CSV' 'input/pt_profile.csv' : [profile, time], pt_profile;
 table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
 table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
-#table data IN 'CSV' 'input/timeline_duration_in_years.csv' : p_timeline_duration_in_years;
+table data IN 'CSV' 'input/timeline_duration_in_years.csv' : [timeline], p_timeline_duration_in_years;
 
 # Parameters from the solve loop
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
@@ -2220,5 +2225,5 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in test_dt : m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
-display v_invest;
+display v_invest, period_flow_annual_multiplier, period_flow_proportional_multiplier, period_share_of_year, pdNode, period_share_of_annual_flow;
 end;

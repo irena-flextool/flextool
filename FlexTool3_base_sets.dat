@@ -139,7 +139,7 @@ set sourceSinkParam := efficiency, efficiency_at_min_load, min_load, coefficient
 set sourceSinkTimeParam := efficiency, efficiency_at_min_load, min_load, variable_cost;
 set nodeParam := annual_flow, existing, fixed_cost, inflow, interest_rate, invest_cost, salvage_value,
                  invest_max_total, invest_min_total, lifetime,
-				 invest_max_period, invest_min_period,
+				 invest_max_period, invest_min_period, retire_max_period, retire_min_period,
                  penalty_down, penalty_up, retire_forced, retire_min_total, 
 				 retire_max_total, self_discharge_loss, virtual_unitsize;
 set nodePeriodParam := annual_flow, fixed_cost, interest_rate, invest_cost, salvage_value,
