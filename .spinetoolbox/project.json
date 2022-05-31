@@ -67,8 +67,11 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            31,
-                            32
+                            74,
+                            75
+                        ],
+                        "tool_filter": [
+                            1
                         ]
                     }
                 }
@@ -116,8 +119,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -26.861627961259728,
-            "y": 28.326893723021676,
+            "x": -27.873139083615314,
+            "y": 27.316542189671186,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -131,8 +134,8 @@
         "Results_F3": {
             "type": "Data Store",
             "description": "",
-            "x": 325.2868007280372,
-            "y": 46.467168842313946,
+            "x": 324.2752896056816,
+            "y": 47.47867996466953,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -147,8 +150,8 @@
         "Import_Flex3": {
             "type": "Importer",
             "description": "",
-            "x": 215.565666485461,
-            "y": 53.45365467851765,
+            "x": 216.57601801881154,
+            "y": 52.44330314516716,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -163,8 +166,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 92.12521522517704,
-            "y": 42.823076805415404,
+            "x": 92.12405563617196,
+            "y": 41.812725272064895,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": []
@@ -172,8 +175,8 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -176.53124563138198,
-            "y": -15.146553738699055,
+            "x": -176.53124563138206,
+            "y": -14.134785489386616,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -188,13 +191,18 @@
         "FlexTool3_Excel": {
             "type": "Data Connection",
             "description": "",
-            "x": -459.0442648439319,
-            "y": 75.25154447087736,
+            "x": -460.0557759662876,
+            "y": 74.24119293752686,
             "file_references": [
                 {
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool3_import_template.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": false,
+                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_import_Ukraine_reserves.xlsx"
                 },
                 {
                     "type": "path",
@@ -207,8 +215,8 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -320.60863470644745,
-            "y": 10.7242781211677,
+            "x": -319.59828317309706,
+            "y": 10.724278121167698,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -216,6 +224,10 @@
             "file_selection": [
                 [
                     "<project>/FlexTool3_import_template.xlsx",
+                    false
+                ],
+                [
+                    "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_import_Ukraine_reserves.xlsx",
                     false
                 ],
                 [
