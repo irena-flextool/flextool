@@ -1013,16 +1013,10 @@ s.t. profile_upper_limit {(p, source, sink, f, m) in process__source__sink__prof
 	)
   <=
   + pt_profile[f, t]
-    * ( + ( if p not in process_online then
-              + p_entity_all_existing[p]
-              + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
-#              - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
-#              - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
-	      )
-        + ( if p in process_online then
-              + v_online_linear[p, d, t] * p_entity_unitsize[p]
-	      )
-      )
+    * ( + p_entity_all_existing[p]
+        + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#        - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+	  )
 ;
 
 s.t. profile_lower_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'lower_limit'} :
@@ -1034,14 +1028,9 @@ s.t. profile_lower_limit {(p, source, sink, f, m) in process__source__sink__prof
 	)
   >=
   + pt_profile[f, t]
-    * ( + ( if p not in process_online then
-              + p_entity_all_existing[p]
-              + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
-#              - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
-	      )
-        + ( if p in process_online then
-              + v_online_linear[p, d, t] * p_entity_unitsize[p]
-	      )
+    * ( + p_entity_all_existing[p]
+        + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#        - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
 	  )
 ;
 
@@ -1054,14 +1043,9 @@ s.t. profile_fixed_limit {(p, source, sink, f, m) in process__source__sink__prof
 	)
   =
   + pt_profile[f, t]
-    * ( + ( if p not in process_online then
-              + p_entity_all_existing[p]
-              + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
-#              - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
-	      )
-        + ( if p in process_online then
-              + v_online_linear[p, d, t] * p_entity_unitsize[p]
-	    )
+    * ( + p_entity_all_existing[p]
+        + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#        - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
 	  )
 ;
 
