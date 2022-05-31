@@ -103,7 +103,7 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            389
+                            416
                         ],
                         "tool_filter": [
                             1
@@ -118,8 +118,8 @@
         "ExportFlexTool3ToCSV": {
             "type": "Exporter",
             "description": "",
-            "x": -28.549756765313944,
-            "y": 42.44740634277163,
+            "x": -27.572914547768825,
+            "y": 42.436778989662216,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -165,8 +165,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 94.13987693344153,
-            "y": 39.96133001590554,
+            "x": 98.17477404093498,
+            "y": 40.9700542927789,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": []
@@ -174,8 +174,8 @@
         "FlexTool3_test_data": {
             "type": "Data Store",
             "description": "",
-            "x": -178.55032144160586,
-            "y": -14.136202205348543,
+            "x": -174.47291492167486,
+            "y": -15.155553835331315,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -197,21 +197,6 @@
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool3_import_template.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_Ukraine.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_template_multi.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_UA_DR_water.xlsx"
                 }
             ],
             "db_references": []
@@ -219,8 +204,8 @@
         "FlexTool3_input_importer": {
             "type": "Importer",
             "description": "",
-            "x": -321.6173589833208,
-            "y": 13.752078208264921,
+            "x": -320.60863470644745,
+            "y": 13.75207820826492,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -229,18 +214,6 @@
                 [
                     "<project>/FlexTool3_import_template.xlsx",
                     true
-                ],
-                [
-                    "<project>/FlexTool3_import_Ukraine.xlsx",
-                    false
-                ],
-                [
-                    "<project>/FlexTool3_import_template_multi.xlsx",
-                    false
-                ],
-                [
-                    "<project>/FlexTool3_UA_DR_water.xlsx",
-                    false
                 ]
             ]
         },

@@ -106,6 +106,7 @@ set inflow_method_original within inflow_method;
 set node__inflow_method_read 'method for scaling the inflow applied to a node' within {node, inflow_method};
 set node__inflow_method dimen 2 within {node, inflow_method} :=
     {n in node, m in inflow_method : (n, m) in node__inflow_method_read || (sum{(n, m2) in node__inflow_method_read} 1 = 0 && m in inflow_method_original)};
+set node__profile__profile_method dimen 3 within {node,profile,profile_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
 set group_process_node 'process__nodes of a particular group' dimen 3 within {group, process, node};
@@ -697,6 +698,7 @@ table data IN 'CSV' 'input/process_unit.csv': process_unit <- [process_unit];
 table data IN 'CSV' 'input/commodity__node.csv' : commodity_node <- [commodity,node];
 table data IN 'CSV' 'input/entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
 table data IN 'CSV' 'input/node__inflow_method.csv' : node__inflow_method_read <- [node,inflow_method];
+table data IN 'CSV' 'input/node__profile__profile_method.csv' : node__profile__profile_method <- [node,profile,profile_method];
 table data IN 'CSV' 'input/group__node.csv' : group_node <- [group,node];
 table data IN 'CSV' 'input/group__process.csv' : group_process <- [group,process];
 table data IN 'CSV' 'input/group__process__node.csv' : group_process_node <- [group,process,node];
@@ -1004,7 +1006,7 @@ s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_i
   + (if (p, 'min_load_efficiency') in process__ct_method then v_online_linear[p, d, t] * ptProcess_section[p, t] * p_entity_unitsize[p])
 ;
 
-s.t. profile_upper_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'upper_limit'} :
+s.t. profile_flow_upper_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'upper_limit'} :
   + ( + v_flow[p, source, sink, d, t] 
   	      * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
 			  else if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
@@ -1019,7 +1021,7 @@ s.t. profile_upper_limit {(p, source, sink, f, m) in process__source__sink__prof
 	  )
 ;
 
-s.t. profile_lower_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'lower_limit'} :
+s.t. profile_flow_lower_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'lower_limit'} :
   + ( + v_flow[p, source, sink, d, t] 
   	      * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
 			  else if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
@@ -1034,7 +1036,7 @@ s.t. profile_lower_limit {(p, source, sink, f, m) in process__source__sink__prof
 	  )
 ;
 
-s.t. profile_fixed_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'fixed'} :
+s.t. profile_flow_fixed_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'fixed'} :
   + ( + v_flow[p, source, sink, d, t] 
   	      * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
 			  else if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
@@ -1046,6 +1048,36 @@ s.t. profile_fixed_limit {(p, source, sink, f, m) in process__source__sink__prof
     * ( + p_entity_all_existing[p]
         + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
 #        - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+	  )
+;
+
+s.t. profile_state_upper_limit {(n, f, m) in node__profile__profile_method, (d, t) in dt : m = 'upper_limit'} :
+  + v_state[n, d, t] 
+  <=
+  + pt_profile[f, t]
+    * ( + p_entity_all_existing[n]
+        + sum {(n, d_invest) in pd_invest : d_invest <= d} v_invest[n, d_invest] * p_entity_unitsize[n]
+#        - sum {(n, d_invest) in pd_divest : d_invest <= d} v_divest[n, d_invest] * p_entity_unitsize[n]
+	  )
+;
+
+s.t. profile_state_lower_limit {(n, f, m) in node__profile__profile_method, (d, t) in dt : m = 'lower_limit'} :
+  + v_state[n, d, t] 
+  >=
+  + pt_profile[f, t]
+    * ( + p_entity_all_existing[n]
+        + sum {(n, d_invest) in pd_invest : d_invest <= d} v_invest[n, d_invest] * p_entity_unitsize[n]
+#        - sum {(n, d_invest) in pd_divest : d_invest <= d} v_divest[n, d_invest] * p_entity_unitsize[n]
+	  )
+;
+
+s.t. profile_state_fixed_limit {(n, f, m) in node__profile__profile_method, (d, t) in dt : m = 'fixed'} :
+  + v_state[n, d, t] 
+  =
+  + pt_profile[f, t]
+    * ( + p_entity_all_existing[n]
+        + sum {(n, d_invest) in pd_invest : d_invest <= d} v_invest[n, d_invest] * p_entity_unitsize[n]
+#        - sum {(n, d_invest) in pd_divest : d_invest <= d} v_divest[n, d_invest] * p_entity_unitsize[n]
 	  )
 ;
 
@@ -2177,7 +2209,7 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 
 #display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {p in process, (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
-display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].lb;
 #display {p in process_online, (d, t) in test_dt} : v_online_linear[p, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
@@ -2187,6 +2219,6 @@ display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source
 #display {g in groupInertia, (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
-#display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in test_dt : m = 'lower_limit'}: profile_lower_limit[p, source, sink, f, m, d, t].dual;
+#display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in test_dt : m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
 display v_invest;
 end;
