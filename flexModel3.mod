@@ -476,11 +476,11 @@ param ptProcess_source_sink {(p, source, sink, param) in process__source__sink__
 param p_process_source_coefficient {(p, source) in process_source} := 
     + if (p_process_source[p, source, 'coefficient']) 
 	  then p_process_source[p, source, 'coefficient'] 
-	  else 1;
+	  else 0;
 param p_process_sink_coefficient {(p, sink) in process_sink} := 
 	+ if (p_process_sink[p, sink, 'coefficient']) 
 	  then p_process_sink[p, sink, 'coefficient'] 
-	  else 1;
+	  else 0;  # Can't default to 1, since if 0 has been entered, it will be overwritten.
 
 param pt_profile {profile, time};
 
@@ -2193,8 +2193,8 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 
 #display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {p in process, (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
+display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].lb;
 #display {p in process_online, (d, t) in test_dt} : v_online_linear[p, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
@@ -2204,7 +2204,5 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in test_dt : m = 'lower_limit'}: profile_lower_limit[p, source, sink, f, m, d, t].dual;
-display period_flow_annual_multiplier, period_flow_proportional_multiplier, period_share_of_year, period_share_of_annual_flow;
 display v_invest;
-display process_source, process_sink, process_profile, process_method, process_ct_startup_fork_method;
 end;

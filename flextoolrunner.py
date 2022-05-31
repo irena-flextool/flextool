@@ -489,7 +489,7 @@ def main():
         countModels = countModels + 1
         if countModels > 1:
             logging.error(f'Trying to run more than one model - not supported. The results of the first model are retained.')
-            exit(-1)
+            sys.exit(1)
 
         for solve in runner.model_solve[model]:
             active_time_list = runner.get_active_time(solve, runner.timeblocks_used_by_solves, runner.timeblocks,
