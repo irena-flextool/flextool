@@ -29,7 +29,8 @@ set solve_period '(solve, d) - Time periods in the solves to extract periods tha
 set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
 set solve_current 'current solve name' dimen 1;
 set period 'd - Time periods in the current solve' := setof {(d, t) in period_time} (d);
-set time 't - Time steps in the current timelines'; 
+set timeline dimen 3;
+set time 't - Time steps in the current timelines' := setof {(tl, t, duration) in timeline} (t); 
 set method 'm - Type of process that transfers, converts or stores commodities';
 set upDown 'upward and downward directions for some variables';
 set ct_method;
@@ -130,31 +131,53 @@ set process__profile__profile_method dimen 3 within {process, profile, profile_m
 set process__node__profile__profile_method dimen 4 within {process, node, profile, profile_method};
 set process_source dimen 2 within {process, entity};
 set process_sink dimen 2 within {process, entity};
-set process_fork_method dimen 2 within {process, fork_method} := 
+set process__fork_method_yes dimen 2 within {process, fork_method} := 
     {p in process, m in fork_method 
-	  : (sum{(p, source) in process_source} 1 > 1 || sum{(p, sink) in process_sink} 1 > 1 && m in fork_method_yes)
-	  || (sum{(p, source) in process_source} 1 < 2 && sum{(p, sink) in process_sink} 1 < 2 && m in fork_method_no) };
+	  : (sum{(p, source) in process_source} 1 > 1 || sum{(p, sink) in process_sink} 1 > 1) && m in fork_method_yes};
+set process__fork_method_no dimen 2 within {process, fork_method} := 
+    {p in process, m in fork_method 
+	  : (sum{(p, source) in process_source} 1 < 2 && sum{(p, sink) in process_sink} 1 < 2) && m in fork_method_no};
+set process__fork_method := process__fork_method_yes union process__fork_method_no;
 set process_ct_startup_fork_method := 
     { p in process, m1 in ct_method, m2 in startup_method, m3 in fork_method, m in method
 	    : (m1, m2, m3, m) in methods
 	    && (p, m1) in process__ct_method
 	    && (p, m2) in process__startup_method
-		&& (p, m3) in process_fork_method
+		&& (p, m3) in process__fork_method
 	};
 set process_method := setof {(p, m1, m2, m3, m) in process_ct_startup_fork_method} (p, m);
+set process__profileProcess__toSink__profile__profile_method :=
+    { p in process, p2 in process, sink in node, f in profile, m in profile_method
+	    :  p = p2
+		&& (p, sink) in process_sink
+		&& (p2, sink, f, m) in process__node__profile__profile_method
+	};
+set process__profileProcess__toSink := setof {(p, p2, sink, f, m) in process__profileProcess__toSink__profile__profile_method} (p, p2, sink);
+set process__source__toProfileProcess__profile__profile_method :=
+    { p in process, source in node, p2 in process, f in profile, m in profile_method
+	    :  p = p2
+		&& (p, source) in process_source
+		&& (p2, source, f, m) in process__node__profile__profile_method
+	};
+set process__source__toProfileProcess := setof {(p, source, p2, f, m) in process__source__toProfileProcess__profile__profile_method} (p, source, p2);
+set process_profile := setof {(p, source, p2) in process__source__toProfileProcess} (p) union setof {(p, p2, sink) in process__profileProcess__toSink} (p);
 set process_source_toProcess := 
     { p in process, source in node, p2 in process 
 	    :  p = p2 
 	    && (p, source) in process_source 
 	    && (p2, source) in process_source 
-	    && sum{(p, m) in process_method : m in method_indirect} 1
+	    && (sum{(p, m) in process_method : m in method_indirect} 1
+		    || p in process_profile
+		   )
 	};
 set process_process_toSink := 
     { p in process, p2 in process, sink in node 
 	    :  p = p2 
 	    && (p, sink) in process_sink 
 	    && (p2, sink) in process_sink 
-	    && sum{(p, m) in process_method : m in method_indirect} 1
+	    && (sum{(p, m) in process_method : m in method_indirect} 1
+		    || p in process_profile 
+		   )
 	};
 set process_sink_toProcess := 
     { sink in node, p in process, p2 in process 
@@ -174,6 +197,7 @@ set process_source_toSink :=
     { p in process, source in node, sink in node
 	    :  (p, source) in process_source
 	    && (p, sink) in process_sink
+		&& p not in process_profile
         && sum{(p, m) in process_method : m in method_direct} 1
 	};
 set process_source_toProcess_direct :=
@@ -188,12 +212,6 @@ set process_process_toSink_direct :=
 		&& (p, sink) in process_sink
         && sum{(p, m) in process_method : m in method_direct} 1
 	};
-set process_sink_toSource := 
-	{ p in process, sink in node, source in node
-	    :  (p, source) in process_source
-	    && (p, sink) in process_sink
-	    && sum{(p, m) in process_method : m in method_2way_2var} 1
-	};
 set process_sink_toProcess_direct := 
 	{ p in process, sink in node, p2 in process
 	    :  p = p2
@@ -206,20 +224,13 @@ set process_process_toSource_direct :=
 		&& (p, source) in process_source
 	    && sum{(p, m) in process_method : m in method_2way_2var} 1
 	};
-set process__profileProcess__toSink__profile__profile_method :=
-    { p in process, p2 in process, sink in node, f in profile, m in profile_method
-	    :  p = p2
-		&& (p, sink) in process_sink
-		&& (p2, sink, f, m) in process__node__profile__profile_method
+set process_sink_toSource := 
+	{ p in process, sink in node, source in node
+	    :  (p, source) in process_source
+	    && (p, sink) in process_sink
+		&& p not in process_profile
+	    && sum{(p, m) in process_method : m in method_2way_2var} 1
 	};
-set process__profileProcess__toSink := setof {(p, p2, sink, f, m) in process__profileProcess__toSink__profile__profile_method} (p, p2, sink);
-set process__source__toProfileProcess__profile__profile_method :=
-    { p in process, source in node, p2 in process, f in profile, m in profile_method
-	    :  p = p2
-		&& (p, source) in process_source
-		&& (p2, source, f, m) in process__node__profile__profile_method
-	};
-set process__source__toProfileProcess := setof {(p, source, p2, f, m) in process__source__toProfileProcess__profile__profile_method} (p, source, p2);
 
 set process_source_sink := 
     process_source_toSink union    # Direct 1-variable
@@ -493,15 +504,21 @@ param hours_in_period{d in period} := sum {(d, t) in dt} (step_duration[d, t]);
 param hours_in_solve := sum {(d, t) in dt} (step_duration[d, t]);
 param period_share_of_year{d in period} := hours_in_period[d] / 8760;
 param solve_share_of_year := hours_in_solve / 8760;
+
 param period_share_of_annual_flow {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
         abs(sum{(d, t) in dt} (ptNode[n, 'inflow', t])) / pdNode[n, 'annual_flow', d];
-param period_flow_multiplier {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
+param period_flow_annual_multiplier {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
         period_share_of_year[d] / period_share_of_annual_flow[n, d];
+param period_flow_proportional_multiplier {n in node, d in period : (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d]} :=
+        pdNode[n, 'annual_flow', d] / (abs(sum{t in time} (ptNode[n, 'inflow', t])) / period_share_of_year[d]);
 param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  := 
         + ptNode[n, 'inflow', t] *
         ( if (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] then
-		    + period_flow_multiplier[n, d]
-		  else 1);
+		    + period_flow_annual_multiplier[n, d]
+		  else if (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d] then
+		    + period_flow_proportional_multiplier[n, d]
+		  else 1
+		);
 
 param step_period{(d, t) in dt} := 0;
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
@@ -670,7 +687,6 @@ table data IN 'CSV' 'input/groupCapacityMargin.csv' : groupCapacityMargin <- [gr
 table data IN 'CSV' 'input/groupOutput.csv' : groupOutput <- [groupOutput];
 table data IN 'CSV' 'input/process.csv': process <- [process];
 table data IN 'CSV' 'input/profile.csv': profile <- [profile];
-table data IN 'CSV' 'input/timeline.csv' : time <- [timestep];
 
 # Single dimension membership sets
 table data IN 'CSV' 'input/process_connection.csv': process_connection <- [process_connection];
@@ -711,6 +727,7 @@ table data IN 'CSV' 'input/pt_process_source.csv' : process__source__param__time
 table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
 table data IN 'CSV' 'input/pt_process_sink.csv' : process__sink__param__time <- [process, sink, sourceSinkTimeParam, time];
 table data IN 'CSV' 'input/pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
+table data IN 'CSV' 'input/timeline.csv' : timeline <- [timeline,timestep,duration];
 
 # Parameters for model data
 table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_commodity;
@@ -734,6 +751,7 @@ table data IN 'CSV' 'input/pt_process.csv' : [process, processParam, time], pt_p
 table data IN 'CSV' 'input/pt_profile.csv' : [profile, time], pt_profile;
 table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
 table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
+#table data IN 'CSV' 'input/timeline_duration_in_years.csv' : p_timeline_duration_in_years;
 
 # Parameters from the solve loop
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
@@ -972,7 +990,7 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
 ;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
-s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_indirect} :
+s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_indirect || p in process_profile} :
   + sum {source in entity : (p, source) in process_source} 
     ( + v_flow[p, source, p, d, t] 
   	      * p_process_source_coefficient[p, source]
@@ -2176,6 +2194,7 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {p in process, (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
 #display {p in process_online, (d, t) in test_dt} : v_online_linear[p, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
@@ -2183,6 +2202,9 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {n in nodeBalance, (d, t) in test_dt}: vq_state_down[n, d, t].val;
 #display {g in groupInertia, (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
+#display {(p, sink, source) in process_sink_toSource, (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
+#display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in test_dt : m = 'lower_limit'}: profile_lower_limit[p, source, sink, f, m, d, t].dual;
+display period_flow_annual_multiplier, period_flow_proportional_multiplier, period_share_of_year, period_share_of_annual_flow;
 display v_invest;
-
+display process_source, process_sink, process_profile, process_method, process_ct_startup_fork_method;
 end;
