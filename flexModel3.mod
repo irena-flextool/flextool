@@ -131,16 +131,19 @@ set process__profile__profile_method dimen 3 within {process, profile, profile_m
 set process__node__profile__profile_method dimen 4 within {process, node, profile, profile_method};
 set process_source dimen 2 within {process, entity};
 set process_sink dimen 2 within {process, entity};
-set process_fork_method dimen 2 within {process, fork_method} := 
+set process__fork_method_yes dimen 2 within {process, fork_method} := 
     {p in process, m in fork_method 
-	  : (sum{(p, source) in process_source} 1 > 1 || sum{(p, sink) in process_sink} 1 > 1 && m in fork_method_yes)
-	  || (sum{(p, source) in process_source} 1 < 2 && sum{(p, sink) in process_sink} 1 < 2 && m in fork_method_no) };
+	  : (sum{(p, source) in process_source} 1 > 1 || sum{(p, sink) in process_sink} 1 > 1) && m in fork_method_yes};
+set process__fork_method_no dimen 2 within {process, fork_method} := 
+    {p in process, m in fork_method 
+	  : (sum{(p, source) in process_source} 1 < 2 && sum{(p, sink) in process_sink} 1 < 2) && m in fork_method_no};
+set process__fork_method := process__fork_method_yes union process__fork_method_no;
 set process_ct_startup_fork_method := 
     { p in process, m1 in ct_method, m2 in startup_method, m3 in fork_method, m in method
 	    : (m1, m2, m3, m) in methods
 	    && (p, m1) in process__ct_method
 	    && (p, m2) in process__startup_method
-		&& (p, m3) in process_fork_method
+		&& (p, m3) in process__fork_method
 	};
 set process_method := setof {(p, m1, m2, m3, m) in process_ct_startup_fork_method} (p, m);
 set process__profileProcess__toSink__profile__profile_method :=
@@ -2203,5 +2206,5 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in test_dt : m = 'lower_limit'}: profile_lower_limit[p, source, sink, f, m, d, t].dual;
 display period_flow_annual_multiplier, period_flow_proportional_multiplier, period_share_of_year, period_share_of_annual_flow;
 display v_invest;
-
+display process_source, process_sink, process_profile, process_method, process_ct_startup_fork_method;
 end;
