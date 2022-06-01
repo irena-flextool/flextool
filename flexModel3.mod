@@ -52,6 +52,7 @@ set profile;
 set profile_method;
 set debug 'flags to output debugging and test results';
 set test_dt 'a shorter set of time steps for printing out test results' dimen 2;
+set test_t dimen 1;
 set model 'dummy set because has to load a table';
 
 set constraint 'user defined greater than, less than or equality constraints between inputs and outputs';
@@ -526,11 +527,22 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 		  else 1
 		);
 
+set period_last := {d in period : sum{d2 in period : d2 <= d} 1 = card(period)};
+set period__period_next := {d in period, dNext in period : 1 + sum{d2 in period : d2 <=d} 1 = sum{dNext2 in period : dNext2 <=dNext} 1};
 param step_period{(d, t) in dt} := 0;
 param p_discount_years{d in period} default 0;
 param p_discount_rate{model} default 0;
-param p_disc_rate := max{m in model} p_discount_rate[m];
-param p_discount_factor{d in period} := 1/(1 + p_disc_rate) ^ p_discount_years[d];
+param p_discount_offset_investment{model} default 0;    # Calculate investment cost discounting while assuming they are made at the begining of the year (unless other value is given)
+param p_discount_offset_operations{model} default 0.5;  # Calculate operational costs assuming they are on average taking place at the middle of the year (unless other value is given)
+param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0);
+param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_discount_offset_investment[m] else 0);
+param p_disc_offset_operations := (if sum{m in model} 1 then max{m in model} p_discount_offset_operations[m] else 0.5);
+param p_discount_factor_investment{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_investment);
+param p_discount_factor_operations{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_operations);
+param p_discount_in_perpetuity_investment{d in period} := (if p_disc_rate then (1/(1+p_disc_rate)^(p_discount_years[d]+p_disc_offset_investment))/p_disc_rate else 1);
+param p_discount_in_perpetuity_operations{d in period} := (if p_disc_rate then (1/(1+p_disc_rate)^(p_discount_years[d]+p_disc_offset_operations))/p_disc_rate else 1);
+param p_discount_with_perpetuity_investment{d in period} := (if d not in period_last then sum{(d, dNext) in period__period_next} (p_discount_in_perpetuity_investment[d] - p_discount_in_perpetuity_investment[dNext]) else p_discount_in_perpetuity_investment[d]);
+param p_discount_with_perpetuity_operations{d in period} := (if d not in period_last then sum{(d, dNext) in period__period_next} (p_discount_in_perpetuity_operations[d] - p_discount_in_perpetuity_operations[dNext]) else p_discount_in_perpetuity_operations[d]);
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
           ( + (pdNode[e, 'invest_cost', d] * 1000 * ( pdNode[e, 'interest_rate', d] 
@@ -922,13 +934,13 @@ minimize total_cost:
       + sum {n in nodeBalance} vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]
       + sum {(r, ud, ng) in reserve__upDown__group} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']
 	) * step_duration[d, t]
- 	  * p_discount_factor[d]
+ 	  * p_discount_with_perpetuity_operations[d]
 	  / period_share_of_year[d]
   + sum {(e, d) in ed_invest} 
     + v_invest[e, d]
       * p_entity_unitsize[e]
       * ed_entity_annual[e, d]
-	  * p_discount_factor[d]
+	  * p_discount_with_perpetuity_investment[d]
 ;
 
 # Energy balance in each node  
