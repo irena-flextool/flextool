@@ -153,17 +153,21 @@ set process_ct_startup_fork_method :=
 	};
 set process_method := setof {(p, m1, m2, m3, m) in process_ct_startup_fork_method} (p, m);
 set process__profileProcess__toSink__profile__profile_method :=
-    { p in process, p2 in process, sink in node, f in profile, m in profile_method
+    { p in process, p2 in process, sink in node, f in profile, fm in profile_method
 	    :  p = p2
 		&& (p, sink) in process_sink
-		&& (p2, sink, f, m) in process__node__profile__profile_method
+		&& (p2, sink, f, fm) in process__node__profile__profile_method
+	    && (sum{(p, m) in process_method : m in method_indirect} 1
+		    || sum{(p, source) in process_source} 1 < 1)
 	};
 set process__profileProcess__toSink := setof {(p, p2, sink, f, m) in process__profileProcess__toSink__profile__profile_method} (p, p2, sink);
 set process__source__toProfileProcess__profile__profile_method :=
-    { p in process, source in node, p2 in process, f in profile, m in profile_method
+    { p in process, source in node, p2 in process, f in profile, fm in profile_method
 	    :  p = p2
 		&& (p, source) in process_source
-		&& (p2, source, f, m) in process__node__profile__profile_method
+		&& (p2, source, f, fm) in process__node__profile__profile_method
+	    && (sum{(p, m) in process_method : m in method_indirect} 1
+		    || sum{(p, sink) in process_sink} 1 < 1)
 	};
 set process__source__toProfileProcess := setof {(p, source, p2, f, m) in process__source__toProfileProcess__profile__profile_method} (p, source, p2);
 set process_profile := setof {(p, source, p2) in process__source__toProfileProcess} (p) union setof {(p, p2, sink) in process__profileProcess__toSink} (p);
@@ -172,18 +176,14 @@ set process_source_toProcess :=
 	    :  p = p2 
 	    && (p, source) in process_source 
 	    && (p2, source) in process_source 
-	    && (sum{(p, m) in process_method : m in method_indirect} 1
-		    || p in process_profile
-		   )
+	    && sum{(p, m) in process_method : m in method_indirect} 1
 	};
 set process_process_toSink := 
     { p in process, p2 in process, sink in node 
 	    :  p = p2 
 	    && (p, sink) in process_sink 
 	    && (p2, sink) in process_sink 
-	    && (sum{(p, m) in process_method : m in method_indirect} 1
-		    || p in process_profile 
-		   )
+	    && sum{(p, m) in process_method : m in method_indirect} 1
 	};
 set process_sink_toProcess := 
     { sink in node, p in process, p2 in process 
@@ -203,7 +203,6 @@ set process_source_toSink :=
     { p in process, source in node, sink in node
 	    :  (p, source) in process_source
 	    && (p, sink) in process_sink
-		&& p not in process_profile
         && sum{(p, m) in process_method : m in method_direct} 1
 	};
 set process_source_toProcess_direct :=
@@ -234,8 +233,14 @@ set process_sink_toSource :=
 	{ p in process, sink in node, source in node
 	    :  (p, source) in process_source
 	    && (p, sink) in process_sink
-		&& p not in process_profile
 	    && sum{(p, m) in process_method : m in method_2way_2var} 1
+	};
+set process__source__sink__profile__profile_method_direct :=
+    { (p, source, sink) in process_source_toSink, f in profile, fm in profile_method
+	    :  sum{(p, m) in process_method : m in method_direct} 1
+		&& ( (p, source, f, fm) in process__node__profile__profile_method
+		     || (p, sink, f, fm) in process__node__profile__profile_method
+		   )
 	};
 
 set process_source_sink := 
@@ -279,7 +284,8 @@ set process__source__sink__profile__profile_method_connection :=
 set process__source__sink__profile__profile_method :=
     process__profileProcess__toSink__profile__profile_method union
 	process__source__toProfileProcess__profile__profile_method union
-	process__source__sink__profile__profile_method_connection
+	process__source__sink__profile__profile_method_connection union
+	process__source__sink__profile__profile_method_direct
 ;
 
 set process_online 'processes with an online status' := setof {(p, m) in process_method : m in method_LP} p;
@@ -808,7 +814,7 @@ var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
-
+display process_source_sink;
 #########################
 ## Data checks 
 printf 'Checking: Eff. data for 1 variable conversions directly from source to sink (and possibly back)\n';
@@ -1020,7 +1026,7 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
 ;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
-s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_indirect || p in process_profile} :
+s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_indirect} :
   + sum {source in entity : (p, source) in process_source} 
     ( + v_flow[p, source, p, d, t] 
   	      * p_process_source_coefficient[p, source]
@@ -2235,18 +2241,22 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 #}
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
-#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
-#display {p in process, (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+#display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
+display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].lb;
-#display {p in process_online, (d, t) in test_dt} : v_online_linear[p, d, t].val;
+#display {p in process_online, (d, t) in dt : (d, t) in test_dt} : v_online_linear[p, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
-#display {n in nodeBalance, (d, t) in test_dt}: vq_state_up[n, d, t].val;
-#display {n in nodeBalance, (d, t) in test_dt}: vq_state_down[n, d, t].val;
-#display {g in groupInertia, (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
+#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val;
+#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val;
+#display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
-#display {(p, sink, source) in process_sink_toSource, (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
-#display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in test_dt : m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
-display v_invest;
+#display {(p, source, sink) in process_source_sink, (d, t) in dt : (d, t) in test_dt && (p, sink) in process_sink}: maxToSink[p, source, sink, d, t].ub;
+#display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
+#display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
+#display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
+display v_invest, process_online, process_sink, process_source_sink;
+display process__source__sink__profile__profile_method_direct, process_method, process__source__sink__profile__profile_method;
+display process__source__toProfileProcess, process__profileProcess__toSink, process_source_toProcess, process_source_toSink, process__node__profile__profile_method;
 end;
