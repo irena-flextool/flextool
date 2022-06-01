@@ -67,8 +67,8 @@
                 "resource_filters": {
                     "db_url@FlexTool3_test_data": {
                         "scenario_filter": [
-                            74,
-                            75
+                            121,
+                            122
                         ],
                         "tool_filter": [
                             1
@@ -191,8 +191,8 @@
         "FlexTool3_Excel": {
             "type": "Data Connection",
             "description": "",
-            "x": -460.0557759662876,
-            "y": 74.24119293752686,
+            "x": -460.05577596628757,
+            "y": 73.22968181517128,
             "file_references": [
                 {
                     "type": "path",
@@ -202,12 +202,12 @@
                 {
                     "type": "path",
                     "relative": false,
-                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_import_Ukraine_reserves.xlsx"
+                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_UA_DR_water.xlsx"
                 },
                 {
                     "type": "path",
                     "relative": false,
-                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_UA_DR_water.xlsx"
+                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_UA_DR_Irrigation.xlsx"
                 }
             ],
             "db_references": []
@@ -227,12 +227,12 @@
                     false
                 ],
                 [
-                    "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_import_Ukraine_reserves.xlsx",
-                    false
-                ],
-                [
                     "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_UA_DR_water.xlsx",
                     true
+                ],
+                [
+                    "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_UA_DR_Irrigation.xlsx",
+                    false
                 ]
             ]
         }
