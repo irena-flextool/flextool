@@ -27,7 +27,8 @@ class FlexToolRunner:
             os.makedirs("./tests")
         # read the data in
         self.timelines = self.get_timelines()
-        self.solves = self.get_solves()
+        self.model_solve = self.get_solves()
+        self.solve_modes = self.get_solve_modes()
         self.solvers = self.get_solver()
         self.timeblocks = self.get_timeblocks()
         self.timeblocks__timeline = self.get_timeblocks_timelines()
@@ -39,7 +40,25 @@ class FlexToolRunner:
     def get_solves(self):
         """
         read in
-        the list of solves return it as a list of strings
+        the list of solves, return it as a list of strings
+        :return:
+        """
+        with open("input/model__solve.csv", 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            model__solve = defaultdict(list)
+            while True:
+                try:
+                    datain = next(filereader)
+                    model__solve[datain[0]].append((datain[1]))
+                except StopIteration:
+                    break
+        return model__solve
+
+    def get_solve_modes(self):
+        """
+        read in
+        the list of solve modes, return it as a list of strings
         :return:
         """
         with open("input/solve_mode.csv", 'r') as solvefile:
@@ -460,40 +479,47 @@ def main():
     runner = FlexToolRunner()
     active_time_lists = OrderedDict()
     jump_lists = OrderedDict()
+    countModels = 0
     try:
         os.mkdir('solve_data')
     except FileExistsError:
         print("solve_data folder existed")
 
-    for solve in runner.solves:
-        active_time_list = runner.get_active_time(solve, runner.timeblocks_used_by_solves, runner.timeblocks,
+    for model in runner.model_solve:
+        countModels = countModels + 1
+        if countModels > 1:
+            logging.error(f'Trying to run more than one model - not supported. The results of the first model are retained.')
+            sys.exit(1)
+
+        for solve in runner.model_solve[model]:
+            active_time_list = runner.get_active_time(solve, runner.timeblocks_used_by_solves, runner.timeblocks,
                                                   runner.timelines, runner.timeblocks__timeline)
-        active_time_lists[solve] = active_time_list
-        jumps = runner.make_step_jump(active_time_list)
-        jump_lists[solve] = jumps
+            active_time_lists[solve] = active_time_list
+            jumps = runner.make_step_jump(active_time_list)
+            jump_lists[solve] = jumps
 
     #first_steps = runner.get_first_steps(active_time_lists)
 
-    first = True
-    for solve in runner.solves:
-        runner.write_full_timelines(runner.timeblocks_used_by_solves[solve], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
-        runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
-        runner.write_step_jump(jump_lists[solve])
-        runner.write_periods(solve, runner.realized_periods, 'solve_data/realized_periods_of_current_solve.csv')
-        runner.write_periods(solve, runner.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
-        runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
-        if first:
-            runner.write_first_status(first)
-            first = False
-            runner.write_empty_investment_file()
-        else:
-            runner.write_first_status(first)
+        first = True
+        for solve in runner.model_solve[model]:
+            runner.write_full_timelines(runner.timeblocks_used_by_solves[solve], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
+            runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
+            runner.write_step_jump(jump_lists[solve])
+            runner.write_periods(solve, runner.realized_periods, 'solve_data/realized_periods_of_current_solve.csv')
+            runner.write_periods(solve, runner.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
+            runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
+            if first:
+                runner.write_first_status(first)
+                first = False
+                runner.write_empty_investment_file()
+            else:
+                runner.write_first_status(first)
 
-        exit_status = runner.model_run(solve)
-        if exit_status == 0:
-            logging.info('Success!')
-        else:
-            logging.error(f'Error: {exit_status}')
+            exit_status = runner.model_run(solve)
+            if exit_status == 0:
+                logging.info('Success!')
+            else:
+                logging.error(f'Error: {exit_status}')
 
 
 if __name__ == '__main__':
