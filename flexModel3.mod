@@ -52,6 +52,8 @@ set profile;
 set profile_method;
 set debug 'flags to output debugging and test results';
 set test_dt 'a shorter set of time steps for printing out test results' dimen 2;
+set test_t dimen 1;
+set model 'dummy set because has to load a table';
 
 set constraint 'user defined greater than, less than or equality constraints between inputs and outputs';
 set sense 'sense of user defined constraints';
@@ -151,17 +153,21 @@ set process_ct_startup_fork_method :=
 	};
 set process_method := setof {(p, m1, m2, m3, m) in process_ct_startup_fork_method} (p, m);
 set process__profileProcess__toSink__profile__profile_method :=
-    { p in process, p2 in process, sink in node, f in profile, m in profile_method
+    { p in process, p2 in process, sink in node, f in profile, fm in profile_method
 	    :  p = p2
 		&& (p, sink) in process_sink
-		&& (p2, sink, f, m) in process__node__profile__profile_method
+		&& (p2, sink, f, fm) in process__node__profile__profile_method
+	    && (sum{(p, m) in process_method : m in method_indirect} 1
+		    || sum{(p, source) in process_source} 1 < 1)
 	};
 set process__profileProcess__toSink := setof {(p, p2, sink, f, m) in process__profileProcess__toSink__profile__profile_method} (p, p2, sink);
 set process__source__toProfileProcess__profile__profile_method :=
-    { p in process, source in node, p2 in process, f in profile, m in profile_method
+    { p in process, source in node, p2 in process, f in profile, fm in profile_method
 	    :  p = p2
 		&& (p, source) in process_source
-		&& (p2, source, f, m) in process__node__profile__profile_method
+		&& (p2, source, f, fm) in process__node__profile__profile_method
+	    && (sum{(p, m) in process_method : m in method_indirect} 1
+		    || sum{(p, sink) in process_sink} 1 < 1)
 	};
 set process__source__toProfileProcess := setof {(p, source, p2, f, m) in process__source__toProfileProcess__profile__profile_method} (p, source, p2);
 set process_profile := setof {(p, source, p2) in process__source__toProfileProcess} (p) union setof {(p, p2, sink) in process__profileProcess__toSink} (p);
@@ -170,18 +176,14 @@ set process_source_toProcess :=
 	    :  p = p2 
 	    && (p, source) in process_source 
 	    && (p2, source) in process_source 
-	    && (sum{(p, m) in process_method : m in method_indirect} 1
-		    || p in process_profile
-		   )
+	    && sum{(p, m) in process_method : m in method_indirect} 1
 	};
 set process_process_toSink := 
     { p in process, p2 in process, sink in node 
 	    :  p = p2 
 	    && (p, sink) in process_sink 
 	    && (p2, sink) in process_sink 
-	    && (sum{(p, m) in process_method : m in method_indirect} 1
-		    || p in process_profile 
-		   )
+	    && sum{(p, m) in process_method : m in method_indirect} 1
 	};
 set process_sink_toProcess := 
     { sink in node, p in process, p2 in process 
@@ -201,7 +203,6 @@ set process_source_toSink :=
     { p in process, source in node, sink in node
 	    :  (p, source) in process_source
 	    && (p, sink) in process_sink
-		&& p not in process_profile
         && sum{(p, m) in process_method : m in method_direct} 1
 	};
 set process_source_toProcess_direct :=
@@ -232,8 +233,14 @@ set process_sink_toSource :=
 	{ p in process, sink in node, source in node
 	    :  (p, source) in process_source
 	    && (p, sink) in process_sink
-		&& p not in process_profile
 	    && sum{(p, m) in process_method : m in method_2way_2var} 1
+	};
+set process__source__sink__profile__profile_method_direct :=
+    { (p, source, sink) in process_source_toSink, f in profile, fm in profile_method
+	    :  sum{(p, m) in process_method : m in method_direct} 1
+		&& ( (p, source, f, fm) in process__node__profile__profile_method
+		     || (p, sink, f, fm) in process__node__profile__profile_method
+		   )
 	};
 
 set process_source_sink := 
@@ -277,7 +284,8 @@ set process__source__sink__profile__profile_method_connection :=
 set process__source__sink__profile__profile_method :=
     process__profileProcess__toSink__profile__profile_method union
 	process__source__toProfileProcess__profile__profile_method union
-	process__source__sink__profile__profile_method_connection
+	process__source__sink__profile__profile_method_connection union
+	process__source__sink__profile__profile_method_direct
 ;
 
 set process_online 'processes with an online status' := setof {(p, m) in process_method : m in method_LP} p;
@@ -525,7 +533,22 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 		  else 1
 		);
 
+set period_last := {d in period : sum{d2 in period : d2 <= d} 1 = card(period)};
+set period__period_next := {d in period, dNext in period : 1 + sum{d2 in period : d2 <=d} 1 = sum{dNext2 in period : dNext2 <=dNext} 1};
 param step_period{(d, t) in dt} := 0;
+param p_discount_years{d in period} default 0;
+param p_discount_rate{model} default 0;
+param p_discount_offset_investment{model} default 0;    # Calculate investment cost discounting while assuming they are made at the begining of the year (unless other value is given)
+param p_discount_offset_operations{model} default 0.5;  # Calculate operational costs assuming they are on average taking place at the middle of the year (unless other value is given)
+param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0);
+param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_discount_offset_investment[m] else 0);
+param p_disc_offset_operations := (if sum{m in model} 1 then max{m in model} p_discount_offset_operations[m] else 0.5);
+param p_discount_factor_investment{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_investment);
+param p_discount_factor_operations{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_operations);
+param p_discount_in_perpetuity_investment{d in period} := (if p_disc_rate then (1/(1+p_disc_rate)^(p_discount_years[d]+p_disc_offset_investment))/p_disc_rate else 1);
+param p_discount_in_perpetuity_operations{d in period} := (if p_disc_rate then (1/(1+p_disc_rate)^(p_discount_years[d]+p_disc_offset_operations))/p_disc_rate else 1);
+param p_discount_with_perpetuity_investment{d in period} := (if d not in period_last then sum{(d, dNext) in period__period_next} (p_discount_in_perpetuity_investment[d] - p_discount_in_perpetuity_investment[dNext]) else p_discount_in_perpetuity_investment[d]);
+param p_discount_with_perpetuity_operations{d in period} := (if d not in period_last then sum{(d, dNext) in period__period_next} (p_discount_in_perpetuity_operations[d] - p_discount_in_perpetuity_operations[dNext]) else p_discount_in_perpetuity_operations[d]);
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
           ( + (pdNode[e, 'invest_cost', d] * 1000 * ( pdNode[e, 'interest_rate', d] 
@@ -759,6 +782,9 @@ table data IN 'CSV' 'input/pt_profile.csv' : [profile, time], pt_profile;
 table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
 table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
 table data IN 'CSV' 'input/timeline_duration_in_years.csv' : [timeline], p_timeline_duration_in_years;
+table data IN 'CSV' 'solve_data/p_discount_years.csv' : [period], p_discount_years;
+table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
+table data IN 'CSV' 'input/p_discount_rate.csv' : [model], p_discount_rate;
 
 # Parameters from the solve loop
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
@@ -788,7 +814,7 @@ var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
-
+display process_source_sink;
 #########################
 ## Data checks 
 printf 'Checking: Eff. data for 1 variable conversions directly from source to sink (and possibly back)\n';
@@ -914,10 +940,13 @@ minimize total_cost:
       + sum {n in nodeBalance} vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t]
       + sum {(r, ud, ng) in reserve__upDown__group} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']
 	) * step_duration[d, t]
+ 	  * p_discount_with_perpetuity_operations[d]
 	  / period_share_of_year[d]
-  + sum {(e, d) in ed_invest} v_invest[e, d]
-    * p_entity_unitsize[e]
-    * ed_entity_annual[e, d]
+  + sum {(e, d) in ed_invest} 
+    + v_invest[e, d]
+      * p_entity_unitsize[e]
+      * ed_entity_annual[e, d]
+	  * p_discount_with_perpetuity_investment[d]
 ;
 
 # Energy balance in each node  
@@ -997,7 +1026,7 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
 ;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
-s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_indirect || p in process_profile} :
+s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_indirect} :
   + sum {source in entity : (p, source) in process_source} 
     ( + v_flow[p, source, p, d, t] 
   	      * p_process_source_coefficient[p, source]
@@ -2212,18 +2241,22 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 #}
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
-#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
-#display {p in process, (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+#display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
+display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].lb;
-#display {p in process_online, (d, t) in test_dt} : v_online_linear[p, d, t].val;
+#display {p in process_online, (d, t) in dt : (d, t) in test_dt} : v_online_linear[p, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
-#display {n in nodeBalance, (d, t) in test_dt}: vq_state_up[n, d, t].val;
-#display {n in nodeBalance, (d, t) in test_dt}: vq_state_down[n, d, t].val;
-#display {g in groupInertia, (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
+#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val;
+#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val;
+#display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
-#display {(p, sink, source) in process_sink_toSource, (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
-#display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in test_dt : m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
-display v_invest, period_flow_annual_multiplier, period_flow_proportional_multiplier, period_share_of_year, pdNode, period_share_of_annual_flow;
+#display {(p, source, sink) in process_source_sink, (d, t) in dt : (d, t) in test_dt && (p, sink) in process_sink}: maxToSink[p, source, sink, d, t].ub;
+#display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
+#display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
+#display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
+display v_invest, process_online, process_sink, process_source_sink;
+display process__source__sink__profile__profile_method_direct, process_method, process__source__sink__profile__profile_method;
+display process__source__toProfileProcess, process__profileProcess__toSink, process_source_toProcess, process_source_toSink, process__node__profile__profile_method;
 end;

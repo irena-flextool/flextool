@@ -96,9 +96,9 @@ set method_1var_per_way := method_1way_1var_off, method_1way_1var_LP, method_1wa
 set methods := 
 (constant_efficiency, no_startup, fork_no, method_1way_1var_off)
 (constant_efficiency, no_startup, fork_yes, method_1way_nvar_off)
-(constant_efficiency, linear, fork_no, method_1way_nvar_LP)
+(constant_efficiency, linear, fork_no, method_1way_1var_LP)
 (constant_efficiency, linear, fork_yes, method_1way_nvar_LP)
-(constant_efficiency, binary, fork_no, method_1way_nvar_MIP)
+(constant_efficiency, binary, fork_no, method_1way_1var_MIP)
 (constant_efficiency, binary, fork_yes, method_1way_nvar_MIP)
 (no_losses_no_variable_cost, no_startup, fork_no, method_2way_1var_off)
 (no_losses_no_variable_cost, no_startup, fork_yes, method_2way_nvar_off)
@@ -110,9 +110,9 @@ set methods :=
 (exact, no_startup, fork_yes, not_applicable)
 (min_load_efficiency, no_startup, fork_no, not_applicable)
 (min_load_efficiency, no_startup, fork_yes, not_applicable)
-(min_load_efficiency, linear, fork_no, method_1way_nvar_LP)
+(min_load_efficiency, linear, fork_no, method_1way_1var_LP)
 (min_load_efficiency, linear, fork_yes, method_1way_nvar_LP)
-(min_load_efficiency, binary, fork_no, method_1way_nvar_MIP)
+(min_load_efficiency, binary, fork_no, method_1way_1var_MIP)
 (min_load_efficiency, binary, fork_yes, method_1way_nvar_MIP)
 (none, no_startup, fork_no, method_1way_1var_off)
 (none, no_startup, fork_yes, method_1way_nvar_off)
@@ -166,7 +166,7 @@ set inflow_method := use_original scale_to_annual_flow no_inflow scale_in_propor
 set inflow_method_original := use_original;
 set reserve_method := no_reserve timeseries_only dynamic_only both;
 
-
-set test_dt := (p2020, t0020);
+set test_t := t0019;
+set test_dt := (p2020, t0019);
 #set test_dt := (p2020, t0001) (p2020, t0009) (p2020, t0015) (p2020, t0020) (p2020, t0024);
 end;
