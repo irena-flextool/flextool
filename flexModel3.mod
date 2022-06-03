@@ -537,10 +537,10 @@ set period_last := {d in period : sum{d2 in period : d2 <= d} 1 = card(period)};
 set period__period_next := {d in period, dNext in period : 1 + sum{d2 in period : d2 <=d} 1 = sum{dNext2 in period : dNext2 <=dNext} 1};
 param step_period{(d, t) in dt} := 0;
 param p_discount_years{d in period} default 0;
-param p_discount_rate{model} default 0;
+param p_discount_rate{model} default 0.05;
 param p_discount_offset_investment{model} default 0;    # Calculate investment cost discounting while assuming they are made at the begining of the year (unless other value is given)
 param p_discount_offset_operations{model} default 0.5;  # Calculate operational costs assuming they are on average taking place at the middle of the year (unless other value is given)
-param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0);
+param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0.05);
 param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_discount_offset_investment[m] else 0);
 param p_disc_offset_operations := (if sum{m in model} 1 then max{m in model} p_discount_offset_operations[m] else 0.5);
 param p_discount_factor_investment{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_investment);
@@ -814,7 +814,7 @@ var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
-display process_source_sink;
+
 #########################
 ## Data checks 
 printf 'Checking: Eff. data for 1 variable conversions directly from source to sink (and possibly back)\n';
@@ -1020,7 +1020,8 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
   >=
   + sum {(p, r, ud, n) in process_reserve_upDown_node_increase_reserve_ratio : (ng, n) in group_node 
           && (r, ud, ng) in reserve__upDown__group}
-	   (v_reserve[p, r, ud, n, d, t] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'])
+	   (+ sum{(p, source, n) in process_source_sink} v_flow[p, source, n, d, t] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio']
+	    + sum{(p, n, sink) in process_source_sink} v_flow[p, n, sink, d, t] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'])
   + sum {(n, ng) in group_node : p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio']}
 	   (pdtNodeInflow[n, d, t] * p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio'])
 ;
@@ -1911,7 +1912,7 @@ for {i in 1..1 : p_model['solveFirst']}
   { 
     printf ',,Investments,,,"Operational costs",,,,"Penalty costs",,,,,\nPeriod,' > fn_summary_cost;
     printf 'Total,Unit,Connection,Storage,Commodity,CO2,O&M,Starts,"Created matter or energy","Removed ' >> fn_summary_cost;
-	printf '"matter or energy","Lack of inertia","Non-synchronous","Created reserves","Removed reserves"\n' >> fn_summary_cost;
+	printf 'matter or energy","Lack of inertia","Non-synchronous","Created reserves","Removed reserves"\n' >> fn_summary_cost;
   }
 for {d in period_realized}
   { 
@@ -2243,7 +2244,7 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 
 #display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
-display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].lb;
 #display {p in process_online, (d, t) in dt : (d, t) in test_dt} : v_online_linear[p, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
@@ -2256,7 +2257,5 @@ display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
-display v_invest, process_online, process_sink, process_source_sink;
-display process__source__sink__profile__profile_method_direct, process_method, process__source__sink__profile__profile_method;
-display process__source__toProfileProcess, process__profileProcess__toSink, process_source_toProcess, process_source_toSink, process__node__profile__profile_method;
+display v_invest;
 end;
