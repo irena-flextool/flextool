@@ -121,7 +121,17 @@
                 "to": [
                     "Export_to_CSV",
                     "left"
-                ]
+                ],
+                "resource_filters": {
+                    "db_url@Input_data": {
+                        "scenario_filter": [
+                            478
+                        ],
+                        "tool_filter": [
+                            1
+                        ]
+                    }
+                }
             }
         ],
         "jumps": []
