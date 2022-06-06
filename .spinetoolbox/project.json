@@ -28,11 +28,6 @@
                     "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Tool/flextool3.json"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": ".spinetoolbox/specifications/Tool/nnew_model.json"
                 }
             ]
         },
@@ -108,10 +103,8 @@
                 "resource_filters": {
                     "db_url@Input_data": {
                         "scenario_filter": [
-                            476
-                        ],
-                        "tool_filter": [
-                            1
+                            4,
+                            5
                         ]
                     }
                 }
@@ -134,10 +127,10 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 62.585091846793375,
-            "y": 15.583795133391048,
+            "x": 63.60100061865626,
+            "y": 16.59970390525393,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": []
         },
         "Init": {
@@ -159,8 +152,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -193.83727174737209,
-            "y": -32.27122408441235,
+            "x": -193.8372717473721,
+            "y": -33.287132856275235,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -183,8 +176,8 @@
         "Excel_input_data": {
             "type": "Data Connection",
             "description": "",
-            "x": -438.6762085606295,
-            "y": -8.222852770011484,
+            "x": -437.6590666383526,
+            "y": -8.222852770011485,
             "file_references": [
                 {
                     "type": "path",
@@ -193,18 +186,13 @@
                 },
                 {
                     "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_UA_DR_water.xlsx"
+                    "relative": false,
+                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_UA_DR_water.xlsx"
                 },
                 {
                     "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_Ukraine_test.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_template_fixed.xlsx"
+                    "relative": false,
+                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_import_Ukraine_test.xlsx"
                 }
             ],
             "db_references": []
@@ -212,7 +200,7 @@
         "Import_from_Excel": {
             "type": "Importer",
             "description": "",
-            "x": -312.46403759953,
+            "x": -311.4481288276672,
             "y": -32.06719069118017,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
@@ -224,24 +212,20 @@
                     false
                 ],
                 [
-                    "<project>/FlexTool3_UA_DR_water.xlsx",
+                    "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_UA_DR_water.xlsx",
                     false
                 ],
                 [
-                    "<project>/FlexTool3_import_Ukraine_test.xlsx",
+                    "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_import_Ukraine_test.xlsx",
                     true
-                ],
-                [
-                    "<project>/FlexTool3_import_template_fixed.xlsx",
-                    false
                 ]
             ]
         },
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -52.020775044058716,
-            "y": 0.688115224814493,
+            "x": -51.004866272195834,
+            "y": 1.704023996677372,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -259,7 +243,7 @@
             "y": 32.08181037787374,
             "specification": "Import_flex3",
             "cancel_on_error": false,
-            "purge_before_writing": true,
+            "purge_before_writing": false,
             "on_conflict": "replace",
             "file_selection": [
                 [
@@ -272,7 +256,7 @@
             "type": "Data Store",
             "description": "",
             "x": 296.79499747484965,
-            "y": 37.29793358102282,
+            "y": 36.28202480915994,
             "url": {
                 "dialect": "sqlite",
                 "host": "",

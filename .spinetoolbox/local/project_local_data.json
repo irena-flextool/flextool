@@ -1,19 +1,25 @@
 {
     "items": {
-        "Results_F3": {
+        "Init": {
             "url": {
                 "username": "",
                 "password": ""
             }
         },
-        "FlexTool3_test_data": {
+        "Input_data": {
             "url": {
                 "username": "",
                 "password": ""
             }
         },
-        "FlexTool3_Excel": {
+        "Excel_input_data": {
             "db_credentials": {}
+        },
+        "Results": {
+            "url": {
+                "username": "",
+                "password": ""
+            }
         }
     }
 }
