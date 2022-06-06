@@ -2079,7 +2079,7 @@ for {(d, t, t_previous, t_previous_within_block) in dttt : d in period_realized}
     printf '\n%s,%s', d, t >> fn_nodal_prices__dt;
     for {n in nodeBalance}
 	  {
-	    printf ',%8g', nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual * period_share_of_year[d] >> fn_nodal_prices__dt;
+	    printf ',%8g', nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual / p_discount_with_perpetuity_operations[d] * period_share_of_year[d] >> fn_nodal_prices__dt;
       }
   }
 
