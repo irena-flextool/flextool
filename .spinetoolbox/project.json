@@ -80,6 +80,17 @@
                 }
             },
             {
+                "name": "from Init to Initialize",
+                "from": [
+                    "Init",
+                    "right"
+                ],
+                "to": [
+                    "Initialize",
+                    "left"
+                ]
+            },
+            {
                 "name": "from Import_from_Excel to Input_data",
                 "from": [
                     "Import_from_Excel",
@@ -88,6 +99,17 @@
                 "to": [
                     "Input_data",
                     "left"
+                ]
+            },
+            {
+                "name": "from Initialize to Input_data",
+                "from": [
+                    "Initialize",
+                    "right"
+                ],
+                "to": [
+                    "Input_data",
+                    "bottom"
                 ]
             },
             {
@@ -103,22 +125,13 @@
                 "resource_filters": {
                     "db_url@Input_data": {
                         "scenario_filter": [
-                            4,
-                            5
+                            478
+                        ],
+                        "tool_filter": [
+                            1
                         ]
                     }
                 }
-            },
-            {
-                "name": "from Init to Initialize",
-                "from": [
-                    "Init",
-                    "right"
-                ],
-                "to": [
-                    "Initialize",
-                    "left"
-                ]
             }
         ],
         "jumps": []
@@ -127,17 +140,17 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 63.60100061865626,
-            "y": 16.59970390525393,
+            "x": 62.58509184679337,
+            "y": 17.595909499362556,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": []
         },
         "Init": {
             "type": "Data Store",
             "description": "",
-            "x": -343.28843077845085,
-            "y": 83.58374422868941,
+            "x": -410.69426203849633,
+            "y": 77.5474011307749,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -152,8 +165,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -193.8372717473721,
-            "y": -33.287132856275235,
+            "x": -193.83727174737209,
+            "y": -32.27122408441235,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -168,31 +181,21 @@
         "Initialize": {
             "type": "Merger",
             "description": "",
-            "x": -237.21139073896836,
-            "y": 82.46404570753833,
-            "cancel_on_error": false,
+            "x": -289.52636425422753,
+            "y": 70.39135951170934,
+            "cancel_on_error": true,
             "purge_before_writing": false
         },
         "Excel_input_data": {
             "type": "Data Connection",
             "description": "",
-            "x": -437.6590666383526,
-            "y": -8.222852770011485,
+            "x": -434.6519798286864,
+            "y": -21.30159614882627,
             "file_references": [
                 {
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool3_import_template.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": false,
-                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_UA_DR_water.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": false,
-                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_import_Ukraine_test.xlsx"
                 }
             ],
             "db_references": []
@@ -200,7 +203,7 @@
         "Import_from_Excel": {
             "type": "Importer",
             "description": "",
-            "x": -311.4481288276672,
+            "x": -312.46403759953,
             "y": -32.06719069118017,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
@@ -210,28 +213,20 @@
                 [
                     "<project>/FlexTool3_import_template.xlsx",
                     false
-                ],
-                [
-                    "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_UA_DR_water.xlsx",
-                    false
-                ],
-                [
-                    "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_import_Ukraine_test.xlsx",
-                    true
                 ]
             ]
         },
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -51.004866272195834,
-            "y": 1.704023996677372,
+            "x": -60.06923250794475,
+            "y": -5.348227873100026,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
                 {
                     "in_label": "db_url@Input_data",
-                    "out_label": "FlexTool"
+                    "out_label": ""
                 }
             ],
             "specification": "export_FlexTool3_csv"
@@ -243,7 +238,7 @@
             "y": 32.08181037787374,
             "specification": "Import_flex3",
             "cancel_on_error": false,
-            "purge_before_writing": false,
+            "purge_before_writing": true,
             "on_conflict": "replace",
             "file_selection": [
                 [
@@ -256,7 +251,7 @@
             "type": "Data Store",
             "description": "",
             "x": 296.79499747484965,
-            "y": 36.28202480915994,
+            "y": 37.29793358102282,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
