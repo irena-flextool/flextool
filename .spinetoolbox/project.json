@@ -226,7 +226,7 @@
             "output_labels": [
                 {
                     "in_label": "db_url@Input_data",
-                    "out_label": ""
+                    "out_label": "FlexTool"
                 }
             ],
             "specification": "export_FlexTool3_csv"
