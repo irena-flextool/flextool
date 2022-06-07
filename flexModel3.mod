@@ -840,6 +840,7 @@ minimize total_cost:
 	          + sum {(p, n, sink) in process_source_sink_eff } (
 			      + v_flow[p, n, sink, d, t]
          	          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+		              * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
                   + (if (p, 'min_load_efficiency') in process__ct_method then 
 	                  + v_online_linear[p, d, t] 
 			              * ptProcess_section[p, t]
@@ -859,6 +860,7 @@ minimize total_cost:
 	          + sum {(p, n, sink) in process_source_sink_eff } (
 			      + v_flow[p, n, sink, d, t]
          	          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+		              * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
                   + (if (p, 'min_load_efficiency') in process__ct_method then 
 	                  + v_online_linear[p, d, t] 
 			              * ptProcess_section[p, t]
@@ -879,6 +881,7 @@ minimize total_cost:
 	   ( + ptProcess_source[p, source, 'variable_cost', t]
 	       * v_flow[p, source, sink, d, t] 
            	       * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+                   * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, source] else 1)
                + (if (p, 'min_load_efficiency') in process__ct_method then 
 	               + v_online_linear[p, d, t] 
    			          * ptProcess_section[p, t]
@@ -893,45 +896,6 @@ minimize total_cost:
 	   ( + ptProcess[p, 'variable_cost', t]
 	       * v_flow[p, source, sink, d, t] 
        )
-#     + sum {(p, source, sink) in process_source_sink_eff : ptProcess__source__sink__t_varCost[p, source, sink, t]}
-#	   ( + ptProcess__source__sink__t_varCost[p, source, sink, t]
-#	       * ( + v_flow[p, source, sink, d, t]
-#           	       * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
-#               + (if (p, 'min_load_efficiency') in process__ct_method then 
-#	               + v_online_linear[p, d, t] 
-#   			          * ptProcess_section[p, t]
-#			          * p_entity_unitsize[p]
-#    			 )	  
-#			 )
-#	   ) 
-#	  + sum {(p, source, 'variable_cost') in process__source__timeParam} 
-#       ( + ptProcess_source[p, source, 'variable_cost', t]
-#	          * ( + sum {(p, source, sink) in process_source_sink, m in method : (p, m) in process_method && m in method_1var_per_way} (
-#		              + v_flow[p, source, sink, d, t]
-#         	              * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
-#                      + (if (p, 'min_load_efficiency') in process__ct_method then 
-#	                      + v_online_linear[p, d, t] 
-#   			                  * ptProcess_section[p, t]
-#			                  * p_entity_unitsize[p]
-#    				    )	  
-#					)	
-# 	              + sum {(p, source, sink) in process_source_sink, m in method : (p, m) in process_method && m not in method_1var_per_way} (
-#				      + v_flow[p, source, sink, d, t]
-#					)  
-#                )
-#       )
-#	  + sum {(p, sink, 'variable_cost') in process__sink__timeParam} 
-#       ( + ptProcess_sink[p, sink, 'variable_cost', t]
-#		      * ( + sum {(p, source, sink) in process_source_sink, m in method : (p, m) in process_method} (
-#				      + v_flow[p, source, sink, d, t]
-#					)  
-#                )
-#       )
-#	  + sum {(p, 'variable_cost') in process__timeParam : p in process_connection} 
-#       ( + ptProcess[p, 'variable_cost', t]
-#		      * sum {(p, source, sink) in process_source_sink}
-#			      + v_flow[p, source, sink, d, t]
-#       )
 #      + sum {(p, source, sink, m) in process__source__sink__ramp_method : m in ramp_cost_method}
 #        ( + v_ramp[p, source, sink, d, t] * pProcess_source_sink[p, source, sink, 'ramp_cost'] )
       + sum {g in groupInertia} vq_inertia[g, d, t] * pdGroup[g, 'penalty_inertia', d]
@@ -961,6 +925,7 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   - sum {(p, n, sink) in process_source_sink_eff } ( 
       + v_flow[p, n, sink, d, t] 
 	      * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+		  * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
       + (if (p, 'min_load_efficiency') in process__ct_method then 
 	        + v_online_linear[p, d, t]
 			    * ptProcess_section[p, t]
@@ -1612,6 +1577,7 @@ param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alw
     ( + sum {(p, source, sink2) in process_source_toSink} 
         ( + v_flow[p, source, sink2, d, t].val 
 	          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	  		  * (if p in process_unit then p_process_sink_coefficient[p, sink2] / p_process_source_coefficient[p, source] else 1)
           + (if (p, 'min_load_efficiency') in process__ct_method then v_online_linear[p, d, t] * ptProcess_section[p, t] * p_entity_unitsize[p])
 	    )
       + sum {(p, source2, sink) in process_source_toSink} 
