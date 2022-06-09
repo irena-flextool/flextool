@@ -104,6 +104,7 @@ set invest_method 'methods available for investments';
 set invest_method_not_allowed 'method for denying investments' within invest_method;
 set entity__invest_method 'the investment method applied to an entity' dimen 2 within {entity, invest_method};
 set entityInvest := setof {(e, m) in entity__invest_method : m not in invest_method_not_allowed} (e);
+param investableEntities := sum{e in entityInvest} 1;
 set nodeBalance 'nodes that maintain a node balance' within node;
 set nodeState 'nodes that have a state' within node;
 set inflow_method 'method for scaling the inflow';
@@ -828,7 +829,7 @@ check {(p, m) in process_method, t in time : m in method_2way_off} ptProcess[p, 
 
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
 check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
-
+display process__ct_method;
 minimize total_cost:
   + sum {(d, t) in dt}
     (
@@ -872,7 +873,7 @@ minimize total_cost:
 			      + v_flow[p, source, n, d, t]
 				)  
 			)
- 	 + sum {p in process_online : pdProcess[p, 'startup_cost', d]} (v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d])
+ 	 + sum {p in process_online : pdProcess[p, 'startup_cost', d]} (v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d] * p_entity_unitsize[p])
      + sum {(p, source, sink) in process_source_sink_noEff : ptProcess__source__sink__t_varCost[p, source, sink, t]}
        ( + ptProcess__source__sink__t_varCost[p, source, sink, t]
 	       * v_flow[p, source, sink, d, t]
@@ -1148,7 +1149,7 @@ s.t. minToSink {(p, source, sink) in process_source_sink, (d, t) in dt
 } :
   + v_flow[p, source, sink, d, t]
   >=
-  + 0
+  + (if p in process_online then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] else 0)
 ;
 
 # Special equation to limit the 1variable connection on the negative transfer
@@ -1197,7 +1198,7 @@ s.t. minToSource {(p, source, sink) in process_source_sink, (d, t) in dt
 } :
   + v_flow[p, sink, source, d, t]
   >=
-  + 0
+  + (if p in process_online then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] else 0)
 ;
 
 s.t. maxOnline {p in process_online, (d, t) in dt} :
@@ -1564,6 +1565,42 @@ s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
     + sum {(g, n) in group_node} ptNode[n, 'inflow', t]
   ) * pdGroup[g, 'non_synchronous_limit', d]
 ;
+
+#s.t. capacityMargin {g in groupCapacityMargin, (d, t) in dt : investableEntities} :
+#  + sum {(p, sink) in process__sink : sum{(g, sink) in group__node} 1 }
+#      + p_process_sink_coefficient[p, sink]
+#        * ( + p_entity_all_existing[p]
+#            + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#           - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+#          )
+#  + sum {(p, source) in process__source : sum{(g, source) in group__node} 1 }
+#      + p_process_source_coefficient[p, source]
+#        * ( + p_entity_all_existing[p]
+#            + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#           - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+#          )
+
+
+#  + sum {(g,n,u) in gnu_capacityAvailability} (p_unittype[u, 'availability']
+#       * ( + p_unit[g, n, u, 'capacity_MW']
+#           + p_unit[g, n, u, 'invested_capacity_MW']        
+#           + (if (g,n,u) in gnu_invest then v_invest[g, n, u])
+#        ))
+#  + sum {(g,n,u) in gnu_capacityGen} v_gen[g, n, u, t]
+#  + sum {(g,n2,n) in gnn} (v_transfer[g,n2,n,t] - v_transferRightward[g,n2,n,t] * p_nodeNode[g,n2,n,'loss'])
+#  + sum {(g2, n2, u, g, n) in gnuGrid2Node2} v_convert[g2, n2, u, g, n, t] * (if p_unit[g,n,u,'use_efficiency_time_series'] then ts_unit[g,n,u,'efficiency',t] else p_unittype[u, 'conversion_eff'])
+#  + sum {(g_output1, n_output1, u, g, n) in gnuOutputGrid2Node2 : (g_output1, n_output1, u) in gnu_output1} v_gen[g,n,u,t]
+#  + (if (g,n) in gn_import then ts_import[g,n,t] * p_scaleImportFull[g,n])
+#  + v_capacitySlack[g, n, t]
+#  + v_slack[g, n, t]
+#  >= 
+#  + sum {u in unit : (g, n, u) in gnu_storage_charging || (g,n,u) in gnu_demand_increase} v_charge[g, n, u, t] 
+#  + sum {(g,n,n2,t) in gnnt} (v_transfer[g,n,n2,t] - v_transferLeftward[g,n,n2,t] * p_nodeNode[g,n,n2,'loss'])
+#  + sum {(g, n, u, g2, n2) in gnuGrid2Node2} v_convert[g, n, u, g2, n2, t]
+#  + (if (g,n) in gn_demand then demand[g,n,t] * p_scaleDemandForCapacityAdequacy[g,n])
+#  + p_node[g, n, 'capacity_margin_MW']
+#;
+
 
 solve;
 
@@ -2208,20 +2245,20 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 #}
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
-#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
-#display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
+display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
-#display {p in process_online, (d, t) in dt : (d, t) in test_dt} : v_online_linear[p, d, t].val;
+display {p in process_online, (d, t) in dt : (d, t) in test_dt} : v_online_linear[p, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
-#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val;
-#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val;
+display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val;
+display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val;
 #display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual;
 #display {(p, source, sink) in process_source_sink, (d, t) in dt : (d, t) in test_dt && (p, sink) in process_sink}: maxToSink[p, source, sink, d, t].ub;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
-display v_invest;
+display v_invest, ptProcess_slope;
 end;
