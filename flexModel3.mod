@@ -486,14 +486,8 @@ param ptProcess_source_sink {(p, source, sink, param) in process__source__sink__
 		  else 0;
 
 
-param p_process_source_coefficient {(p, source) in process_source} := 
-    + if (p_process_source[p, source, 'coefficient']) 
-	  then p_process_source[p, source, 'coefficient'] 
-	  else 1;
-param p_process_sink_coefficient {(p, sink) in process_sink} := 
-	+ if (p_process_sink[p, sink, 'coefficient']) 
-	  then p_process_sink[p, sink, 'coefficient'] 
-	  else 1;
+param p_process_source_coefficient {(p, source) in process_source} default 1;
+param p_process_sink_coefficient {(p, sink) in process_sink} default 1;
 
 param pt_profile {profile, time};
 
@@ -773,7 +767,9 @@ table data IN 'CSV' 'input/p_process_node_constraint_coefficient.csv' : [process
 table data IN 'CSV' 'input/p_process__reserve__upDown__node.csv' : [process, reserve, upDown, node, reserveParam], p_process_reserve_upDown_node;
 table data IN 'CSV' 'input/p_process_sink.csv' : [process, sink, sourceSinkParam], p_process_sink;
 table data IN 'CSV' 'input/pt_process_sink.csv' : [process, sink, sourceSinkTimeParam, time], pt_process_sink;
+table data IN 'CSV' 'input/p_process_sink_coefficient.csv' : [process, sink], p_process_sink_coefficient;
 table data IN 'CSV' 'input/p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
+table data IN 'CSV' 'input/p_process_source_coefficient.csv' : [process, source], p_process_source_coefficient;
 table data IN 'CSV' 'input/pt_process_source.csv' : [process, source, sourceSinkTimeParam, time], pt_process_source;
 table data IN 'CSV' 'input/p_constraint_constant.csv' : [constraint], p_constraint_constant;
 table data IN 'CSV' 'input/p_process.csv' : [process, processParam], p_process;
