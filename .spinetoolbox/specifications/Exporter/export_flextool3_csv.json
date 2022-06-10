@@ -3827,7 +3827,7 @@
                 {
                     "map_type": "RelationshipObject",
                     "position": 1,
-                    "header": "source"
+                    "header": "sink"
                 },
                 {
                     "map_type": "Alternative",
