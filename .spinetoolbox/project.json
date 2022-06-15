@@ -125,12 +125,8 @@
                 "resource_filters": {
                     "db_url@Input_data": {
                         "scenario_filter": [
-                            663,
-                            664,
-                            665,
-                            666,
-                            667,
-                            668
+                            508,
+                            509
                         ],
                         "tool_filter": [
                             1
