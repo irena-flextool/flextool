@@ -125,7 +125,12 @@
                 "resource_filters": {
                     "db_url@Input_data": {
                         "scenario_filter": [
-                            478
+                            663,
+                            664,
+                            665,
+                            666,
+                            667,
+                            668
                         ],
                         "tool_filter": [
                             1
@@ -140,10 +145,10 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 62.58509184679337,
+            "x": 65.62188107406708,
             "y": 17.595909499362556,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": []
         },
         "Init": {
@@ -165,7 +170,7 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -193.83727174737209,
+            "x": -192.8250086716142,
             "y": -32.27122408441235,
             "url": {
                 "dialect": "sqlite",
@@ -196,6 +201,11 @@
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool3_import_template.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": false,
+                    "path": "C:/HJY_projects/NEF_DEM/Ukraine_DR/FlexTool3_UA_DR_water.xlsx"
                 }
             ],
             "db_references": []
@@ -203,8 +213,8 @@
         "Import_from_Excel": {
             "type": "Importer",
             "description": "",
-            "x": -312.46403759953,
-            "y": -32.06719069118017,
+            "x": -310.43951144801434,
+            "y": -31.22156345993327,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "purge_before_writing": false,
@@ -213,14 +223,18 @@
                 [
                     "<project>/FlexTool3_import_template.xlsx",
                     false
+                ],
+                [
+                    "C:\\HJY_projects\\NEF_DEM\\Ukraine_DR\\FlexTool3_UA_DR_water.xlsx",
+                    true
                 ]
             ]
         },
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -60.06923250794475,
-            "y": -5.348227873100026,
+            "x": -59.05696943218686,
+            "y": -5.348227873100029,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -238,7 +252,7 @@
             "y": 32.08181037787374,
             "specification": "Import_flex3",
             "cancel_on_error": false,
-            "purge_before_writing": true,
+            "purge_before_writing": false,
             "on_conflict": "replace",
             "file_selection": [
                 [
@@ -250,8 +264,8 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 296.79499747484965,
-            "y": 37.29793358102282,
+            "x": 297.80726055060745,
+            "y": 38.31019665678071,
             "url": {
                 "dialect": "sqlite",
                 "host": "",

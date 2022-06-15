@@ -1,21 +1,8 @@
 Running HiGHS 1.2.2 [date: 2022-05-24, git hash: n/a]
 Copyright (c) 2022 ERGO-Code under MIT licence terms
-LP   flexModel3 has 46080 rows; 38160 cols; 97200 nonzeros
+LP   flexModel3 has 911040 rows; 718320 cols; 2006040 nonzeros
 Presolving model
-18720 rows, 28073 cols, 58313 nonzeros
-16560 rows, 28073 cols, 53993 nonzeros
-Presolve : Reductions: rows 16560(-29520); columns 28073(-10087); elements 53993(-43207)
-Solving the presolved LP
-Using EKK dual simplex solver - serial
-  Iteration        Objective     Infeasibilities num(sum)
-          0     4.2332454873e+08 Pr: 7917(5.80282e+06) 0s
-      11849     1.6168064707e+11 Pr: 0(0) 0s
-Using EKK dual simplex solver - serial
-  Iteration        Objective     Infeasibilities num(sum)
-      11849     1.6168064707e+11 Pr: 58(9.877e-06) 0s
-      11921     1.6168064707e+11 Pr: 0(0) 0s
-Solving the original LP from the solution after postsolve
-Model   status      : Optimal
-Simplex   iterations: 11921
-Objective value     :  1.6168064707e+11
-HiGHS run time      :          0.40
+Problem status detected on presolve: Infeasible
+Model   status      : Infeasible
+Objective value     :  0.0000000000e+00
+HiGHS run time      :          0.61
