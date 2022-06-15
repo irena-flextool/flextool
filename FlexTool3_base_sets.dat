@@ -155,11 +155,11 @@ set groupParam := has_capacity_margin, capacity_margin, has_inertia, inertia_lim
                   invest_max_total, invest_min_total, invest_max_period, invest_min_period,
 				  non_synchronous_limit, co2_price, penalty_inertia, penalty_non_synchronous
 				  max_cumulative_flow, min_cumulative_flow, max_instant_flow, min_instant_flow,
-				  output_results;
+				  output_results, penalty_capacity_margin;
 set groupPeriodParam := capacity_margin, co2_price, inertia_limit, invest_max_period,
                   invest_min_period, max_cumulative_flow, min_cumulative_flow,
 				  non_synchronous_limit, penalty_inertia, penalty_non_synchronous,
-				  max_instant_flow, min_instant_flow;
+				  max_instant_flow, min_instant_flow, penalty_capacity_margin;
 set invest_method_not_allowed := not_allowed;
 set profile_method := upper_limit lower_limit fixed;
 set inflow_method := use_original scale_to_annual_flow no_inflow scale_in_proportion;
@@ -168,5 +168,6 @@ set reserve_method := no_reserve timeseries_only dynamic_only both;
 
 set test_t := t0001;
 set test_dt := (p2020, t0001) (p2020, t0004) (p2020, t0040);
+#set test_dt := (p2020, t2589) (p2020, t2590) (p2020, t2591);
 #set test_dt := (p2020, t0001) (p2020, t0009) (p2020, t0015) (p2020, t0020) (p2020, t0024);
 end;

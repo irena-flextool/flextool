@@ -811,6 +811,7 @@ var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
+var vq_capacity_margin {g in groupCapacityMargin} >= 0;
 
 #########################
 ## Data checks 
@@ -907,6 +908,10 @@ minimize total_cost:
     + v_invest[e, d]
       * p_entity_unitsize[e]
       * ed_entity_annual[e, d]
+	  * p_discount_with_perpetuity_investment[d]
+  + sum {g in groupCapacityMargin, d in period}
+    + vq_capacity_margin[g]
+	  * pdGroup[g, 'penalty_capacity_margin', d]
 	  * p_discount_with_perpetuity_investment[d]
 ;
 
@@ -1118,6 +1123,14 @@ s.t. process_constraint_equal {(c, s) in constraint__sense, (d, t) in dt
 	)
   =
   + p_constraint_constant[c]
+;
+
+s.t. maxState {n in nodeState, (d, t) in dt} :
+  + v_state[n, d, t]
+  <=
+  + p_entity_all_existing[n]
+  + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[n]
+#  - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[n]
 ;
 
 s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt 
@@ -1562,41 +1575,62 @@ s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
   ) * pdGroup[g, 'non_synchronous_limit', d]
 ;
 
-#s.t. capacityMargin {g in groupCapacityMargin, (d, t) in dt : investableEntities} :
-#  + sum {(p, sink) in process__sink : sum{(g, sink) in group__node} 1 }
-#      + p_process_sink_coefficient[p, sink]
-#        * ( + p_entity_all_existing[p]
-#            + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
-#           - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
-#          )
-#  + sum {(p, source) in process__source : sum{(g, source) in group__node} 1 }
-#      + p_process_source_coefficient[p, source]
-#        * ( + p_entity_all_existing[p]
-#            + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
-#           - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
-#          )
-
-
-#  + sum {(g,n,u) in gnu_capacityAvailability} (p_unittype[u, 'availability']
-#       * ( + p_unit[g, n, u, 'capacity_MW']
-#           + p_unit[g, n, u, 'invested_capacity_MW']        
-#           + (if (g,n,u) in gnu_invest then v_invest[g, n, u])
-#        ))
-#  + sum {(g,n,u) in gnu_capacityGen} v_gen[g, n, u, t]
-#  + sum {(g,n2,n) in gnn} (v_transfer[g,n2,n,t] - v_transferRightward[g,n2,n,t] * p_nodeNode[g,n2,n,'loss'])
-#  + sum {(g2, n2, u, g, n) in gnuGrid2Node2} v_convert[g2, n2, u, g, n, t] * (if p_unit[g,n,u,'use_efficiency_time_series'] then ts_unit[g,n,u,'efficiency',t] else p_unittype[u, 'conversion_eff'])
-#  + sum {(g_output1, n_output1, u, g, n) in gnuOutputGrid2Node2 : (g_output1, n_output1, u) in gnu_output1} v_gen[g,n,u,t]
-#  + (if (g,n) in gn_import then ts_import[g,n,t] * p_scaleImportFull[g,n])
-#  + v_capacitySlack[g, n, t]
-#  + v_slack[g, n, t]
-#  >= 
-#  + sum {u in unit : (g, n, u) in gnu_storage_charging || (g,n,u) in gnu_demand_increase} v_charge[g, n, u, t] 
-#  + sum {(g,n,n2,t) in gnnt} (v_transfer[g,n,n2,t] - v_transferLeftward[g,n,n2,t] * p_nodeNode[g,n,n2,'loss'])
-#  + sum {(g, n, u, g2, n2) in gnuGrid2Node2} v_convert[g, n, u, g2, n2, t]
-#  + (if (g,n) in gn_demand then demand[g,n,t] * p_scaleDemandForCapacityAdequacy[g,n])
-#  + p_node[g, n, 'capacity_margin_MW']
-#;
-
+s.t. capacityMargin {g in groupCapacityMargin, (d, t) in dt} :
+  # profile limited units producing to a node in the group (based on available capacity)
+  + sum {(p, source, sink, f, m) in process__source__sink__profile__profile_method 
+         : m = 'upper_limit' || m = 'fixed'
+           && (p, sink) in process_sink
+		   && (g, sink) in group_node
+		   && p in process_unit
+		} 
+    ( + pt_profile[f, t]
+        * ( + p_entity_all_existing[p]
+            + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#            - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+	      )
+    )
+  # capacity limited units producing to a node in the group (based on available capacity)
+  + sum {(p, source, sink) in process_source_sink 
+         : (p, sink) in process_sink 
+	       && sum {(p, source, sink, f, m) in process__source__sink__profile__profile_method : m = 'upper_limit' || m = 'fixed'} 1 = 0
+		   && (p, sink) in process_sink
+  		   && (g, sink) in group_node 
+		   && p in process_unit
+		} 
+	(
+      + ( + p_entity_all_existing[p]
+          + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
+#          - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
+        )
+	)
+  # profile or capacity limited units consuming from a node in the group (as they consume in any given time step)
+  - sum {(p, source, sink) in process_source_sink 
+         : (p, source) in process_source
+		   && (g, source) in group_node
+		   && p in process_unit
+		} 
+    ( + if (p, source, sink) in process_source_sink_eff then 
+        ( + v_flow[p, source, sink, d, t] 
+	          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+		      * p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, source]
+          + (if (p, 'min_load_efficiency') in process__ct_method then 
+	            + v_online_linear[p, d, t]
+			        * ptProcess_section[p, t]
+				    * p_entity_unitsize[p]
+	  	    )
+	    )
+	  + if (p, source, sink) in process_source_sink_noEff then
+        ( + v_flow[p, source, sink, d, t] 
+        )
+	)
+  + vq_capacity_margin[g]
+  >=
+  + sum {(g, n) in group_node} 
+    ( - (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
+	  + (if n in nodeState then sum{(d, t, t_previous, t_previous_within_block) in dttt} (v_state[n, d, t] -  v_state[n, d, t_previous])) 
+	)
+  + pdGroup[g, 'capacity_margin', d]
+;
 
 solve;
 
@@ -2241,20 +2275,21 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 #}
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
-#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
 #display {p in process_online, (d, t) in dt : (d, t) in test_dt} : v_online_linear[p, d, t].val;
+display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
-#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val;
-#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val;
+display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val;
+display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val;
 #display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual / p_discount_with_perpetuity_operations[d] * period_share_of_year[d];
 #display {(p, source, sink) in process_source_sink, (d, t) in dt : (d, t) in test_dt && (p, sink) in process_sink}: maxToSink[p, source, sink, d, t].ub;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
-display v_invest;
+display v_invest, nodeBalance, nodeState, vq_capacity_margin;
 end;
