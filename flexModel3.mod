@@ -1828,31 +1828,46 @@ for {e in entity: e in entityInvest}
 	>> fn_entity_invested;
   }
 
-printf 'Write unit investment results...\n';
-param fn_investment_unit symbolic := "output/investment_unit__period.csv";
+printf 'Write unit capacity results...\n';
+param fn_unit_capacity symbolic := "output/unit_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'unit,period,invested\n' > fn_investment_unit; }  # Clear the file on the first solve
-for {(p, d) in pd_invest : d in period_realized && d in period_invest && p in process_unit}
+  { printf 'unit,solve,period,existing,invested,divested,total\n' > fn_unit_capacity; }  # Clear the file on the first solve
+for {s in solve_current, p in process_unit, d in period_realized}
   {
-    printf '%s,%s,%.8g\n', p, d, v_invest[p, d].val * p_entity_unitsize[p] >> fn_investment_unit;
+    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
+	        p_entity_all_existing[p], 
+			(if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0), 
+			0, 
+			p_entity_all_existing[p] + (if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0)
+	>> fn_unit_capacity;
   }
 
-printf 'Write connection investment results...\n';
-param fn_investment_connection symbolic := "output/investment_connection__period.csv";
+printf 'Write connection capacity results...\n';
+param fn_connection_capacity symbolic := "output/connection_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'connection,period,invested\n' > fn_investment_connection; }  # Clear the file on the first solve
-for {(p, d) in pd_invest : d in period_realized && d in period_invest && p in process_connection}
+  { printf 'connection,solve,period,existing,invested,divested,total\n' > fn_connection_capacity; }  # Clear the file on the first solve
+for {s in solve_current, p in process_connection, d in period_realized}
   {
-    printf '%s,%s,%.8g\n', p, d, v_invest[p, d].val * p_entity_unitsize[p] >> fn_investment_connection;
+    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
+	        p_entity_all_existing[p],
+			(if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0),
+			0,
+			p_entity_all_existing[p] + (if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0)
+	>> fn_connection_capacity;
   }
 
-printf 'Write node/storage investment results...\n';
-param fn_investment_node symbolic := "output/investment_node__period.csv";
+printf 'Write node/storage capacity results...\n';
+param fn_node_capacity symbolic := "output/node_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'node,period,invested\n' > fn_investment_node; }  # Clear the file on the first solve
-for {(e, d) in ed_invest : d in period_realized && d in period_invest && e in nodeState}
+  { printf 'node,solve,period,existing,invested,divested,total\n' > fn_node_capacity; }  # Clear the file on the first solve
+for {s in solve_current, e in nodeState, d in period_realized}
   {
-    printf '%s,%s,%.8g\n', e, d, v_invest[e, d].val * p_entity_unitsize[e] >> fn_investment_connection;
+    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', e, s, d, 
+	        p_entity_all_existing[e],
+			(if (e, d) in ed_invest then v_invest[e, d].val * p_entity_unitsize[e] else 0),
+			0,
+			p_entity_all_existing[e] + (if (e, d) in ed_invest then v_invest[e, d].val * p_entity_unitsize[e] else 0)
+	 >> fn_node_capacity;
   }
 
 
@@ -2286,5 +2301,5 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
-display v_invest;
+display v_invest, groupOutput, period_realized, p_model;
 end;
