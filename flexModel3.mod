@@ -2460,9 +2460,9 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 #}
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
-#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
 #display {p in process_online, (d, t) in dt : (d, t) in test_dt} : v_online_linear[p, d, t].val;
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
@@ -2476,5 +2476,12 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
-display v_invest, v_divest;
+display v_invest, v_divest, pdCommodity, process__ct_method, commodity_node, process_source_sink, period_share_of_year;
 end;
+  + step_duration[d, t] 
+      * pdCommodity[c, 'price', d] 
+      * ( + sum{(p, n, sink) in process_source_sink_alwaysProcess}
+              + r_process_source_sink_flow_dt[p, n, sink, d, t]
+		  - sum{(p, source, n) in process_source_sink_alwaysProcess}	  
+              + r_process_source_sink_flow_dt[p, source, n, d, t]
+	    )
