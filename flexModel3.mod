@@ -326,7 +326,7 @@ param startNext_index := sum{t in time, t_startNext in startNext : t <= t_startN
 set modelParam;
 param p_model {modelParam};
 
-param p_commodity {c in commodity, commodityParam};
+param p_commodity {c in commodity, commodityParam} default 0;
 param pd_commodity {c in commodity, commodityPeriodParam, d in periodAll} default 0;
 param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} := 
         + if (c, param, d) in commodity__param__period
@@ -701,6 +701,11 @@ set group_commodity_node_period_co2 :=
 			&& pdGroup[g, 'co2_price', d]
 		};
 
+set commodity_node_co2 :=
+        {(c, n) in commodity_node : 
+			p_commodity[c, 'co2_content'] 
+		};
+
 set process__sink_nonSync_unit dimen 2 within {process, node};
 set process_nonSync_connection dimen 1 within {process};
 set process__sink_nonSync :=
@@ -886,7 +891,8 @@ minimize total_cost:
 			      + v_flow[p, source, n, d, t]
 				)  
 		    ) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
-	  + sum {(g, c, n, d) in group_commodity_node_period_co2, (d, t) in dt} p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
+	  + sum {(g, c, n, d) in group_commodity_node_period_co2, t in time : (d, t) in dt} 
+	      p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
 	      * (
 		      # Paying for CO2 (increases the objective function)
 			  + sum {(p, n, sink) in process_source_sink_noEff } 
@@ -1795,7 +1801,7 @@ param r_cost_commodity_dt{(c, n) in commodity_node, (d, t) in dt} :=
 	    )
 ;
 
-param r_emissions_co2_dt{(g, c, n, d) in group_commodity_node_period_co2, t in time : (d, t) in dt} := 
+param r_emissions_co2_dt{(c, n) in commodity_node_co2, (d, t) in dt} := 
   + step_duration[d, t] 
       * p_commodity[c, 'co2_content'] 
       * ( + sum{(p, n, sink) in process_source_sink_alwaysProcess}
@@ -1805,11 +1811,11 @@ param r_emissions_co2_dt{(g, c, n, d) in group_commodity_node_period_co2, t in t
         )
 ;	  
 
-param r_emissions_co2_commodity_d{c in commodity, d in period} :=
-  + sum{(g, c, n, d) in group_commodity_node_period_co2, t in time : (d, t) in dt} r_emissions_co2_dt[g, c, n, d, t];
+param r_emissions_co2_d{(c, n) in commodity_node_co2, d in period} :=
+  + sum{t in time : (d, t) in dt} r_emissions_co2_dt[c, n, d, t];
 
 param r_cost_co2_dt{(g, c, n, d) in group_commodity_node_period_co2, t in time : (d, t) in dt} := 
-  + r_emissions_co2_dt[g, c, n, d, t] 
+  + r_emissions_co2_dt[c, n, d, t] 
     * pdGroup[g, 'co2_price', d]
 ;	  
 
@@ -2036,10 +2042,10 @@ for {d in period}
 printf '\n' >> fn_summary;
 
 printf '\nEmissions\n' >> fn_summary;
-printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for all periods"\n', sum{c in commodity, d in period} (r_emissions_co2_commodity_d[c, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for realized periods"\n', sum{c in commodity, d in period_realized} (r_emissions_co2_commodity_d[c, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for all periods"\n', sum{(c, n) in commodity_node_co2, d in period} (r_emissions_co2_d[c, n, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for realized periods"\n', sum{(c, n) in commodity_node_co2, d in period_realized} (r_emissions_co2_d[c, n, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
 
-printf '\n"Possible issues (creating or removing energy/matter, creating inertia, ' >> fn_summary;
+printf '\n"Slack variables (creating or removing energy/matter, creating inertia, ' >> fn_summary;
 printf 'changing non-synchronous generation to synchronous)"\n' >> fn_summary;
 for {n in nodeBalance}
   {  
@@ -2077,9 +2083,9 @@ printf 'Write group results for nodes...\n';
 param fn_groupNode__d symbolic := "output/group_node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf ',,"Sum of inflows","VRE share","Curtailed VRE share","Created energy or matter",' > fn_groupNode__d;
-	printf '"Removed energy or matter"\nGroup,Period,"MWh","\% of annual inflow","\% of annual inflow",' >> fn_groupNode__d;
-	printf '"\% of annual inflow","\% of annual inflow"\n' >> fn_groupNode__d;
+    printf ',,"Sum of inflows","VRE share","Curtailed VRE share","Upward slack",' > fn_groupNode__d;
+	printf '"Downward slack"\nGroup,Period,"MWh","\% of annual inflow",' >> fn_groupNode__d;
+	printf '"\% of annual inflow","\% of annual inflow","\% of annual inflow"\n' >> fn_groupNode__d;
   }
 for {g in groupOutput, d in period_realized : sum{(g, n) in group_node} pdNodeInflow[n, d]}
   {
@@ -2104,9 +2110,9 @@ printf 'Write cost summary for realized periods...\n';
 param fn_summary_cost symbolic := "output/costs__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf ',,Investments,,,"Operational costs",,,,"Penalty costs",,,,,\nPeriod,' > fn_summary_cost;
-    printf 'Total,Unit,Connection,Storage,Commodity,CO2,O&M,Starts,"Created matter or energy","Removed ' >> fn_summary_cost;
-	printf 'matter or energy","Lack of inertia","Non-synchronous","Created reserves","Removed reserves"\n' >> fn_summary_cost;
+    printf ',,Investments,,,"Operational costs",,,,"Penalty (slack) costs",,,,,\nPeriod,' > fn_summary_cost;
+    printf 'Total,Unit,Connection,Storage,Commodity,CO2,O&M,Starts,"Upward","Downward",' >> fn_summary_cost;
+	printf '"Lack of inertia","Non-synchronous","Upward reserves","Downward reserves"\n' >> fn_summary_cost;
   }
 for {d in period_realized}
   { 
@@ -2133,8 +2139,8 @@ printf 'Write cost for realized periods and t...\n';
 param fn_summary_cost_dt symbolic := "output/costs__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf 'Period,Time,Commodity,CO2,O&M,Starts,"Created matter or energy","Removed ' > fn_summary_cost_dt;
-	printf 'matter or energy","Lack of inertia","Non-synchronous","Created reserves","Removed reserves"\n' >> fn_summary_cost_dt;
+    printf 'Period,Time,Commodity,CO2,O&M,Starts,"Upward slack","Downward slack",' > fn_summary_cost_dt;
+	printf '"Lack of inertia slack","Non-synchronous slack","Upward reserves slack","Downward reserves slack"\n' >> fn_summary_cost_dt;
   }
 for {(d, t) in dt : d in period_realized}
   { 
@@ -2249,10 +2255,10 @@ printf 'Write node results for periods...\n';
 param fn_node__d symbolic := "output/node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'Node,Period,Inflow,"From units","From connections","To units","To connections",' > fn_node__d;
-    printf '"State change","Self discharge","Create with penalty","Remove with penalty"\n' >> fn_node__d; }  # Print the header on the first solve
+    printf '"State change","Self discharge","Upward slack","Downward slack","CO2 Mt"\n' >> fn_node__d; }  # Print the header on the first solve
 for {n in node, d in period_realized}
   {
-    printf '%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
+    printf '%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
 		, n, d
         , (if (n, 'no_inflow') not in node__inflow_method then sum{(d, t) in dt : d in period_realized} pdtNodeInflow[n, d, t])
 	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_unit} r_process_source_sink_flow_d[p, source, n, d]
@@ -2263,6 +2269,7 @@ for {n in node, d in period_realized}
         , (if n in nodeSelfDischarge then r_selfDischargeLoss_d[n, d] else 0)
 	    , sum{ud in upDown : ud = 'up' && n in nodeBalance} r_penalty_nodeState_upDown_d[n, ud, d]
 	    , sum{ud in upDown : ud = 'down' && n in nodeBalance} -r_penalty_nodeState_upDown_d[n, ud, d]
+        , sum{(c, n) in commodity_node_co2} r_emissions_co2_d[c, n, d] / 1000000
 	  >> fn_node__d;
   }
 
@@ -2270,10 +2277,10 @@ printf 'Write node results for time...\n';
 param fn_node__dt symbolic := "output/node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'Node,Period,Time,Inflow,"From units","From connections","To units","To connections",' > fn_node__dt;
-    printf '"State","Self discharge","Create with penalty","Remove with penalty"\n' >> fn_node__dt; }  # Print the header on the first solve
+    printf '"State","Self discharge","Upward slack","Downward slack","CO2 t"\n' >> fn_node__dt; }  # Print the header on the first solve
 for {n in node, (d, t) in dt : d in period_realized}
   {
-    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
+    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
 		, n, d, t
         , (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
 	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_unit} r_process_source_sink_flow_dt[p, source, n, d, t]
@@ -2284,6 +2291,7 @@ for {n in node, (d, t) in dt : d in period_realized}
         , (if n in nodeSelfDischarge then r_selfDischargeLoss_dt[n, d, t] else 0)
 	    , (if n in nodeBalance then vq_state_up[n, d, t].val else 0)
 	    , (if n in nodeBalance then -vq_state_down[n, d, t].val else 0)
+        , sum{(c, n) in commodity_node_co2} r_emissions_co2_dt[c, n, d, t]
 	  >> fn_node__dt;
   }
 
