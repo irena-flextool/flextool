@@ -54,7 +54,7 @@
                     }
                 }
             ],
-            "unit__sinkNode__period": [
+            "unit__outputNode__period": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -127,7 +127,7 @@
                     }
                 }
             ],
-            "unit__sourceNode__period": [
+            "unit__inputNode__period": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -302,7 +302,7 @@
                     }
                 }
             ],
-            "unit__sourceNode__period__t": [
+            "unit__inputNode__period__t": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -445,7 +445,7 @@
                     }
                 }
             ],
-            "unit__sinkNode__period__t": [
+            "unit__outputNode__period__t": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -1211,12 +1211,12 @@
         },
         "selected_tables": [
             "node__period",
-            "unit__sinkNode__period",
-            "unit__sourceNode__period",
+            "unit__outputNode__period",
+            "unit__inputNode__period",
             "process__reserve__upDown__node__period__t",
-            "unit__sourceNode__period__t",
+            "unit__inputNode__period__t",
             "unit_online__period__t",
-            "unit__sinkNode__period__t",
+            "unit__outputNode__period__t",
             "connection__period__t",
             "connection__period",
             "costs__period",
@@ -1236,40 +1236,40 @@
             "summary_solve": {},
             "node__period__t": {},
             "node_state__period__t": {},
-            "unit__sourceNode__period__t": {},
+            "unit__inputNode__period__t": {},
             "costs__period": {},
             "unit_online__period__t": {},
             "group_node__period": {},
-            "unit__sinkNode__period__t": {},
+            "unit__outputNode__period__t": {},
             "node_capacity__period": {},
             "connection__period": {},
             "group_inertia__period__t": {},
             "unit_capacity__period": {},
-            "unit__sinkNode__period": {},
+            "unit__outputNode__period": {},
             "connection__period__t": {},
-            "unit__sourceNode__period": {}
+            "unit__inputNode__period": {}
         },
         "table_types": {
-            "unit__sinkNode__period": {
+            "unit__outputNode__period": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
                 "3": "float"
             },
-            "unit__sourceNode__period": {
+            "unit__inputNode__period": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
                 "3": "float"
             },
-            "unit__sourceNode__period__t": {
+            "unit__inputNode__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
                 "3": "string",
                 "4": "float"
             },
-            "unit__sinkNode__period__t": {
+            "unit__outputNode__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "string",

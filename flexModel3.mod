@@ -2016,17 +2016,25 @@ for {i in 1..1 : p_model['solveFirst']}
 for {s in solve_current} { printf '\n\n"Solve",%s\n', s >> fn_summary; }
 printf '"Total cost obj. function (M CUR)",%.12g,"Minimized total system cost as ', (total_cost.val / 1000000) >> fn_summary;
 printf 'given by the solver (includes all penalty costs)"\n' >> fn_summary;
-printf '"Total cost calculated full horizon (M CUR)",%.12g,', sum{d in period} 
+printf '"Total cost (calculated) full horizon (M CUR)",%.12g,', sum{d in period} 
            ( + r_costOper_and_penalty_d[d] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d] 
 		     + r_costInvest_d[d]
 			 + r_costDivest_d[d]
 		   ) / 1000000 >> fn_summary;
 printf '"Annualized operational, penalty and investment costs"\n' >> fn_summary;
-printf '"Total cost calculated realized periods (M CUR)",%.12g\n', sum{d in period_realized} 
+printf '"Total cost (calculated) realized periods (M CUR)",%.12g\n', sum{d in period_realized} 
            ( + r_costOper_and_penalty_d[d] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d] 
 		     + r_costInvest_d[d]
 			 + r_costDivest_d[d]
 		   ) / 1000000 >> fn_summary;
+printf '"Operational costs for realized periods (M CUR)",%.12g\n', sum{d in period_realized} 
+           + r_costOper_d[d] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d] / 1000000>> fn_summary;
+printf '"Investment costs for realized periods (M CUR)",%.12g\n', sum{d in period_realized} 
+           + r_costInvest_d[d] / 1000000 >> fn_summary;
+printf '"Retirement costs (negative salvage value) for realized periods (M CUR)",%.12g\n', sum{d in period_realized} 
+           + r_costDivest_d[d] / 1000000 >> fn_summary;
+printf '"Penalty (slack) costs for realized periods (M CUR)",%.12g\n', sum{d in period_realized} 
+           + r_costPenalty_d[d] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d] / 1000000 >> fn_summary;
 printf '\nPeriod' >> fn_summary;
 for {d in period}
   { printf ',%s', d >> fn_summary; }
@@ -2159,8 +2167,8 @@ for {(d, t) in dt : d in period_realized}
 	>> fn_summary_cost_dt;
   } 
 
-printf 'Write unit__sinkNode flow for periods...\n';
-param fn_unit__sinkNode__d symbolic := "output/unit__sinkNode__period.csv";
+printf 'Write unit__outputNode flow for periods...\n';
+param fn_unit__sinkNode__d symbolic := "output/unit__outputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'unit,node,period,flow\n' > fn_unit__sinkNode__d; }  # Print the header on the first solve
 for {u in process_unit, d in period_realized}
@@ -2171,8 +2179,8 @@ for {u in process_unit, d in period_realized}
       }
   } 
 
-printf 'Write unit__sinkNode flow for time...\n';
-param fn_unit__sinkNode__dt symbolic := "output/unit__sinkNode__period__t.csv";
+printf 'Write unit__outputNode flow for time...\n';
+param fn_unit__sinkNode__dt symbolic := "output/unit__outputNode__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'unit,node,period,time,flow\n' > fn_unit__sinkNode__dt; }  # Print the header on the first solve
 for {(u, m) in process_method, (d, t) in dt : d in period_realized && u in process_unit}
@@ -2183,8 +2191,8 @@ for {(u, m) in process_method, (d, t) in dt : d in period_realized && u in proce
       }
   } 
 
-printf 'Write unit__sourceNode flow for periods...\n';
-param fn_unit__sourceNode__d symbolic := "output/unit__sourceNode__period.csv";
+printf 'Write unit__inputNode flow for periods...\n';
+param fn_unit__sourceNode__d symbolic := "output/unit__inputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'unit,node,period,flow\n' > fn_unit__sourceNode__d; }  # Print the header on the first solve
 for {u in process_unit, d in period_realized}
@@ -2195,8 +2203,8 @@ for {u in process_unit, d in period_realized}
       }
   } 
 
-printf 'Write unit__sourceNode flow for time...\n';
-param fn_unit__sourceNode__dt symbolic := "output/unit__sourceNode__period__t.csv";
+printf 'Write unit__inputNode flow for time...\n';
+param fn_unit__sourceNode__dt symbolic := "output/unit__inputNode__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'unit,node,period,time,flow\n' > fn_unit__sourceNode__dt; }  # Print the header on the first solve
 for {(u, m) in process_method, (d, t) in dt : d in period_realized && u in process_unit}
@@ -2210,7 +2218,7 @@ for {(u, m) in process_method, (d, t) in dt : d in period_realized && u in proce
 printf 'Write connection flow for periods...\n';
 param fn_connection__d symbolic := "output/connection__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'connection,source,sink,period,flow\n' > fn_connection__d; }  # Print the header on the first solve
+  { printf 'connection,input,output,period,flow\n' > fn_connection__d; }  # Print the header on the first solve
 for {(c, source, sink) in process_source_sink_alwaysProcess, d in period_realized : c in process_connection}
   {
     printf '%s,%s,%s,%s,%.8g\n', c, source, sink, d, r_process_source_sink_flow_d[c, source, sink, d] >> fn_connection__d;
@@ -2219,7 +2227,7 @@ for {(c, source, sink) in process_source_sink_alwaysProcess, d in period_realize
 printf 'Write connection flow for time...\n';
 param fn_connection__dt symbolic := "output/connection__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'connection,source,sink,period,time,flow\n' > fn_connection__dt; }  # Print the header on the first solve
+  { printf 'connection,input,output,period,time,flow\n' > fn_connection__dt; }  # Print the header on the first solve
 for {(c, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt 
        : d in period_realized && c in process_connection }
   {
