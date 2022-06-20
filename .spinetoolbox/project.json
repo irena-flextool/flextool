@@ -181,8 +181,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -192.9951580377198,
-            "y": -34.42182702350128,
+            "x": -192.99515803771976,
+            "y": -36.57630986623368,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -274,8 +274,8 @@
                 "port": "",
                 "database": {
                     "type": "path",
-                    "relative": false,
-                    "path": "C:/Users/prokjt/Downloads/Results_F3.sqlite"
+                    "relative": true,
+                    "path": ".spinetoolbox/items/results/Results_F3.sqlite"
                 }
             }
         },
