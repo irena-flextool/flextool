@@ -1059,12 +1059,14 @@ s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_i
 ;
 
 s.t. profile_flow_upper_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'upper_limit'} :
-  + ( + v_flow[p, source, sink, d, t] 
-  	      * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
-			  else if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
-			  else 1
-			)
+  + ( + v_flow[p, source, sink, d, t]
+      + sum{(p, r, 'up', sink) in process_reserve_upDown_node} v_reserve[p, r, 'up', sink, d, t]
 	)
+  	* 
+	  ( if (p, source) in process_source then p_process_source_coefficient[p, source]
+	    else if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
+		else 1
+      )
   <=
   + pt_profile[f, t]
     * ( + p_entity_all_existing[p]
@@ -1075,11 +1077,12 @@ s.t. profile_flow_upper_limit {(p, source, sink, f, m) in process__source__sink_
 
 s.t. profile_flow_lower_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'lower_limit'} :
   + ( + v_flow[p, source, sink, d, t] 
-  	      * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
-			  else if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
-			  else 1
-			)
-	)
+      - sum{(p, r, 'down', sink) in process_reserve_upDown_node} v_reserve[p, r, 'down', sink, d, t]
+    )
+    * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
+        else if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
+		else 1
+	  )
   >=
   + pt_profile[f, t]
     * ( + p_entity_all_existing[p]
@@ -2091,13 +2094,13 @@ printf 'Write group results for nodes...\n';
 param fn_groupNode__d symbolic := "output/group_node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf ',,"Sum of inflows","VRE share","Curtailed VRE share","Upward slack",' > fn_groupNode__d;
-	printf '"Downward slack"\nGroup,Period,"MWh","\% of annual inflow",' >> fn_groupNode__d;
-	printf '"\% of annual inflow","\% of annual inflow","\% of annual inflow"\n' >> fn_groupNode__d;
+    printf 'group,solve,period,"sum of inflows [MWh]","VRE share [\% of annual inflow]",' > fn_groupNode__d;
+	printf '"curtailed VRE share, [\% of annual inflow]","upward slack [\% of annual inflow]",' >> fn_groupNode__d;
+	printf '"downward slack [\% of annual inflow]"\n' >> fn_groupNode__d;
   }
-for {g in groupOutput, d in period_realized : sum{(g, n) in group_node} pdNodeInflow[n, d]}
+for {g in groupOutput, s in solve_current, d in period_realized : sum{(g, n) in group_node} pdNodeInflow[n, d]}
   {
-    printf '%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g\n', g, d 
+    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g\n', g, s, d 
        , sum{(g, n) in group_node} pdNodeInflow[n, d]
        , ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 	             r_process_source_sink_flow_d[p, source, n, d] ) 
@@ -2118,14 +2121,14 @@ printf 'Write cost summary for realized periods...\n';
 param fn_summary_cost symbolic := "output/costs__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf ',,Investments,,,"Operational costs",,,,"Penalty (slack) costs",,,,,\nPeriod,' > fn_summary_cost;
-    printf 'Total,Unit,Connection,Storage,Commodity,CO2,O&M,Starts,"Upward","Downward",' >> fn_summary_cost;
-	printf '"Lack of inertia","Non-synchronous","Upward reserves","Downward reserves"\n' >> fn_summary_cost;
+    printf 'solve,period,total,"unit investment","connection investment","storage investment",' > fn_summary_cost;
+    printf 'commodity,CO2,"variable cost",starts,"upward penalty","downward penalty","inertia penalty",' >> fn_summary_cost;
+	printf '"non-synchronous penalty","upward reserve penalty","downward reserve penalty"\n' >> fn_summary_cost;
   }
-for {d in period_realized}
+for {s in solve_current, d in period_realized}
   { 
-    printf '%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
-      d,
+    printf '%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
+      s, d,
 	  (r_costOper_and_penalty_d[d] / period_share_of_year[d] + r_costInvest_d[d]) / 1000000,
       r_costInvestUnit_d[d] / 1000000,
       r_costInvestConnection_d[d] / 1000000,
@@ -2147,13 +2150,14 @@ printf 'Write cost for realized periods and t...\n';
 param fn_summary_cost_dt symbolic := "output/costs__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf 'Period,Time,Commodity,CO2,O&M,Starts,"Upward slack","Downward slack",' > fn_summary_cost_dt;
-	printf '"Lack of inertia slack","Non-synchronous slack","Upward reserves slack","Downward reserves slack"\n' >> fn_summary_cost_dt;
+    printf 'solve,period,time,commodity,CO2,variable,starts,"upward slack penalty","downward slack penalty",' > fn_summary_cost_dt;
+	printf '"inertia slack penalty","non-synchronous slack penalty","upward reserve slack penalty",' >> fn_summary_cost_dt;
+	printf '""downward reserves slack penalty"\n' >> fn_summary_cost_dt;
   }
-for {(d, t) in dt : d in period_realized}
+for {s in solve_current, (d, t) in dt : d in period_realized}
   { 
-    printf '%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
-      d, t,
+    printf '%s,%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
+      s, d, t,
 	  sum{(c, n) in commodity_node} r_cost_commodity_dt[c, n, d, t],
 	  sum{(g, c, n, d) in group_commodity_node_period_co2} r_cost_co2_dt[g, c, n, d, t],
 	  sum{p in process} r_cost_process_variable_cost_dt[p, d, t],
@@ -2170,89 +2174,123 @@ for {(d, t) in dt : d in period_realized}
 printf 'Write unit__outputNode flow for periods...\n';
 param fn_unit__sinkNode__d symbolic := "output/unit__outputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'unit,node,period,flow\n' > fn_unit__sinkNode__d; }  # Print the header on the first solve
-for {u in process_unit, d in period_realized}
+  { 
+    printf 'solve,period' > fn_unit__sinkNode__d;  # Print the header on the first solve
+	for {(u, sink) in process_sink : u in process_unit} printf ',%s', u >> fn_unit__sinkNode__d;
+	printf '\n,' >> fn_unit__sinkNode__d;
+	for {(u, sink) in process_sink : u in process_unit} printf ',%s', sink >> fn_unit__sinkNode__d;
+  }
+for {s in solve_current, d in period_realized}
   {
-    for {(u, sink) in process_sink}
-      {
-        printf '%s,%s,%s,%.8g\n', u, sink, d, r_process_sink_flow_d[u, sink, d] >> fn_unit__sinkNode__d;
-      }
+	printf '\n%s,%s', s, d >> fn_unit__sinkNode__d;
+    for {(u, sink) in process_sink : u in process_unit}
+      { printf ',%.8g', r_process_sink_flow_d[u, sink, d] >> fn_unit__sinkNode__d; }
   } 
 
 printf 'Write unit__outputNode flow for time...\n';
 param fn_unit__sinkNode__dt symbolic := "output/unit__outputNode__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'unit,node,period,time,flow\n' > fn_unit__sinkNode__dt; }  # Print the header on the first solve
-for {(u, m) in process_method, (d, t) in dt : d in period_realized && u in process_unit}
+    printf 'solve,period,time' > fn_unit__sinkNode__dt;  # Print the header on the first solve
+	for {(u, sink) in process_sink : u in process_unit} printf ',%s', u >> fn_unit__sinkNode__dt;
+	printf '\n,,' >> fn_unit__sinkNode__dt;
+	for {(u, sink) in process_sink : u in process_unit} printf ',%s', sink >> fn_unit__sinkNode__dt;
+for {s in solve_current, (d, t) in dt : d in period_realized}
   {
-    for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink}
-      {
-        printf '%s,%s,%s,%s,%.8g\n', u, sink, d, t, r_process_source_sink_flow_dt[u, source, sink, d, t] >> fn_unit__sinkNode__dt;
-      }
+	printf '\n%s,%s,%s', s, d, t >> fn_unit__sinkNode__dt;
+    for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit}
+      { printf ',%.8g', r_process_source_sink_flow_dt[u, source, sink, d, t] >> fn_unit__sinkNode__dt; }
   } 
 
 printf 'Write unit__inputNode flow for periods...\n';
 param fn_unit__sourceNode__d symbolic := "output/unit__inputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'unit,node,period,flow\n' > fn_unit__sourceNode__d; }  # Print the header on the first solve
-for {u in process_unit, d in period_realized}
+    printf 'solve,period' > fn_unit__sourceNode__d;  # Print the header on the first solve
+	for {(u, source) in process_source : u in process_unit} printf ',%s', u >> fn_unit__sourceNode__d;
+	printf '\n,' >> fn_unit__sourceNode__d;
+	for {(u, source) in process_source : u in process_unit} printf ',%s', source >> fn_unit__sourceNode__d;
+for {s in solve_current, d in period_realized}
   {
-    for {(u, source) in process_source}
-      {
-        printf '%s,%s,%s,%.8g\n', u, source, d, r_process_source_flow_d[u, source, d] >> fn_unit__sourceNode__d;
-      }
+	printf '\n%s,%s', s, d >> fn_unit__sourceNode__d;
+    for {(u, source) in process_source : u in process_unit}
+      { printf ',%.8g', r_process_source_flow_d[u, source, d] >> fn_unit__sourceNode__d; }
   } 
 
 printf 'Write unit__inputNode flow for time...\n';
 param fn_unit__sourceNode__dt symbolic := "output/unit__inputNode__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'unit,node,period,time,flow\n' > fn_unit__sourceNode__dt; }  # Print the header on the first solve
-for {(u, m) in process_method, (d, t) in dt : d in period_realized && u in process_unit}
+    printf 'solve,period,time' > fn_unit__sourceNode__dt;  # Print the header on the first solve
+	for {(u, source) in process_source : u in process_unit} printf ',%s', u >> fn_unit__sourceNode__dt;
+	printf '\n,,' >> fn_unit__sourceNode__dt;
+	for {(u, source) in process_source : u in process_unit} printf ',%s', source >> fn_unit__sourceNode__dt;
+for {s in solve_current, (d, t) in dt : d in period_realized}
   {
-    for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source}
-      {
-        printf '%s,%s,%s,%s,%.8g\n', u, source, d, t, r_process_source_sink_flow_dt[u, source, sink, d, t] >> fn_unit__sourceNode__dt;
-      }
+	printf '\n%s,%s,%s', s, d, t >> fn_unit__sourceNode__dt;
+    for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}
+      { printf ',%.8g', r_process_source_sink_flow_dt[u, source, sink, d, t] >> fn_unit__sourceNode__dt; }
   } 
 
 printf 'Write connection flow for periods...\n';
 param fn_connection__d symbolic := "output/connection__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'connection,input,output,period,flow\n' > fn_connection__d; }  # Print the header on the first solve
-for {(c, source, sink) in process_source_sink_alwaysProcess, d in period_realized : c in process_connection}
+  { printf 'solve,period' > fn_connection__d;  # Print the header on the first solve
+	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', c >> fn_connection__d;
+	printf '\n,' >> fn_connection__d;
+	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', input >> fn_connection__d;
+	printf '\n,' >> fn_connection__d;
+	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection__d;
+  }
+for {s in solve_current, d in period_realized}
   {
-    printf '%s,%s,%s,%s,%.8g\n', c, source, sink, d, r_process_source_sink_flow_d[c, source, sink, d] >> fn_connection__d;
-  } 
+	printf '\n%s,%s', s, d >> fn_connection__d;
+    for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
+	  { printf ',%.8g', r_process_source_sink_flow_d[c, c, output, d] - r_process_source_sink_flow_d[c, c, input, d] >> fn_connection__d; }
+  }
 
 printf 'Write connection flow for time...\n';
 param fn_connection__dt symbolic := "output/connection__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'connection,input,output,period,time,flow\n' > fn_connection__dt; }  # Print the header on the first solve
-for {(c, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt 
-       : d in period_realized && c in process_connection }
+  { printf 'solve,period,time' > fn_connection__dt;  # Print the header on the first solve
+	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', c >> fn_connection__dt;
+	printf '\n,,' >> fn_connection__dt;
+	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', input >> fn_connection__dt;
+	printf '\n,,' >> fn_connection__dt;
+	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection__dt;
+  }
+for {s in solve_current, (d, t) in dt : d in period_realized}
   {
-    printf '%s,%s,%s,%s,%s,%.8g\n', c, source, sink, d, t, r_process_source_sink_flow_dt[c, source, sink, d, t] >> fn_connection__dt;
-  } 
+	printf '\n%s,%s,%s', s, d, t >> fn_connection__dt;
+    for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
+	  { printf ',%.8g', r_process_source_sink_flow_dt[c, c, output, d, t] - r_process_source_sink_flow_dt[c, c, input, d, t] >> fn_connection__dt; }
+  }
 
 printf 'Write reserve from processes over time...\n';
 param fn_process__reserve__upDown__node__dt symbolic := "output/process__reserve__upDown__node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'process,reserve,upDown,node,period,time,reservation\n' > fn_process__reserve__upDown__node__dt; }  # Print the header on the first solve
-for {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt}
+  { printf 'solve,period,time' > fn_process__reserve__upDown__node__dt; }  # Print the header on the first solve
+    for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', p >> fn_process__reserve__upDown__node__dt;
+	printf '\n,,' >> fn_process__reserve__upDown__node__dt;
+    for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', r >> fn_process__reserve__upDown__node__dt;
+	printf '\n,,' >> fn_process__reserve__upDown__node__dt;
+    for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', ud >> fn_process__reserve__upDown__node__dt;
+	printf '\n,,' >> fn_process__reserve__upDown__node__dt;
+    for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', n >> fn_process__reserve__upDown__node__dt;
+for {s in solve_current, (d, t) in dt : d in period_realized}
   {
-    printf '%s,%s,%s,%s,%s,%s,%.8g\n', p, r, ud, n, d, t, v_reserve[p, r, ud, n, d, t].val >> fn_process__reserve__upDown__node__dt;
+	printf '\n%s,%s,%s', s, d, t >> fn_process__reserve__upDown__node__dt;
+	for {(p, r, ud, n) in process_reserve_upDown_node_active}
+	  { printf ',%.8g', v_reserve[p, r, ud, n, d, t].val >> fn_process__reserve__upDown__node__dt; }
   }
 
 printf 'Write online status of units over time...\n';
 param fn_unit_online__dt symbolic := "output/unit_online__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'period,time' > fn_unit_online__dt; 
+  { printf 'solve,period,time' > fn_unit_online__dt; 
     for {p in process_unit  : p in process_online}
       { printf ',%s', p >> fn_unit_online__dt; }
   }  # Print the header on the first solve
-for {(d, t) in dt}
+for {s in solve_current, (d, t) in dt}
   {
-    printf '\n%s,%s', d, t >> fn_unit_online__dt;
+    printf '\n%s,%s,%s', s, d, t >> fn_unit_online__dt;
 	for {p in process_unit : p in process_online}
 	  {
 	    printf ',%.8g', v_online_linear[p, d, t].val >> fn_unit_online__dt;
@@ -2262,12 +2300,12 @@ for {(d, t) in dt}
 printf 'Write node results for periods...\n';
 param fn_node__d symbolic := "output/node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'Node,Period,Inflow,"From units","From connections","To units","To connections",' > fn_node__d;
-    printf '"State change","Self discharge","Upward slack","Downward slack","CO2 Mt"\n' >> fn_node__d; }  # Print the header on the first solve
-for {n in node, d in period_realized}
+  { printf 'node,solve,period,inflow,"from units","from connections","to units","to connections",' > fn_node__d;
+    printf '"state change","self discharge","upward slack","downward slack"\n' >> fn_node__d; }  # Print the header on the first solve
+for {n in node, s in solve_current, d in period_realized}
   {
-    printf '%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
-		, n, d
+    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
+		, n, s, d
         , (if (n, 'no_inflow') not in node__inflow_method then sum{(d, t) in dt : d in period_realized} pdtNodeInflow[n, d, t])
 	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_unit} r_process_source_sink_flow_d[p, source, n, d]
 	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_connection} r_process_source_sink_flow_d[p, source, n, d]
@@ -2277,19 +2315,30 @@ for {n in node, d in period_realized}
         , (if n in nodeSelfDischarge then r_selfDischargeLoss_d[n, d] else 0)
 	    , sum{ud in upDown : ud = 'up' && n in nodeBalance} r_penalty_nodeState_upDown_d[n, ud, d]
 	    , sum{ud in upDown : ud = 'down' && n in nodeBalance} -r_penalty_nodeState_upDown_d[n, ud, d]
-        , sum{(c, n) in commodity_node_co2} r_emissions_co2_d[c, n, d] / 1000000
 	  >> fn_node__d;
+  }
+
+printf 'Write node CO2 results for periods...\n';
+param fn_node_co2__d symbolic := "output/node__period_co2.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'node,solve,period,"CO2 [Mt]"\n' > fn_node_co2__d; }  # Print the header on the first solve 
+for {n in node, s in solve_current, d in period_realized}
+  {
+    printf '%s,%s,%s,%.8g\n'
+		, n, s, d
+        , sum{(c, n) in commodity_node_co2} r_emissions_co2_d[c, n, d] / 1000000
+	  >> fn_node_co2__d;
   }
 
 printf 'Write node results for time...\n';
 param fn_node__dt symbolic := "output/node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'Node,Period,Time,Inflow,"From units","From connections","To units","To connections",' > fn_node__dt;
-    printf '"State","Self discharge","Upward slack","Downward slack","CO2 t"\n' >> fn_node__dt; }  # Print the header on the first solve
-for {n in node, (d, t) in dt : d in period_realized}
+  { printf 'node,solve,period,time,inflow,"from units","from connections","to units","to connections",' > fn_node__dt;
+    printf '"state","self discharge","upward slack","downward slack"\n' >> fn_node__dt; }  # Print the header on the first solve
+for {n in node, s in solve_current, (d, t) in dt : d in period_realized}
   {
-    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
-		, n, d, t
+    printf '%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
+		, n, s, d, t
         , (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
 	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_unit} r_process_source_sink_flow_dt[p, source, n, d, t]
 	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_connection} r_process_source_sink_flow_dt[p, source, n, d, t]
@@ -2299,18 +2348,20 @@ for {n in node, (d, t) in dt : d in period_realized}
         , (if n in nodeSelfDischarge then r_selfDischargeLoss_dt[n, d, t] else 0)
 	    , (if n in nodeBalance then vq_state_up[n, d, t].val else 0)
 	    , (if n in nodeBalance then -vq_state_down[n, d, t].val else 0)
-        , sum{(c, n) in commodity_node_co2} r_emissions_co2_dt[c, n, d, t]
 	  >> fn_node__dt;
   }
 
 printf 'Write nodal prices for time...\n';
 param fn_nodal_prices__dt symbolic := "output/node_prices__period__t.csv";
-printf 'period,time' > fn_nodal_prices__dt;
-for {n in nodeBalance}
-  { printf ',%s', n >> fn_nodal_prices__dt; }
-for {(d, t, t_previous, t_previous_within_block) in dttt : d in period_realized}
+for {i in 1..1 : p_model['solveFirst']}
   {
-    printf '\n%s,%s', d, t >> fn_nodal_prices__dt;
+    printf 'solve,period,time' > fn_nodal_prices__dt;
+    for {n in nodeBalance}
+      { printf ',%s', n >> fn_nodal_prices__dt; }
+  }
+for {s in solve_current, (d, t, t_previous, t_previous_within_block) in dttt : d in period_realized}
+  {
+    printf '\n%s,%s,%s', s, d, t >> fn_nodal_prices__dt;
     for {n in nodeBalance}
 	  {
 	    printf ',%8g', nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual / p_discount_with_perpetuity_operations[d] * period_share_of_year[d] >> fn_nodal_prices__dt;
@@ -2320,28 +2371,26 @@ for {(d, t, t_previous, t_previous_within_block) in dttt : d in period_realized}
 printf 'Write node state for time..\n';
 param fn_nodeState__dt symbolic := "output/node_state__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'period,time' > fn_nodeState__dt;
+  { printf 'solve,period,time' > fn_nodeState__dt;
     for {n in nodeState}
       { printf ',%s', n >> fn_nodeState__dt; }
   }
-for {(d, t) in dt : d in period_realized && d not in period_invest}
-  { printf '\n%s,%s', d, t >> fn_nodeState__dt;
+for {s in solve_current, (d, t) in dt : d in period_realized && d not in period_invest}
+  { printf '\n%s,%s', s, d, t >> fn_nodeState__dt;
     for {n in nodeState} 
       {
 	    printf ',%.8g', v_state[n, d, t].val >> fn_nodeState__dt;
       }
   }
-		
-
 
 printf 'Write group inertia over time...\n';
 param fn_group_inertia__dt symbolic := "output/group_inertia__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'group,period,time,inertia,penalty_variable\n' > fn_group_inertia__dt; }
-for {g in groupInertia, (d, t) in dt : d in period_realized}
+  { printf 'group,solve,period,time,inertia,penalty_variable\n' > fn_group_inertia__dt; }
+for {g in groupInertia, s in solve_current, (d, t) in dt : d in period_realized}
   {
-    printf '%s,%s,%s,%.8g,%.8g\n'
-	    , g, d, t
+    printf '%s,%s,%s,%s,%.8g,%.8g\n'
+	    , g, s, d, t
 		, + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']} 
             ( + (if p in process_online then v_online_linear[p, d, t]) 
 	          + (if p not in process_online then v_flow[p, source, sink, d, t])

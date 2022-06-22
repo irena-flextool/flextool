@@ -130,7 +130,7 @@
                 "resource_filters": {
                     "db_url@Input_data": {
                         "scenario_filter": [
-                            526
+                            542
                         ],
                         "tool_filter": [
                             1
@@ -156,8 +156,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 67.53692343162805,
-            "y": 15.229536496772248,
+            "x": 69.55220661086227,
+            "y": 13.21425331753801,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": []
@@ -235,8 +235,8 @@
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -56.21904776160235,
-            "y": -7.989592925639274,
+            "x": -55.211406171985246,
+            "y": -5.974309746405032,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -250,11 +250,11 @@
         "Import_results": {
             "type": "Importer",
             "description": "",
-            "x": 191.12415205969472,
-            "y": 30.81096261942087,
+            "x": 185.07830252199196,
+            "y": 25.772754671335267,
             "specification": "Import_flex3",
             "cancel_on_error": false,
-            "purge_before_writing": true,
+            "purge_before_writing": false,
             "on_conflict": "replace",
             "file_selection": [
                 [
@@ -282,8 +282,8 @@
         "To_Excel": {
             "type": "Exporter",
             "description": "",
-            "x": 201.79195622213527,
-            "y": 141.5164368311078,
+            "x": 205.578563828954,
+            "y": 141.51643683110777,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
