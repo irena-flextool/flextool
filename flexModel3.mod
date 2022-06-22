@@ -291,7 +291,11 @@ set process__source__sink__profile__profile_method :=
 	process__source__sink__profile__profile_method_direct
 ;
 
+set process__source__sink_isNodeSink := {(p, source, sink) in process_source_sink : (p, sink) in process_sink};
+
 set process_online 'processes with an online status' := setof {(p, m) in process_method : m in method_LP} p;
+
+
 
 set commodityParam;
 set commodityPeriodParam within commodityParam;
@@ -344,6 +348,21 @@ param pdGroup {g in group, param in groupPeriodParam, d in period} :=
 		  else if (g, param) in group__param 
 		  then p_group[g, param]
 		  else 0;
+
+set reserve__upDown__group__method_timeseries := {(r, ud, ng, r_m) in reserve__upDown__group__method : r_m = 'timeseries_only' || r_m = 'both'};
+set reserve__upDown__group__method_dynamic := {(r, ud, ng, r_m) in reserve__upDown__group__method : r_m = 'dynamic_only' || r_m = 'both'};
+
+set process__method_indirect := {(p, m) in process_method : m in method_indirect};
+
+set process__source__sink_isNodeSink_no2way := {(p, source, sink) in process_source_sink : (p, sink) in process_sink 
+	                                       && sum{(p,m) in process_method : m not in method_2way_1var} 1};
+set process__source__sink_isNodeSink_yes2way := {(p, source, sink) in process_source_sink : (p, sink) in process_sink 
+	                                       && sum{(p,m) in process_method : m in method_2way_1var} 1};
+set process__source__sink_isNodeSink_2way_2var := {(p, source, sink) in process_source_sink : (p, sink) in process_sink 
+	                                       && sum{(p,m) in process_method : m in method_2way_2var } 1};
+
+set gdt_maxInstantFlow := {g in group, (d, t) in dt : pdGroup[g, 'max_instant_flow', d]};
+set gdt_minInstantFlow := {g in group, (d, t) in dt : pdGroup[g, 'min_instant_flow', d]};
 		  
 set node__param__time dimen 3 within {node, nodeTimeParam, time};
 param p_node {node, nodeParam} default 0;
@@ -503,6 +522,7 @@ param ptReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in res
 param p_process_reserve_upDown_node {process, reserve, upDown, node, reserveParam} default 0;
 set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group} 1};
 set prundt := {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt};
+set pdt_online := {p in process_online, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
 
 param p_constraint_constant {constraint};
 param p_process_node_constraint_coefficient {process, node, constraint};
@@ -599,6 +619,9 @@ param ptProcess__source__sink__t_varCost_alwaysProcess {(p, source, sink) in pro
 	 then ptProcess[p, 'variable_cost', t])
 ;
 
+set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : ptProcess__source__sink__t_varCost[p, source, sink, t]};
+set pssdt_varCost_eff := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && ptProcess_source[p, source, 'variable_cost', t]};
+
 set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d]};
 set pd_invest := {(p, d) in ed_invest : p in process};
 set nd_invest := {(n, d) in ed_invest : n in node};
@@ -689,6 +712,12 @@ set process_source_sink_dt_ramp :=
             || (p, source, sink, d, t) in process_source_sink_dt_ramp_up
         };
 
+set process_source_sink_dttt_ramp_up := {(p, source, sink) in process_source_sink_ramp_limit_up, (d, t, t_previous, t_previous_within_block) in dttt
+		: (p, source, sink, d, t) in process_source_sink_dt_ramp};
+
+set process_source_sink_dttt_ramp_down := {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t, t_previous, t_previous_within_block) in dttt
+		: (p, source, sink, d, t) in process_source_sink_dt_ramp};
+
 set process_reserve_upDown_node_increase_reserve_ratio :=
         {(p, r, ud, n) in process_reserve_upDown_node_active :
 		    p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'] > 0
@@ -700,6 +729,8 @@ set group_commodity_node_period_co2 :=
 			&& p_commodity[c, 'co2_content'] 
 			&& pdGroup[g, 'co2_price', d]
 		};
+
+set gcndt_co2 := {(g, c, n, d) in group_commodity_node_period_co2, t in time : (d, t) in dt};
 
 set commodity_node_co2 :=
         {(c, n) in commodity_node : 
@@ -871,7 +902,8 @@ printf 'Checking: Invalid combinations between conversion/transfer methods and t
 check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
 
 minimize total_cost:
-      + sum {(c, n) in commodity_node, (d, t) in dt} pdCommodity[c, 'price', d]
+      + sum {(c, n) in commodity_node, (d, t) in dt} 
+	      pdCommodity[c, 'price', d]
 	      * (
 		      # Buying a commodity (increases the objective function)
 	          + sum {(p, n, sink) in process_source_sink_noEff } 
@@ -891,7 +923,7 @@ minimize total_cost:
 			      + v_flow[p, source, n, d, t]
 				)  
 		    ) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
-	  + sum {(g, c, n, d) in group_commodity_node_period_co2, t in time : (d, t) in dt} 
+	  + sum {(g, c, n, d, t) in gcndt_co2} 
 	      p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
 	      * (
 		      # Paying for CO2 (increases the objective function)
@@ -912,12 +944,12 @@ minimize total_cost:
 			      + v_flow[p, source, n, d, t]
 				)  
 			) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
- 	 + sum {p in process_online, (d, t) in dt : pdProcess[p, 'startup_cost', d]} (v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d] * p_entity_unitsize[p]) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
-     + sum {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : ptProcess__source__sink__t_varCost[p, source, sink, t]}
+ 	 + sum {(p, d, t) in pdt_online} (v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d] * p_entity_unitsize[p]) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
+     + sum {(p, source, sink, d, t) in pssdt_varCost_noEff}
        ( + ptProcess__source__sink__t_varCost[p, source, sink, t]
 	       * v_flow[p, source, sink, d, t]
        ) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
-     + sum {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && ptProcess_source[p, source, 'variable_cost', t]}
+     + sum {(p, source, sink, d, t) in pssdt_varCost_eff}
 	   ( + ptProcess_source[p, source, 'variable_cost', t]
 	       * v_flow[p, source, sink, d, t] 
            	       * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
@@ -928,11 +960,11 @@ minimize total_cost:
 			          * p_entity_unitsize[p]
     			 )	  
 	   ) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
-     + sum {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && ptProcess_sink[p, sink, 'variable_cost', t]}
+     + sum {(p, source, sink, d, t) in pssdt_varCost_eff}
 	   ( + ptProcess_sink[p, sink, 'variable_cost', t]
 	       * v_flow[p, source, sink, d, t] 
 	   ) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
-     + sum {(p, source, sink) in process_source_sink_eff, (d, t) in dt : ptProcess[p, 'variable_cost', t]}
+     + sum {(p, source, sink, d, t) in pssdt_varCost_eff}
 	   ( + ptProcess[p, 'variable_cost', t]
 	       * v_flow[p, source, sink, d, t] 
        ) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
@@ -996,7 +1028,7 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   - vq_state_down[n, d, t]
 ;
 
-s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__method, (d, t) in dt : r_m = 'timeseries_only' || r_m = 'both'} :
+s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__method_timeseries, (d, t) in dt} :
   + sum {(p, r, ud, n) in process_reserve_upDown_node_active 
 	      :  (sum{(p, m) in process_method : m not in method_1var_per_way} 1 || (p, n) in process_sink)
 		  && (ng, n) in group_node 
@@ -1017,7 +1049,7 @@ s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__m
   + ptReserve_upDown_group[r, ud, ng, 'reservation', t]
 ;
 
-s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__method, (d, t) in dt : r_m = 'dynamic_only' || r_m = 'both'} :
+s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__method_dynamic, (d, t) in dt} :
   + sum {(p, r, ud, n) in process_reserve_upDown_node_active 
 	      : sum{(p, m) in process_method : m in method_1var_per_way} 1
 		  && (ng, n) in group_node 
@@ -1044,7 +1076,7 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
 ;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
-s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_indirect} :
+s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t) in dt} :
   + sum {source in entity : (p, source) in process_source} 
     ( + v_flow[p, source, p, d, t] 
   	      * p_process_source_coefficient[p, source]
@@ -1136,8 +1168,7 @@ s.t. profile_state_fixed_limit {(n, f, 'fixed') in node__profile__profile_method
 	  )
 ;
 
-s.t. process_constraint_greater_than {(c, s) in constraint__sense, (d, t) in dt 
-     : s in sense_greater_than} :
+s.t. process_constraint_greater_than {(c, 'greater_than') in constraint__sense, (d, t) in dt} :
   + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_constraint}
     ( + v_flow[p, source, sink, d, t]
 	      * p_process_node_constraint_coefficient[p, source, c]
@@ -1150,8 +1181,7 @@ s.t. process_constraint_greater_than {(c, s) in constraint__sense, (d, t) in dt
   + p_constraint_constant[c]
 ;
 	
-s.t. process_constraint_less_than {(c, s) in constraint__sense, (d, t) in dt 
-     : s in sense_less_than} :
+s.t. process_constraint_less_than {(c, 'lesser_than') in constraint__sense, (d, t) in dt} :
   + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_constraint}
     ( + v_flow[source, source, p, d, t]
 	      * p_process_node_constraint_coefficient[p, source, c]
@@ -1164,8 +1194,7 @@ s.t. process_constraint_less_than {(c, s) in constraint__sense, (d, t) in dt
   + p_constraint_constant[c]
 ;
 
-s.t. process_constraint_equal {(c, s) in constraint__sense, (d, t) in dt 
-     : s in sense_equal} :
+s.t. process_constraint_equal {(c, 'equal') in constraint__sense, (d, t) in dt} :
   + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_constraint}
     ( + v_flow[p, source, sink, d, t]
 	      * p_process_node_constraint_coefficient[p, source, c]
@@ -1186,8 +1215,7 @@ s.t. maxState {n in nodeState, (d, t) in dt} :
   - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[n]
 ;
 
-s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt 
-     : (p, sink) in process_sink } :
+s.t. maxToSink {(p, source, sink) in process__source__sink_isNodeSink, (d, t) in dt} :
   + v_flow[p, source, sink, d, t]
   + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node_active} v_reserve[p, r, 'up', sink, d, t]
   <=
@@ -1205,20 +1233,14 @@ s.t. maxToSink {(p, source, sink) in process_source_sink, (d, t) in dt
     ) 
 ;
 
-s.t. minToSink {(p, source, sink) in process_source_sink, (d, t) in dt
-     : (p, sink) in process_sink 
-	 && sum{(p,m) in process_method : m not in method_2way_1var} 1 
-} :
+s.t. minToSink {(p, source, sink) in process__source__sink_isNodeSink_no2way, (d, t) in dt} :
   + v_flow[p, source, sink, d, t]
   >=
   + (if p in process_online then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] else 0)
 ;
 
 # Special equation to limit the 1variable connection on the negative transfer
-s.t. minToSink_1var {(p, source, sink) in process_source_sink, (d, t) in dt
-     : (p, sink) in process_sink 
-	 && sum{(p,m) in process_method : m in method_2way_1var} 1 
-} :
+s.t. minToSink_1var {(p, source, sink) in process__source__sink_isNodeSink_yes2way, (d, t) in dt} :
   + v_flow[p, source, sink, d, t]
   >=
   - ( if p not in process_online then
@@ -1254,10 +1276,7 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt} :
     )  
 ;
 
-s.t. minToSource {(p, source, sink) in process_source_sink, (d, t) in dt
-     : (p, sink) in process_sink 
-	 && sum{(p,m) in process_method : m in method_2way_2var } 1 
-} :
+s.t. minToSource {(p, source, sink) in process__source__sink_isNodeSink_2way_2var, (d, t) in dt} :
   + v_flow[p, sink, source, d, t]
   >=
   + (if p in process_online then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] else 0)
@@ -1326,8 +1345,7 @@ s.t. ramp_up_variable {(p, source, sink) in process_source_sink_ramp, (d, t, t_p
   - v_flow[p, source, sink, d, t_previous]
 ;
 
-s.t. ramp_up_constraint {(p, source, sink) in process_source_sink_ramp_limit_up, (d, t, t_previous, t_previous_within_block) in dttt
-		: (p, source, sink, d, t) in process_source_sink_dt_ramp} :
+s.t. ramp_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block) in process_source_sink_dttt_ramp_up} :
   + v_ramp[p, source, sink, d, t]
   + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'up', sink, d, t] / step_duration[d, t])
@@ -1345,8 +1363,7 @@ s.t. ramp_up_constraint {(p, source, sink) in process_source_sink_ramp_limit_up,
   + ( if p in process_online then v_startup_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
 ;
 
-s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t, t_previous, t_previous_within_block) in dttt
-		: (p, source, sink, d, t) in process_source_sink_dt_ramp} :
+s.t. ramp_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block) in process_source_sink_dttt_ramp_down} :
   + v_ramp[p, source, sink, d, t]
   + sum {r in reserve : (p, r, 'down', sink) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'down', sink, d, t] / step_duration[d, t])
@@ -1364,37 +1381,37 @@ s.t. ramp_down {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t,
   - ( if p in process_online then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
 ;
 
-s.t. reserve_process_upward{(p, r, ud, n, d, t) in prundt : ud = 'up'} :
-  + v_reserve[p, r, ud, n, d, t]
+s.t. reserve_process_upward{(p, r, 'ud', n, d, t) in prundt} :
+  + v_reserve[p, r, 'ud', n, d, t]
   <=
   ( if p in process_online then
       + v_online_linear[p, d, t] 
-	    * p_process_reserve_upDown_node[p, r, ud, n, 'max_share']
+	    * p_process_reserve_upDown_node[p, r, 'ud', n, 'max_share']
 		* p_entity_unitsize[p]
     else
-      + p_process_reserve_upDown_node[p, r, ud, n, 'max_share'] 
+      + p_process_reserve_upDown_node[p, r, 'ud', n, 'max_share'] 
         * (
             + p_entity_all_existing[p]
             + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
           )
-    	* ( if (sum{(p, prof, m) in process__profile__profile_method : m = 'upper_limit'} 1) then
-	          ( + sum{(p, prof, m) in process__profile__profile_method : m = 'upper_limit'} pt_profile[prof, t] )
+    	* ( if (sum{(p, prof, 'upper_limit') in process__profile__profile_method} 1) then
+	          ( + sum{(p, prof, 'upper_limit') in process__profile__profile_method} pt_profile[prof, t] )
 	        else 1
 	      )
   )
 ;
 
-s.t. reserve_process_downward{(p, r, ud, n, d, t) in prundt : ud = 'down'} :
-  + v_reserve[p, r, ud, n, d, t]
+s.t. reserve_process_downward{(p, r, 'down', n, d, t) in prundt} :
+  + v_reserve[p, r, 'down', n, d, t]
   <=
-  + p_process_reserve_upDown_node[p, r, ud, n, 'max_share']
+  + p_process_reserve_upDown_node[p, r, 'down', n, 'max_share']
     * ( + sum{(p, source, n) in process_source_sink} v_flow[p, source, n, d, t]
         - ( + p_entity_all_existing[p]
             + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
-          ) * ( if (sum{(p, prof, m) in process__profile__profile_method : m = 'lower_limit'} 1) then
-	              ( + sum{(p, prof, m) in process__profile__profile_method : m = 'lower_limit'} pt_profile[prof, t] )
+          ) * ( if (sum{(p, prof, 'lower_limit') in process__profile__profile_method} 1) then
+	              ( + sum{(p, prof, 'lower_limit') in process__profile__profile_method} pt_profile[prof, t] )
 	          )
 	  )		  
 ;
@@ -1615,7 +1632,7 @@ s.t. minCumulative_flow_period {g in group, d in period : pd_group[g, 'min_cumul
       * hours_in_period[d]
 ;
 
-s.t. maxInstant_flow {g in group, (d, t) in dt : pdGroup[g, 'max_instant_flow', d]} :
+s.t. maxInstant_flow {(g, d, t) in gdt_maxInstantFlow} :
   + sum{(g, p, n) in group_process_node} (
       # n is sink
       + sum {(p, source, n) in process_source_sink} (
@@ -1638,7 +1655,7 @@ s.t. maxInstant_flow {g in group, (d, t) in dt : pdGroup[g, 'max_instant_flow', 
   + pdGroup[g, 'max_instant_flow', d] 
 ;
 
-s.t. minInstant_flow {g in group, (d, t) in dt : pdGroup[g, 'min_instant_flow', d]} :
+s.t. minInstant_flow {(g, d, t) in gdt_minInstantFlow} :
   + sum{(g, p, n) in group_process_node} (
       # n is sink
       + sum {(p, source, n) in process_source_sink} (
@@ -1817,7 +1834,7 @@ param r_emissions_co2_dt{(c, n) in commodity_node_co2, (d, t) in dt} :=
 param r_emissions_co2_d{(c, n) in commodity_node_co2, d in period} :=
   + sum{t in time : (d, t) in dt} r_emissions_co2_dt[c, n, d, t];
 
-param r_cost_co2_dt{(g, c, n, d) in group_commodity_node_period_co2, t in time : (d, t) in dt} := 
+param r_cost_co2_dt{(g, c, n, d, t) in gcndt_co2} := 
   + r_emissions_co2_dt[c, n, d, t] 
     * pdGroup[g, 'co2_price', d]
 ;	  
@@ -1890,7 +1907,7 @@ param r_cost_entity_divest_d{(e, d) in ed_divest} :=
 
 param r_costOper_dt{(d, t) in dt} :=
   + sum{(c, n) in commodity_node} r_cost_commodity_dt[c, n, d, t]
-  + sum{(g, c, n, d) in group_commodity_node_period_co2} r_cost_co2_dt[g, c, n, d, t]
+  + sum{(g, c, n, d, t) in gcndt_co2} r_cost_co2_dt[g, c, n, d, t]
   + sum{p in process} r_cost_process_variable_cost_dt[p, d, t]
 #  + sum{(p, source, sink, m) in process__source__sink__ramp_method : m in ramp_cost_method}
 #      + r_cost_process_ramp_cost_dt[p, d, t]
@@ -1909,7 +1926,7 @@ param r_costOper_and_penalty_dt{(d,t) in dt} :=
   + r_costPenalty_dt[d, t]
 ;
 
-param r_cost_co2_d{d in period} := sum{(g, c, n, d) in group_commodity_node_period_co2, (d, t) in dt} r_cost_co2_dt[g, c, n, d, t];
+param r_cost_co2_d{d in period} := sum{(g, c, n, d, t) in gcndt_co2} r_cost_co2_dt[g, c, n, d, t];
 param r_cost_commodity_d{d in period} := sum{(c, n) in commodity_node, (d, t) in dt} r_cost_commodity_dt[c, n, d, t];
 param r_cost_variable_d{d in period} := sum{p in process, (d, t) in dt} r_cost_process_variable_cost_dt[p, d, t];
 #param r_cost_ramp_d{d in period} := sum{(p, source, sink, m) in process__source__sink__ramp_method, (d, t) in dt : m in ramp_cost_method} r_cost_process_ramp_cost_dt[p, d, t];
@@ -2159,7 +2176,7 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
     printf '%s,%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
       s, d, t,
 	  sum{(c, n) in commodity_node} r_cost_commodity_dt[c, n, d, t],
-	  sum{(g, c, n, d) in group_commodity_node_period_co2} r_cost_co2_dt[g, c, n, d, t],
+	  sum{(g, c, n, d, t) in gcndt_co2} r_cost_co2_dt[g, c, n, d, t],
 	  sum{p in process} r_cost_process_variable_cost_dt[p, d, t],
 	  sum{p in process_online : pdProcess[p, 'startup_cost', d]} r_cost_startup_dt[p, d, t],
 	  sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_dt[n, 'up', d, t]),
