@@ -1058,7 +1058,7 @@ s.t. conversion_indirect {(p, m) in process_method, (d, t) in dt : m in method_i
   + (if (p, 'min_load_efficiency') in process__ct_method then v_online_linear[p, d, t] * ptProcess_section[p, t] * p_entity_unitsize[p])
 ;
 
-s.t. profile_flow_upper_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'upper_limit'} :
+s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t]
       + sum{(p, r, 'up', sink) in process_reserve_upDown_node} v_reserve[p, r, 'up', sink, d, t]
 	)
@@ -1075,7 +1075,7 @@ s.t. profile_flow_upper_limit {(p, source, sink, f, m) in process__source__sink_
 	  )
 ;
 
-s.t. profile_flow_lower_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'lower_limit'} :
+s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t] 
       - sum{(p, r, 'down', sink) in process_reserve_upDown_node} v_reserve[p, r, 'down', sink, d, t]
     )
@@ -1091,7 +1091,7 @@ s.t. profile_flow_lower_limit {(p, source, sink, f, m) in process__source__sink_
 	  )
 ;
 
-s.t. profile_flow_fixed_limit {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'fixed'} :
+s.t. profile_flow_fixed_limit {(p, source, sink, f, 'fixed') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t] 
   	      * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
 			  else if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
@@ -1106,7 +1106,7 @@ s.t. profile_flow_fixed_limit {(p, source, sink, f, m) in process__source__sink_
 	  )
 ;
 
-s.t. profile_state_upper_limit {(n, f, m) in node__profile__profile_method, (d, t) in dt : m = 'upper_limit'} :
+s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_method, (d, t) in dt} :
   + v_state[n, d, t] 
   <=
   + pt_profile[f, t]
@@ -1116,7 +1116,7 @@ s.t. profile_state_upper_limit {(n, f, m) in node__profile__profile_method, (d, 
 	  )
 ;
 
-s.t. profile_state_lower_limit {(n, f, m) in node__profile__profile_method, (d, t) in dt : m = 'lower_limit'} :
+s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_method, (d, t) in dt} :
   + v_state[n, d, t] 
   >=
   + pt_profile[f, t]
@@ -1126,7 +1126,7 @@ s.t. profile_state_lower_limit {(n, f, m) in node__profile__profile_method, (d, 
 	  )
 ;
 
-s.t. profile_state_fixed_limit {(n, f, m) in node__profile__profile_method, (d, t) in dt : m = 'fixed'} :
+s.t. profile_state_fixed_limit {(n, f, 'fixed') in node__profile__profile_method, (d, t) in dt} :
   + v_state[n, d, t] 
   =
   + pt_profile[f, t]

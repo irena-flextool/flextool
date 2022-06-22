@@ -130,7 +130,8 @@
                 "resource_filters": {
                     "db_url@Input_data": {
                         "scenario_filter": [
-                            542
+                            542,
+                            555
                         ],
                         "tool_filter": [
                             1
