@@ -11,6 +11,9 @@
 
 #Author: Juha Kiviluoma (2017-2022), VTT Technical Research Centre of Finland
 
+param datetime0 := gmtime();
+display datetime0;
+
 #########################
 # Fundamental sets of the model
 set entity 'e - contains both nodes and processes';
@@ -20,9 +23,6 @@ set processTransfer 'Transfer processes' within process;
 set node 'n - Any location where a balance needs to be maintained' within entity;
 set group 'g - Any group of entities that have a set of common constraints';
 set commodity 'c - Stuff that is being processed';
-set reserve__upDown__group__method dimen 4;
-set reserve__upDown__group := setof {(r, ud, g, m) in reserve__upDown__group__method : m <> 'no_reserve'} (r, ud, g);
-set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng, r_m) in reserve__upDown__group__method} (r);
 set period_time '(d, t) - Time steps in the time periods of the timelines in use' dimen 2;
 set solve_period_timeblockset '(solve, d, tb) - All solve, period, timeblockset combinations in the model instance' dimen 3;
 set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeblockset} (s, d);
@@ -61,10 +61,32 @@ set sense_greater_than within sense;
 set sense_less_than within sense;
 set sense_equal within sense;
 
-set node__param__period dimen 3; # within {node, nodePeriodParam, periodAll};
-set process__param__period dimen 3; # within {process, processPeriodParam, periodAll};
-set commodity__param__period dimen 3; # within {commodity, commodityPeriodParam, periodAll};
+set commodityParam;
+set commodityPeriodParam within commodityParam;
+set nodeParam;
+set nodePeriodParam;
+set nodeTimeParam within nodeParam;
+set processParam;
+set processPeriodParam;
+set processTimeParam within processParam;
+set sourceSinkParam;
+set sourceSinkTimeParam within sourceSinkParam;
+set reserveParam;
+set reserveTimeParam within reserveParam;
+set groupParam;
+set groupPeriodParam;
+set groupTimeParam within groupParam;
+
+set reserve__upDown__group__method dimen 4;
+set reserve__upDown__group := setof {(r, ud, g, m) in reserve__upDown__group__method : m <> 'no_reserve'} (r, ud, g);
+set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng, r_m) in reserve__upDown__group__method} (r);
+set reserve__upDown__group__reserveParam__time dimen 5 within {reserve, upDown, group, reserveTimeParam, time};
+
+set group__param dimen 2 within {group, groupParam};
 set group__param__period dimen 3; # within {group, groupPeriodParam, periodAll};
+set node__param__period dimen 3; # within {node, nodePeriodParam, periodAll};
+set commodity__param__period dimen 3; # within {commodity, commodityPeriodParam, periodAll};
+set process__param__period dimen 3; # within {process, processPeriodParam, periodAll};
 
 set period_group 'picking up periods from group data' := setof {(n, param, d) in group__param__period} (d);
 set period_node 'picking up periods from node data' := setof {(n, param, d) in node__param__period} (d);
@@ -72,6 +94,12 @@ set period_commodity 'picking up periods from commodity data' := setof {(n, para
 set period_process 'picking up periods from process data' := setof {(n, param, d) in process__param__period} (d);
 
 set periodAll 'd - Time periods in data (including those currently in use)' := period_group union period_node union period_commodity union period_process union period_solve;
+
+
+param p_group {g in group, groupParam} default 0;
+param pd_group {g in group, groupPeriodParam, d in periodAll} default 0;
+param p_group__process {g in group, p in process, groupParam};
+
 
 
 #Method collections use in the model (abstracted methods)
@@ -140,6 +168,188 @@ set process__profile__profile_method dimen 3 within {process, profile, profile_m
 set process__node__profile__profile_method dimen 4 within {process, node, profile, profile_method};
 set process_source dimen 2 within {process, entity};
 set process_sink dimen 2 within {process, entity};
+
+set process__sink_nonSync_unit dimen 2 within {process, node};
+set process_nonSync_connection dimen 1 within {process};
+
+set process_reserve_upDown_node dimen 4;
+set process_node_constraint dimen 3 within {process, node, constraint};
+set constraint__sense dimen 2 within {constraint, sense};
+set commodity_node dimen 2 within {commodity, node}; 
+
+set dt dimen 2 within period_time;
+set dttt dimen 4;
+set period_invest dimen 1 within period;
+set period_realized dimen 1 within period;
+
+
+set startTime dimen 1 within time;
+set startNext dimen 1 within time;
+param startNext_index := sum{t in time, t_startNext in startNext : t <= t_startNext} 1;
+set modelParam;
+
+set process__param dimen 2 within {process, processParam};
+set process__param__time dimen 3 within {process, processTimeParam, time};
+set process__param_t := setof {(p, param, t) in process__param__time} (p, param);
+
+set connection__param := {(p, param) in process__param : p in process_connection};
+set connection__param__time := { (p, param, t) in process__param__time : (p in process_connection)};
+set connection__param_t := setof {(connection, param, t) in connection__param__time} (connection, param);
+set process__source__param dimen 3 within {process_source, sourceSinkParam};
+set process__source__param__time dimen 4 within {process_source, sourceSinkTimeParam, time};
+set process__source__param_t := setof {(p, source, param, t) in process__source__param__time} (p, source, param);
+set process__sink__param dimen 3 within {process_sink, sourceSinkParam};
+set process__sink__param__time dimen 4 within {process_sink, sourceSinkTimeParam, time};
+set process__sink__param_t := setof {(p, sink, param, t) in process__sink__param__time} (p, sink, param);
+
+set node__param__time dimen 3 within {node, nodeTimeParam, time};
+
+param p_model {modelParam};
+param p_commodity {c in commodity, commodityParam} default 0;
+param pd_commodity {c in commodity, commodityPeriodParam, d in periodAll} default 0;
+
+param p_node {node, nodeParam} default 0;
+param pd_node {node, nodePeriodParam, periodAll} default 0;
+param pt_node {node, nodeTimeParam, time} default 0;
+
+param p_process_source {(p, source) in process_source, sourceSinkParam} default 0;
+param pt_process_source {(p, source) in process_source, sourceSinkTimeParam, time} default 0;
+param p_process_sink {(p, sink) in process_sink, sourceSinkParam} default 0;
+param pt_process_sink {(p, sink) in process_sink, sourceSinkTimeParam, time} default 0;
+
+param p_process_source_coefficient {(p, source) in process_source} default 1;
+param p_process_sink_coefficient {(p, sink) in process_sink} default 1;
+
+param pt_profile {profile, time};
+
+param p_reserve_upDown_group {reserve, upDown, group, reserveParam} default 0;
+param pt_reserve_upDown_group {reserve, upDown, group, reserveTimeParam, time};
+param p_process_reserve_upDown_node {process, reserve, upDown, node, reserveParam} default 0;
+
+param p_process {process, processParam} default 0;
+param pd_process {process, processPeriodParam, periodAll} default 0;
+param pt_process {process, processTimeParam, time} default 0;
+
+param p_constraint_constant {constraint};
+param p_process_node_constraint_coefficient {process, node, constraint};
+param penalty_up {n in nodeBalance};
+param penalty_down {n in nodeBalance};
+param step_duration{(d, t) in dt};
+
+param p_timeline_duration_in_years{timeline};
+param p_discount_years{d in period} default 0;
+param p_discount_rate{model} default 0.05;
+param p_discount_offset_investment{model} default 0;    # Calculate investment cost discounting while assuming they are made at the begining of the year (unless other value is given)
+param p_discount_offset_operations{model} default 0.5;  # Calculate operational costs assuming they are on average taking place at the middle of the year (unless other value is given)
+
+param p_entity_invested {e in entity : e in entityInvest};
+param p_entity_divested {e in entity : e in entityInvest};
+
+
+#########################
+# Read data
+#table data IN 'CSV' '.csv' :  <- [];
+# Domain sets
+table data IN 'CSV' 'input/commodity.csv' : commodity <- [commodity];
+table data IN 'CSV' 'input/constraint__sense.csv' : constraint <- [constraint];
+table data IN 'CSV' 'input/debug.csv': debug <- [debug];
+table data IN 'CSV' 'input/entity.csv': entity <- [entity];
+table data IN 'CSV' 'input/group.csv' : group <- [group];
+table data IN 'CSV' 'input/node.csv' : node <- [node];
+table data IN 'CSV' 'input/nodeBalance.csv' : nodeBalance <- [nodeBalance];
+table data IN 'CSV' 'input/nodeState.csv' : nodeState <- [nodeState];
+table data IN 'CSV' 'input/groupInertia.csv' : groupInertia <- [groupInertia];
+table data IN 'CSV' 'input/groupNonSync.csv' : groupNonSync <- [groupNonSync];
+table data IN 'CSV' 'input/groupCapacityMargin.csv' : groupCapacityMargin <- [groupCapacityMargin];
+table data IN 'CSV' 'input/groupOutput.csv' : groupOutput <- [groupOutput];
+table data IN 'CSV' 'input/process.csv': process <- [process];
+table data IN 'CSV' 'input/profile.csv': profile <- [profile];
+
+# Single dimension membership sets
+table data IN 'CSV' 'input/process_connection.csv': process_connection <- [process_connection];
+table data IN 'CSV' 'input/process_nonSync_connection.csv': process_nonSync_connection <- [process];
+table data IN 'CSV' 'input/process_unit.csv': process_unit <- [process_unit];
+
+# Multi dimension membership sets
+table data IN 'CSV' 'input/commodity__node.csv' : commodity_node <- [commodity,node];
+table data IN 'CSV' 'input/entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
+table data IN 'CSV' 'input/node__inflow_method.csv' : node__inflow_method_read <- [node,inflow_method];
+table data IN 'CSV' 'input/node__profile__profile_method.csv' : node__profile__profile_method <- [node,profile,profile_method];
+table data IN 'CSV' 'input/group__node.csv' : group_node <- [group,node];
+table data IN 'CSV' 'input/group__process.csv' : group_process <- [group,process];
+table data IN 'CSV' 'input/group__process__node.csv' : group_process_node <- [group,process,node];
+table data IN 'CSV' 'input/p_process_node_constraint_coefficient.csv' : process_node_constraint <- [process, node, constraint];
+table data IN 'CSV' 'input/constraint__sense.csv' : constraint__sense <- [constraint, sense];
+table data IN 'CSV' 'input/p_process.csv' : process__param <- [process, processParam];
+table data IN 'CSV' 'input/pd_node.csv' : node__param__period <- [node, nodeParam, period];
+table data IN 'CSV' 'input/pt_node.csv' : node__param__time <- [node, nodeParam, time];
+table data IN 'CSV' 'input/pd_process.csv' : process__param__period <- [process, processParam, period];
+table data IN 'CSV' 'input/pt_process.csv' : process__param__time <- [process, processParam, time];
+table data IN 'CSV' 'input/p_group.csv' : group__param <- [group, groupParam];
+table data IN 'CSV' 'input/pd_group.csv' : group__param__period <- [group, groupParam, period];
+table data IN 'CSV' 'input/process__ct_method.csv' : process__ct_method_read <- [process,ct_method];
+table data IN 'CSV' 'input/process__node__ramp_method.csv' : process_node_ramp_method <- [process,node,ramp_method];
+table data IN 'CSV' 'input/process__reserve__upDown__node.csv' : process_reserve_upDown_node <- [process,reserve,upDown,node];
+table data IN 'CSV' 'input/process__sink.csv' : process_sink <- [process,sink];
+table data IN 'CSV' 'input/process__source.csv' : process_source <- [process,source];
+table data IN 'CSV' 'input/process__sink_nonSync_unit.csv' : process__sink_nonSync_unit <- [process,sink];
+table data IN 'CSV' 'input/process__startup_method.csv' : process__startup_method_read <- [process,startup_method];
+table data IN 'CSV' 'input/process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
+table data IN 'CSV' 'input/process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
+table data IN 'CSV' 'input/reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
+table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time];
+table data IN 'CSV' 'input/timeblocks_in_use.csv' : solve_period_timeblockset <- [solve,period,timeblocks];
+table data IN 'CSV' 'input/timeblocks__timeline.csv' : timeblockset__timeline <- [timeblocks,timeline];
+table data IN 'CSV' 'solve_data/solve_current.csv' : solve_current <- [solve];
+table data IN 'CSV' 'input/p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
+table data IN 'CSV' 'input/pt_process_source.csv' : process__source__param__time <- [process, source, sourceSinkTimeParam, time];
+table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
+table data IN 'CSV' 'input/pt_process_sink.csv' : process__sink__param__time <- [process, sink, sourceSinkTimeParam, time];
+table data IN 'CSV' 'input/pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
+table data IN 'CSV' 'input/timeline.csv' : timeline__timestep__duration <- [timeline,timestep,duration];
+
+# Parameters for model data
+table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_commodity;
+table data IN 'CSV' 'input/pd_commodity.csv' : [commodity, commodityParam, period], pd_commodity;
+table data IN 'CSV' 'input/p_group__process.csv' : [group, process, groupParam], p_group__process;
+table data IN 'CSV' 'input/p_group.csv' : [group, groupParam], p_group;
+table data IN 'CSV' 'input/pd_group.csv' : [group, groupParam, period], pd_group;
+table data IN 'CSV' 'input/p_node.csv' : [node, nodeParam], p_node;
+table data IN 'CSV' 'input/pd_node.csv' : [node, nodeParam, period], pd_node;
+table data IN 'CSV' 'input/pt_node.csv' : [node, nodeParam, time], pt_node;
+table data IN 'CSV' 'input/p_process_node_constraint_coefficient.csv' : [process, node, constraint], p_process_node_constraint_coefficient;
+table data IN 'CSV' 'input/p_process__reserve__upDown__node.csv' : [process, reserve, upDown, node, reserveParam], p_process_reserve_upDown_node;
+table data IN 'CSV' 'input/p_process_sink.csv' : [process, sink, sourceSinkParam], p_process_sink;
+table data IN 'CSV' 'input/pt_process_sink.csv' : [process, sink, sourceSinkTimeParam, time], pt_process_sink;
+table data IN 'CSV' 'input/p_process_sink_coefficient.csv' : [process, sink], p_process_sink_coefficient;
+table data IN 'CSV' 'input/p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
+table data IN 'CSV' 'input/p_process_source_coefficient.csv' : [process, source], p_process_source_coefficient;
+table data IN 'CSV' 'input/pt_process_source.csv' : [process, source, sourceSinkTimeParam, time], pt_process_source;
+table data IN 'CSV' 'input/p_constraint_constant.csv' : [constraint], p_constraint_constant;
+table data IN 'CSV' 'input/p_process.csv' : [process, processParam], p_process;
+table data IN 'CSV' 'input/pd_process.csv' : [process, processParam, period], pd_process;
+table data IN 'CSV' 'input/pt_process.csv' : [process, processParam, time], pt_process;
+table data IN 'CSV' 'input/pt_profile.csv' : [profile, time], pt_profile;
+table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
+table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
+table data IN 'CSV' 'input/timeline_duration_in_years.csv' : [timeline], p_timeline_duration_in_years;
+table data IN 'CSV' 'solve_data/p_discount_years.csv' : [period], p_discount_years;
+table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
+table data IN 'CSV' 'input/p_discount_rate.csv' : [model], p_discount_rate;
+
+# Parameters from the solve loop
+table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
+table data IN 'CSV' 'solve_data/steps_in_use.csv' : [period, step], step_duration;
+table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,step];
+table data IN 'CSV' 'solve_data/step_previous.csv' : dttt <- [period, time, previous, previous_within_block];
+table data IN 'CSV' 'solve_data/realized_periods_of_current_solve.csv' : period_realized <- [period];
+table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
+table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
+
+# After rolling forward the investment model
+table data IN 'CSV' 'solve_data/p_entity_invested.csv' : [entity], p_entity_invested;
+
+
 set process__fork_method_yes dimen 2 within {process, fork_method} := 
     {p in process, m in fork_method 
 	  : (sum{(p, source) in process_source} 1 > 1 || sum{(p, sink) in process_sink} 1 > 1) && m in fork_method_yes};
@@ -156,36 +366,32 @@ set process_ct_startup_fork_method :=
 	};
 set process_method := setof {(p, m1, m2, m3, m) in process_ct_startup_fork_method} (p, m);
 set process__profileProcess__toSink__profile__profile_method :=
-    { p in process, p2 in process, sink in node, f in profile, fm in profile_method
+    { p in process, (p2, sink, f, fm) in process__node__profile__profile_method
 	    :  p = p2
 		&& (p, sink) in process_sink
-		&& (p2, sink, f, fm) in process__node__profile__profile_method
 	    && (sum{(p, m) in process_method : m in method_indirect} 1
 		    || sum{(p, source) in process_source} 1 < 1)
 	};
 set process__profileProcess__toSink := setof {(p, p2, sink, f, m) in process__profileProcess__toSink__profile__profile_method} (p, p2, sink);
+set process_n__profile__profile_method := setof {(p2, n, f, fm) in process__node__profile__profile_method} (p2, f, fm);
 set process__source__toProfileProcess__profile__profile_method :=
-    { p in process, source in node, p2 in process, f in profile, fm in profile_method
+    { (p, source) in process_source, (p2, f, fm) in process_n__profile__profile_method
 	    :  p = p2
-		&& (p, source) in process_source
-		&& (p2, source, f, fm) in process__node__profile__profile_method
 	    && (sum{(p, m) in process_method : m in method_indirect} 1
 		    || sum{(p, sink) in process_sink} 1 < 1)
 	};
 set process__source__toProfileProcess := setof {(p, source, p2, f, m) in process__source__toProfileProcess__profile__profile_method} (p, source, p2);
 set process_profile := setof {(p, source, p2) in process__source__toProfileProcess} (p) union setof {(p, p2, sink) in process__profileProcess__toSink} (p);
 set process_source_toProcess := 
-    { p in process, source in node, p2 in process 
+    { (p, source) in process_source, p2 in process 
 	    :  p = p2 
-	    && (p, source) in process_source 
 	    && (p2, source) in process_source 
 	    && sum{(p, m) in process_method : m in method_indirect} 1
 	};
 set process_process_toSink := 
-    { p in process, p2 in process, sink in node 
+    { p in process, (p2, sink) in process_sink
 	    :  p = p2 
 	    && (p, sink) in process_sink 
-	    && (p2, sink) in process_sink 
 	    && sum{(p, m) in process_method : m in method_indirect} 1
 	};
 set process_sink_toProcess := 
@@ -196,22 +402,19 @@ set process_sink_toProcess :=
 	    && sum{(p, m) in process_method : m in method_2way_nvar} 1
 	};
 set process_process_toSource := 
-    { p in process, p2 in process, source in node 
+    { p in process, (p2, source) in process_source
 	    :  p = p2 
 	    && (p, source) in process_source
-	    && (p2, source) in process_source
 	    && sum{(p, m) in process_method : m in method_2way_nvar} 1
 	};
 set process_source_toSink := 
-    { p in process, source in node, sink in node
-	    :  (p, source) in process_source
-	    && (p, sink) in process_sink
+    { (p, source) in process_source, sink in node
+	    :  (p, sink) in process_sink
         && sum{(p, m) in process_method : m in method_direct} 1
 	};
 set process_source_toProcess_direct :=
-    { p in process, source in node, p2 in process
+    { (p, source) in process_source, p2 in process
 	    :  p = p2
-		&& (p, source) in process_source
         && sum{(p, m) in process_method : m in method_direct} 1
 	};
 set process_process_toSink_direct :=
@@ -221,7 +424,7 @@ set process_process_toSink_direct :=
         && sum{(p, m) in process_method : m in method_direct} 1
 	};
 set process_sink_toProcess_direct := 
-	{ p in process, sink in node, p2 in process
+	{ (p, sink) in process_sink, p2 in process
 	    :  p = p2
 		&& (p, sink) in process_sink
 	    && sum{(p, m) in process_method : m in method_2way_2var} 1
@@ -233,7 +436,7 @@ set process_process_toSource_direct :=
 	    && sum{(p, m) in process_method : m in method_2way_2var} 1
 	};
 set process_sink_toSource := 
-	{ p in process, sink in node, source in node
+	{ (p, sink) in process_sink, source in node
 	    :  (p, source) in process_source
 	    && (p, sink) in process_sink
 	    && sum{(p, m) in process_method : m in method_2way_2var} 1
@@ -295,53 +498,14 @@ set process__source__sink_isNodeSink := {(p, source, sink) in process_source_sin
 
 set process_online 'processes with an online status' := setof {(p, m) in process_method : m in method_LP} p;
 
-
-
-set commodityParam;
-set commodityPeriodParam within commodityParam;
-set nodeParam;
-set nodePeriodParam;
-set nodeTimeParam within nodeParam;
-set processParam;
-set processPeriodParam;
-set processTimeParam within processParam;
-set sourceSinkParam;
-set sourceSinkTimeParam within sourceSinkParam;
-set reserveParam;
-set reserveTimeParam within reserveParam;
-set groupParam;
-set groupPeriodParam;
-set groupTimeParam within groupParam;
-
-set process_reserve_upDown_node dimen 4;
-set process_node_constraint dimen 3 within {process, node, constraint};
-set constraint__sense dimen 2 within {constraint, sense};
-set commodity_node dimen 2 within {commodity, node}; 
-
-set dt dimen 2 within period_time;
-set dttt dimen 4;
-set period_invest dimen 1 within period;
-set period_realized dimen 1 within period;
 set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
 
-set startTime dimen 1 within time;
-set startNext dimen 1 within time;
-param startNext_index := sum{t in time, t_startNext in startNext : t <= t_startNext} 1;
-set modelParam;
-param p_model {modelParam};
 
-param p_commodity {c in commodity, commodityParam} default 0;
-param pd_commodity {c in commodity, commodityPeriodParam, d in periodAll} default 0;
 param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} := 
         + if (c, param, d) in commodity__param__period
 		  then pd_commodity[c, param, d]
 		  else p_commodity[c, param];
 
-param p_group__process {g in group, p in process, groupParam};
-
-set group__param dimen 2 within {group, groupParam};
-param p_group {g in group, groupParam} default 0;
-param pd_group {g in group, groupPeriodParam, d in periodAll} default 0;
 param pdGroup {g in group, param in groupPeriodParam, d in period} :=
         + if (g, param, d) in group__param__period
 		  then pd_group[g, param, d]
@@ -364,10 +528,6 @@ set process__source__sink_isNodeSink_2way_2var := {(p, source, sink) in process_
 set gdt_maxInstantFlow := {g in group, (d, t) in dt : pdGroup[g, 'max_instant_flow', d]};
 set gdt_minInstantFlow := {g in group, (d, t) in dt : pdGroup[g, 'min_instant_flow', d]};
 		  
-set node__param__time dimen 3 within {node, nodeTimeParam, time};
-param p_node {node, nodeParam} default 0;
-param pd_node {node, nodePeriodParam, periodAll} default 0;
-param pt_node {node, nodeTimeParam, time} default 0;
 param pdNode {n in node, param in nodePeriodParam, d in period} :=
         + if (n, param, d) in node__param__period
 		  then pd_node[n, param, d]
@@ -378,20 +538,6 @@ param ptNode {n in node, param in nodeTimeParam, t in time} :=
 		  else p_node[n, param];
 set nodeSelfDischarge :=  {n in nodeState : sum{(d, t) in dt : ptNode[n, 'self_discharge_loss', t]} 1};
 		  
-
-set process__param dimen 2 within {process, processParam};
-set process__param__time dimen 3 within {process, processTimeParam, time};
-set process__param_t := setof {(p, param, t) in process__param__time} (p, param);
-
-set connection__param := {(p, param) in process__param : p in process_connection};
-set connection__param__time := { (p, param, t) in process__param__time : (p in process_connection)};
-set connection__param_t := setof {(connection, param, t) in connection__param__time} (connection, param);
-set process__source__param dimen 3 within {process_source, sourceSinkParam};
-set process__source__param__time dimen 4 within {process_source, sourceSinkTimeParam, time};
-set process__source__param_t := setof {(p, source, param, t) in process__source__param__time} (p, source, param);
-set process__sink__param dimen 3 within {process_sink, sourceSinkParam};
-set process__sink__param__time dimen 4 within {process_sink, sourceSinkTimeParam, time};
-set process__sink__param_t := setof {(p, sink, param, t) in process__sink__param__time} (p, sink, param);
 
 set process__source__timeParam := 
     { (p, source) in process_source, param in sourceSinkTimeParam
@@ -427,15 +573,20 @@ set process__source__sink__param_t :=
 	    || ((p, param) in process__param_t && p in process_connection)
 	};
 
+
+display process__source__sink__param_t;
+param setup1 := gmtime() - datetime0;
+display setup1;
+
+set process_source_sink_param_t := {(p, source, sink) in process_source_sink_eff, param in processTimeParam : (p, param) in process__param_t};
+display process_source_sink_param_t;
+
 set process__source__sink__ramp_method :=
     { (p, source, sink) in process_source_sink, m in ramp_method
 	    :  (p, source, m) in process_node_ramp_method
 		|| (p, sink, m) in process_node_ramp_method
 	};
 
-param p_process {process, processParam} default 0;
-param pd_process {process, processPeriodParam, periodAll} default 0;
-param pt_process {process, processTimeParam, time} default 0;
 param pdProcess {p in process, param in processPeriodParam, d in period} :=
         + if (p, param, d) in process__param__period
 		  then pd_process[p, param, d]
@@ -465,11 +616,6 @@ param p_entity_unitsize {e in entity} :=
 					  else 1
 			   );
 
-param p_process_source {(p, source) in process_source, sourceSinkParam} default 0;
-param pt_process_source {(p, source) in process_source, sourceSinkTimeParam, time} default 0;
-param p_process_sink {(p, sink) in process_sink, sourceSinkParam} default 0;
-param pt_process_sink {(p, sink) in process_sink, sourceSinkTimeParam, time} default 0;
-
 param pProcess_source_sink {(p, source, sink, param) in process__source__sink__param} :=
 		+ if (p, source, param) in process__source__param
 		  then p_process_source[p, source, param]
@@ -477,21 +623,21 @@ param pProcess_source_sink {(p, source, sink, param) in process__source__sink__p
 		  then p_process_sink[p, sink, param]
 		  else 0;
 
-param ptProcess_source {(p, source) in process_source, param in sourceSinkTimeParam, t in time : sum{d in period : (d, t) in dt} 1} :=
+param ptProcess_source {(p, source) in process_source, param in sourceSinkTimeParam, t in time} :=  # : sum{d in period : (d, t) in dt} 1
         + if (p, source, param, t) in process__source__param__time
 		  then pt_process_source[p, source, param, t]
 		  else if (p, source, param) in process__source__param
 		  then p_process_source[p, source, param]
 		  else 0;
         
-param ptProcess_sink {(p, sink) in process_sink, param in sourceSinkTimeParam, t in time : sum{d in period : (d, t) in dt} 1} :=
+param ptProcess_sink {(p, sink) in process_sink, param in sourceSinkTimeParam, t in time} :=  #  : sum{d in period : (d, t) in dt} 1
         + if (p, sink, param, t) in process__sink__param__time
 		  then pt_process_sink[p, sink, param, t]
 		  else if (p, sink, param) in process__sink__param
 		  then p_process_sink[p, sink, param]
 		  else 0;
 
-param ptProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, t in time : sum{d in period : (d, t) in dt} 1} :=
+param ptProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, t in time} := #  : sum{d in period : (d, t) in dt} 1
         + if (p, sink, param, t) in process__sink__param__time
 		  then pt_process_sink[p, sink, param, t]
           else if (p, source, param, t) in process__source__param__time
@@ -507,33 +653,18 @@ param ptProcess_source_sink {(p, source, sink, param) in process__source__sink__
 		  else 0;
 
 
-param p_process_source_coefficient {(p, source) in process_source} default 1;
-param p_process_sink_coefficient {(p, sink) in process_sink} default 1;
-
-param pt_profile {profile, time};
-
-set reserve__upDown__group__reserveParam__time dimen 5 within {reserve, upDown, group, reserveTimeParam, time};
-param p_reserve_upDown_group {reserve, upDown, group, reserveParam} default 0;
-param pt_reserve_upDown_group {reserve, upDown, group, reserveTimeParam, time};
 param ptReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, t in time} :=
         + if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
 		  then pt_reserve_upDown_group[r, ud, g, param, t]
 		  else p_reserve_upDown_group[r, ud, g, param];
-param p_process_reserve_upDown_node {process, reserve, upDown, node, reserveParam} default 0;
 set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group} 1};
 set prundt := {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt};
 set pdt_online := {p in process_online, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
 
-param p_constraint_constant {constraint};
-param p_process_node_constraint_coefficient {process, node, constraint};
-param penalty_up {n in nodeBalance};
-param penalty_down {n in nodeBalance};
-param step_duration{(d, t) in dt};
 param hours_in_period{d in period} := sum {(d, t) in dt} (step_duration[d, t]);
 param hours_in_solve := sum {(d, t) in dt} (step_duration[d, t]);
 param period_share_of_year{d in period} := hours_in_period[d] / 8760;
 param solve_share_of_year := hours_in_solve / 8760;
-param p_timeline_duration_in_years{timeline};
 
 param period_share_of_annual_flow {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
         abs(sum{(d, t) in dt} (ptNode[n, 'inflow', t])) / pdNode[n, 'annual_flow', d];
@@ -553,10 +684,6 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 set period_last := {d in period : sum{d2 in period : d2 <= d} 1 = card(period)};
 set period__period_next := {d in period, dNext in period : 1 + sum{d2 in period : d2 <=d} 1 = sum{dNext2 in period : dNext2 <=dNext} 1};
 param step_period{(d, t) in dt} := 0;
-param p_discount_years{d in period} default 0;
-param p_discount_rate{model} default 0.05;
-param p_discount_offset_investment{model} default 0;    # Calculate investment cost discounting while assuming they are made at the begining of the year (unless other value is given)
-param p_discount_offset_operations{model} default 0.5;  # Calculate operational costs assuming they are on average taking place at the middle of the year (unless other value is given)
 param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0.05);
 param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_discount_offset_investment[m] else 0);
 param p_disc_offset_operations := (if sum{m in model} 1 then max{m in model} p_discount_offset_operations[m] else 0.5);
@@ -593,13 +720,22 @@ param ed_entity_annual_divest{e in entityDivest, d in period_invest} :=
 		  )
 ; 			
 
-param ptProcess_section{p in process, t in time : (p, 'min_load_efficiency') in process__ct_method} := 
+
+set process_minload := {p in process : (p, 'min_load_efficiency') in process__ct_method};
+param ptProcess_section{p in process_minload, t in time} := 
         + 1 / ptProcess[p, 'efficiency', t] 
     	- ( 1 / ptProcess[p, 'efficiency', t] - ptProcess[p, 'min_load', t] / ptProcess[p, 'efficiency_at_min_load', t] ) 
 			    / (1 - ptProcess[p, 'min_load', t])
 		; 
-param ptProcess_slope{p in process, t in time : (p, 'min_load_efficiency') in process__ct_method} := 
-        1 / ptProcess[p, 'efficiency', t] - ptProcess_section[p, t];
+param ptProcess_slope{p in process, t in time} := 
+        1 / ptProcess[p, 'efficiency', t] 
+		- (if p in process_minload then ptProcess_section[p, t] else 0);
+
+#         	          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+#		              * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
+
+param w_calc_slope := gmtime() - datetime0 - setup1;
+display w_calc_slope;
 
 param ptProcess__source__sink__t_varCost {(p, source, sink) in process_source_sink, t in time : sum{d in period : (d, t) in dt} 1} :=
   + (if (p, source) in process_source then ptProcess_source[p, source, 'variable_cost', t])
@@ -737,8 +873,6 @@ set commodity_node_co2 :=
 			p_commodity[c, 'co2_content'] 
 		};
 
-set process__sink_nonSync_unit dimen 2 within {process, node};
-set process_nonSync_connection dimen 1 within {process};
 set process__sink_nonSync :=
         {p in process, sink in node :
 		       ( (p, sink) in process_sink && (p, sink) in process__sink_nonSync_unit )
@@ -746,8 +880,6 @@ set process__sink_nonSync :=
 			|| ( (p, sink) in process_source && p in process_nonSync_connection )  
 	    };
 
-param p_entity_invested {e in entity : e in entityInvest};
-param p_entity_divested {e in entity : e in entityInvest};
 param p_entity_all_existing {e in entity} :=
         + (if e in process then p_process[e, 'existing'])
         + (if e in node then p_node[e, 'existing'])
@@ -765,109 +897,6 @@ param d_flowInvest {(p, d) in pd_invest} default 0;
 param d_reserve_upDown_node {(p, r, ud, n, d, t) in prundt} default 0;
 param dq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} default 0;
 
-#########################
-# Read data
-#table data IN 'CSV' '.csv' :  <- [];
-
-# Domain sets
-table data IN 'CSV' 'input/commodity.csv' : commodity <- [commodity];
-table data IN 'CSV' 'input/constraint__sense.csv' : constraint <- [constraint];
-table data IN 'CSV' 'input/debug.csv': debug <- [debug];
-table data IN 'CSV' 'input/entity.csv': entity <- [entity];
-table data IN 'CSV' 'input/group.csv' : group <- [group];
-table data IN 'CSV' 'input/node.csv' : node <- [node];
-table data IN 'CSV' 'input/nodeBalance.csv' : nodeBalance <- [nodeBalance];
-table data IN 'CSV' 'input/nodeState.csv' : nodeState <- [nodeState];
-table data IN 'CSV' 'input/groupInertia.csv' : groupInertia <- [groupInertia];
-table data IN 'CSV' 'input/groupNonSync.csv' : groupNonSync <- [groupNonSync];
-table data IN 'CSV' 'input/groupCapacityMargin.csv' : groupCapacityMargin <- [groupCapacityMargin];
-table data IN 'CSV' 'input/groupOutput.csv' : groupOutput <- [groupOutput];
-table data IN 'CSV' 'input/process.csv': process <- [process];
-table data IN 'CSV' 'input/profile.csv': profile <- [profile];
-
-# Single dimension membership sets
-table data IN 'CSV' 'input/process_connection.csv': process_connection <- [process_connection];
-table data IN 'CSV' 'input/process_nonSync_connection.csv': process_nonSync_connection <- [process];
-table data IN 'CSV' 'input/process_unit.csv': process_unit <- [process_unit];
-
-# Multi dimension membership sets
-table data IN 'CSV' 'input/commodity__node.csv' : commodity_node <- [commodity,node];
-table data IN 'CSV' 'input/entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
-table data IN 'CSV' 'input/node__inflow_method.csv' : node__inflow_method_read <- [node,inflow_method];
-table data IN 'CSV' 'input/node__profile__profile_method.csv' : node__profile__profile_method <- [node,profile,profile_method];
-table data IN 'CSV' 'input/group__node.csv' : group_node <- [group,node];
-table data IN 'CSV' 'input/group__process.csv' : group_process <- [group,process];
-table data IN 'CSV' 'input/group__process__node.csv' : group_process_node <- [group,process,node];
-table data IN 'CSV' 'input/p_process_node_constraint_coefficient.csv' : process_node_constraint <- [process, node, constraint];
-table data IN 'CSV' 'input/constraint__sense.csv' : constraint__sense <- [constraint, sense];
-table data IN 'CSV' 'input/p_process.csv' : process__param <- [process, processParam];
-table data IN 'CSV' 'input/pd_node.csv' : node__param__period <- [node, nodeParam, period];
-table data IN 'CSV' 'input/pt_node.csv' : node__param__time <- [node, nodeParam, time];
-table data IN 'CSV' 'input/pd_process.csv' : process__param__period <- [process, processParam, period];
-table data IN 'CSV' 'input/pt_process.csv' : process__param__time <- [process, processParam, time];
-table data IN 'CSV' 'input/p_group.csv' : group__param <- [group, groupParam];
-table data IN 'CSV' 'input/pd_group.csv' : group__param__period <- [group, groupParam, period];
-table data IN 'CSV' 'input/process__ct_method.csv' : process__ct_method_read <- [process,ct_method];
-table data IN 'CSV' 'input/process__node__ramp_method.csv' : process_node_ramp_method <- [process,node,ramp_method];
-table data IN 'CSV' 'input/process__reserve__upDown__node.csv' : process_reserve_upDown_node <- [process,reserve,upDown,node];
-table data IN 'CSV' 'input/process__sink.csv' : process_sink <- [process,sink];
-table data IN 'CSV' 'input/process__source.csv' : process_source <- [process,source];
-table data IN 'CSV' 'input/process__sink_nonSync_unit.csv' : process__sink_nonSync_unit <- [process,sink];
-table data IN 'CSV' 'input/process__startup_method.csv' : process__startup_method_read <- [process,startup_method];
-table data IN 'CSV' 'input/process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
-table data IN 'CSV' 'input/process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
-table data IN 'CSV' 'input/reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
-table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time];
-table data IN 'CSV' 'input/timeblocks_in_use.csv' : solve_period_timeblockset <- [solve,period,timeblocks];
-table data IN 'CSV' 'input/timeblocks__timeline.csv' : timeblockset__timeline <- [timeblocks,timeline];
-table data IN 'CSV' 'solve_data/solve_current.csv' : solve_current <- [solve];
-table data IN 'CSV' 'input/p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
-table data IN 'CSV' 'input/pt_process_source.csv' : process__source__param__time <- [process, source, sourceSinkTimeParam, time];
-table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
-table data IN 'CSV' 'input/pt_process_sink.csv' : process__sink__param__time <- [process, sink, sourceSinkTimeParam, time];
-table data IN 'CSV' 'input/pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
-table data IN 'CSV' 'input/timeline.csv' : timeline__timestep__duration <- [timeline,timestep,duration];
-
-# Parameters for model data
-table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_commodity;
-table data IN 'CSV' 'input/pd_commodity.csv' : [commodity, commodityParam, period], pd_commodity;
-table data IN 'CSV' 'input/p_group__process.csv' : [group, process, groupParam], p_group__process;
-table data IN 'CSV' 'input/p_group.csv' : [group, groupParam], p_group;
-table data IN 'CSV' 'input/pd_group.csv' : [group, groupParam, period], pd_group;
-table data IN 'CSV' 'input/p_node.csv' : [node, nodeParam], p_node;
-table data IN 'CSV' 'input/pd_node.csv' : [node, nodeParam, period], pd_node;
-table data IN 'CSV' 'input/pt_node.csv' : [node, nodeParam, time], pt_node;
-table data IN 'CSV' 'input/p_process_node_constraint_coefficient.csv' : [process, node, constraint], p_process_node_constraint_coefficient;
-table data IN 'CSV' 'input/p_process__reserve__upDown__node.csv' : [process, reserve, upDown, node, reserveParam], p_process_reserve_upDown_node;
-table data IN 'CSV' 'input/p_process_sink.csv' : [process, sink, sourceSinkParam], p_process_sink;
-table data IN 'CSV' 'input/pt_process_sink.csv' : [process, sink, sourceSinkTimeParam, time], pt_process_sink;
-table data IN 'CSV' 'input/p_process_sink_coefficient.csv' : [process, sink], p_process_sink_coefficient;
-table data IN 'CSV' 'input/p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
-table data IN 'CSV' 'input/p_process_source_coefficient.csv' : [process, source], p_process_source_coefficient;
-table data IN 'CSV' 'input/pt_process_source.csv' : [process, source, sourceSinkTimeParam, time], pt_process_source;
-table data IN 'CSV' 'input/p_constraint_constant.csv' : [constraint], p_constraint_constant;
-table data IN 'CSV' 'input/p_process.csv' : [process, processParam], p_process;
-table data IN 'CSV' 'input/pd_process.csv' : [process, processParam, period], pd_process;
-table data IN 'CSV' 'input/pt_process.csv' : [process, processParam, time], pt_process;
-table data IN 'CSV' 'input/pt_profile.csv' : [profile, time], pt_profile;
-table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
-table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
-table data IN 'CSV' 'input/timeline_duration_in_years.csv' : [timeline], p_timeline_duration_in_years;
-table data IN 'CSV' 'solve_data/p_discount_years.csv' : [period], p_discount_years;
-table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
-table data IN 'CSV' 'input/p_discount_rate.csv' : [model], p_discount_rate;
-
-# Parameters from the solve loop
-table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
-table data IN 'CSV' 'solve_data/steps_in_use.csv' : [period, step], step_duration;
-table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,step];
-table data IN 'CSV' 'solve_data/step_previous.csv' : dttt <- [period, time, previous, previous_within_block];
-table data IN 'CSV' 'solve_data/realized_periods_of_current_solve.csv' : period_realized <- [period];
-table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
-table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
-
-# After rolling forward the investment model
-table data IN 'CSV' 'solve_data/p_entity_invested.csv' : [entity], p_entity_invested;
 
 #########################
 # Variable declarations
@@ -900,6 +929,9 @@ check {(p, m) in process_method, t in time : m in method_2way_off} ptProcess[p, 
 
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
 check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
+
+param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
+display setup2;
 
 minimize total_cost:
       + sum {(c, n) in commodity_node, (d, t) in dt} 
@@ -996,6 +1028,8 @@ minimize total_cost:
 	  * pdGroup[g, 'penalty_capacity_margin', d]
 	  * p_discount_with_perpetuity_investment[d]
 ;
+param w_total_cost := gmtime() - datetime0 - setup1 - w_calc_slope - setup2;
+display w_total_cost;
 
 # Energy balance in each node  
 s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt} :
@@ -1027,6 +1061,8 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   + vq_state_up[n, d, t]
   - vq_state_down[n, d, t]
 ;
+param balance := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost;
+display balance;
 
 s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__method_timeseries, (d, t) in dt} :
   + sum {(p, r, ud, n) in process_reserve_upDown_node_active 
@@ -1074,6 +1110,8 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
   + sum {(n, ng) in group_node : p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio']}
 	   (pdtNodeInflow[n, d, t] * p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio'])
 ;
+param reserves := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance;
+display reserves;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
 s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t) in dt} :
@@ -1089,6 +1127,8 @@ s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t) in dt} :
 	  * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
   + (if (p, 'min_load_efficiency') in process__ct_method then v_online_linear[p, d, t] * ptProcess_section[p, t] * p_entity_unitsize[p])
 ;
+param indirect := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves;
+display indirect;
 
 s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t]
@@ -1106,6 +1146,8 @@ s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__s
         - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
 	  )
 ;
+param upper := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect;
+display upper;
 
 s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t] 
@@ -1122,6 +1164,8 @@ s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__s
         - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
 	  )
 ;
+param lower := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - upper;
+display lower;
 
 s.t. profile_flow_fixed_limit {(p, source, sink, f, 'fixed') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t] 
@@ -1759,8 +1803,13 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t) in dt} :
 	)
   + pdGroup[g, 'capacity_margin', d]
 ;
+param rest := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - upper - lower;
+display rest;
 
 solve;
+
+param w_solve := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - upper - lower - rest;
+display w_solve;
 
 param entity_all_capacity{e in entity, d in period_realized} :=
   + p_entity_all_existing[e]
