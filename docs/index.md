@@ -25,19 +25,21 @@ See below for more detailed explanations.
 The properties and operational characteristics of nodes can be set with the following parameters (available choices are marked in *italics*):
 
 - **'name'** - unique name identifier (case sensitive)
-- **'is_active'** - is the model/node/unit active in a specific scenario: *yes*, *no*
-- **'has_balance'** - does the node maintain a balance for inputs and outputs: *yes*, *no*
-- **'has_state'** - does the node represent a storage and therefore have a state: *yes*, *no*
-- **'annual_flow'** -
+- **'is_active'** - is the model/node/unit active in a specific scenario
+    - *yes*, *no*
+- **'has_balance'** - does the node maintain a balance for inputs and outputs
+    - *yes*, *no*
+- **'has_state'** - does the node represent a storage and therefore have a state
+    - *yes*, *no*
 - **'invest_method'** - choice of investment method
-    - *only_invest* - 
-    - *only_retire* - 
-    - *invest_and_retire* - 
-    - *not_allowed* - 
+    - *only_invest* 
+    - *only_retire* 
+    - *invest_and_retire* 
+    - *not_allowed* 
 - **'inflow_method'** - choice of inflow method
-    - use_original - time series from node
-    - no_inflow - ignores any inserted inflow time series
-    - scale_to_annual_flow - 
+    - *use_original* 
+    - *no_inflow* 
+    - *scale_to_annual_flow* 
 
 ![image.png](./nodes.png)
 
@@ -49,6 +51,7 @@ Input data is set with the following parameters:
 - **'inflow'** - Inflow into the node (negative is outflow). Constant or time series.
 - **'penalty_down'** and **'penalty_up'** - penalty costs for violating the balance of the node (downwards or upwards)
 - **'startup_cost'**
+- **'annual_flow'**
 
 # Commodities
 
@@ -60,12 +63,13 @@ Commodities are characterized by their price and CO2 content. Commodities are no
 
 Connections have a name and a transfer capacity. Their operational characteristics include the transfer method, startup method, DC or AC and efficiency.
 
-- **'left_node' and 'right_node'** -
-- **'is_active'** -
+- **'left_node' and 'right_node'**
+- **'is_active'**
 - **'transfer_method'** - *regular*
 - **'startup_method'** - *no_startup*
-- **'invest_method'** -
-- **'is_DC'** - *yes*, *no*
+- **'invest_method'**
+- **'is_DC'**
+    - *yes*, *no*
 
 Investment parameters (for capacity expansion): investment method, investment cost, interest rate, lifetime. Retirement possible
 
@@ -125,10 +129,10 @@ In Flextool 3, batteries are modeled with
 
 Storage specific parameters of a node: has_state (has storage), existing (MWh), self_discharge_loss
 
-- self_discharge_loss
-- virtual_unitsize
-- transfer_method
-- fixed_cost
-- variable_cost
-- efficiency
+- **self_discharge_loss**
+- **virtual_unitsize**
+- **transfer_method**
+- **fixed_cost**
+- **variable_cost**
+- **efficiency**
 
