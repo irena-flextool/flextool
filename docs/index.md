@@ -11,8 +11,8 @@ The instructions for installing IRENA FlexTool are [here](/readme.md).
 - **Nodes**: maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
 - **Profiles**: timeseries that can be used to constraint the behaviour of units, connections or storages
 - **Units**: power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
-- **Constraints**:  
-- **Groups**:
+
+See below for more detailed explanations.
 
 ![Simple example grid](./simple_grid.png)
 
@@ -49,7 +49,7 @@ Input data is set with the following parameters:
 
 # Commodities
 
-Commodities include fuels, such as coal and natural gas, and are characterized by their price and CO2 content. Commodities are not directly injected to units (e.g. coal in the coal plant) so to be useful, they need to be assigned to commodity nodes (e.g. coal_node, gas_node). 
+Commodities are characterized by their price and CO2 content. Commodities are not directly injected to units (e.g. coal to the coal plant) so to be useful, they need to be assigned to commodity nodes (e.g. coal_node, gas_node). 
 
 ![image-1.png](./commodities.png)
 
@@ -122,9 +122,9 @@ Association of profile-unit and determination of profile method.
 
 # Defining a battery
 
-In Flextool 3 batteries are modeled with 
-1 battery node, which represents the storage capacity (MWh) of the battery (energy part of the battery)
-1 connection which transfers energy to and from the battery node (power part of the battery)
+In Flextool 3, batteries are modeled with 
+- 1 battery node, which represents the storage capacity (MWh) of the battery (energy part of the battery)
+- 1 connection which transfers energy to and from the battery node (power part of the battery)
 
 Storage specific parameters of a node: has_state (has storage), existing (MWh), self_discharge_loss
 
