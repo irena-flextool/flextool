@@ -8,36 +8,47 @@ The instructions for installing IRENA FlexTool are [here](https://github.com/ire
 
 # Essential objects for defining a power/energy system
 
-- **Commodities**: fuels or other commodities that are either purchased or sold at a price outside of the model scope
-- **Connections**: transmission lines or other transfer connections between nodes
-- **Nodes**: maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
-- **Profiles**: timeseries that can be used to constraint the behaviour of units, connections or storages
-- **Units**: power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
+- **nodes**: maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
+- **units**: power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
+- **connections**: transmission lines or other transfer connections between nodes
+- **commodities**: fuels or other commodities that are either purchased or sold at a price outside of the model scope
+- **profiles**: timeseries that can be used to constraint the behaviour of units, connections or storages
 
 See below for more detailed explanations.
 
 ![Simple example grid](./simple_grid.png)
 
+# Essential objects to define model properties
+
+- **model**: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)
+- **solve**: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.
+- **timeblockset**: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)
+- **timeline**: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.
+ 
+# Additional objects for further functionality
+- **group**: include multiple objects in a group to define common constraints (e.g. minimum VRE share)
+- **reserve**: to define reserves for power systems
+- **constraint**: to create user defined constraints between flow, state, and capacity variables (for nodes, units and connections)
+ 
 # Nodes
 
-## Main definitions
+## Functionality
 
 The properties and operational characteristics of nodes can be set with the following parameters (available choices are marked in *italics*):
 
 - **'name'** - unique name identifier (case sensitive)
-- **'is_active'** - is the model/node/unit active in a specific scenario: *yes*, *no*
-- **'has_balance'** - does the node maintain a balance for inputs and outputs: *yes*, *no*
-- **'has_state'** - does the node represent a storage and therefore have a state: *yes*, *no*
-- **'annual_flow'** -
+- **'is_active'** - is the model/node/unit active in a specific scenario: *yes* (if not defined, then not active)
+- **'has_balance'** - does the node maintain a balance for inputs and outputs: *yes* (if not defined, then balance is not maintained)
+- **'has_state'** - does the node represent a storage and therefore have a state: *yes* (if not defined, then no storage)
 - **'invest_method'** - choice of investment method
     - *only_invest* - 
     - *only_retire* - 
     - *invest_and_retire* - 
     - *not_allowed* - 
 - **'inflow_method'** - choice of inflow method
-    - use_original - time series from node
-    - no_inflow - ignores any inserted inflow time series
-    - scale_to_annual_flow - 
+    - *use_original* - time series from node
+    - *no_inflow* - ignores any inserted inflow time series
+    - *scale_to_annual_flow* - 
 
 ![image.png](./image.png)
 
@@ -46,6 +57,7 @@ The properties and operational characteristics of nodes can be set with the foll
 Input data is set with the following parameters:
 
 - **'invest_cost'** - investment cost. Constant or time series.
+- **'annual_flow'** - annual flow in energy units (always positive, the sign of inflow defines in/out)
 - **'inflow'** - Inflow into the node (negative is outflow). Constant or time series.
 - **'penalty_down'** and **'penalty_up'** - penalty costs for violating the balance of the node (downwards or upwards)
 - **'startup_cost'**
@@ -69,9 +81,9 @@ Connections have a name and a transfer capacity. Their operational characteristi
 
 Investment parameters (for capacity expansion): investment method, investment cost, interest rate, lifetime. Retirement possible
 
-# Generators
+# Units
 
-Generators are units.
+Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine).
 
 Units definition
 
