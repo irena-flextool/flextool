@@ -2,6 +2,8 @@
 
 IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.
 
+User guide and documentation can be found [here](https://irena-flextool.github.io/flextool/).
+
 ## Main alternatives to use IRENA FlexTool
 
 - The easiest way is through a webpage when someone is running a server with IRENA FlexTool. You need an account from the manager of the server.
@@ -25,7 +27,7 @@ https://github.com/irena-flextool/flextool-web-interface#installation
 - `conda activate flextool`
 - `conda install git`
 - cd to a directory into which both FlexTool and SpineToolbox will make their own folders
-- `git clone https://gitlab.vtt.fi/FlexTool/flextool3.git`
+- `git clone https://github.com/irena-flextool/flextool`
 - `git clone https://github.com/Spine-project/Spine-Toolbox.git`
 - `cd SpineToolbox`
 - `pip install --upgrade pip`
