@@ -11,17 +11,29 @@ IRENA FlexTool is an energy and power systems model for understanding the role o
 
 ## Connecting to IRENA FlexTool server
 
-asdf
+Instruction will be added later
 
 ## Setting up your own server
 
-https://github.com/irena-flextool/flextool-web-interface
+https://github.com/irena-flextool/flextool-web-interface#installation
 
-## Installing Spine Toolbox
+## Installing Spine Toolbox and IRENA FlexTool on local computer
 
-The instruction for installing Spine Toolbox are here: https://github.com/Spine-project/Spine-Toolbox#installation
+- Install Miniconda (or Anaconda)  [Can be ignored if already installed]
+- Start anaconda prompt
+- `conda create -n flextool python=3.8`  [Also possible to use existing, up-to-date, Spine Toolbox environment]
+- `conda activate flextool`
+- `conda install git`
+- cd to a directory into which both FlexTool and SpineToolbox will make their own folders
+- `git clone https://gitlab.vtt.fi/FlexTool/flextool3.git`
+- `git clone https://github.com/Spine-project/Spine-Toolbox.git`
+- `cd SpineToolbox`
+- `pip install --upgrade pip`
+- `pip install -r requirements.txt`
+- `python -m spinetoolbox`
+- Open FlexTool3 project in Spine Toolbox (Choose FlexTool folder)
 
-After that...
+In case of problems when installing Spine Toolbox, more instructions are available at: https://github.com/Spine-project/Spine-Toolbox#installation
 
 ## Using Excel as an interface
 
