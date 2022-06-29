@@ -19,7 +19,7 @@ https://github.com/irena-flextool/flextool-web-interface#installation
 
 ## Installing Spine Toolbox and IRENA FlexTool on local computer
 
-- Install Miniconda (or Anaconda)  [Can be ignored if already installed]
+- Install [Miniconda](https://docs.conda.io/en/latest/miniconda.html) (or Anaconda)  [Can be ignored if already installed]
 - Start anaconda prompt
 - `conda create -n flextool python=3.8`  [Also possible to use existing, up-to-date, Spine Toolbox environment]
 - `conda activate flextool`
@@ -37,4 +37,4 @@ In case of problems when installing Spine Toolbox, more instructions are availab
 
 ## Using Excel as an interface
 
-asdf
+Functionality yet not available.
