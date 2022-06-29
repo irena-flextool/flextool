@@ -54,7 +54,7 @@ Input data is set with the following parameters:
 
 Commodities are characterized by their price and CO2 content. Commodities are not directly injected to units (e.g. coal to the coal plant) so to be useful, they need to be assigned to commodity nodes (e.g. coal_node, gas_node). 
 
-![image-1.png](./commodities.png)
+![image-1.png](./commodities.PNG)
 
 # Connections
 
