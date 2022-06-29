@@ -68,3 +68,70 @@ Connections have a name and a transfer capacity. Their operational characteristi
 Investment parameters (for capacity expansion): investment method, investment cost, interest rate, lifetime. Retirement possible
 
 # Generators
+
+Generators are units.
+
+Units definition
+
+- Unit names (e.g. coal_plant, hydro_plant, solar_pv), capacities.
+
+variable_cost
+
+Operational characteristics
+
+- Energy conversion method (conversion_method), startup method (startup_method), minimum up/down time method (minimum_time_method)
+- Technical: Minimum load (min_load), efficiency, efficiency at min load (efficiency_at_min_load), minimum up/down time
+- Economic: Variable O&M cost, startup cost.
+- is_active
+
+Investment parameters (for capacity expansion)
+
+- Investment method, investment cost, interest rate, lifetime
+- Retirement possible
+
+![image](https://user-images.githubusercontent.com/84900647/176386407-0d4506c5-bc89-44c9-9534-005bcd019bb7.png)
+
+Generators are associated with nodes.
+
+## Relationship of a unit to a node and determination of the type of relationship:
+
+- If the unit’s outputs are flowing into the node, the node acts as output for the unit.
+- If the unit’s inputs are flowing out of the node (into the unit), the node acts as input for the unit.
+- Not all units necessary have an input node. E.g. VRE generators have only output nodes and their generation is driven by profiles (next slide).
+
+## Relationship properties:
+
+- Flow (from/to node) coefficient (accounts for efficiency of unit)
+- Variable cost of flow
+
+Generators are associated with nodes.
+
+### Generators driven by profiles
+
+Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile.
+
+Association of profile-unit and determination of profile method.
+
+- profile: solar_capacity_factor, ...
+- profile_method: upper_limit, ...
+
+![image](https://user-images.githubusercontent.com/84900647/176389062-7d5576bd-e433-4627-b5c6-b02943bfae74.png)
+
+![image](https://user-images.githubusercontent.com/84900647/176389102-af7253f4-085f-4b05-ab81-b92f247f34c4.png)
+
+
+# Defining a battery
+
+In Flextool 3 batteries are modeled with 
+1 battery node, which represents the storage capacity (MWh) of the battery (energy part of the battery)
+1 connection which transfers energy to and from the battery node (power part of the battery)
+
+Storage specific parameters of a node: has_state (has storage), existing (MWh), self_discharge_loss
+
+- self_discharge_loss
+- virtual_unitsize
+- transfer_method
+- fixed_cost
+- variable_cost
+- efficiency
+
