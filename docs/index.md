@@ -1,4 +1,4 @@
-![irenalogo](./MicrosoftTeams-image.png)
+![irenalogo](./irena_flextool_logo.png)
 
 # IRENA FlexTool user guide and documentation
 
@@ -39,7 +39,7 @@ The properties and operational characteristics of nodes can be set with the foll
     - no_inflow - ignores any inserted inflow time series
     - scale_to_annual_flow - 
 
-![image.png](./image.png)
+![image.png](./nodes.png)
 
 ## Data
 
@@ -54,7 +54,7 @@ Input data is set with the following parameters:
 
 Commodities are characterized by their price and CO2 content. Commodities are not directly injected to units (e.g. coal to the coal plant) so to be useful, they need to be assigned to commodity nodes (e.g. coal_node, gas_node). 
 
-![image-1.png](./commodities.PNG)
+![image-1.png](./commodities.png)
 
 # Connections
 
