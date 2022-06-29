@@ -4,7 +4,7 @@
 
 IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.
 
-User guide and documentation can be found [here]([https://github.com/irena-flextool/flextool/tree/master#irena-flextool).
+User guide and documentation can be found [here](https://github.com/irena-flextool/flextool/tree/master#irena-flextool).
 
 ## Main alternatives to use IRENA FlexTool
 
