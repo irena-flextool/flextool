@@ -46,3 +46,25 @@ Input data is set with the following parameters:
 - **'invest_cost'** - investment cost. Constant or time series.
 - **'inflow'** - Inflow into the node (negative is outflow). Constant or time series.
 - **'penalty_down'** and **'penalty_up'** - penalty costs for violating the balance of the node (downwards or upwards)
+
+# Commodities
+
+Commodities include fuels, such as coal and natural gas, and are characterized by their price and CO2 content. Commodities are not directly injected to units (e.g. coal in the coal plant) so to be useful, they need to be assigned to commodity nodes (e.g. coal_node, gas_node). 
+
+![image-1.png](./commodities.png)
+
+# Connections
+
+Connections have a name and a transfer capacity. Their operational characteristics include the transfer method, startup method, DC or AC and efficiency.
+
+- **'left_node' and 'right_node'** -
+- **'is_active'** -
+- **'transfer_method'** - *regular*
+- **'startup_method'** - *no_startup*
+- **'invest_method'** -
+- **'is_DC'** - *yes*, *no*
+- **'startup_cost'** - SHOULD THIS BE IN DATA?
+
+Investment parameters (for capacity expansion): investment method, investment cost, interest rate, lifetime. Retirement possible
+
+# Generators
