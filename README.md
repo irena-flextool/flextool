@@ -4,7 +4,7 @@ IRENA FlexTool is an energy and power systems model for understanding the role o
 
 This is IRENA FlexTool v3.0 in beta testing. Report any bugs or difficulties in the [issue tracker](https://github.com/irena-flextool/flextool/issues). Previous version of IRENA FlexTool can be found in https://www.irena.org/energytransition/Energy-System-Models-and-Data/IRENA-FlexTool.
 
-User guide and documentation can be found [here](https://github.com/irena-flextool/flextool/tree/master#irena-flextool).
+User guide and documentation can be found [here](https://irena-flextool.github.io/flextool/).
 
 ## Main alternatives to use IRENA FlexTool
 
