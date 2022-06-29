@@ -46,6 +46,7 @@ Input data is set with the following parameters:
 - **'invest_cost'** - investment cost. Constant or time series.
 - **'inflow'** - Inflow into the node (negative is outflow). Constant or time series.
 - **'penalty_down'** and **'penalty_up'** - penalty costs for violating the balance of the node (downwards or upwards)
+- **'startup_cost'**
 
 # Commodities
 
@@ -63,7 +64,6 @@ Connections have a name and a transfer capacity. Their operational characteristi
 - **'startup_method'** - *no_startup*
 - **'invest_method'** -
 - **'is_DC'** - *yes*, *no*
-- **'startup_cost'** - SHOULD THIS BE IN DATA?
 
 Investment parameters (for capacity expansion): investment method, investment cost, interest rate, lifetime. Retirement possible
 
@@ -89,7 +89,7 @@ Investment parameters (for capacity expansion)
 - Investment method, investment cost, interest rate, lifetime
 - Retirement possible
 
-![image](https://user-images.githubusercontent.com/84900647/176386407-0d4506c5-bc89-44c9-9534-005bcd019bb7.png)
+![image](./generators.png)
 
 Generators are associated with nodes.
 
@@ -114,11 +114,6 @@ Association of profile-unit and determination of profile method.
 
 - profile: solar_capacity_factor, ...
 - profile_method: upper_limit, ...
-
-![image](https://user-images.githubusercontent.com/84900647/176389062-7d5576bd-e433-4627-b5c6-b02943bfae74.png)
-
-![image](https://user-images.githubusercontent.com/84900647/176389102-af7253f4-085f-4b05-ab81-b92f247f34c4.png)
-
 
 # Defining a battery
 
