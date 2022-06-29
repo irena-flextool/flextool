@@ -173,7 +173,10 @@ set process__sink_nonSync_unit dimen 2 within {process, node};
 set process_nonSync_connection dimen 1 within {process};
 
 set process_reserve_upDown_node dimen 4;
-set process_node_constraint dimen 3 within {process, node, constraint};
+set process_node_flow_constraint dimen 3 within {process, node, constraint};
+set process_capacity_constraint dimen 2 within {process, constraint};
+set node_capacity_constraint dimen 2 within {node, constraint};
+set node_state_constraint dimen 2 within {node, constraint};
 set constraint__sense dimen 2 within {constraint, sense};
 set commodity_node dimen 2 within {commodity, node}; 
 
@@ -231,7 +234,10 @@ param pd_process {process, processPeriodParam, periodAll} default 0;
 param pt_process {process, processTimeParam, time} default 0;
 
 param p_constraint_constant {constraint};
-param p_process_node_constraint_coefficient {process, node, constraint};
+param p_process_node_constraint_flow_coefficient {process, node, constraint};
+param p_process_constraint_capacity_coefficient {process, constraint};
+param p_node_constraint_capacity_coefficient {node, constraint};
+param p_node_constraint_state_coefficient {node, constraint};
 param penalty_up {n in nodeBalance};
 param penalty_down {n in nodeBalance};
 param step_duration{(d, t) in dt};
@@ -278,7 +284,10 @@ table data IN 'CSV' 'input/node__profile__profile_method.csv' : node__profile__p
 table data IN 'CSV' 'input/group__node.csv' : group_node <- [group,node];
 table data IN 'CSV' 'input/group__process.csv' : group_process <- [group,process];
 table data IN 'CSV' 'input/group__process__node.csv' : group_process_node <- [group,process,node];
-table data IN 'CSV' 'input/p_process_node_constraint_coefficient.csv' : process_node_constraint <- [process, node, constraint];
+table data IN 'CSV' 'input/p_process_node_constraint_flow_coefficient.csv' : process_node_flow_constraint <- [process, node, constraint];
+table data IN 'CSV' 'input/p_process_constraint_capacity_coefficient.csv' : process_capacity_constraint <- [process, constraint];
+table data IN 'CSV' 'input/p_node_constraint_capacity_coefficient.csv' : node_capacity_constraint <- [node, constraint];
+table data IN 'CSV' 'input/p_node_constraint_state_coefficient.csv' : node_state_constraint <- [node, constraint];
 table data IN 'CSV' 'input/constraint__sense.csv' : constraint__sense <- [constraint, sense];
 table data IN 'CSV' 'input/p_process.csv' : process__param <- [process, processParam];
 table data IN 'CSV' 'input/pd_node.csv' : node__param__period <- [node, nodeParam, period];
@@ -317,7 +326,10 @@ table data IN 'CSV' 'input/pd_group.csv' : [group, groupParam, period], pd_group
 table data IN 'CSV' 'input/p_node.csv' : [node, nodeParam], p_node;
 table data IN 'CSV' 'input/pd_node.csv' : [node, nodeParam, period], pd_node;
 table data IN 'CSV' 'input/pt_node.csv' : [node, nodeParam, time], pt_node;
-table data IN 'CSV' 'input/p_process_node_constraint_coefficient.csv' : [process, node, constraint], p_process_node_constraint_coefficient;
+table data IN 'CSV' 'input/p_process_node_constraint_flow_coefficient.csv' : [process, node, constraint], p_process_node_constraint_flow_coefficient;
+table data IN 'CSV' 'input/p_process_constraint_capacity_coefficient.csv' : [process, constraint], p_process_constraint_capacity_coefficient;
+table data IN 'CSV' 'input/p_node_constraint_capacity_coefficient.csv' : [node, constraint], p_node_constraint_capacity_coefficient;
+table data IN 'CSV' 'input/p_node_constraint_state_coefficient.csv' : [node, constraint], p_node_constraint_state_coefficient;
 table data IN 'CSV' 'input/p_process__reserve__upDown__node.csv' : [process, reserve, upDown, node, reserveParam], p_process_reserve_upDown_node;
 table data IN 'CSV' 'input/p_process_sink.csv' : [process, sink, sourceSinkParam], p_process_sink;
 table data IN 'CSV' 'input/pt_process_sink.csv' : [process, sink, sourceSinkTimeParam, time], pt_process_sink;
@@ -758,10 +770,10 @@ param ptProcess__source__sink__t_varCost_alwaysProcess {(p, source, sink) in pro
 set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : ptProcess__source__sink__t_varCost[p, source, sink, t]};
 set pssdt_varCost_eff := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && ptProcess_source[p, source, 'variable_cost', t]};
 
-set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d]};
+set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d] || sum{(e, c) in process_capacity_constraint} 1 || sum{(e, c) in node_capacity_constraint} 1 };
 set pd_invest := {(p, d) in ed_invest : p in process};
 set nd_invest := {(n, d) in ed_invest : n in node};
-set ed_divest := {e in entityDivest, d in period_invest : ed_entity_annual_divest[e, d]};
+set ed_divest := {e in entityDivest, d in period_invest : ed_entity_annual_divest[e, d] || sum{(e, c) in process_capacity_constraint} 1 || sum{(e, c) in node_capacity_constraint} 1 };
 set pd_divest := {(p, d) in ed_divest : p in process};
 set nd_divest := {(n, d) in ed_divest : n in node};
 
@@ -1212,40 +1224,88 @@ s.t. profile_state_fixed_limit {(n, f, 'fixed') in node__profile__profile_method
 	  )
 ;
 
-s.t. process_constraint_greater_than {(c, 'greater_than') in constraint__sense, (d, t) in dt} :
-  + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_constraint}
+s.t. constraint_greater_than {(c, 'greater_than') in constraint__sense, (d, t) in dt} :
+  + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_flow_constraint}
     ( + v_flow[p, source, sink, d, t]
-	      * p_process_node_constraint_coefficient[p, source, c]
+	      * p_process_node_constraint_flow_coefficient[p, source, c]
 	)
-  + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_constraint}
+  + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_flow_constraint}
     ( + v_flow[p, source, sink, d, t]
-	      * p_process_node_constraint_coefficient[p, sink, c]
+	      * p_process_node_constraint_flow_coefficient[p, sink, c]
+	)
+  + sum {(n, c) in node_state_constraint}
+    ( + v_state[n, d, t]
+	      * p_node_constraint_state_coefficient[n, c]
+	)
+  + sum {(n, c) in node_capacity_constraint : d in period_invest}
+    ( ( + (if (n, d) in ed_invest then v_invest[n, d])
+	    - (if (n, d) in ed_divest then v_divest[n, d])
+	  )
+	  * p_node_constraint_capacity_coefficient[n, c]
+	)
+  + sum {(p, c) in process_capacity_constraint : d in period_invest}
+    ( ( + (if (p, d) in ed_invest then v_invest[p, d])
+	    - (if (p, d) in ed_divest then v_divest[p, d])
+	  )
+	  * p_process_constraint_capacity_coefficient[p, c]
 	)
   >=
   + p_constraint_constant[c]
 ;
 	
 s.t. process_constraint_less_than {(c, 'lesser_than') in constraint__sense, (d, t) in dt} :
-  + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_constraint}
+  + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_flow_constraint}
     ( + v_flow[source, source, p, d, t]
-	      * p_process_node_constraint_coefficient[p, source, c]
+	      * p_process_node_constraint_flow_coefficient[p, source, c]
 	)
-  + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_constraint}
+  + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_flow_constraint}
     ( + v_flow[p, source, sink, d, t]
-	      * p_process_node_constraint_coefficient[p, sink, c]
+	      * p_process_node_constraint_flow_coefficient[p, sink, c]
+	)
+  + sum {(n, c) in node_state_constraint}
+    ( + v_state[n, d, t]
+	      * p_node_constraint_state_coefficient[n, c]
+	)
+  + sum {(n, c) in node_capacity_constraint : d in period_invest}
+    ( ( + (if (n, d) in ed_invest then v_invest[n, d])
+	    - (if (n, d) in ed_divest then v_divest[n, d])
+	  )
+	  * p_node_constraint_capacity_coefficient[n, c]
+	)
+  + sum {(p, c) in process_capacity_constraint : d in period_invest}
+    ( ( + (if (p, d) in ed_invest then v_invest[p, d])
+	    - (if (p, d) in ed_divest then v_divest[p, d])
+	  )
+	  * p_process_constraint_capacity_coefficient[p, c]
 	)
   <=
   + p_constraint_constant[c]
 ;
-
+display node_capacity_constraint, process_capacity_constraint, entityInvest, p_entity_unitsize;
 s.t. process_constraint_equal {(c, 'equal') in constraint__sense, (d, t) in dt} :
-  + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_constraint}
+  + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_flow_constraint}
     ( + v_flow[p, source, sink, d, t]
-	      * p_process_node_constraint_coefficient[p, source, c]
+	      * p_process_node_constraint_flow_coefficient[p, source, c]
 	)
-  + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_constraint}
+  + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_flow_constraint}
     ( + v_flow[p, source, sink, d, t]
-	      * p_process_node_constraint_coefficient[p, sink, c]
+	      * p_process_node_constraint_flow_coefficient[p, sink, c]
+	)
+  + sum {(n, c) in node_state_constraint}
+    ( + v_state[n, d, t]
+	      * p_node_constraint_state_coefficient[n, c]
+	)
+  + sum {(n, c) in node_capacity_constraint : d in period_invest}
+    ( ( + (if (n, d) in ed_invest then v_invest[n, d])
+	    - (if (n, d) in ed_divest then v_divest[n, d])
+	  )
+	  * p_node_constraint_capacity_coefficient[n, c]
+	)
+  + sum {(p, c) in process_capacity_constraint : d in period_invest}
+    ( ( + (if (p, d) in ed_invest then v_invest[p, d])
+	    - (if (p, d) in ed_divest then v_divest[p, d])
+	  )
+	  * p_process_constraint_capacity_coefficient[p, c]
 	)
   =
   + p_constraint_constant[c]
@@ -2025,7 +2085,7 @@ for {e in entity: e in entityInvest}
   {
     printf '%s,%.8g\n', e, 
 	  + (if not p_model['solveFirst'] then p_entity_invested[e] else 0)
-	  + sum {d_invest in period_invest} v_invest[e, d_invest].val * p_entity_unitsize[e]
+	  + sum {(e, d_invest) in ed_invest} v_invest[e, d_invest].val * p_entity_unitsize[e]
 	>> fn_entity_invested;
   }
 
@@ -2607,5 +2667,7 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
+display entityInvest, period_invest, ed_invest;
+display {(e, d) in ed_invest} : v_invest[e, d].dual;
 display v_invest, v_divest;
 end;
