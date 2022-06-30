@@ -57,6 +57,8 @@ IRENA FlexTool workflow is a Spine Toolbox workflow that can be modified by the 
 
 ![IRENA FlexTool workflow](./docs/flextool_workflow.png)
 
+The panel on the right shows the different `scenarios` that are available in the database. The user can choose which scenarios will be processed by the workflow (until item `Results`, which combines the results into one database). Spine Toolbox can execute scenarios in parallel (as long as using 'work directories' defined in `FlexTool` item.
+
 `Input_data` workflow item points to a sqlite file that needs to have IRENA FlexTool data format (that uses Spine Toolbox database definition). The template file has the right format and contains empty object classes corresponding to FlexTool data structure as well as parameters available in each object class. Double clicking the Input_data workflow item will open the database editor. Just selecting the Input_data workflow item allows one to change the file (make a copy of the existing Input_data.sqlite and point to the copy).
 
 `Init` workflow item points to a sqlite file with predefined data that showcases IRENA FlexTool functionality. Some of the scenarios from there are used in the user guide. `Initialize` copies the contents of the Init database to the Input_data database.
@@ -71,6 +73,15 @@ IRENA FlexTool workflow is a Spine Toolbox workflow that can be modified by the 
 
 `To_Excel` worfklow item will export most scenario results to a simple Excel file. One way to utilize is this by creating another Excel file that draws figures from the result Excel file that is then updated by the workflow.
 
+The browser interface of FlexTool also runs part of this same workflow (`Export_to_csv` --> `FlexTool` --> `Import_results`). The server takes a copy of the workflow (inside the user_projects) folder and uses Spine Toolbox to execute the scenarios.
+
+## Database editor in brief
+
+Spine Toolbox database editor can be used to modify data and build scenarios. The figure below shows an example where parameter data from two `alternatives` have been selected for display (in the data table). The object tree on the left selects two `nodes` ('coal_market' and 'west') as well as one `unit` ('coal_plant'). These are visualized in the graph on top. The mouse pointer is showing a relationship entity that connects the 'coal_plant' and its output `node` 'west'. The relationship entity is defined in a relationship tree, which is not visible here.
+
+The `scenario` tree (on the right, below the `alternative` tree) shows that the 'coal' `scenario` is formed by taking all data from the 'init' `alternative` and then all data from the 'coal' `alternative`. If there would be same parameter defined for both `scenarios`, then the latter `alternative` would overwrite the first `alternative`.
+
+![Database editor](./docs/database_editor.png)
 
 ## Updating IRENA FlexTool
 
