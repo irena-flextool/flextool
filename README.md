@@ -51,9 +51,9 @@ In case of problems when installing Spine Toolbox, more instructions are availab
 Functionality yet not available.
 --->
 
-## IRENA FlexTool workflow explained
+## IRENA FlexTool workflow shortly explained
 
-IRENA FlexTool workflow is a Spine Toolbox workflow that can be modified by the user. The workflow provided in the repository is a template project that can be **either** copied for local changes **or** the workflow data input data files can be switched to local files. It is also possible to work directly with the template, but then one needs to be careful when updating IRENA FlexTool (the input data file contents need to be copied to safety before updating). 
+IRENA FlexTool workflow is a Spine Toolbox workflow that can be modified by the user. The workflow provided in the repository is a template Spine Toolbox project that can be **either** copied for local changes **or** the workflow data input data files can be switched to local files. It is also possible to work directly with the template, but then one needs to be careful when updating IRENA FlexTool (the input data file contents need to be copied to safety before updating). 
 
 ![IRENA FlexTool workflow](./docs/flextool_workflow.png)
 
@@ -75,13 +75,29 @@ The panel on the right shows the different `scenarios` that are available in the
 
 The browser interface of FlexTool also runs part of this same workflow (`Export_to_csv` --> `FlexTool` --> `Import_results`). The server takes a copy of the workflow (inside the user_projects) folder and uses Spine Toolbox to execute the scenarios.
 
+More instructions for Spine Toolbox in https://spine-toolbox.readthedocs.io/en/latest/?badge=latest.
+
 ## Database editor in brief
 
-Spine Toolbox database editor can be used to modify data and build scenarios. The figure below shows an example where parameter data from two `alternatives` have been selected for display (in the data table). The object tree on the left selects two `nodes` ('coal_market' and 'west') as well as one `unit` ('coal_plant'). These are visualized in the graph on top. The mouse pointer is showing a relationship entity that connects the 'coal_plant' and its output `node` 'west'. The relationship entity is defined in a relationship tree, which is not visible here.
+Spine Toolbox database editor can be used to modify data and to build scenarios. The figure below shows an example where parameter data from two `alternatives` have been selected for display (in the data table). The object tree on the left selects two `nodes` ('coal_market' and 'west') as well as one `unit` ('coal_plant'). These are visualized in the graph on top. The mouse pointer is showing a relationship entity that connects the 'coal_plant' and its output `node` 'west'. The relationship entity is defined in a relationship tree, which is not visible here.
 
 The `scenario` tree (on the right, below the `alternative` tree) shows that the 'coal' `scenario` is formed by taking all data from the 'init' `alternative` and then all data from the 'coal' `alternative`. If there would be same parameter defined for both `scenarios`, then the latter `alternative` would overwrite the first `alternative`.
 
 ![Database editor](./docs/database_editor.png)
+
+More on Spine Database editor in https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html.
+
+## Browser interface in brief
+
+![Webinterface project page](./docs/webinterface_projects.png)
+
+![Webinterface data editor front page](./docs/webinterface_editor_front.png)
+
+![Webinterface data page](./docs/webinterface_data.png)
+
+![Webinterface run page](./docs/webinterface_run.png)
+
+![Webinterface results page](./docs/webinterface_results.png)
 
 ## Updating IRENA FlexTool
 
