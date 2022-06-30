@@ -10,7 +10,7 @@ User guide and documentation are under development, but the current version can 
 
 ## Main alternatives to use IRENA FlexTool
 
-- [Use a browser](#connecting-to-irena-flextool-server): IRENA FlexTool can be accessed with a web browser if you have an account for an IRENA FlexTool server. No public servers available at the moment.
+- [Use a browser](#connecting-to-irena-flextool-server): IRENA FlexTool can be accessed with a web browser if you have an account for an IRENA FlexTool server. No public servers available at the moment. The browser interface is shown [below](#browser-interface-in-brief).
 - Local server: It is possible to setup a local server and then use a browser to access that server. See https://github.com/irena-flextool/flextool-web-interface
 - [Install a front-end](#installing-spine-toolbox-and-irena-flextool-on-a-local-computer): Install Spine Toolbox and run IRENA FlexTool as a Spine Toolbox project. This gives you the graphical user interface of Spine Toolbox. https://github.com/Spine-project/Spine-Toolbox
 <!---
@@ -19,7 +19,7 @@ User guide and documentation are under development, but the current version can 
 
 ### Connecting to IRENA FlexTool server
 
-Instruction will be added later
+Instruction will be added later. The interface is shown [below](#browser-interface-in-brief).
 
 <!---
 ### Setting up a local server
