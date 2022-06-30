@@ -8,7 +8,7 @@ User guide and documentation are under development, but the current version can 
 
 ## Main alternatives to use IRENA FlexTool
 
-- IRENA FlexTool can be accessed with a web browser if you have an account for an IRENA FlexTool server. No public servers available at the moment.
+[Use a browser](#-connecting-to-irena-flextool-server) IRENA FlexTool can be accessed with a web browser if you have an account for an IRENA FlexTool server. No public servers available at the moment.
 - It is possible to setup a local server and then use a browser to access that server. See https://github.com/irena-flextool/flextool-web-interface
 - Install Spine Toolbox and run IRENA FlexTool as a Spine Toolbox project. This gives you the graphical user interface of Spine Toolbox. https://github.com/Spine-project/Spine-Toolbox
 - It is also possible to define all the data in Excel and execute IRENA FlexTool workflows that takes the data and scenarios from Excel and returns results in another Excel file. This functionality is still under development.
