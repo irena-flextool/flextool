@@ -24,6 +24,12 @@ In the second step, a coal unit is added. It needs `efficiency` and capacity (`e
 
 Furthermore, the model needs to know that there is a link between the 'coal_market' and 'coal_plant' as well as 'coal_plant' and the `node` 'west'. These are established as relationships between objects. `unit__inputNode` relationship will therefore have 'coal_plant, coal_market' relationship and `unit__outputNode` will include 'coal_plant, west' relationship.
 
+## 3rd step - add the second unit
+
+Next a wind unit is added. The parameters for wind units include `conversion_method`, `efficiency`, `existing` and `is_active`.
+
+![Add another unit](./add_unit2.png)
+
 # Essential objects for defining a power/energy system
 
 - **nodes**: maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
