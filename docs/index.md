@@ -26,9 +26,15 @@ Furthermore, the model needs to know that there is a link between the 'coal_mark
 
 ## 3rd step - add the second unit
 
-Next a wind unit is added. The parameters for wind units include `conversion_method`, `efficiency`, `existing` and `is_active`.
+Next a wind unit is added. The parameters for wind units include `conversion_method`, `efficiency`, `existing` and `is_active`. Note that wind does not require a commodity since the marginal cost of wind production is zero.
 
 ![Add another unit](./add_unit2.png)
+
+## 4th step - add a network
+
+ A network introduces connections between nodes (`east_north`, `west_east` and `west_north`).
+
+ ![Add network](./add_network.png)
 
 # Essential objects for defining a power/energy system
 
