@@ -51,6 +51,7 @@ Functionality yet not available.
 
 Update of IRENA FlexTool to the latest version is done as follows
 - Start anaconda prompt
+- `conda activate flextool` (or whatever is your conda environment name for IRENA FlexTool)
 - cd to the FlexTool directory
 - `git restore .` (THIS WILL DELETE YOUR LOCAL CHANGES TO THE FILES IN THE WORKFLOW. This will be improved in the future. Currently you can work around this by making your own input files (Excel or SQLite) and pointing the workflow items (Excel_input_data or Input_Data) to your own files instead of the input_data.sqlite or FlexTool_import_template.xlsx. Whenever you update IRENA FlexTool you need to update the file links again.) 
 - `git pull`
