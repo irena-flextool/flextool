@@ -130,7 +130,7 @@
                 "resource_filters": {
                     "db_url@Input_data": {
                         "scenario_filter": [
-                            574
+                            575
                         ],
                         "tool_filter": [
                             1
@@ -159,7 +159,7 @@
             "x": 62.933522684556,
             "y": 7.69868337894945,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": []
         },
         "Init": {
