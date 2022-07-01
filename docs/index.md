@@ -18,7 +18,7 @@ At first the test system shows the parameters needed to establish a working mode
 
 ## 2nd step - add a coal unit
 
-In the second step, a coal unit is added. It needs `efficiency` and capacity (`existing`), but it also needs a new `node` *coal_market* from which it will get the *coal* `commodity` which needs a parameter for `price`. All these new parameters are part of the 'coal' `alternative`. A scenario with the initial node and the coal unit is then build by including both 'init' and 'coal' `alternatives` in the 'coal' `scenario`. There are some extra parameters related to investments, that will be useful later.
+In the second step, a coal unit is added. It needs `efficiency` and capacity (`existing`), but it also needs a new `node` *coal_market* from which it will get the *coal* `commodity` which needs a parameter for `price`. All these new parameters are part of the 'coal' `alternative`. A scenario with the initial node and the coal unit is then built by including both 'init' and 'coal' `alternatives` in the 'coal' `scenario`. There are some extra parameters related to investments that will be useful later.
 
 ![Add unit](./add_unit.png)
 
@@ -42,8 +42,17 @@ Next, a wind power plant is added. The parameters for this unit include `convers
 
  ![Add a reserve](./reserves.png)
 
-# A wind + battery system
+# Adding a battery
 
+Batteries are connected to inverters with `battery_inverter` objects involving parameters `efficiency` (between 0 and 1), `existing` (describing existing capacity), `is_active` and `transfer_method` which can be *regular*, *no_losses_no_variable_cost*, *exact* or *variable_cost_only*. Battery node parameters include e.g. `self_discharge_loss`, `penalty_up` and `penalty_down`.
+
+![Add a battery](./battery.png)
+
+#  Adding battery investment capabilities
+
+Battery investment capabilities can be modelled by adding parameters for `invest_cost`, `interest_rate` (discount rate), `lifetime` `` `` ``
+
+![Add battery investments](./battery_invest.png)
 
 
 # Essential objects for defining a power/energy system
