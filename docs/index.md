@@ -16,7 +16,7 @@ First test system shows the parameters needed to establish a working model. Howe
 
 ![First_model](./first_model.png)
 
-## 2nd step - add the first unit
+## 2nd step - add a coal unit
 
 In the second step, a coal unit is added. It needs `efficiency` and capacity (`existing`), but it also needs a new `node` 'coal_market' from which it will get the 'coal' `commodity` which needs a parameter for `price`. All these new parameters are part of the 'coal' `alternative`. A scenario with the initial node and the coal unit is then build by including both 'init' and 'coal' `alternatives` in the 'coal' `scenario`. There are some extra parameters related to investments, that will be useful later.
 
@@ -24,9 +24,9 @@ In the second step, a coal unit is added. It needs `efficiency` and capacity (`e
 
 Furthermore, the model needs to know that there is a link between the 'coal_market' and 'coal_plant' as well as 'coal_plant' and the `node` 'west'. These are established as relationships between objects. `unit__inputNode` relationship will therefore have 'coal_plant, coal_market' relationship and `unit__outputNode` will include 'coal_plant, west' relationship.
 
-## 3rd step - add the second unit
+## 3rd step - add a wind power plant
 
-Next a wind unit is added. The parameters for wind units include `conversion_method`, `efficiency`, `existing` and `is_active`. Note that wind does not require a commodity since the marginal cost of wind production is zero.
+Next a wind power plant is added. The parameters for this unit include `conversion_method`, `efficiency`, `existing` and `is_active`. Note that wind does not require a commodity, but instead uses a profile to limit the generation to the available wind. An 'wind_profile' object is added to the `profile` object class and the parameter `profile` is given a map of values where each time step gets the maximum available capacity factor for the time step. Outside of the figure, the relationship class `unit__node__profile` gets a new member 'wind_plant, west, wind_profile', which tells the model to connect the 'wind_profile' with the flow going from the 'wind_plant' to the 'west' `node`. There is also a parameter `profile_method`given to 'wind_plant, west, wind_profile' relationship with the choice 'upper_limit' selected. Now the wind_plant must generate at or below its capacity factor.
 
 ![Add another unit](./add_unit2.png)
 
