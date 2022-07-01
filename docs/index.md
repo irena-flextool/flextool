@@ -42,15 +42,25 @@ Next, a wind power plant is added. The parameters for this unit include `convers
 
  ![Add a reserve](./reserves.png)
 
-# Adding a battery
+# Other functionalities
+
+## Adding a battery
 
 Batteries are connected to inverters with `battery_inverter` objects involving parameters `efficiency` (between 0 and 1), `existing` (describing existing capacity), `is_active` and `transfer_method` which can be *regular*, *no_losses_no_variable_cost*, *exact* or *variable_cost_only*. Battery node parameters include e.g. `self_discharge_loss`, `penalty_up` and `penalty_down`.
 
 ![Add a battery](./battery.png)
 
-#  Adding battery investment capabilities
+##  Adding battery investment capabilities
 
-Battery investment capabilities can be modelled by adding parameters for `invest_cost`, `interest_rate` (discount rate), `lifetime` `` `` ``
+Battery investment capabilities can be modelled by adding parameters to the `battery_inverter` object for:
+
+- `invest_cost` - cost per added power,
+- `invest_max_total` - maximum investment (energy or power) to the virtual capacity of a group of units or to the storage capacity of a group of nodes
+- `interest_rate` - i.e. discount rate,
+- `lifetime` - used together with `interest_rate` to calculate annuity,
+- `invest_method` - allows the values *only_invest*, *only_retire*, *invest_and_retire* or *not_allowed*, and
+- `constraint_capacity_coefficient` - a map of coefficients (index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.
+
 
 ![Add battery investments](./battery_invest.png)
 
