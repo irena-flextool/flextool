@@ -8,6 +8,16 @@ The instructions for installing IRENA FlexTool are [here](https://github.com/ire
 
 This user guide will build a small system step-by-step. After that, there is a reference section for model properties. The small system is also available in the repository ('Init.sqlite') and can be opened with Spine Toolbox database editor. It can also be run with IRENA FlexTool (in the Spine Toolbox workflow one can initialize the Input_data.sqlite with the Init.sqlite when testing the modelling framework). More information on how to set-up and use the Spine Toolbox front-end in [here](https://github.com/irena-flextool/flextool#irena-flextool-workflow-shortly-explained).
 
+- [Building a small test system](#building-a-small-test-system)
+- [More functionality](#more-functionality)
+- [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system)
+- [Essential objects to define model properties](#essential-objects-to-define-model-properties)
+- [Additional objects for further functionality](#additional-objects-for-further-functionality)
+- [Nodes](#nodes)
+- [Commodities](#commodities)
+- [Connections](#connections)
+- [Units](#units)
+
 # Building a small test system
 
 ## 1st step - a node with no units
@@ -48,7 +58,7 @@ Parameters from the `reserve__upDown__unit__node` class will be used to define h
 
 # More functionality
 
-## Adding a battery
+## Adding a battery : init - wind - battery
 
 In the init.sqlite, there is a `scenario` *wind_battery* - the *wind_plant* alone is not able to meet the load in all conditions, but the *battery* will help it to improve the situation.
 
@@ -60,7 +70,7 @@ The `transfer_method` can be used by all types of connections, but in this case 
 
 ![Add a battery](./battery.png)
 
-##  Adding battery investment capabilities
+##  Adding battery investment capabilities : init - wind - battery - battery_invest
 
 To make the *wind_battery* `scenario` more interesting, an option to invest in *battery* and *battery_inverter* will be added. It will also demonstrate how FlexTool can have more complicated constraints that the user defines through data. 
 
@@ -75,7 +85,7 @@ First, the investment parameters need to be included for the `battery_inverter` 
 
 ![Add battery investments](./battery_invest.png)
 
-## Adding combined heat and power (CHP)
+## Adding combined heat and power (CHP) : init - coal_chp - heat
 
 *coal_chp_fix* - `constant` (numeric value), `is_active` (*yes*, *no*) `sense` (*less_than*, *equal*, *greater_than*)
 *coal_chp* - `conversion_method`, `efficiency`, `existing`, `is_active`
@@ -83,7 +93,7 @@ First, the investment parameters need to be included for the `battery_inverter` 
 
 ![Add CHP](./coal_chp.png)
 
-## Minimum load for coal
+## Minimum load for coal : init - coal - coal_min_load
 
 - `conversion_method` - *constant_efficiency*, *min_load_efficiency*, *none*
 - `startup_method` - *no_startup*, *linear*, *binary*
@@ -103,7 +113,7 @@ Carbon dioxide emissions of e.g. coal production can be added as a `commodity` w
 
 ![fullYear](./fullYear.png)
 
-## System with coal & wind power, network, battery and CO2 over full year : init - coal - wind - network - battery - co2 - fullYear
+## System with coal, wind, network, battery and CO2 over a full year : init - coal - wind - network - battery - co2 - fullYear
 
 ![Entity graph](./coal_wind_chp_battery_graph.png)
 
@@ -154,7 +164,7 @@ These parameters will define how the node will behave and use the data it is giv
 
 ![image.png](./nodes.png)
 
-## Data
+## Data for nodes
 
 Input data is set with the following parameters:
 
@@ -192,8 +202,8 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 Units definition
 
 - Unit names (e.g. coal_plant, hydro_plant, solar_pv), capacities.
+- 
 
-variable_cost
 
 Operational characteristics
 
@@ -215,7 +225,7 @@ Generators are associated with nodes.
 
 - If the unit’s outputs are flowing into the node, the node acts as output for the unit.
 - If the unit’s inputs are flowing out of the node (into the unit), the node acts as input for the unit.
-- Not all units necessary have an input node. E.g. VRE generators have only output nodes and their generation is driven by profiles (next slide).
+- Not all units necessary have an input node. E.g. VRE generators have only output nodes and their generation is driven by profiles
 
 ## Relationship properties:
 
@@ -224,7 +234,7 @@ Generators are associated with nodes.
 
 Generators are associated with nodes.
 
-### Generators driven by profiles
+## Generators driven by profiles
 
 Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile.
 
@@ -232,19 +242,3 @@ Association of profile-unit and determination of profile method.
 
 - profile: solar_capacity_factor, ...
 - profile_method: upper_limit, ...
-
-# Defining a battery
-
-In Flextool 3, batteries are modeled with 
-- 1 battery node, which represents the storage capacity (MWh) of the battery (energy part of the battery)
-- 1 connection which transfers energy to and from the battery node (power part of the battery)
-
-Storage specific parameters of a node: has_state (has storage), existing (MWh), self_discharge_loss
-
-- **self_discharge_loss**
-- **virtual_unitsize**
-- **transfer_method**
-- **fixed_cost**
-- **variable_cost**
-- **efficiency**
-
