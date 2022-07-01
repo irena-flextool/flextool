@@ -65,16 +65,33 @@ Battery investment capabilities can be modelled by adding the following paramete
 
 ## Adding combined heat and power (CHP)
 
+*coal_chp_fix* - `constant` (numeric value), `is_active` (*yes*, *no*) `sense` (*less_than*, *equal*, *greater_than*)
+*coal_chp* - `conversion_method`, `efficiency`, `existing`, `is_active`
+*heat* - `has_balance`, `inflow`, `is_active`, `penalty_down`, `penalty_up`
+
 ![Add CHP](./coal_chp.png)
 
 ## Minimum load for coal
 
-conversion_method: constant_efficiency, min_load_efficiency, none
-startup_method: no_startup, linear, binary
+- `conversion_method` - *constant_efficiency*, *min_load_efficiency*, *none*
+- `startup_method` - *no_startup*, *linear*, *binary*
+- `efficiency_at_min_load` - [e.g. 0.4 means 40%] Efficiency of the unit at minimum load. Applies only if the unit has an online variable. Constant.
+- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. Constant.
+- `startup_cost` - '[CUR/MW] Cost of starting up one MW of ''virtual'' capacity. Constant.'
 
 ![Add min_load](./coal_min_load.png)
 
-## Adding CO2 emissions
+## Adding coal CO2 emissions : init - coal - co2
+
+Carbon dioxide emissions of e.g. coal production can be added as a `commodity` with the parameter `co2_content` (CO2 per energy produced). The `price` (price per energy produced) of the emission is linked to a `group`.
+
+![Add CO2](./coal_co2.png)
+
+## Full year model : init - fullYear
+
+![fullYear](./fullYear.png)
+
+## System with coal & wind power, network, battery and CO2 over full year : init - coal - wind - network - battery - co2 - fullYear
 
 
 # Essential objects for defining a power/energy system
