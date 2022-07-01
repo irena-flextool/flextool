@@ -32,7 +32,7 @@ Next a wind power plant is added. The parameters for this unit include `conversi
 
 ## 4th step - add a network
 
- A network introduces connections between nodes (`east_north`, `west_east` and `west_north`).
+ A *network* `alternative` introduces two new `nodes` (*east* and *north*) and three new `connections` between `nodes` (*east_north*, *west_east* and *west_north*). The new nodes are kept simple: they just have a constant negative `inflow` (i.e. demand) and penalty values for violating their energy balance, which is also required through the `has_balance` parameter. The *north* `node` has the lowest upward penalty, so the model will prefer to use that whenever the *coal* and *wind* units cannot meet all the demand. Sometimes the `existing` capacity of the new `connections` will not be sufficient to carry all the needed power, since both generators are producing to the *west* `node`.
 
  ![Add network](./add_network.png)
 
