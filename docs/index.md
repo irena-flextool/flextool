@@ -74,14 +74,35 @@ The `transfer_method` can be used by all types of connections, but in this case 
 
 To make the *wind_battery* `scenario` more interesting, an option to invest in *battery* and *battery_inverter* will be added. It will also demonstrate how FlexTool can have more complicated constraints that the user defines through data. 
 
-First, the investment parameters need to be included for the `battery_inverter` and `battery` objects:
+First, the investment parameters need to be included both for the *battery_inverter* and *battery* objects:
 
-- `invest_cost` - cost per added power,
-- `invest_max_total` - maximum investment (energy or power) to the virtual capacity of a group of units or to the storage capacity of a group of nodes
-- `interest_rate` - i.e. discount rate,
-- `lifetime` - used together with `interest_rate` to calculate annuity,
-- `invest_method` - allows the values *only_invest*, *only_retire*, *invest_and_retire* or *not_allowed*, and
-- `constraint_capacity_coefficient` - a map of coefficients (index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.
+- `invest_method` - the modeller needs to choose between *only_invest*, *only_retire*, *invest_and_retire* or *not_allowed*
+- `invest_cost` - overnight investment cost new capacity [currency/kW] for the *battery_inverter* and [currency/kWh] for the *battery*. Other one can be left empty or zero, since they will be tied together in the next phase. Here we will assume a fixed relation between kW and kWh for this battery technology, but for example flow batteries could have separate investments for storage and charging capacities.
+- `invest_max_total` - maximum investment (power [MW] or energy [MWh]) to the virtual capacity of a group of units or to the storage capacity of a group of nodes. This should not be empty or zero, since then the model cannot invest in the technology.
+- `interest_rate` - an interest rate [e.g. 0.05 means 5%] for the technology that is sufficient to cover capital costs assuming that the economic lifetime equals the technical lifetime
+- `lifetime` - technical lifetime of the technology to calculate investment annuity (together with interest rate)
+
+Second, we need to create a new constraint that will tie together the storage capacity of the *battery* and the charging/discharging capacity of the *battery_inverter*. A new `constraint` object *battery_tie_kW_kWh* is created and it is given parameters `constant`, `is_active` and `sense`. Constant could be left out, since it is zero, but `is_active` must be defined in order to include the constraint in the *battery_invest* `alternative`. The `sense` of the constraint must be *equal* to enforce the kw/kWh relation.
+
+Third, both *battery_inverter* and *battery* will need a coefficient that will tell the model how they relate to each other. The equation has the capacity variables on the left side of the equation and the constant on the right side.
+
+```sum_i(`constraint_capacity_coefficient` * `invested_capacity`) = `constant`, where i is any unit, connection or node that is part of the constraint```
+
+If we now set `constraint_capacity_coefficient` for *battery* at 1 and for *battery_inverter* at -8, the equation will force *battery_inverter* `capacity`to be 8 times smaller than the *battery* `capacity`. The negative term can be seen to move to the right side of the equation, so that we have:
+
+```1 x *battery* = 8 x *battery_inverter*, which can be true only if *battery_inverter* is 1/8 of *battery*```
+
+`constraint_capacity_coefficient` is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the object to participate in multiple constraints.
+
+Finally, FlexTool can mix three different types of constraint coefficients: `constraint_capacity_coefficient`, `constraint_state_coefficient` and `constraint_flow_coefficient` allowing the user to create custom constraints between any types of objects in the model for the four different main variables in the model (*flow*, *state* as well as *invest* / *divest*). So, the equation above should really be written in this form:
+
+```
+  + sum_i(`constraint_capacity_coefficient` * `invested_capacity`), where i contains [node, unit, connection] belonging to the constraint
+  + sum_j(`constraint_flow_coefficient` * `invested_capacity`), where j contains [unit--node, connection--node] belonging to the constraint
+  + sum_k(`constraint_state_coefficient` * `invested_capacity`), where k contains [node] belonging to the constraint
+  = 
+  `constant`
+```
 
 ![Add battery investments](./battery_invest.png)
 
