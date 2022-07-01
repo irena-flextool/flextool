@@ -12,21 +12,21 @@ This user guide will build a small system step-by-step. After that, there is a r
 
 ## 1st step - a node with no units
 
-First test system shows the parameters needed to establish a working model. However, this model has only a `node` ('west') with demand, but no units to provide the demand. It will therefore use the slack variables and accept the penalty associated with them. All parameters here are part of the 'init' `alternative` - they will be used whenever a `scenario` includes the 'init' `alternative`.
+At first the test system shows the parameters needed to establish a working model. However, this model has only a `node` (*west*) with demand, but no units to provide the demand. It will therefore use the slack variables and accept the penalty associated with them. All parameters here are part of the 'init' `alternative` - they will be used whenever a `scenario` includes the 'init' `alternative`.
 
 ![First_model](./first_model.png)
 
 ## 2nd step - add a coal unit
 
-In the second step, a coal unit is added. It needs `efficiency` and capacity (`existing`), but it also needs a new `node` 'coal_market' from which it will get the 'coal' `commodity` which needs a parameter for `price`. All these new parameters are part of the 'coal' `alternative`. A scenario with the initial node and the coal unit is then build by including both 'init' and 'coal' `alternatives` in the 'coal' `scenario`. There are some extra parameters related to investments, that will be useful later.
+In the second step, a coal unit is added. It needs `efficiency` and capacity (`existing`), but it also needs a new `node` *coal_market* from which it will get the *coal* `commodity` which needs a parameter for `price`. All these new parameters are part of the 'coal' `alternative`. A scenario with the initial node and the coal unit is then build by including both 'init' and 'coal' `alternatives` in the 'coal' `scenario`. There are some extra parameters related to investments, that will be useful later.
 
 ![Add unit](./add_unit.png)
 
-Furthermore, the model needs to know that there is a link between the 'coal_market' and 'coal_plant' as well as 'coal_plant' and the `node` 'west'. These are established as relationships between objects. `unit__inputNode` relationship will therefore have 'coal_plant, coal_market' relationship and `unit__outputNode` will include 'coal_plant, west' relationship.
+Furthermore, the model needs to know that there is a link between the *coal_market* and *coal_plant* as well as *coal_plant* and the `node` 'west'. These are established as relationships between objects. `unit__inputNode` relationship will therefore have 'coal_plant, coal_market' relationship and `unit__outputNode` will include 'coal_plant, west' relationship.
 
 ## 3rd step - add a wind power plant
 
-Next a wind power plant is added. The parameters for this unit include `conversion_method`, `efficiency`, `existing` and `is_active`. Note that wind does not require a commodity, but instead uses a profile to limit the generation to the available wind. A *wind_profile* object is added to the `profile` object class and the parameter `profile` is given a map of values where each time step gets the maximum available capacity factor for the time step. On the bottom of the the figure, the relationship class `unit__node__profile` gets a new member *wind_plant, west, wind_profile*, which tells the model to connect the *wind_profile* with the flow going from the *wind_plant* to the *west* `node`. There is also a parameter `profile_method` given to *wind_plant, west, wind_profile* relationship with the choice *upper_limit* selected. Now the *wind_plant* must generate at or below its capacity factor.
+Next, a wind power plant is added. The parameters for this unit include `conversion_method`, `efficiency`, `existing` and `is_active`. Note that wind does not require a commodity, but instead uses a profile to limit the generation to the available wind. A *wind_profile* object is added to the `profile` object class and the parameter `profile` is given a map of values where each time step gets the maximum available capacity factor for the time step. On the bottom of the the figure, the relationship class `unit__node__profile` gets a new member *wind_plant, west, wind_profile*, which tells the model to connect the *wind_profile* with the flow going from the *wind_plant* to the *west* `node`. There is also a parameter `profile_method` given to *wind_plant, west, wind_profile* relationship with the choice *upper_limit* selected. Now the *wind_plant* must generate at or below its capacity factor.
 
 ![Add another unit](./add_unit2.png)
 
@@ -35,6 +35,16 @@ Next a wind power plant is added. The parameters for this unit include `conversi
  A *network* `alternative` introduces two new `nodes` (*east* and *north*) and three new `connections` between `nodes` (*east_north*, *west_east* and *west_north*). The new nodes are kept simple: they just have a constant negative `inflow` (i.e. demand) and penalty values for violating their energy balance, which is also required through the `has_balance` parameter. The *north* `node` has the lowest upward penalty, so the model will prefer to use that whenever the *coal* and *wind* units cannot meet all the demand. Sometimes the `existing` capacity of the new `connections` will not be sufficient to carry all the needed power, since both generators are producing to the *west* `node`.
 
  ![Add network](./add_network.png)
+
+ ## 5th step - add a reserve
+
+ Primary reserves (`reserve__upDown__group` and ` reserve__upDown__unit__node`) can be added with parameters `penalty_reserve`, `reservation`, `reserve_method`, `is_active`, `max_share`, `reliability` and `profile_method`. The values for `reserve_method` can be *no_reserve*, *timeseries_only*, *dynamic_only* or *both*. 
+
+ ![Add a reserve](./reserves.png)
+
+# A wind + battery system
+
+
 
 # Essential objects for defining a power/energy system
 
