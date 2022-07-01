@@ -6,23 +6,23 @@ IRENA FlexTool is an energy systems optimisation model developed for power and e
 
 The instructions for installing IRENA FlexTool are [here](https://github.com/irena-flextool/flextool/tree/master#irena-flextool).
 
-This user guide will build a small system step-by-step. After that, there is a reference section for model properties. The small system is also available in the repository ('Init.sqlite') and can be opened with Spine Toolbox database editor. It can also be run with IRENA FlexTool (in the Spine Toolbox workflow one can initialize the Input_data.sqlite with the Init.sqlite when testing the modelling framework). More information on how to set-up and use the Spine Toolbox front-end in [here](https://github.com/irena-flextool/flextool#irena-flextool-workflow-explained).
+This user guide will build a small system step-by-step. After that, there is a reference section for model properties. The small system is also available in the repository ('Init.sqlite') and can be opened with Spine Toolbox database editor. It can also be run with IRENA FlexTool (in the Spine Toolbox workflow one can initialize the Input_data.sqlite with the Init.sqlite when testing the modelling framework). More information on how to set-up and use the Spine Toolbox front-end in [here](https://github.com/irena-flextool/flextool#irena-flextool-workflow-shortly-explained).
 
 # Building a small test system
 
 ## 1st step - a node with no units
 
-At first the test system shows the parameters needed to establish a working model. However, this model has only a `node` (*west*) with demand, but no units to provide the demand. It will therefore use the slack variables and accept the penalty associated with them. All parameters here are part of the 'init' `alternative` - they will be used whenever a `scenario` includes the 'init' `alternative`.
+At first the test system shows the parameters needed to establish a working model. However, this model has only a `node` (*west*) with demand, but no units to provide the demand. It will therefore use the slack variables and accept the penalty associated with them. All parameters here are part of the *init* `alternative` - they will be used whenever a `scenario` includes the *init* `alternative`.
 
 ![First_model](./first_model.png)
 
 ## 2nd step - add a coal unit
 
-In the second step, a coal unit is added. It needs `efficiency` and capacity (`existing`), but it also needs a new `node` *coal_market* from which it will get the *coal* `commodity` which needs a parameter for `price`. All these new parameters are part of the 'coal' `alternative`. A scenario with the initial node and the coal unit is then built by including both 'init' and 'coal' `alternatives` in the 'coal' `scenario`. There are some extra parameters related to investments that will be useful later.
+In the second step, a coal unit is added. It needs `efficiency` and capacity (`existing`), but it also needs a new `node` *coal_market* from which it will get the *coal* `commodity` which needs a parameter for `price`. All these new parameters are part of the 'coal' `alternative`. A scenario with the initial node and the coal unit is then built by including both *init* and *coal* `alternatives` in the *coal* `scenario`. There are some extra parameters related to investments that will be useful later.
 
 ![Add unit](./add_unit.png)
 
-Furthermore, the model needs to know that there is a link between the *coal_market* and *coal_plant* as well as *coal_plant* and the `node` 'west'. These are established as relationships between objects. `unit__inputNode` relationship will therefore have 'coal_plant, coal_market' relationship and `unit__outputNode` will include 'coal_plant, west' relationship.
+Furthermore, the model needs to know that there is a link between the *coal_market* and *coal_plant* as well as *coal_plant* and the `node` *west*. These are established as relationships between objects. `unit__inputNode` relationship will therefore have *coal_plant--coal_market* relationship and `unit__outputNode` will include *coal_plant--west* relationship.
 
 ## 3rd step - add a wind power plant
 
@@ -38,21 +38,33 @@ Next, a wind power plant is added. The parameters for this unit include `convers
 
  ## 5th step - add a reserve
 
- Primary reserves (`reserve__upDown__group` and ` reserve__upDown__unit__node`) can be added with parameters `penalty_reserve`, `reservation`, `reserve_method`, `is_active`, `max_share`, `reliability` and `profile_method`. The values for `reserve_method` can be *no_reserve*, *timeseries_only*, *dynamic_only* or *both*. 
+Reserve requirement is defined for a group of nodes. Therefore, the first step is to add a new `group` called *electricity* with *west*, *east* and *north* as its members using the `group__node` relationship class. Then, a new reserve category called *primary* is added to the `reserve` object class. 
+
+A relationship between *primary--up--electricity* in the `reserve__upDown__group` class allows to define the reserve parameters `reserve_method`, `reservation` and `penalty_reserve`. In this case the reserve requirement will be a constant even though the `reserve_method` is *timeseries_only*. The other alternative is dynamic reserves where the model calculates the reserve requirement from generation and loads according to user defined factors (`increase_reserve_ratio`). 
+
+Parameters from the `reserve__upDown__unit__node` class will be used to define how different units can contribute to different reserves. Parameter `max_share` says how large share of the total capacity of the unit can contribute to this reserve category (e.g. *coal_plant*, in this example, has ramping restrictions and can only provide 1% of it's capacity to this upward primary reserve. Meanwhile, parameter `reliability` affects what portion of the reserved capacity actually contributes to the reserve (e.g. in this contrived example, *wind_plant* must reduce output by 20 MW to provide 10 MW of reserve). 
 
  ![Add a reserve](./reserves.png)
 
-# Other functionalities
+# More functionality
 
 ## Adding a battery
 
-Batteries are connected to inverters with `battery_inverter` objects involving parameters `efficiency` (between 0 and 1), `existing` (describing existing capacity), `is_active` and `transfer_method` which can be *regular*, *no_losses_no_variable_cost*, *exact* or *variable_cost_only*. Battery node parameters include e.g. `self_discharge_loss`, `penalty_up` and `penalty_down`.
+In the init.sqlite, there is a `scenario` *wind_battery* - the *wind_plant* alone is not able to meet the load in all conditions, but the *battery* will help it to improve the situation.
+
+In FlexTool, only `nodes` can have storage. This means that `existing` capacity and all investment parameters for `nodes` refer to the amount of storage the `node` can have. In this example, a *battery* `node` is established to describe the storage properties of the *battery* (e.g. `existing` capacity and `self_discharge_loss` in each hour). 
+
+Battery also needs charging and discharging capabilities. These could be presented either with a `connection` or by having a charging `unit` and a discarging `unit`. In here, we are using a `connection` called *batter_inverter*, since its more easy to prevent simultaneous charging and discharging that way (although, in a linear model, this cannot be fully prevented since that requires an integer variable). Please note that the `efficiency` parameter of the `connection` applies to both directions, so the round-trip `efficiency` will be `efficiency` squared.
+
+The `transfer_method` can be used by all types of connections, but in this case it is best to choose *regular*, which tries to avoid simultaneous charging and discharing, but can still do it when the model needs to dissipate energy. *exact* method would prevent that, but it would require integer variables and make the storage computationally much more expensive. Model leakage will be reported in the results (forthcoming).
 
 ![Add a battery](./battery.png)
 
 ##  Adding battery investment capabilities
 
-Battery investment capabilities can be modelled by adding the following parameters to the `battery_inverter` and `battery` objects:
+To make the *wind_battery* `scenario` more interesting, an option to invest in *battery* and *battery_inverter* will be added. It will also demonstrate how FlexTool can have more complicated constraints that the user defines through data. 
+
+First, the investment parameters need to be included for the `battery_inverter` and `battery` objects:
 
 - `invest_cost` - cost per added power,
 - `invest_max_total` - maximum investment (energy or power) to the virtual capacity of a group of units or to the storage capacity of a group of nodes
