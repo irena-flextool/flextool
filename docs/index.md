@@ -86,7 +86,10 @@ Second, we need to create a new constraint that will tie together the storage ca
 
 Third, both *battery_inverter* and *battery* will need a coefficient that will tell the model how they relate to each other. The equation has the capacity variables on the left side of the equation and the constant on the right side.
 
-```sum_i(`constraint_capacity_coefficient` * `invested_capacity`) = `constant`, where i is any unit, connection or node that is part of the constraint```
+```
+sum_i(`constraint_capacity_coefficient` * `invested_capacity`) = `constant` 
+      where i is any unit, connection or node that is part of the constraint
+```
 
 If we now set `constraint_capacity_coefficient` for *battery* at 1 and for *battery_inverter* at -8, the equation will force *battery_inverter* `capacity`to be 8 times smaller than the *battery* `capacity`. The negative term can be seen to move to the right side of the equation, so that we have:
 
@@ -97,9 +100,12 @@ If we now set `constraint_capacity_coefficient` for *battery* at 1 and for *batt
 Finally, FlexTool can mix three different types of constraint coefficients: `constraint_capacity_coefficient`, `constraint_state_coefficient` and `constraint_flow_coefficient` allowing the user to create custom constraints between any types of objects in the model for the four different main variables in the model (*flow*, *state* as well as *invest* / *divest*). So, the equation above should really be written in this form:
 
 ```
-  + sum_i(`constraint_capacity_coefficient` * `invested_capacity`), where i contains [node, unit, connection] belonging to the constraint
-  + sum_j(`constraint_flow_coefficient` * `invested_capacity`), where j contains [unit--node, connection--node] belonging to the constraint
-  + sum_k(`constraint_state_coefficient` * `invested_capacity`), where k contains [node] belonging to the constraint
+  + sum_i(`constraint_capacity_coefficient` * `invested_capacity`)
+          where i contains [node, unit, connection] belonging to the constraint
+  + sum_j(`constraint_flow_coefficient` * `invested_capacity`)
+          where j contains [unit--node, connection--node] belonging to the constraint
+  + sum_k(`constraint_state_coefficient` * `invested_capacity`)
+          where k contains [node] belonging to the constraint
   = 
   `constant`
 ```
