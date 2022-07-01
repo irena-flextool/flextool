@@ -52,7 +52,7 @@ Batteries are connected to inverters with `battery_inverter` objects involving p
 
 ##  Adding battery investment capabilities
 
-Battery investment capabilities can be modelled by adding parameters to the `battery_inverter` object for:
+Battery investment capabilities can be modelled by adding the following parameters to the `battery_inverter` and `battery` objects:
 
 - `invest_cost` - cost per added power,
 - `invest_max_total` - maximum investment (energy or power) to the virtual capacity of a group of units or to the storage capacity of a group of nodes
@@ -61,8 +61,20 @@ Battery investment capabilities can be modelled by adding parameters to the `bat
 - `invest_method` - allows the values *only_invest*, *only_retire*, *invest_and_retire* or *not_allowed*, and
 - `constraint_capacity_coefficient` - a map of coefficients (index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.
 
-
 ![Add battery investments](./battery_invest.png)
+
+## Adding combined heat and power (CHP)
+
+![Add CHP](./coal_chp.png)
+
+## Minimum load for coal
+
+conversion_method: constant_efficiency, min_load_efficiency, none
+startup_method: no_startup, linear, binary
+
+![Add min_load](./coal_min_load.png)
+
+## Adding CO2 emissions
 
 
 # Essential objects for defining a power/energy system
