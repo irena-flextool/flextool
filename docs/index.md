@@ -93,6 +93,7 @@ Carbon dioxide emissions of e.g. coal production can be added as a `commodity` w
 
 ## System with coal & wind power, network, battery and CO2 over full year : init - coal - wind - network - battery - co2 - fullYear
 
+![Entity graph](./coal_wind_chp_battery_graph.png)
 
 # Essential objects for defining a power/energy system
 
