@@ -145,17 +145,21 @@ By default, `input_coefficient` and `output_coefficient` are 1, but if there is 
 
 ![Add min_load](./coal_min_load.png)
 
-## Adding coal CO2 emissions : init - coal - co2
+## Adding CO2 emissions and costs : init - coal - co2
 
-Carbon dioxide emissions of e.g. coal production can be added as a `commodity` with the parameter `co2_content` (CO2 per energy produced). The `price` (price per energy produced) of the emission is linked to a `group`.
+Carbon dioxide emissions are added to FlexTool by associating relevant `commodities` (e.g. *coal*) with a `co2_content` parameter (CO2 content per MWh of energy contained in the fuel). To set a price for the CO2, the nodes that use those commodities will need to be linked to a `group` of `nodes` that set the `co2_price` (currency / CO2 ton). Therefore, in addition to what is visible in the figure below, a relationship *co2_price--coal_market* must be established so that the model knows to point the `CO2_price` to the `commodity` used from the *coal_market* `node` based on the `co2_content` of the *coal* `commodity`.
 
 ![Add CO2](./coal_co2.png)
 
 ## Full year model : init - fullYear
 
+So far the model has been using only two days to keep it fast to run. This example extends the model horizon to a full year. To do so, a new `solve` object *y2020_fullYear_dispatch* is added. Each `solve` object needs to know what `periods` it will contain and what `periods` it will realize (print out results). `solve_mode` does not do anything at present, but will be used when FlexTool can be set to do automatic rolling window optimization (at present, it needs to be set manually using multiple solves). The key difference here is that the `period_timeblockSet` parameter points the *p2020* period to a timeblockSet definition that covers the full year instead of the two days used before.
+
 ![fullYear](./fullYear.png)
 
 ## System with coal, wind, network, battery and CO2 over a full year : init - coal - wind - network - battery - co2 - fullYear
+
+The final example shows a system many of the previous examples have been put into one model and run for one year. The graph below shows the physical objects in the example.
 
 ![Entity graph](./coal_wind_chp_battery_graph.png)
 
