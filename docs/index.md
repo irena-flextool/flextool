@@ -100,19 +100,19 @@ If we now set `constraint_capacity_coefficient` for *battery* at 1 and for *batt
 Finally, FlexTool can mix three different types of constraint coefficients: `constraint_capacity_coefficient`, `constraint_state_coefficient` and `constraint_flow_coefficient` allowing the user to create custom constraints between any types of objects in the model for the main variables in the model (*flow*, *state* as well as *invest* and *divest*). So, the equation above is in full form:
 
 ```
-  + sum_i(`constraint_capacity_coefficient` * `invested_capacity`)
-          where i contains [node, unit, connection] belonging to the constraint
-  + sum_j(`constraint_flow_coefficient` * `invested_capacity`)
-          where j contains [unit--node, connection--node] belonging to the constraint
-  + sum_k(`constraint_state_coefficient` * `invested_capacity`)
-          where k contains [node] belonging to the constraint
+  + sum_i [constraint_capacity_coefficient(i) * invested_capacity]
+           where i contains [node, unit, connection] belonging to the constraint
+  + sum_j [constraint_flow_coefficient(j) * invested_capacity]
+           where j contains [unit--node, connection--node] belonging to the constraint
+  + sum_k [constraint_state_coefficient(k) * `invested_capacity]
+           where k contains [node] belonging to the constraint
   = 
-  `constant`
+  constant
 ```
 
 ![Add battery investments](./battery_invest.png)
 
-## Adding combined heat and power (CHP) : init - coal_chp - heat
+## Combined heat and power (CHP) example : init - coal_chp - heat
 
 This CHP plant is an another example where the user defined `constraint` (see the last equation in the previous example) is used to make something in the model to behave in the derised manner. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plants the relation is more complicated - there is an allowed operating area between heat and power. Both can be depicted in FlexTool, but here a backpressure example is given. An extraction plant would require two or more *greater_than* and/or *lesser_than* `constraints` to define an operating area.
 
@@ -124,13 +124,24 @@ This is done by adding a new `constraint` *coal_chp_fix* where the heat and powe
 
 ![Add CHP](./coal_chp.png)
 
-## Minimum load for coal : init - coal - coal_min_load
+## Minimum load example : init - coal - coal_min_load
 
-- `conversion_method` - *constant_efficiency*, *min_load_efficiency*, *none*
-- `startup_method` - *no_startup*, *linear*, *binary*
-- `efficiency_at_min_load` - [e.g. 0.4 means 40%] Efficiency of the unit at minimum load. Applies only if the unit has an online variable. Constant.
-- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. Constant.
-- `startup_cost` - '[CUR/MW] Cost of starting up one MW of ''virtual'' capacity. Constant.'
+The next example is more simple. It adds a minimum load behavior to the *coal_plant* `unit`. Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a `startup_method` needs to be defined and an optional `startup_cost` can be given. The options are *no_startup*, *linear* and *binary*. *binary* would require an integer variable so *linear* is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (*flow* >= *min_load_efficiency* x *capacity_online*).
+
+The online variable also allows to change the efficiency of the plant between the minimum and full loads. An unit with a part-load efficiency will obey the following equation:
+
+```
+  + sum_i[ input(i) * input_coefficient(i) ]
+  =
+  + sum_o[ output(o) * output_coefficient(o) ] * slope
+  + online * section
+
+where   slope = 1 / efficiency - section
+  and section = 1 / efficiency 
+                - ( 1 / efficiency - 1 / efficiency_at_min_load) / ( 1 - efficiency_at_min_load )
+```
+
+By default, `input_coefficient` and `output_coefficient` are 1, but if there is a need to tweak their relative contributions, these coefficients allow to do so (e.g. a coal plant might have lower efficieny when using lignite than when using brown coal).
 
 ![Add min_load](./coal_min_load.png)
 
