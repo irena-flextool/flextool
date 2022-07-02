@@ -9,7 +9,18 @@ The instructions for installing IRENA FlexTool are [here](https://github.com/ire
 This user guide will build a small system step-by-step. After that, there is a reference section for model properties. The small system is also available in the repository ('Init.sqlite') and can be opened with Spine Toolbox database editor. It can also be run with IRENA FlexTool (in the Spine Toolbox workflow one can initialize the Input_data.sqlite with the Init.sqlite when testing the modelling framework). More information on how to set-up and use the Spine Toolbox front-end in [here](https://github.com/irena-flextool/flextool#irena-flextool-workflow-shortly-explained).
 
 - [Building a small test system](#building-a-small-test-system)
+  - [1st step - a node with no units](#1st-step---a-node-with-no-units)
+  - [2nd step - add a coal unit](#2nd-step---add-a-coal-unit)
+  - [3rd step - add a wind power plant](#3rd-step---add-a-wind-power-plant)
+  - [4th step - add a network](#4th-step---add-a-network)
+  - [5th step - add a reserve](#5th-step---add-a-reserve)
 - [More functionality](#more-functionality)
+  - [Adding a battery : init - wind - battery](#adding-a-battery--init---wind---battery)
+  - [Adding battery investment capabilities : init - wind - battery - battery_invest](#adding-battery-investment-capabilities--init---wind---battery---battery_invest)
+  - [Minimum load example : init - coal - coal_min_load](#minimum-load-example--init---coal---coal_min_load)
+  - [Adding CO2 emissions and costs : init - coal - co2](#adding-co2-emissions-and-costs--init---coal---co2)
+  - [Full year model : init - fullYear](#full-year-model--init---fullyear)
+  - [System with coal, wind, network, battery and CO2 over a full year : init - coal - wind - network - battery - co2 - fullYear](#system-with-coal-wind-network-battery-and-co2-over-a-full-year--init---coal---wind---network---battery---co2---fullyear)
 - [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system)
 - [Essential objects to define model properties](#essential-objects-to-define-model-properties)
 - [Additional objects for further functionality](#additional-objects-for-further-functionality)
