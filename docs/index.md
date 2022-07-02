@@ -97,7 +97,7 @@ If we now set `constraint_capacity_coefficient` for *battery* at 1 and for *batt
 
 `constraint_capacity_coefficient` is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the object to participate in multiple constraints.
 
-Finally, FlexTool can mix three different types of constraint coefficients: `constraint_capacity_coefficient`, `constraint_state_coefficient` and `constraint_flow_coefficient` allowing the user to create custom constraints between any types of objects in the model for the four different main variables in the model (*flow*, *state* as well as *invest* / *divest*). So, the equation above should really be written in this form:
+Finally, FlexTool can mix three different types of constraint coefficients: `constraint_capacity_coefficient`, `constraint_state_coefficient` and `constraint_flow_coefficient` allowing the user to create custom constraints between any types of objects in the model for the main variables in the model (*flow*, *state* as well as *invest* and *divest*). So, the equation above is in full form:
 
 ```
   + sum_i(`constraint_capacity_coefficient` * `invested_capacity`)
@@ -114,9 +114,13 @@ Finally, FlexTool can mix three different types of constraint coefficients: `con
 
 ## Adding combined heat and power (CHP) : init - coal_chp - heat
 
-*coal_chp_fix* - `constant` (numeric value), `is_active` (*yes*, *no*) `sense` (*less_than*, *equal*, *greater_than*)
-*coal_chp* - `conversion_method`, `efficiency`, `existing`, `is_active`
-*heat* - `has_balance`, `inflow`, `is_active`, `penalty_down`, `penalty_up`
+This CHP plant is an another example where the user defined `constraint` (see the last equation in the previous example) is used to make something in the model to behave in the derised manner. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plants the relation is more complicated - there is an allowed operating area between heat and power. Both can be depicted in FlexTool, but here a backpressure example is given. An extraction plant would require two or more *greater_than* and/or *lesser_than* `constraints` to define an operating area.
+
+First, a new *heat* `node` is added and it is given the necessary parameters. Then the *coal_chp* `unit` is made with a high efficiency, since CHP units  convert fuel energy to power and heat at such rates. In FlexTool, `efficiency` is a property of the unit - it demarcates at what rate the sum of inputs is converted to the sum of outputs. However, without any additional constraints, the `unit` is free to choose in what proportion to use inputs and in which proportion to use outputs. In units with only one input and output, this freedom does not exist, but in here, the *coal_chp* needs to be constrained. 
+
+This is done by adding a new `constraint` *coal_chp_fix* where the heat and power co-efficients are fixed. As can be seen in the bottom part of the figure below, the `constraint_flow_coefficient` parameter for the *coal_chp--heat* and *coal_chp--west* is set as a map value where the `constraint` name matches with the *coal_chp_fix* `constraint` object name. The values are set so that the constraint equation forces the heat output to be twice as large as the electricity output. Again, the negative value moves the other variable to the right side of the equality, creating this:
+
+```1 x *electricity* = 0.5 x *heat*, which is true only if *heat* is 2 x *electricity*```
 
 ![Add CHP](./coal_chp.png)
 
