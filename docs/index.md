@@ -15,12 +15,12 @@ This user guide will build a small system step-by-step. After that, there is a r
   - [4th step - add a network](#4th-step---add-a-network)
   - [5th step - add a reserve](#5th-step---add-a-reserve)
 - [More functionality](#more-functionality)
-  - [Adding a battery : init - wind - battery](#adding-a-battery--init---wind---battery)
-  - [Adding battery investment capabilities : init - wind - battery - battery_invest](#adding-battery-investment-capabilities--init---wind---battery---battery_invest)
-  - [Minimum load example : init - coal - coal_min_load](#minimum-load-example--init---coal---coal_min_load)
-  - [Adding CO2 emissions and costs : init - coal - co2](#adding-co2-emissions-and-costs--init---coal---co2)
-  - [Full year model : init - fullYear](#full-year-model--init---fullyear)
-  - [System with coal, wind, network, battery and CO2 over a full year : init - coal - wind - network - battery - co2 - fullYear](#system-with-coal-wind-network-battery-and-co2-over-a-full-year--init---coal---wind---network---battery---co2---fullyear)
+  - [Adding a storage unit (battery)](#adding-a-storage-unit-battery)
+  - [Adding battery investment capabilities](#adding-battery-investment-capabilities)
+  - [Minimum load example](#minimum-load-example)
+  - [Adding CO2 emissions and costs](#adding-co2-emissions-and-costs)
+  - [Full year model](#full-year-model)
+  - [A system with coal, wind, network, battery and CO2 over a full year](#a-system-with-coal-wind-network-battery-and-co2-over-a-full-year)
 - [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system)
 - [Essential objects to define model properties](#essential-objects-to-define-model-properties)
 - [Additional objects for further functionality](#additional-objects-for-further-functionality)
@@ -28,8 +28,6 @@ This user guide will build a small system step-by-step. After that, there is a r
 - [Commodities](#commodities)
 - [Connections](#connections)
 - [Units](#units)
-
-# Building a small test system
 
 ## 1st step - a node with no units
 
@@ -119,7 +117,7 @@ Finally, FlexTool can actually mix three different types of constraint coefficie
            where i contains [node, unit, connection] belonging to the constraint
   + sum_j [constraint_flow_coefficient(j) * invested_capacity]
            where j contains [unit--node, connection--node] belonging to the constraint
-  + sum_k [constraint_state_coefficient(k) * invested_capacity]
+  + sum_k [constraint_state_coefficient(k) * invested_capacity] 
            where k contains [node] belonging to the constraint
   = 
   constant
@@ -266,15 +264,16 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 ## Functional definitions
 
-- `is_active`
-- Energy conversion method (conversion_method), 
-- startup method (startup_method), 
-- minimum up/down time method (minimum_time_method)
+- `is_active` to state the alternative where the unit becomes active
+- 'conversion_method' to define the way unit converts inputs to outputs 
+- `startup_method` defines how the start-up mechanism is modelled
+- `minimum_time_method` - not functional at the moment
 
 ## Main parameters 
+
 - Capacity: `existing` (and the investment and retirement parameters below)
-- Technical: efficiency, minimum load (min_load), efficiency at min load (efficiency_at_min_load), inertia_constant
-- Economic: variable_cost, startup_cost, fixed_cost (fuel cost comes through the use of fuel commodities)
+- Technical: `efficiency`, `min_load`, `efficiency_at_min_load`, `inertia_constant`
+- Economic: `variable_cost`, `startup_cost`, `fixed_cost` (fuel cost comes through the use of fuel commodities)
 
 ## Investment parameters (for capacity expansion)
 
@@ -285,17 +284,17 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 ![image](./generators.png)
 
 
-## Relationship of a unit to a node and determination of the type of relationship:
+## Relationship of a unit to a node and determination of the type of relationship
 
 - If the unit’s outputs are flowing into the node, the node acts as output for the unit.
 - If the unit’s inputs are flowing out of the node (into the unit), the node acts as input for the unit.
 - Not all units necessary have an input or an output node. E.g. VRE generators have only output nodes and their generation is driven by profiles
 
-## Properties of unit--inputNode and unit--outputNode relationships:
+## Properties of unit--inputNode and unit--outputNode relationships
 
 - Flow (from/to node) coefficient (changes the accounts for efficiency of unit)
 - Variable cost of the particular flow of unit--inputNode or unit--outputNode
 
-## Generators driven by profiles
+## Units constrained by profiles
 
 Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` object with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile`object is given a `profile` time series (or it can also be a constant).
