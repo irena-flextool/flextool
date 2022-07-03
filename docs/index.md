@@ -2,11 +2,11 @@
 
 # IRENA FlexTool user guide and documentation
 
-IRENA FlexTool is an energy systems optimisation model developed for power and energy systems with high shares of wind and solar power. It can be used to find cost-effective sources of flexibility across the energy system to mitigate the increasing variability arising from the power systems. It can perform multi-year capacity expansion as well as unit commitment and economic dispatch in a user-defined sequence of solves. The aim has been to make it fast and easy to use while including lot of functionality especially in the time scales relevant for investment planning and operational scheduling of energy systems.
+IRENA FlexTool is an energy systems optimisation model developed for power and energy systems with high shares of wind and solar power. It can be used to find cost-effective sources of flexibility across the energy system to mitigate the increasing variability arising from the power systems. It can perform multi-year capacity expansion as well as unit commitment and economic dispatch in a user-defined sequence of solves. The aim has been to make it fast to learn and easy to use while including lot of functionality especially in the time scales relevant for investment planning and operational scheduling of energy systems.
 
 The instructions for installing IRENA FlexTool are [here](https://github.com/irena-flextool/flextool/tree/master#irena-flextool).
 
-This user guide will build a small system step-by-step. After that, there is a reference section for model properties. The small system is also available in the repository ('Init.sqlite') and can be opened with Spine Toolbox database editor. It can also be run with IRENA FlexTool (in the Spine Toolbox workflow one can initialize the Input_data.sqlite with the Init.sqlite when testing the modelling framework). More information on how to set-up and use the Spine Toolbox front-end in [here](https://github.com/irena-flextool/flextool#irena-flextool-workflow-shortly-explained).
+This user guide will build a small system step-by-step. After that, there is a reference section for model properties. The small system is also available in the repository ('Init.sqlite') and can be opened with Spine Toolbox database editor. It can also be run with IRENA FlexTool (initialize the Input_data.sqlite with the Init.sqlite in the Spine Toolbox workflow when testing the modelling framework). More information on how to set-up and use the Spine Toolbox front-end in [here](https://github.com/irena-flextool/flextool#irena-flextool-workflow-shortly-explained).
 
 - [Building a small test system](#building-a-small-test-system)
   - [1st step - a node with no units](#1st-step---a-node-with-no-units)
@@ -33,7 +33,7 @@ This user guide will build a small system step-by-step. After that, there is a r
 
 ## 1st step - a node with no units
 
-At first the test system shows the parameters needed to establish a working model. However, this model has only a `node` (*west*) with demand, but no units to provide the demand. It will therefore use the slack variables and accept the penalty associated with them. All parameters here are part of the *init* `alternative` - they will be used whenever a `scenario` includes the *init* `alternative`.
+At first the test system shows the parameters needed to establish a working model. However, this model has only one `node` (*west*) with demand, but no units to provide the demand. It will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. All parameters here are part of the *init* `alternative` - they will be used whenever a `scenario` includes the *init* `alternative`.
 
 ![First_model](./first_model.png)
 
@@ -69,7 +69,9 @@ Parameters from the `reserve__upDown__unit__node` class will be used to define h
 
 # More functionality
 
-## Adding a battery : init - wind - battery
+## Adding a storage unit (battery)
+
+***init - wind - battery***
 
 In the init.sqlite, there is a `scenario` *wind_battery* - the *wind_plant* alone is not able to meet the load in all conditions, but the *battery* will help it to improve the situation.
 
@@ -81,9 +83,11 @@ The `transfer_method` can be used by all types of connections, but in this case 
 
 ![Add a battery](./battery.png)
 
-##  Adding battery investment capabilities : init - wind - battery - battery_invest
+##  Adding battery investment capabilities 
 
-To make the *wind_battery* `scenario` more interesting, an option to invest in *battery* and *battery_inverter* will be added. It will also demonstrate how FlexTool can have more complicated constraints that the user defines through data. 
+***init - wind - battery - battery_invest***
+
+To make the *wind_battery* `scenario` more interesting, an option to invest in *battery* and *battery_inverter* is added. It also demonstrates how FlexTool can have more complicated constraints that the user defines through data. 
 
 First, the investment parameters need to be included both for the *battery_inverter* and *battery* objects:
 
@@ -93,29 +97,29 @@ First, the investment parameters need to be included both for the *battery_inver
 - `interest_rate` - an interest rate [e.g. 0.05 means 5%] for the technology that is sufficient to cover capital costs assuming that the economic lifetime equals the technical lifetime
 - `lifetime` - technical lifetime of the technology to calculate investment annuity (together with interest rate)
 
-Second, we need to create a new constraint that will tie together the storage capacity of the *battery* and the charging/discharging capacity of the *battery_inverter*. A new `constraint` object *battery_tie_kW_kWh* is created and it is given parameters `constant`, `is_active` and `sense`. Constant could be left out, since it is zero, but `is_active` must be defined in order to include the constraint in the *battery_invest* `alternative`. The `sense` of the constraint must be *equal* to enforce the kw/kWh relation.
+Second, a new constraint needs to be created that ties together the storage capacity of the *battery* and the charging/discharging capacity of the *battery_inverter*. A new `constraint` object *battery_tie_kW_kWh* is created and it is given parameters `constant`, `is_active` and `sense`. Constant could be left out, since it is zero, but `is_active` must be defined in order to include the constraint in the *battery_invest* `alternative`. The `sense` of the constraint must be *equal* to enforce the kw/kWh relation.
 
-Third, both *battery_inverter* and *battery* will need a coefficient that will tell the model how they relate to each other. The equation has the capacity variables on the left side of the equation and the constant on the right side.
+Third, both *battery_inverter* and *battery* need a coefficient to tell the model how they relate to each other. The equation has the capacity variables on the left side of the equation and the constant on the right side.
 
 ```
 sum_i(`constraint_capacity_coefficient` * `invested_capacity`) = `constant` 
       where i is any unit, connection or node that is part of the constraint
 ```
 
-If we now set `constraint_capacity_coefficient` for *battery* at 1 and for *battery_inverter* at -8, the equation will force *battery_inverter* `capacity`to be 8 times smaller than the *battery* `capacity`. The negative term can be seen to move to the right side of the equation, so that we have:
+When the `constraint_capacity_coefficient` for *battery* is set at 1 and for the *battery_inverter* at -8, then the equation will force *battery_inverter* `capacity`to be 8 times smaller than the *battery* `capacity`. The negative term can be seen to move to the right side of the equation, which yields:
 
 ```1 x *battery* = 8 x *battery_inverter*, which can be true only if *battery_inverter* is 1/8 of *battery*```
 
 `constraint_capacity_coefficient` is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the object to participate in multiple constraints.
 
-Finally, FlexTool can mix three different types of constraint coefficients: `constraint_capacity_coefficient`, `constraint_state_coefficient` and `constraint_flow_coefficient` allowing the user to create custom constraints between any types of objects in the model for the main variables in the model (*flow*, *state* as well as *invest* and *divest*). So, the equation above is in full form:
+Finally, FlexTool can actually mix three different types of constraint coefficients: `constraint_capacity_coefficient`, `constraint_state_coefficient` and `constraint_flow_coefficient` allowing the user to create custom constraints between any types of objects in the model for the main variables in the model (*flow*, *state* as well as *invest* and *divest*). So, the equation above is in full form:
 
 ```
   + sum_i [constraint_capacity_coefficient(i) * invested_capacity]
            where i contains [node, unit, connection] belonging to the constraint
   + sum_j [constraint_flow_coefficient(j) * invested_capacity]
            where j contains [unit--node, connection--node] belonging to the constraint
-  + sum_k [constraint_state_coefficient(k) * `invested_capacity]
+  + sum_k [constraint_state_coefficient(k) * invested_capacity]
            where k contains [node] belonging to the constraint
   = 
   constant
@@ -123,11 +127,13 @@ Finally, FlexTool can mix three different types of constraint coefficients: `con
 
 ![Add battery investments](./battery_invest.png)
 
-## Combined heat and power (CHP) example : init - coal_chp - heat
+## Combined heat and power (CHP) example
 
-This CHP plant is an another example where the user defined `constraint` (see the last equation in the previous example) is used to make something in the model to behave in the derised manner. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plants the relation is more complicated - there is an allowed operating area between heat and power. Both can be depicted in FlexTool, but here a backpressure example is given. An extraction plant would require two or more *greater_than* and/or *lesser_than* `constraints` to define an operating area.
+***init - coal_chp - heat***
 
-First, a new *heat* `node` is added and it is given the necessary parameters. Then the *coal_chp* `unit` is made with a high efficiency, since CHP units  convert fuel energy to power and heat at such rates. In FlexTool, `efficiency` is a property of the unit - it demarcates at what rate the sum of inputs is converted to the sum of outputs. However, without any additional constraints, the `unit` is free to choose in what proportion to use inputs and in which proportion to use outputs. In units with only one input and output, this freedom does not exist, but in here, the *coal_chp* needs to be constrained. 
+This CHP plant is an another example where the user defined `constraint` (see the last equation in the previous example) is used to achieve derised behaviour. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plant the relation is more complicated - there is an allowed operating area between heat and power. Both can be depicted in FlexTool, but here a backpressure example is given. An extraction plant would require two or more *greater_than* and/or *lesser_than* `constraints` to define an operating area.
+
+First, a new *heat* `node` is added and it is given the necessary parameters. Then the *coal_chp* `unit` is made with a high `efficiency` parameter, since CHP units convert fuel energy to power and heat at high overall rates. In FlexTool, `efficiency` is a property of the unit - it demarcates at what rate the sum of inputs is converted to the sum of outputs. However, without any additional constraints, the `unit` is free to choose in what proportion to use inputs and in which proportion to use outputs. In units with only one input and output, this freedom does not exist, but in here, the *coal_chp* needs to be constrained as otherwise the unit could produce electricity at 90% efficiency, which is not feasible. 
 
 This is done by adding a new `constraint` *coal_chp_fix* where the heat and power co-efficients are fixed. As can be seen in the bottom part of the figure below, the `constraint_flow_coefficient` parameter for the *coal_chp--heat* and *coal_chp--west* is set as a map value where the `constraint` name matches with the *coal_chp_fix* `constraint` object name. The values are set so that the constraint equation forces the heat output to be twice as large as the electricity output. Again, the negative value moves the other variable to the right side of the equality, creating this:
 
@@ -135,7 +141,9 @@ This is done by adding a new `constraint` *coal_chp_fix* where the heat and powe
 
 ![Add CHP](./coal_chp.png)
 
-## Minimum load example : init - coal - coal_min_load
+## Minimum load example
+
+***init - coal - coal_min_load***
 
 The next example is more simple. It adds a minimum load behavior to the *coal_plant* `unit`. Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a `startup_method` needs to be defined and an optional `startup_cost` can be given. The options are *no_startup*, *linear* and *binary*. *binary* would require an integer variable so *linear* is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (*flow* >= *min_load* x *capacity_online*).
 
@@ -156,19 +164,25 @@ By default, `input_coefficient` and `output_coefficient` are 1, but if there is 
 
 ![Add min_load](./coal_min_load.png)
 
-## Adding CO2 emissions and costs : init - coal - co2
+## Adding CO2 emissions and costs
+
+***init - coal - co2***
 
 Carbon dioxide emissions are added to FlexTool by associating relevant `commodities` (e.g. *coal*) with a `co2_content` parameter (CO2 content per MWh of energy contained in the fuel). To set a price for the CO2, the nodes that use those commodities will need to be linked to a `group` of `nodes` that set the `co2_price` (currency / CO2 ton). Therefore, in addition to what is visible in the figure below, a relationship *co2_price--coal_market* must be established so that the model knows to point the `CO2_price` to the `commodity` used from the *coal_market* `node` based on the `co2_content` of the *coal* `commodity`.
 
 ![Add CO2](./coal_co2.png)
 
-## Full year model : init - fullYear
+## Full year model
+
+***init - fullYear***
 
 So far the model has been using only two days to keep it fast to run. This example extends the model horizon to a full year. To do so, a new `solve` object *y2020_fullYear_dispatch* is added. Each `solve` object needs to know what `periods` it will contain and what `periods` it will realize (print out results). `solve_mode` does not do anything at present, but will be used when FlexTool can be set to do automatic rolling window optimization (at present, it needs to be set manually using multiple solves). The key difference here is that the `period_timeblockSet` parameter points the *p2020* period to a timeblockSet definition that covers the full year instead of the two days used before.
 
 ![fullYear](./fullYear.png)
 
-## System with coal, wind, network, battery and CO2 over a full year : init - coal - wind - network - battery - co2 - fullYear
+## A system with coal, wind, network, battery and CO2 over a full year
+
+***init - coal - wind - network - battery - co2 - fullYear***
 
 The final example shows a system many of the previous examples have been put into one model and run for one year. The graph below shows the physical objects in the example.
 
@@ -226,76 +240,62 @@ These parameters will define how the node will behave and use the data it is giv
 Input data is set with the following parameters:
 
 - **'inflow'** - inflow into the node (negative is outflow). Constant or time series.
-- **'annual_flow'** - annual flow in energy units (always positive, the sign of inflow defines in/out). 
-- **'existing'** - existing storage capacity (requires `has_state`)
-- **'invest_cost'** - investment cost for new storage capacity. Constant or time series.
-- **'penalty_up'** - penalty cost for decreasing consumption in the node with a slack variable
-- **'penalty_down'** - penalty cost for increasing consumption in the node with a slack variable
+- **'annual_flow'** - annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.
+- **'existing'** - existing storage capacity (requires `has_state`). Constant.
+- **'invest_cost'** - investment cost for new storage capacity. Constant or period.
+- **'invest_max_total'** - maximum investment over all solves. Constant.
+- **'lifetime'** - life time of the storage unit represented by the node. Constant or period.
+- **'interest_rate'** - interest rate for investments. Constant or period.
+- **'fixed_cost'** - annual fixed cost for storage. Constat or period.
+- **'penalty_up'** - penalty cost for decreasing consumption in the node with a slack variable. Constant or time.
+- **'penalty_down'** - penalty cost for increasing consumption in the node with a slack variable. Constant or time.
 
 # Commodities
 
-Commodities are characterized by their price and CO2 content. Commodities are not directly injected to units (e.g. coal to the coal plant) so to be useful, they need to be assigned to commodity nodes (e.g. coal_node, gas_node). 
+Some `nodes` can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a `price` and be connected to those `nodes` that serve (or buy) that particular `commodity` at the given `price`. In other words, `commodity` is separate from `node` so that the user can use the same `commodity` properties for multiple nodes. Commodities can also have a `co2_content`. The `commodity` and its `nodes` are connected by establishin a new relationship between the `commodity` and each of its `nodes` (e.g. *coal--coal_market*).
 
 ![image-1.png](./commodities.PNG)
 
 # Connections
 
-Connections have a name and a transfer capacity. Their operational characteristics include the transfer method, startup method, DC or AC and efficiency.
-
-- **'left_node' and 'right_node'**
-- **'is_active'**
-- **'transfer_method'** - *regular*
-- **'startup_method'** - *no_startup*
-- **'invest_method'**
-- **'is_DC'**
-    - *yes*, *no*
-
-Investment parameters (for capacity expansion): investment method, investment cost, interest rate, lifetime. Retirement possible
+Connections can have an `existing` transfer capacity as well as an opportunity to invest in new capacity and retire old capacity. The functional choices of connections include the `is_active`, `transfer_method`, `invest_method`, `startup_method` as well as a choice if the tranfer connection `is_DC`. Parameters for the connection are defined in the `connection` object, but the two `nodes` it connects are defined by establishing a relationship between `connection--leftNode--rightNode`.
 
 # Units
 
-Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine).
+Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine), but the can also have multiple inputs and/or outputs (e.g. combined heat and power plant). The input nodes are defined with the relationship `unit--inputNode` while the output nodes are defined through the relationship `unit--outputNode`.
 
-Units definition
+## Functional definitions
 
-- Unit names (e.g. coal_plant, hydro_plant, solar_pv), capacities.
-- 
+- `is_active`
+- Energy conversion method (conversion_method), 
+- startup method (startup_method), 
+- minimum up/down time method (minimum_time_method)
 
+## Main parameters 
+- Capacity: `existing` (and the investment and retirement parameters below)
+- Technical: efficiency, minimum load (min_load), efficiency at min load (efficiency_at_min_load), inertia_constant
+- Economic: variable_cost, startup_cost, fixed_cost (fuel cost comes through the use of fuel commodities)
 
-Operational characteristics
+## Investment parameters (for capacity expansion)
 
-- Energy conversion method (conversion_method), startup method (startup_method), minimum up/down time method (minimum_time_method)
-- Technical: Minimum load (min_load), efficiency, efficiency at min load (efficiency_at_min_load), minimum up/down time
-- Economic: Variable O&M cost, startup cost.
-- is_active
-
-Investment parameters (for capacity expansion)
-
-- Investment method, investment cost, interest rate, lifetime
-- Retirement possible
+- investment/retirement method
+- invest_cost, interest_rate, lifetime, invest_max_total, invest_max_period
+- salvage_cost, retire_max_total, retire_max_period
 
 ![image](./generators.png)
 
-Generators are associated with nodes.
 
 ## Relationship of a unit to a node and determination of the type of relationship:
 
 - If the unit’s outputs are flowing into the node, the node acts as output for the unit.
 - If the unit’s inputs are flowing out of the node (into the unit), the node acts as input for the unit.
-- Not all units necessary have an input node. E.g. VRE generators have only output nodes and their generation is driven by profiles
+- Not all units necessary have an input or an output node. E.g. VRE generators have only output nodes and their generation is driven by profiles
 
-## Relationship properties:
+## Properties of unit--inputNode and unit--outputNode relationships:
 
-- Flow (from/to node) coefficient (accounts for efficiency of unit)
-- Variable cost of flow
-
-Generators are associated with nodes.
+- Flow (from/to node) coefficient (changes the accounts for efficiency of unit)
+- Variable cost of the particular flow of unit--inputNode or unit--outputNode
 
 ## Generators driven by profiles
 
-Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile.
-
-Association of profile-unit and determination of profile method.
-
-- profile: solar_capacity_factor, ...
-- profile_method: upper_limit, ...
+Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` object with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile`object is given a `profile` time series (or it can also be a constant).
