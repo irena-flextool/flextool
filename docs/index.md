@@ -199,13 +199,21 @@ See below for more detailed explanations.
 
 ![Simple example grid](./simple_grid.png)
 
-# Essential objects to define model properties
+# How to define model properties
 
-FlexTool has two different kinds of time varying parameters. The first one represents a regular timestep based timeline. The duration of each timestep can be defined by the user and there can be multiple timelines in the database - which means the user needs to tell which timeline to use (and also what part of the timeline as will be explained later). The timestep names in the timeline are defined by the user - they can be abstract like 't0001' or follow a datetime format of choice. However, the timestep names between different timelines must remain unique.
+## Timesteps and periods
 
-The second time varying dimension is `period`. This is typically used to depict assumptions about the future that is to be modelled. One model can include multiple `solves` that the model will solve in sequence (to allow multi-stage modelling). Solves can include multiple `periods` (so that the user can change parameter values for different parts of the future).
+FlexTool has two different kinds of time varying parameters. The first one represents a regular timeline based on timesteps. The duration of each timestep can be defined by the user. There can be multiple timelines in the database - the user needs to define which timeline to use (and what parts of the timeline should be used, as will be explained later). The timestep names in the timeline are defined by the user - they can be abstract like 't0001' or follow a datetime format of choice. However, the timestep names between different timelines must remain unique.
+
+The second time varying dimension is `period`, which is typically used to depict assumptions about the future. One model can include multiple `solves` that the model will solve in sequence (to allow multi-stage modelling). Each solve can include multiple `periods` (so that the user can change parameter values for different parts of the future).
 
 A parameter of particular type can be either constant/time-varying or constant/period-based. For example `inflow` is either a constant or time-varying, but it cannot be period-based.
+
+## Timeblocksets
+
+Timeblocks pick one or more sections from the `timeline` to form a `timeblockset`. Each timeblock defines a start and a duration. The aim of timeblocksets is to allow the modeller to create models with represeantive periods often used in the investment planning.
+
+## Definitions
 
 - **model**: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)
   - *solves*: sequence of solves in the model represented with an array of solve names.
