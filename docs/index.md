@@ -22,7 +22,7 @@ This user guide will build a small system step-by-step. After that, there is a r
   - [Full year model](#full-year-model)
   - [A system with coal, wind, network, battery and CO2 over a full year](#a-system-with-coal-wind-network-battery-and-co2-over-a-full-year)
 - [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system)
-- [Essential objects to define model properties](#essential-objects-to-define-model-properties)
+- [How to define model properties](#how-to-define-model-properties)
 - [Additional objects for further functionality](#additional-objects-for-further-functionality)
 - [Nodes](#nodes)
 - [Units](#units)
@@ -279,14 +279,14 @@ Input data is set with the following parameters:
 
 Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine), but the can also have multiple inputs and/or outputs (e.g. combined heat and power plant). The input nodes are defined with the relationship `unit--inputNode` while the output nodes are defined through the relationship `unit--outputNode`.
 
-## Functional definitions
+## Defining how the unit functions
 
 - `is_active` to state the alternative where the unit becomes active
 - 'conversion_method' to define the way unit converts inputs to outputs 
 - `startup_method` defines how the start-up mechanism is modelled
 - `minimum_time_method` - not functional at the moment
 
-## Main parameters 
+## Main data items for units
 
 - Capacity: `existing` (and the investment and retirement parameters below)
 - Technical: `efficiency`, `min_load`, `efficiency_at_min_load`, `inertia_constant`
