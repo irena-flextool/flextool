@@ -25,10 +25,11 @@ This user guide will build a small system step-by-step. After that, there is a r
 - [Essential objects to define model properties](#essential-objects-to-define-model-properties)
 - [Additional objects for further functionality](#additional-objects-for-further-functionality)
 - [Nodes](#nodes)
-- [Commodities](#commodities)
-- [Connections](#connections)
 - [Units](#units)
-
+- [Connections](#connections)
+- [Commodities](#commodities)
+- [Profiles](#profiles)
+- 
 ## 1st step - a node with no units
 
 At first the test system shows the parameters needed to establish a working model. However, this model has only one `node` (*west*) with demand, but no units to provide the demand. It will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. All parameters here are part of the *init* `alternative` - they will be used whenever a `scenario` includes the *init* `alternative`.
@@ -188,11 +189,11 @@ The final example shows a system many of the previous examples have been put int
 
 # Essential objects for defining a power/energy system
 
-- **nodes**: maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
-- **units**: power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
-- **connections**: transmission lines or other transfer connections between nodes
-- **commodities**: fuels or other commodities that are either purchased or sold at a price outside of the model scope
-- **profiles**: timeseries that can be used to constraint the behaviour of units, connections or storages
+- [**node**](#nodes): maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
+- [**unit**](#units): power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
+- [**connection**](#connections): transmission lines or other transfer connections between nodes
+- [**commodity**](#commodities): fuels or other commodities that are either purchased or sold at a price outside of the model scope
+- [**profile**](#profiles): timeseries that can be used to constraint the behaviour of units, connections or storages
 
 See below for more detailed explanations.
 
@@ -200,11 +201,29 @@ See below for more detailed explanations.
 
 # Essential objects to define model properties
 
+FlexTool has two different kinds of time varying parameters. The first one represents a regular timestep based timeline. The duration of each timestep can be defined by the user and there can be multiple timelines in the database - which means the user needs to tell which timeline to use (and also what part of the timeline as will be explained later). The timestep names in the timeline are defined by the user - they can be abstract like 't0001' or follow a datetime format of choice. However, the timestep names between different timelines must remain unique.
+
+The second time varying dimension is `period`. This is typically used to depict assumptions about the future that is to be modelled. One model can include multiple `solves` that the model will solve in sequence (to allow multi-stage modelling). Solves can include multiple `periods` (so that the user can change parameter values for different parts of the future).
+
+A parameter of particular type can be either constant/time-varying or constant/period-based. For example `inflow` is either a constant or time-varying, but it cannot be period-based.
+
 - **model**: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)
+  - *solves*: sequence of solves in the model represented with an array of solve names.
 - **solve**: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.
+  - *period_timeblockset*: map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name.
+  - *realized_periods*: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve
+  - *invest_periods*: array of periods where investements are allowed in this solve (applies only to objects that can be invested in)
+  - *discount_years*: how far in the future each period is from the start of this solve (in years). Index: period, value: years.
+  - *solver*: choice of solver (a list of possible values)
+  - *solve_mode*: a single shot or a rolling solve (not functional yet, always a single shot)
 - **timeblockset**: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)
+  - *block_duration* a map with index *timestep_name* that starts the timeblock and value that defines the duration of the block (how many timesteps)
 - **timeline**: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.
- 
+  - *timestep_duration*: a map with *timestep_name* as an index and *duration* as a value.
+  - *timeline_duration_in_years* Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.
+- **timeblockset__timeline**: defines which timeline object particular timeblockset is using.
+
+
 # Additional objects for further functionality
 - **group**: include multiple objects in a group to define common constraints (e.g. minimum VRE share)
 - **reserve**: to define reserves for power systems
@@ -248,16 +267,6 @@ Input data is set with the following parameters:
 - **'penalty_up'** - penalty cost for decreasing consumption in the node with a slack variable. Constant or time.
 - **'penalty_down'** - penalty cost for increasing consumption in the node with a slack variable. Constant or time.
 
-# Commodities
-
-Some `nodes` can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a `price` and be connected to those `nodes` that serve (or buy) that particular `commodity` at the given `price`. In other words, `commodity` is separate from `node` so that the user can use the same `commodity` properties for multiple nodes. Commodities can also have a `co2_content`. The `commodity` and its `nodes` are connected by establishin a new relationship between the `commodity` and each of its `nodes` (e.g. *coal--coal_market*).
-
-![image-1.png](./commodities.PNG)
-
-# Connections
-
-Connections can have an `existing` transfer capacity as well as an opportunity to invest in new capacity and retire old capacity. The functional choices of connections include the `is_active`, `transfer_method`, `invest_method`, `startup_method` as well as a choice if the tranfer connection `is_DC`. Parameters for the connection are defined in the `connection` object, but the two `nodes` it connects are defined by establishing a relationship between `connection--leftNode--rightNode`.
-
 # Units
 
 Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine), but the can also have multiple inputs and/or outputs (e.g. combined heat and power plant). The input nodes are defined with the relationship `unit--inputNode` while the output nodes are defined through the relationship `unit--outputNode`.
@@ -283,7 +292,6 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 ![image](./generators.png)
 
-
 ## Relationship of a unit to a node and determination of the type of relationship
 
 - If the unit’s outputs are flowing into the node, the node acts as output for the unit.
@@ -298,3 +306,17 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 ## Units constrained by profiles
 
 Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` object with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile`object is given a `profile` time series (or it can also be a constant).
+
+# Connections
+
+Connections can have an `existing` transfer capacity as well as an opportunity to invest in new capacity and retire old capacity. The functional choices of connections include the `is_active`, `transfer_method`, `invest_method`, `startup_method` as well as a choice if the tranfer connection `is_DC`. Parameters for the connection are defined in the `connection` object, but the two `nodes` it connects are defined by establishing a relationship between `connection--leftNode--rightNode`.
+
+# Commodities
+
+Some `nodes` can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a `price` and be connected to those `nodes` that serve (or buy) that particular `commodity` at the given `price`. In other words, `commodity` is separate from `node` so that the user can use the same `commodity` properties for multiple nodes. Commodities can also have a `co2_content`. The `commodity` and its `nodes` are connected by establishin a new relationship between the `commodity` and each of its `nodes` (e.g. *coal--coal_market*).
+
+![image-1.png](./commodities.PNG)
+
+# Profiles
+
+Profiles are time series of data that will be multiplied by capacity to form a constraint for a unit flow, a connection flow or a storage state. The constraint can be *upper_limit*, *lower_limit* or *fixed*.
