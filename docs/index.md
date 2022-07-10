@@ -29,7 +29,7 @@ This user guide will build a small system step-by-step. After that, there is a r
 - [Connections](#connections)
 - [Commodities](#commodities)
 - [Profiles](#profiles)
-- 
+
 ## 1st step - a node with no units
 
 At first the test system shows the parameters needed to establish a working model. However, this model has only one `node` (*west*) with demand, but no units to provide the demand. It will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. All parameters here are part of the *init* `alternative` - they will be used whenever a `scenario` includes the *init* `alternative`.
