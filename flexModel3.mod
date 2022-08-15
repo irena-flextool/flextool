@@ -24,6 +24,7 @@ set node 'n - Any location where a balance needs to be maintained' within entity
 set group 'g - Any group of entities that have a set of common constraints';
 set commodity 'c - Stuff that is being processed';
 set period_time '(d, t) - Time steps in the time periods of the timelines in use' dimen 2;
+set period__time_first within period_time;
 set solve_period_timeblockset '(solve, d, tb) - All solve, period, timeblockset combinations in the model instance' dimen 3;
 set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeblockset} (s, d);
 set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
@@ -359,6 +360,7 @@ table data IN 'CSV' 'input/p_discount_rate.csv' : [model], p_discount_rate;
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : [period, step], step_duration;
 table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,step];
+table data IN 'CSV' 'solve_data/first_timesteps.csv' : period__time_first <- [period,step];
 table data IN 'CSV' 'solve_data/step_previous.csv' : dttt <- [period, time, previous, previous_within_block];
 table data IN 'CSV' 'solve_data/realized_periods_of_current_solve.csv' : period_realized <- [period];
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
@@ -1182,8 +1184,6 @@ s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__s
         - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
 	  )
 ;
-param lower := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - upper;
-display lower;
 
 s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t] 
@@ -1224,6 +1224,16 @@ s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, 
   + v_state[n, d, t] 
   =
   + pt_profile[f, t]
+    * ( + p_entity_all_existing[n]
+        + sum {(n, d_invest) in pd_invest : d_invest <= d} v_invest[n, d_invest] * p_entity_unitsize[n]
+        - sum {(n, d_invest) in pd_divest : d_invest <= d} v_divest[n, d_invest] * p_entity_unitsize[n]
+	  )
+;
+
+s.t. storage_state_start {n in nodeState, (d, t) in dt : p_model['solveFirst'] && (d, t) in period__time_first} :
+  + v_state[n, d, t]
+  =
+  + p_node[n,'storage_state_start']
     * ( + p_entity_all_existing[n]
         + sum {(n, d_invest) in pd_invest : d_invest <= d} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_invest) in pd_divest : d_invest <= d} v_divest[n, d_invest] * p_entity_unitsize[n]
@@ -1869,12 +1879,12 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t) in dt} :
 	)
   + pdGroup[g, 'capacity_margin', d]
 ;
-param rest := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - upper - lower;
+param rest := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - upper;
 display rest;
 
 solve;
 
-param w_solve := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - upper - lower - rest;
+param w_solve := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - upper - rest;
 display w_solve;
 
 param entity_all_capacity{e in entity, d in period_realized} :=
@@ -2674,6 +2684,6 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
 display entityInvest, period_invest, ed_invest;
-display {(e, d) in ed_invest} : v_invest[e, d].dual;
-display v_invest, v_divest;
+#display {(e, d) in ed_invest} : v_invest[e, d].dual;
+display p_entity_all_existing;
 end;

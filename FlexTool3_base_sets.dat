@@ -141,7 +141,8 @@ set nodeParam := annual_flow, existing, fixed_cost, inflow, interest_rate, inves
                  invest_max_total, invest_min_total, lifetime,
 				 invest_max_period, invest_min_period, retire_max_period, retire_min_period,
                  penalty_down, penalty_up, retire_forced, retire_min_total, 
-				 retire_max_total, self_discharge_loss, virtual_unitsize;
+				 retire_max_total, self_discharge_loss, virtual_unitsize,
+				 storage_state_start, storage_state_end, storage_state_end_reference;
 set nodePeriodParam := annual_flow, fixed_cost, interest_rate, invest_cost, salvage_value,
                  invest_max_period, invest_min_period, lifetime,
                  retire_forced, retire_max_period, retire_min_period, virtual_unitsize;
@@ -150,7 +151,7 @@ set reserveParam := can_provide reservation reliability penalty_reserve,
                     increase_reserve_ratio large_failure_ratio max_share;
 set reserveTimeParam := reservation;
 set invest_method := only_invest, only_retire, invest_and_retire, not_allowed;
-set modelParam := solveFirst;
+set modelParam := solveFirst, solveLast;
 set groupParam := has_capacity_margin, capacity_margin, has_inertia, inertia_limit, 
                   invest_max_total, invest_min_total, invest_max_period, invest_min_period,
                   retire_max_total, retire_min_total, retire_max_period, retire_min_period,

@@ -448,7 +448,7 @@ class FlexToolRunner:
             # prepend with a header
             outfile.write('period,step\n')
             for period_name, period in timeline.items():
-                for item in period[1:]:
+                for item in period[:1]:
                     outfile.write(period_name + ',' + item[0] + '\n')
 
     def write_periods(self, solve, periods, filename):
