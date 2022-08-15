@@ -138,10 +138,15 @@ param investableEntities := sum{e in entityInvest} 1;
 set nodeBalance 'nodes that maintain a node balance' within node;
 set nodeState 'nodes that have a state' within node;
 set inflow_method 'method for scaling the inflow';
-set inflow_method_original within inflow_method;
+set inflow_method_default within inflow_method;
 set node__inflow_method_read 'method for scaling the inflow applied to a node' within {node, inflow_method};
 set node__inflow_method dimen 2 within {node, inflow_method} :=
-    {n in node, m in inflow_method : (n, m) in node__inflow_method_read || (sum{(n, m2) in node__inflow_method_read} 1 = 0 && m in inflow_method_original)};
+    {n in node, m in inflow_method : (n, m) in node__inflow_method_read || (sum{(n, m2) in node__inflow_method_read} 1 = 0 && m in inflow_method_default)};
+set storage_binding_method 'methods for binding storage state between periods';
+set storage_binding_method_default within storage_binding_method;
+set node__storage_binding_method_read within {node, storage_binding_method};
+set node__storage_binding_method dimen 2 within {node, storage_binding_method} :=
+    {n in node, m in storage_binding_method : (n, m) in node__storage_binding_method_read || (sum{(n, m2) in node__storage_binding_method_read} 1 = 0 && m in storage_binding_method_default)};
 set node__profile__profile_method dimen 3 within {node,profile,profile_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
@@ -280,6 +285,7 @@ table data IN 'CSV' 'input/process_unit.csv': process_unit <- [process_unit];
 table data IN 'CSV' 'input/commodity__node.csv' : commodity_node <- [commodity,node];
 table data IN 'CSV' 'input/entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
 table data IN 'CSV' 'input/node__inflow_method.csv' : node__inflow_method_read <- [node,inflow_method];
+table data IN 'CSV' 'input/node__storage_binding_method.csv' : node__storage_binding_method_read <- [node,storage_binding_method];
 table data IN 'CSV' 'input/node__profile__profile_method.csv' : node__profile__profile_method <- [node,profile,profile_method];
 table data IN 'CSV' 'input/group__node.csv' : group_node <- [group,node];
 table data IN 'CSV' 'input/group__process.csv' : group_process <- [group,process];
@@ -1179,7 +1185,7 @@ s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__s
 param lower := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - upper;
 display lower;
 
-s.t. profile_flow_fixed_limit {(p, source, sink, f, 'fixed') in process__source__sink__profile__profile_method, (d, t) in dt} :
+s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t] 
   	      * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
 			  else if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
@@ -1214,7 +1220,7 @@ s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_
 	  )
 ;
 
-s.t. profile_state_fixed_limit {(n, f, 'fixed') in node__profile__profile_method, (d, t) in dt} :
+s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, t) in dt} :
   + v_state[n, d, t] 
   =
   + pt_profile[f, t]
@@ -1281,7 +1287,7 @@ s.t. process_constraint_less_than {(c, 'lesser_than') in constraint__sense, (d, 
   <=
   + p_constraint_constant[c]
 ;
-display node_capacity_constraint, process_capacity_constraint, entityInvest, p_entity_unitsize;
+
 s.t. process_constraint_equal {(c, 'equal') in constraint__sense, (d, t) in dt} :
   + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_flow_constraint}
     ( + v_flow[p, source, sink, d, t]

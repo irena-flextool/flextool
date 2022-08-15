@@ -267,6 +267,7 @@ class FlexToolRunner:
                 for item in period:
                     outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
 
+
     def write_discount_years(self, discount_years, filename):
         """
         write to file a list of timesteps as defined by the active timeline of the current solve
@@ -434,7 +435,7 @@ class FlexToolRunner:
                 starts[name] = (steplists[solve_names[index]][0], steplists[solve_names[index + 1]][0])
         return starts
 
-    def write_first_steps(self, steps):
+    def write_first_steps(self, timeline, filename):
         """
         write to file the first step of the model run
         
@@ -443,16 +444,12 @@ class FlexToolRunner:
         :param steps: a tuple containg the first step of current solve and the first step of next solve
                         in case the current solve is the last one the second item is empty
         """
-        with open("solve_start.csv", "w") as startfile:
-            startfile.write("start\n")
-            startfile.write(steps[0])
-            startfile.write("\n")
-
-        with open("solve_startNext.csv", 'w') as nextfile:
-            nextfile.write("startNext\n")
-            if len(steps) == 2:
-                nextfile.write(steps[1])
-                nextfile.write("\n")
+        with open(filename, 'w') as outfile:
+            # prepend with a header
+            outfile.write('period,step\n')
+            for period_name, period in timeline.items():
+                for item in period[1:]:
+                    outfile.write(period_name + ',' + item[0] + '\n')
 
     def write_periods(self, solve, periods, filename):
         """
@@ -541,6 +538,7 @@ def main():
             runner.write_periods(solve, runner.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
             runner.write_discount_years(runner.solve_period_discount_years[solve], 'solve_data/p_discount_years.csv')
             runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
+            runner.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
             if first:
                 runner.write_first_status(first)
                 first = False
