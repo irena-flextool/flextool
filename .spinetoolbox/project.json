@@ -130,7 +130,7 @@
                 "resource_filters": {
                     "db_url@Input_data": {
                         "scenario_filter": [
-                            575
+                            592
                         ],
                         "tool_filter": [
                             1
@@ -157,9 +157,9 @@
             "type": "Tool",
             "description": "",
             "x": 62.933522684556,
-            "y": 7.69868337894945,
+            "y": 5.684840622564257,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": []
         },
         "Init": {
@@ -181,8 +181,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -192.99515803771976,
-            "y": -36.57630986623368,
+            "x": -192.99515803771973,
+            "y": -41.612294375010976,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -236,7 +236,7 @@
             "type": "Exporter",
             "description": "",
             "x": -55.21140617198526,
-            "y": -11.489879684993586,
+            "y": -12.495423445371873,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -251,7 +251,7 @@
             "type": "Importer",
             "description": "",
             "x": 185.07830252199196,
-            "y": 25.772754671335267,
+            "y": 24.767210910956983,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "purge_before_writing": false,
