@@ -25,11 +25,14 @@ set group 'g - Any group of entities that have a set of common constraints';
 set commodity 'c - Stuff that is being processed';
 set period_time '(d, t) - Time steps in the time periods of the timelines in use' dimen 2;
 set period__time_first within period_time;
+set period__time_last within period_time;
 set solve_period_timeblockset '(solve, d, tb) - All solve, period, timeblockset combinations in the model instance' dimen 3;
 set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeblockset} (s, d);
 set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
 set solve_current 'current solve name' dimen 1;
 set period 'd - Time periods in the current solve' := setof {(d, t) in period_time} (d);
+set period_first := {d in period : sum{d2 in period : d2 <= d} 1 = 1};
+set period_last  := {d in period : sum{d2 in period : d2 <= d} 1 = card(period)};
 set timeline__timestep__duration dimen 3;
 set time 't - Time steps in the current timelines' := setof {(tl, t, duration) in timeline__timestep__duration} (t); 
 set timeblockset__timeline dimen 2;
@@ -148,6 +151,10 @@ set storage_binding_method_default within storage_binding_method;
 set node__storage_binding_method_read within {node, storage_binding_method};
 set node__storage_binding_method dimen 2 within {node, storage_binding_method} :=
     {n in node, m in storage_binding_method : (n, m) in node__storage_binding_method_read || (sum{(n, m2) in node__storage_binding_method_read} 1 = 0 && m in storage_binding_method_default)};
+set storage_start_end_method 'method to fix start and/or end value of storage in a model run';
+set node__storage_start_end_method within {node, storage_start_end_method};
+set storage_solve_horizon_method 'methods to set reference value or price for the end of horizon storage state';
+set node__storage_solve_horizon_method within {node, storage_solve_horizon_method};
 set node__profile__profile_method dimen 3 within {node,profile,profile_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
@@ -287,6 +294,8 @@ table data IN 'CSV' 'input/commodity__node.csv' : commodity_node <- [commodity,n
 table data IN 'CSV' 'input/entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
 table data IN 'CSV' 'input/node__inflow_method.csv' : node__inflow_method_read <- [node,inflow_method];
 table data IN 'CSV' 'input/node__storage_binding_method.csv' : node__storage_binding_method_read <- [node,storage_binding_method];
+table data IN 'CSV' 'input/node__storage_start_end_method.csv' : node__storage_start_end_method <- [node,storage_start_end_method];
+table data IN 'CSV' 'input/node__storage_solve_horizon_method.csv' : node__storage_solve_horizon_method <- [node,storage_solve_horizon_method];
 table data IN 'CSV' 'input/node__profile__profile_method.csv' : node__profile__profile_method <- [node,profile,profile_method];
 table data IN 'CSV' 'input/group__node.csv' : group_node <- [group,node];
 table data IN 'CSV' 'input/group__process.csv' : group_process <- [group,process];
@@ -361,6 +370,7 @@ table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : [period, step], step_duration;
 table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,step];
 table data IN 'CSV' 'solve_data/first_timesteps.csv' : period__time_first <- [period,step];
+table data IN 'CSV' 'solve_data/last_timesteps.csv' : period__time_last <- [period,step];
 table data IN 'CSV' 'solve_data/step_previous.csv' : dttt <- [period, time, previous, previous_within_block];
 table data IN 'CSV' 'solve_data/realized_periods_of_current_solve.csv' : period_realized <- [period];
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
@@ -594,12 +604,10 @@ set process__source__sink__param_t :=
 	};
 
 
-display process__source__sink__param_t;
 param setup1 := gmtime() - datetime0;
 display setup1;
 
 set process_source_sink_param_t := {(p, source, sink) in process_source_sink_eff, param in processTimeParam : (p, param) in process__param_t};
-display process_source_sink_param_t;
 
 set process__source__sink__ramp_method :=
     { (p, source, sink) in process_source_sink, m in ramp_method
@@ -701,7 +709,6 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 		  else 1
 		);
 
-set period_last := {d in period : sum{d2 in period : d2 <= d} 1 = card(period)};
 set period__period_next := {d in period, dNext in period : 1 + sum{d2 in period : d2 <=d} 1 = sum{dNext2 in period : dNext2 <=dNext} 1};
 param step_period{(d, t) in dt} := 0;
 param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0.05);
@@ -1027,6 +1034,10 @@ minimize total_cost:
       + sum {n in nodeBalance, (d, t) in dt} vq_state_up[n, d, t] * ptNode[n, 'penalty_up', t] * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
       + sum {n in nodeBalance, (d, t) in dt} vq_state_down[n, d, t] * ptNode[n, 'penalty_down', t] * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
       + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve'] * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
+  - sum {n in nodeState, (d, t) in period__time_last : (n, 'use_reference_price') in node__storage_solve_horizon_method && d in period_last}
+      + pdNode[n, 'storage_state_reference_price', d]
+        * v_state[n, d, t]
+		* step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
   + sum {e in entity, d in period}  # This is constant term and will be dropped by the solver. Here for completeness.
     + p_entity_all_existing[e]
       * ( + (if e in node then pdNode[e, 'fixed_cost', d] * 1000)
@@ -1166,8 +1177,6 @@ s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__s
         - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
 	  )
 ;
-param upper := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect;
-display upper;
 
 s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t] 
@@ -1230,10 +1239,38 @@ s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, 
 	  )
 ;
 
-s.t. storage_state_start {n in nodeState, (d, t) in dt : p_model['solveFirst'] && (d, t) in period__time_first} :
+s.t. storage_state_start {n in nodeState, (d, t) in period__time_first
+     : p_model['solveFirst'] 
+	 && d in period_first 
+	 && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)} :
   + v_state[n, d, t]
   =
   + p_node[n,'storage_state_start']
+    * ( + p_entity_all_existing[n]
+        + sum {(n, d_invest) in pd_invest : d_invest <= d} v_invest[n, d_invest] * p_entity_unitsize[n]
+        - sum {(n, d_invest) in pd_divest : d_invest <= d} v_divest[n, d_invest] * p_entity_unitsize[n]
+	  )
+;
+
+s.t. storage_state_end {n in nodeState, (d, t) in period__time_last 
+     : p_model['solveLast'] 
+	 && d in period_last 
+	 && ((n, 'fix_end') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)} :
+  + v_state[n, d, t]
+  =
+  + p_node[n,'storage_state_end']
+    * ( + p_entity_all_existing[n]
+        + sum {(n, d_invest) in pd_invest : d_invest <= d} v_invest[n, d_invest] * p_entity_unitsize[n]
+        - sum {(n, d_invest) in pd_divest : d_invest <= d} v_divest[n, d_invest] * p_entity_unitsize[n]
+	  )
+;
+
+s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in period__time_last
+     : d in period_last
+	 && (n, 'use_reference_value') in node__storage_solve_horizon_method} :
+  + v_state[n, d, t]
+  =
+  + p_node[n,'storage_state_reference_value']
     * ( + p_entity_all_existing[n]
         + sum {(n, d_invest) in pd_invest : d_invest <= d} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_invest) in pd_divest : d_invest <= d} v_divest[n, d_invest] * p_entity_unitsize[n]
@@ -1879,12 +1916,12 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t) in dt} :
 	)
   + pdGroup[g, 'capacity_margin', d]
 ;
-param rest := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - upper;
+param rest := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect;
 display rest;
 
 solve;
 
-param w_solve := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - upper - rest;
+param w_solve := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest;
 display w_solve;
 
 param entity_all_capacity{e in entity, d in period_realized} :=
@@ -2518,7 +2555,7 @@ for {i in 1..1 : p_model['solveFirst']}
       { printf ',%s', n >> fn_nodeState__dt; }
   }
 for {s in solve_current, (d, t) in dt : d in period_realized && d not in period_invest}
-  { printf '\n%s,%s', s, d, t >> fn_nodeState__dt;
+  { printf '\n%s,%s,%s', s, d, t >> fn_nodeState__dt;
     for {n in nodeState} 
       {
 	    printf ',%.8g', v_state[n, d, t].val >> fn_nodeState__dt;
@@ -2685,5 +2722,4 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, m, d, t].dual;
 display entityInvest, period_invest, ed_invest;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
-display p_entity_all_existing;
 end;

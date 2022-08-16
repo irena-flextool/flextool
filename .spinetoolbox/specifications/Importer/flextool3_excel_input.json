@@ -3203,9 +3203,9 @@
                 "4": "string",
                 "5": "string",
                 "6": "string",
-                "7": "float",
-                "8": "float",
-                "9": "float",
+                "7": "string",
+                "8": "string",
+                "9": "string",
                 "10": "float",
                 "11": "float",
                 "12": "float",
@@ -3217,8 +3217,15 @@
                 "18": "float",
                 "19": "float",
                 "20": "float",
-                "21": "string",
-                "22": "string"
+                "21": "float",
+                "22": "float",
+                "23": "float",
+                "24": "float",
+                "25": "float",
+                "26": "float",
+                "27": "float",
+                "28": "float",
+                "29": "float"
             },
             "node_p": {
                 "0": "string",
@@ -3234,7 +3241,7 @@
                 "10": "float",
                 "11": "float",
                 "12": "float",
-                "13": "string"
+                "13": "float"
             },
             "node_t": {
                 "0": "string",
@@ -3276,8 +3283,8 @@
                 "17": "float",
                 "18": "float",
                 "19": "float",
-                "20": "string",
-                "21": "string"
+                "20": "float",
+                "21": "float"
             },
             "connection_p": {
                 "0": "string",
@@ -3312,7 +3319,7 @@
                 "2": "float",
                 "3": "float",
                 "4": "float",
-                "5": "string"
+                "5": "float"
             },
             "unit_c": {
                 "0": "string",
@@ -3400,7 +3407,8 @@
                 "14": "float",
                 "15": "float",
                 "16": "float",
-                "17": "float"
+                "17": "float",
+                "18": "float"
             },
             "group_connection": {
                 "0": "string",
@@ -3485,7 +3493,7 @@
                 "12": "float",
                 "13": "float",
                 "14": "float",
-                "15": "string"
+                "15": "float"
             },
             "reserve_group_c": {
                 "0": "string",
@@ -3533,7 +3541,7 @@
                 "12": "float",
                 "13": "float",
                 "14": "float",
-                "15": "string"
+                "15": "float"
             },
             "commodity_p": {
                 "0": "string",
@@ -3601,7 +3609,8 @@
                 "13": "float",
                 "14": "float",
                 "15": "float",
-                "16": "float"
+                "16": "float",
+                "17": "float"
             },
             "unit_node_t": {
                 "0": "string",

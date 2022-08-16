@@ -260,7 +260,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^(?!has_|inflow_method|invest_method|is_active|storage_binding_method)",
+                    "filter_re": "^(?!has_|inflow_method|invest_method|is_active|storage_binding_method|storage_start_end_method|storage_solve_horizon_method)",
                     "header": "nodeParam"
                 },
                 {
@@ -1937,7 +1937,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^annual_flow$|^invest_forced$|^invest_max_period$|^invest_min_period$|^retire_forced$|^retire_max_period$|^retire_min_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$",
+                    "filter_re": "^annual_flow$|^invest_forced$|^invest_max_period$|^invest_min_period$|^retire_forced$|^retire_max_period$|^retire_min_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$|^storage_state_reference_price$",
                     "header": "nodeParam"
                 },
                 {
@@ -4127,6 +4127,100 @@
                     "map_type": "ParameterValue",
                     "position": 1,
                     "header": "storage_binding_method"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "node__storage_start_end_method": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "node__storage_start_end_method"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^node$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^storage_start_end_method$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "node"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 1,
+                    "header": "storage_start_end_method"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "node__storage_solve_horizon_method": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "node__storage_solve_horizon_method"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^node$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^storage_solve_horizon_method$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "node"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 1,
+                    "header": "storage_solve_horizon_method"
                 }
             ],
             "enabled": true,

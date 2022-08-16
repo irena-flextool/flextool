@@ -437,18 +437,28 @@ class FlexToolRunner:
 
     def write_first_steps(self, timeline, filename):
         """
-        write to file the first step of the model run
+        write to file the first step of each period
         
-        write info into two separate files "solve_start.csv" & "solve_startNext.csv"
-
-        :param steps: a tuple containg the first step of current solve and the first step of next solve
-                        in case the current solve is the last one the second item is empty
+        :param steps: a tuple containing the period and the timestep
         """
         with open(filename, 'w') as outfile:
             # prepend with a header
             outfile.write('period,step\n')
             for period_name, period in timeline.items():
                 for item in period[:1]:
+                    outfile.write(period_name + ',' + item[0] + '\n')
+
+    def write_last_steps(self, timeline, filename):
+        """
+        write to file the last step of each period
+
+        :param steps: a tuple containing the period and the timestep
+        """
+        with open(filename, 'w') as outfile:
+            # prepend with a header
+            outfile.write('period,step\n')
+            for period_name, period in timeline.items():
+                for item in period[-1:]:
                     outfile.write(period_name + ',' + item[0] + '\n')
 
     def write_periods(self, solve, periods, filename):
@@ -467,19 +477,23 @@ class FlexToolRunner:
                 if item[0] == solve:
                     outfile.write(item[1] + '\n')
 
-    def write_first_status(self, first_state):
+    def write_solve_status(self, first_state, last_state):
         """
         make a file solve_first.csv that contains information if the current solve is the first to be run
 
         :param first_state: boolean if the current run is the first
 
         """
-        with open("input/p_model.csv", 'w') as firstfile:
-            firstfile.write("modelParam,p_model\n")
+        with open("input/p_model.csv", 'w') as p_model_file:
+            p_model_file.write("modelParam,p_model\n")
             if first_state:
-                firstfile.write("solveFirst,1\n")
+                p_model_file.write("solveFirst,1\n")
             else:
-                firstfile.write("solveFirst,0\n")
+                p_model_file.write("solveFirst,0\n")
+            if last_state:
+                p_model_file.write("solveLast,1\n")
+            else:
+                p_model_file.write("solveLast,0\n")
 
     def write_currentSolve(self, solve, filename):
         """
@@ -530,7 +544,10 @@ def main():
     #first_steps = runner.get_first_steps(active_time_lists)
 
         first = True
+        last = False
+        i = -1
         for solve in runner.model_solve[model]:
+            i += 1
             runner.write_full_timelines(runner.timeblocks_used_by_solves[solve], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
             runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
             runner.write_step_jump(jump_lists[solve])
@@ -539,12 +556,13 @@ def main():
             runner.write_discount_years(runner.solve_period_discount_years[solve], 'solve_data/p_discount_years.csv')
             runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
             runner.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
+            runner.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
+            if i == len(runner.model_solve[model]) - 1:
+                last = True
+            runner.write_solve_status(first, last)
             if first:
-                runner.write_first_status(first)
                 first = False
                 runner.write_empty_investment_file()
-            else:
-                runner.write_first_status(first)
 
             exit_status = runner.model_run(solve)
             if exit_status == 0:
