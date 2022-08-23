@@ -37,7 +37,7 @@ See https://github.com/irena-flextool/flextool-web-interface#installation
 - cd to a directory into which both FlexTool and SpineToolbox will make their own folders
 - `git clone https://github.com/irena-flextool/flextool`
 - `git clone https://github.com/Spine-project/Spine-Toolbox.git`
-- `cd SpineToolbox`
+- `cd Spine-Toolbox`
 - `pip install --upgrade pip`
 - `pip install -r requirements.txt`
 - `python -m spinetoolbox`
