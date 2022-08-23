@@ -38,8 +38,8 @@ See https://github.com/irena-flextool/flextool-web-interface#installation
 - `git clone https://github.com/irena-flextool/flextool`
 - `git clone https://github.com/Spine-project/Spine-Toolbox.git`
 - `cd Spine-Toolbox`
-- `pip install --upgrade pip`
-- `pip install -r requirements.txt`
+- `python -m pip install --upgrade pip`
+- `python -m pip install -r requirements.txt`
 - `python -m spinetoolbox`
 - Open FlexTool3 project in Spine Toolbox (Choose FlexTool folder)
 
