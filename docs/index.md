@@ -30,6 +30,18 @@ This user guide will build a small system step-by-step. After that, there is a r
 - [Commodities](#commodities)
 - [Profiles](#profiles)
 
+# Building a small test system
+
+This tutorial can be used in couple of different ways - the best way depends on your familiarity with energy system modelling. 
+
+First, **all users who are not familiar with the way FlexTool manages data using Spine Toolbox functionalities**, should read the [section on workflow](https://github.com/irena-flextool/flextool#irena-flextool-workflow-shortly-explained) and the [section on data structures](https://github.com/irena-flextool/flextool#database-editor-in-brief).
+
+**If you are new to energy system modelling**, it is probably best to try to build the test system while following the tutorial. This will take time and you will probably have to check many data items from the Init database, but it will also force you to learn the concepts. You can also copy-paste data from the Init database to the Input_data database when writing the data becomes too tedious. Before you start, it can be a good idea to to check the [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system) from below to get an initial understanding of the concepts that will then grow as you learn more.
+
+**If you have experience in using other types of energy system models** - or perhaps older versions of FlexTool - it can be sufficient to follow the tutorial while also browsing the Input_data database using the database editor. Finding the entity classes, entities, and parameter values in the actual database will assist in the learning process.
+
+Finally, **if you are a really experienced modeller**, it can be enough to check the reference section starting from [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system). 
+
 ## 1st step - a node with no units
 
 At first the test system shows the parameters needed to establish a working model. However, this model has only one `node` (*west*) with demand, but no units to provide the demand. It will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. All parameters here are part of the *init* `alternative` - they will be used whenever a `scenario` includes the *init* `alternative`.
@@ -56,7 +68,7 @@ Next, a wind power plant is added. The parameters for this unit include `convers
 
  ![Add network](./add_network.png)
 
- ## 5th step - add a reserve
+## 5th step - add a reserve
 
 Reserve requirement is defined for a group of nodes. Therefore, the first step is to add a new `group` called *electricity* with *west*, *east* and *north* as its members using the `group__node` relationship class. Then, a new reserve category called *primary* is added to the `reserve` object class. 
 
