@@ -30,18 +30,46 @@ See https://github.com/irena-flextool/flextool-web-interface#installation
 ### Installing Spine Toolbox and IRENA FlexTool on a local computer
 
 - Install [Miniconda](https://docs.conda.io/en/latest/miniconda.html) (or Anaconda)  [Can be ignored if already installed]
-- Start anaconda prompt
-- `conda create -n flextool python=3.8`  [Also possible to use existing, up-to-date, Spine Toolbox environment]
-- `conda activate flextool`
-- `conda install git`
-- cd to a directory into which both FlexTool and SpineToolbox will make their own folders
-- `git clone https://github.com/irena-flextool/flextool`
-- `git clone https://github.com/Spine-project/Spine-Toolbox.git`
-- `cd SpineToolbox`
-- `pip install --upgrade pip`
-- `pip install -r requirements.txt`
-- `python -m spinetoolbox`
-- Open FlexTool3 project in Spine Toolbox (Choose FlexTool folder)
+- Start Anaconda prompt
+- Create new Python environment [Also possible to use existing, up-to-date, Spine Toolbox environment]
+  ```shell
+  conda create -n flextool python=3.8
+  ```
+- Activate the environment
+  ```shell
+  conda activate flextool
+  ```
+- Install Git to the environment [Also possible to use existing Git installation]
+  ```shell
+  conda install git
+  ```
+- `cd` to a directory into which both FlexTool and Spine Toolbox will make their own folders
+- Clone the FlexTool Git repository
+  ```shell
+  git clone https://github.com/irena-flextool/flextool
+  ```
+- Install Spine Toolbox [Can be skipped if using existing Toolbox environment]
+  - Clone the Toolbox repository
+    ```shell
+    git clone https://github.com/Spine-project/Spine-Toolbox.git
+    ```
+  - cd to the freshly created folder
+    ```shell
+    cd Spine-Toolbox
+    ```
+  - Make sure Pip is up-to-date
+    ```shell
+    python -m pip install --upgrade pip
+    ```
+  - Install packages required by Toolbox
+    ```shell
+    python -m pip install -r requirements.txt
+    ```
+- Launch Spine Toolbox
+  ```shell
+  python -m spinetoolbox
+  ```
+- Open FlexTool3 project in Spine Toolbox (Choose the flextool *folder* from the Open project dialog)
 
 In case of problems when installing Spine Toolbox, more instructions are available at: https://github.com/Spine-project/Spine-Toolbox#installation
 
@@ -57,7 +85,7 @@ IRENA FlexTool workflow is a Spine Toolbox workflow that can be modified by the 
 
 ![IRENA FlexTool workflow](./docs/flextool_workflow.png)
 
-The panel on the right shows the different `scenarios` that are available in the database. The user can choose which scenarios will be processed by the workflow (until item `Results`, which combines the results into one database). Spine Toolbox can execute scenarios in parallel (as long as using 'work directories' defined in `FlexTool` item.
+The panel on the right shows the different `scenarios` that are available in the database. The user can choose which scenarios will be processed by the workflow (until item `Results`, which combines the results into one database). Spine Toolbox can execute scenarios in parallel (as long as using 'work directories' is defined in `FlexTool` item).
 
 `Input_data` workflow item points to a sqlite file that needs to have IRENA FlexTool data format (that uses Spine Toolbox database definition). The template file has the right format and contains empty object classes corresponding to FlexTool data structure as well as parameters available in each object class. Double clicking the Input_data workflow item will open the database editor. Just selecting the Input_data workflow item allows one to change the file (make a copy of the existing Input_data.sqlite and point to the copy).
 
@@ -67,11 +95,11 @@ The panel on the right shows the different `scenarios` that are available in the
 
 `FlexTool` workflow item contains a Python script that calls FlexTool model code for each solve and passes data between these solves. FlexTool model is written in MathProg and it calls HiGHS solver by default to solve the model. The outputs are csv files.
 
-`Import_results` is a Spine Toolbox importer that takes the output csv files and write them in the Results database.
+`Import_results` is a Spine Toolbox importer that takes the output csv files and writes them in the Results database.
 
 `Excel_input_data` and `Import_from_Excel` allow users to use Excel as an interface for the input data. They are optional parts of the workflow.
 
-`To_Excel` worfklow item will export most scenario results to a simple Excel file. One way to utilize is this by creating another Excel file that draws figures from the result Excel file that is then updated by the workflow.
+`To_Excel` worfklow item will export most scenario results to a simple Excel file. One way to utilize this is by creating another Excel file that draws figures from the result Excel file that is then updated by the workflow.
 
 The browser interface of FlexTool also runs part of this same workflow (`Export_to_csv` --> `FlexTool` --> `Import_results`). The server takes a copy of the workflow (inside the user_projects) folder and uses Spine Toolbox to execute the scenarios.
 
