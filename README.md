@@ -81,9 +81,9 @@ Functionality yet not available.
 
 ## Next steps
 
-If using FlexTool with Spine Toolbox, learn how the Spine Toolbox workflow functions: [Spine Toolbox workflow](./docs/spine_toolbox.md).
-
 Learn about the basic data structure (important for understanding the model): [Spine database](./docs/spine_database.md).
+
+If using FlexTool with Spine Toolbox, learn how the Spine Toolbox workflow functions: [Spine Toolbox workflow](./docs/spine_toolbox.md).
 
 If using FlexTool with a web-browser, read how it works: [Browser interface](./docs/browser_interface.md).
 
