@@ -115,20 +115,12 @@
                             "wind",
                             "wind_battery",
                             "wind_battery_invest"
+                        ],
+                        "tool_filter": [
+                            "FlexTool3"
                         ]
                     }
                 }
-            },
-            {
-                "name": "from Import_from_Excel to Input_data",
-                "from": [
-                    "Import_from_Excel",
-                    "right"
-                ],
-                "to": [
-                    "Input_data",
-                    "left"
-                ]
             },
             {
                 "name": "from Initialize to Input_data",
@@ -161,7 +153,15 @@
                 "to": [
                     "To_Excel",
                     "right"
-                ]
+                ],
+                "disabled_filters": {
+                    "db_url@Results": {
+                        "scenario_filter": [
+                            "network_coal_wind",
+                            "wind_battery"
+                        ]
+                    }
+                }
             }
         ],
         "jumps": []
@@ -280,8 +280,8 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 296.79499747484965,
-            "y": 36.02708582256995,
+            "x": 304.8756268694344,
+            "y": 32.99684979960071,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -297,7 +297,7 @@
             "type": "Exporter",
             "description": "",
             "x": 205.578563828954,
-            "y": 141.51643683110777,
+            "y": 140.44922239338865,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
