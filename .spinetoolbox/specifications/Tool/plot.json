@@ -1,0 +1,14 @@
+{
+    "name": "Plot",
+    "tooltype": "python",
+    "includes": [
+        "plot_results.py"
+    ],
+    "description": "",
+    "inputfiles": [],
+    "inputfiles_opt": [],
+    "outputfiles": [],
+    "cmdline_args": [],
+    "execute_in_work": true,
+    "includes_main_path": "../../.."
+}

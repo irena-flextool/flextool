@@ -11,3 +11,4 @@ results/
 *.log
 *.mps
 *.sol
+.idea/

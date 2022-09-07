@@ -33,6 +33,11 @@
                     "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Tool/flextool3.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/plot.json"
                 }
             ]
         },
@@ -152,6 +157,17 @@
                 ],
                 "to": [
                     "To_Excel",
+                    "right"
+                ]
+            },
+            {
+                "name": "from Results to Plot_results",
+                "from": [
+                    "Results",
+                    "right"
+                ],
+                "to": [
+                    "Plot_results",
                     "right"
                 ],
                 "disabled_filters": {
@@ -307,6 +323,20 @@
                 }
             ],
             "specification": "Results_to_Excel"
+        },
+        "Plot_results": {
+            "type": "Tool",
+            "description": "",
+            "x": 322.3362176541695,
+            "y": 247.63607832479053,
+            "specification": "Plot",
+            "execute_in_work": true,
+            "cmd_line_args": [
+                {
+                    "type": "resource",
+                    "arg": "db_url@Results"
+                }
+            ]
         }
     }
 }
