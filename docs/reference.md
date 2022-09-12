@@ -1,3 +1,4 @@
+- [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system)
 - [How to define model properties](#how-to-define-model-properties)
 - [Additional objects for further functionality](#additional-objects-for-further-functionality)
 - [Nodes](#nodes)
@@ -5,6 +6,20 @@
 - [Connections](#connections)
 - [Commodities](#commodities)
 - [Profiles](#profiles)
+
+
+# Essential objects for defining a power/energy system
+
+- [**node**](#nodes): maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
+- [**unit**](#units): power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
+- [**connection**](#connections): transmission lines or other transfer connections between nodes
+- [**commodity**](#commodities): fuels or other commodities that are either purchased or sold at a price outside of the model scope
+- [**profile**](#profiles): timeseries that can be used to constraint the behaviour of units, connections or storages
+
+See below for more detailed explanations.
+
+![Simple example grid](./simple_grid.png)
+
 
 # How to define model properties
 
