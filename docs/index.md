@@ -6,9 +6,9 @@ IRENA FlexTool is an energy systems optimisation model developed for power and e
 
 The instructions for installing IRENA FlexTool are [here](https://github.com/irena-flextool/flextool/tree/master#irena-flextool).
 
-This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the Irena FlexTool web-interface, the instructions still apply, but the example figures look different. If you are interested in the reference section, please find them in this [page](https://github.com/irena-flextool/flextool#reference). 
+This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the Irena FlexTool web-interface, the instructions still apply, but the example figures look different. If you are interested in the reference section, please find them in this [page](https://irena-flextool.github.io/flextool/reference). 
 
-The small system is also available in the repository ('Init.sqlite') and can be opened with Spine Toolbox database editor. The test system can be run in Spine Toolbox after initializing the Input_data.sqlite with the Init.sqlite in the workflow (one needs to execute the 'Initialize' workflow item: select the item, press 'Execute selected' from the toolbar). More information on how to set-up and use the Spine Toolbox front-end in [here](https://github.com/irena-flextool/flextool#irena-flextool-workflow-shortly-explained).
+The small system is also available in the repository ('Init.sqlite') and can be opened with Spine Toolbox database editor. The test system can be run in Spine Toolbox after initializing the Input_data.sqlite with the Init.sqlite in the workflow (one needs to execute the 'Initialize' workflow item: select the item, press 'Execute selected' from the toolbar). More information on how to set-up and use the Spine Toolbox front-end in [here](https://irena-flextool.github.io/flextool/irena-flextool-workflow-shortly-explained).
 
 - [Building a small test system](#building-a-small-test-system)
   - [1st step - a node with no units](#1st-step---a-node-with-no-units)
@@ -28,13 +28,13 @@ The small system is also available in the repository ('Init.sqlite') and can be 
 
 This tutorial can be used in couple of different ways - the best way depends on your familiarity with energy system modelling. 
 
-First, **all users who are not familiar with the way FlexTool manages data using Spine Toolbox functionalities**, should read the [section on workflow](https://github.com/irena-flextool/flextool#irena-flextool-workflow-shortly-explained) and the [section on data structures](https://github.com/irena-flextool/flextool#database-editor-in-brief).
+First, **all users who are not familiar with the way FlexTool manages data using Spine Toolbox functionalities**, should read the [section on workflow](https://irena-flextool.github.io/flextool/irena-flextool-workflow-shortly-explained) and the [section on data structures](https://irena-flextool.github.io/flextool/database-editor-in-brief).
 
-**If you are new to energy system modelling**, it is probably best to try to build the test system while following the tutorial. This will take time and you will probably have to check many data items from the Init database, but it will also force you to learn the concepts. You can also copy-paste data from the Init database to the Input_data database when writing the data becomes too tedious. Before you start, it can be a good idea to to check the [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system) from below to get an initial understanding of the concepts that will then grow as you learn more.
+**If you are new to energy system modelling**, it is probably best to try to build the test system while following the tutorial. This will take time and you will probably have to check many data items from the Init database, but it will also force you to learn the concepts. You can also copy-paste data from the Init database to the Input_data database when writing the data becomes too tedious. Before you start, it can be a good idea to to check the [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference) from below to get an initial understanding of the concepts that will then grow as you learn more.
 
 **If you have experience in using other types of energy system models** - or perhaps older versions of FlexTool - it can be sufficient to follow the tutorial while also browsing the Input_data database using the database editor. Finding the entity classes, entities, and parameter values in the actual database will assist in the learning process.
 
-Finally, **if you are a really experienced modeller**, it can be enough to check the reference section starting from [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system). 
+Finally, **if you are a really experienced modeller**, it can be enough to check the reference section starting from [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference). 
 
 ## 1st step - a node with no units
 
