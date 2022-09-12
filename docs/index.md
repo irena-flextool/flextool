@@ -23,7 +23,7 @@ The small system is also available in the repository ('Init.sqlite') and can be 
   - [Adding CO2 emissions and costs](#adding-co2-emissions-and-costs)
   - [Full year model](#full-year-model)
   - [A system with coal, wind, network, battery and CO2 over a full year](#a-system-with-coal-wind-network-battery-and-co2-over-a-full-year)
-- [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system)
+
 # Building a small test system
 
 This tutorial can be used in couple of different ways - the best way depends on your familiarity with energy system modelling. 
@@ -192,15 +192,3 @@ So far the model has been using only two days to keep it fast to run. This examp
 The final example shows a system many of the previous examples have been put into one model and run for one year. The graph below shows the physical objects in the example.
 
 ![Entity graph](./coal_wind_chp_battery_graph.png)
-
-# Essential objects for defining a power/energy system
-
-- [**node**](#nodes): maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
-- [**unit**](#units): power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
-- [**connection**](#connections): transmission lines or other transfer connections between nodes
-- [**commodity**](#commodities): fuels or other commodities that are either purchased or sold at a price outside of the model scope
-- [**profile**](#profiles): timeseries that can be used to constraint the behaviour of units, connections or storages
-
-See below for more detailed explanations.
-
-![Simple example grid](./simple_grid.png)
