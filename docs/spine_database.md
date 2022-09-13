@@ -14,6 +14,6 @@ and then all data from the 'coal' `alternative`. If there would be same paramete
 defined for both `scenarios`, then the latter `alternative` would overwrite 
 the first `alternative`.
 
-![Database editor](./docs/database_editor.png)
+![Database editor](./database_editor.png)
 
 More on Spine Database editor in https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html.
