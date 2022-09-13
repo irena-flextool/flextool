@@ -1,3 +1,5 @@
+[Install](https://github.com/irena-flextool/flextool/tree/master#irena-flextool) | [Tutorial](https://irena-flextool.github.io/flextool) | [Reference](https://irena-flextool.github.io/flextool/reference) | [Data structure](https://irena-flextool.github.io/flextool/spine_database) | [Spine Toolbox interface](https://irena-flextool.github.io/flextool/spine_toolbox) | [Browser-interface](https://irena-flextool.github.io/flextool/browser_interface)
+
 - [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system)
 - [How to define model properties](#how-to-define-model-properties)
 - [Additional objects for further functionality](#additional-objects-for-further-functionality)
