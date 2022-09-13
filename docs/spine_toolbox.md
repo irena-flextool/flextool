@@ -2,7 +2,7 @@
 
 IRENA FlexTool workflow is a Spine Toolbox workflow that can be modified by the user. The workflow provided in the repository is a template Spine Toolbox project that can be **either** copied for local changes **or** the workflow data input data files can be switched to local files. It is also possible to work directly with the template, but then one needs to be careful when updating IRENA FlexTool (the input data file contents need to be copied to safety before updating). 
 
-![IRENA FlexTool workflow](./docs/flextool_workflow.png)
+![IRENA FlexTool workflow](./flextool_workflow.png)
 
 The panel on the right shows the different `scenarios` that are available in the database. 
 The user can choose which scenarios will be processed by the workflow (until item `Results`, 
