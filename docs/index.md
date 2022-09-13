@@ -44,6 +44,13 @@ Finally, **if you are a really experienced modeller**, it can be enough to check
 
 The test system is built using `alternatives`. Each step will add a new `alternative`, and the data it contains, on top of the previous ones. The first `alternative` is called *init* and it includes the parameters needed to establish a working model. However, this model has only one `node` (*west*) with demand, but no units to provide the demand. It will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. All parameters here are part of the *init* `alternative` - they will be used whenever a `scenario` includes the *init* `alternative`.
 
+The model will also need parameters that define the model structure for time related issues. FlexTool time structure offers a lot of flexibility, but to do that it needs to be bit complex. At this stage not everything needs to be understood - it will be explained in more detail later. However, to get the model to run, these are needed:
+- `timeline` object called 'y2020' with a parameter `timestep_duration` that defines the timeline for the model - the name of each timestep (e.g. t0001 or 2022-01-01-01) and the length of the timestep in hours. 
+- `timeblockset` object called '2day' with a parameter `block_duration` to define a time block useing a timestep name and a length (e.g. t0001 and 1.0).
+- `solve` object called `y2020_2day_dispatch` 
+  - with a parameter `period_timeblockSet` to define the names of the timeblocksets the model should include (e.g. '2day')
+  - with a parameter `realised_periods` to define the periods that are realised from a particular solve (e.g. 'y2020')
+
 ![First_model](./first_model.png)
 
 ## 2nd step - add a coal unit
