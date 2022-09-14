@@ -75,18 +75,30 @@ In the second step, a coal unit is added.
 - *coal_plant* needs the following parameters (all set for the *coal* alternative): 
   - `efficiency` (e.g. 0.4 for 40% efficiency)
   - `existing` to indicate the existing capacity in the coal_plant (e.g. 500 MW)
-  - `is_active` set to *yes* to include the *coal_plant* in the model0
+  - `is_active` set to *yes* to include the *coal_plant* in the model
 - *coal* `commodity` needs just one parameter for `price` (e.g. 50 €/MWh of fuel)
 - *coal_market* `node` needs to have `is_active` set to *yes* 
 - All these new parameters should be now part of the *coal* `alternative`. A `scenario` with the *init* `node` and the *coal_plant* `unit` is then built by including both *init* and *coal* `alternatives` in the *coal* `scenario`.
 
 ![Add unit](./add_unit.png)
 
-Furthermore, the model needs to know that there is a link between the *coal_market* and *coal_plant* as well as *coal_plant* and the `node` *west*. These are established as relationships between objects. `unit__inputNode` relationship will therefore have *coal_plant--coal_market* relationship and `unit__outputNode` will include *coal_plant--west* relationship.
-
 ## 3rd step - add a wind power plant
 
-Next, a wind power plant is added. The parameters for this unit include `conversion_method`, `efficiency`, `existing` and `is_active`. Note that wind does not require a commodity, but instead uses a profile to limit the generation to the available wind. A *wind_profile* object is added to the `profile` object class and the parameter `profile` is given a map of values where each time step gets the maximum available capacity factor for the time step. On the bottom of the the figure, the relationship class `unit__node__profile` gets a new member *wind_plant, west, wind_profile*, which tells the model to connect the *wind_profile* with the flow going from the *wind_plant* to the *west* `node`. There is also a parameter `profile_method` given to *wind_plant, west, wind_profile* relationship with the choice *upper_limit* selected. Now the *wind_plant* must generate at or below its capacity factor.
+Next, a wind power plant is added. 
+- Add a new `alternative` *wind*
+- Add objects:
+  - `unit` *wind_plant*
+  - `profile` *wind_profile* since *wind_plant* does not require a commodity, but instead uses a profile to limit the generation to the available wind.
+- Add relationships:
+  - `unit__node__profile` *wind_plant, west, wind_profile*
+  - `unit__outputNode` *wind_plant, west*
+- *wind_plant* needs the following parameters (all set for the *wind* alternative):
+  - `conversion_method` to choose a method for the conversion process (in this case *constant_efficiency*)
+  - `efficiency` for *wind_plant* should be set to 1
+  - `existing` capacity can be set to 500 MW
+  - `is_active` set to *yes* to include the *wind_plant* in the model
+- *wind_profile* needs the the parameter `profile` with a map of values where each time step gets the maximum available capacity factor for that time step (see figure). 
+- *wind_plant, west, wind_profile* relationship needs a parameter `profile_method` with the choice *upper_limit* selected. This means that the *wind_plant* must generate at or below its capacity factor.
 
 ![Add another unit](./add_unit2.png)
 
