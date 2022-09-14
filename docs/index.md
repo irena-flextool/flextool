@@ -46,7 +46,7 @@ You should have the FlexTool project open in the Spine Toolbox. Then, open the `
 
 The test system is built using `alternatives`. 
 - Each step will add a new `alternative`, and the data it contains, on top of the previous ones. 
-- The first `alternative` will be called *init* and it will include the parameters needed to establish a working model.
+- The first `alternative` will be called *west* to hold the data for the first `node`in the model.
 - The alternative is added in the 'Alternative/Scenario tree' widget of the 'Spine Database Editor', see figure below.
 
 ![Add alternative](./add_alternative.png)
@@ -63,11 +63,15 @@ The newly minted *west* `node` will now need parameter data.
 - First `inflow` parameter with negative values to indicate negative inflow, i.e. demand. The `inflow` timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. 
 - There are no units to provide the demand. It will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. Also downward `penalty_down` is defined although the model is not using it at this stage. 
 - The *west* `node` needs to have a parameter called `is_active` with value *yes*. This chooses the *west* `node` and all its parameters to be sent to the model. 
-- All parameters here should be part of the *init* `alternative` - they will be used whenever a `scenario` includes the *init* `alternative`. 
+- All parameters here should be part of the *west* `alternative` - they will be used whenever a `scenario` includes the *west* `alternative`. 
 
 ![First_node](./west_node.png)
 
-The model will also need parameters that define the model structure for time related issues. FlexTool time structure offers a lot of flexibility, but it is also bit complex to learn at first. At this stage not everything needs to be understood - the time structures will be explained in more detail later. However, to get the model to run, these are needed:
+The model will also need parameters that define the model structure for time related issues. FlexTool time structure offers a lot of flexibility, but it is also bit complex to learn at first. At this stage not everything needs to be understood - the time structures will be explained in more detail later. 
+
+First, make a new `alternative` called *init* to keep all the model structure related data separate from the data on physical objects. All parameter data that will be added next, should go into the *init* `alternative`.
+
+Then, to get the model to run, these are needed:
 - `timeline` object called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains the name of each timestep in the first column (e.g. *t0001* or *2022-01-01-01*) and the length of the timestep in hours (e.g. *1.0*) in the second column. 
 - `timeblockset` object called *2day* with a map-type parameter `block_duration` to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps (e.g. *t0001* and *1.0*).
 - `solve` object called *y2020_2day_dispatch* 
@@ -75,7 +79,26 @@ The model will also need parameters that define the model structure for time rel
   - with an array-type parameter `realised_periods` to define the periods that are realised from the `solve` named by the object (in this example: first column of the array is the index number *1* and the second column contains the period to be realized in the results: *y2020*)
 - Finally, the model will be a sequence of solves as defined by the `model` object. In this case *flexTool* `model` object contains just one solve *y2020_2day_dispatch* inside the array-type parameter.
 
+The new objects, relationships and parameters have now been staged. Even though it looks like they are in the database, they really are not - they need to be **committed** first. This can be done from the menu of the Database Editor (there is a *commit* command) or by pressing *ctrl-enter*. One should write an informative commit message about the changes that have been made. All commits, and the data they have affected, can be seen later from the *history* menu item.
+
 ![Time_parameters](./first_model.png)
+
+## Interlude - creating a scenario and running the model
+
+Even though the model is very simple and will not do anything interesting, it can be executed. However, first there needs to be a scenario to be executed. Scenarios are created from `alternatives` in the Alternative/Scenario tree widget of the Database Editor. In the figure below, a `scenario` called *base* is created that should contain `alternatives` *west* and *init* in order to have both a node and a model structure included in the model. The new `scenario` must also be **committed**, before it can be used. A new scenario should be added after each step in the tutorial process. 
+
+![Add scenario](./add_scenario.png)
+
+Once the scenario has been committed to the database, it becomes available in the Spine Toolbox workflow. One can select scenarios to be executed from the arrow that leaves the `input_data` database. At this point, there will be only the *base* `scenario` available and should be selected. There is also a tool filter with *FlexTool3* pre-selected. This selection needs to be present when running scenarios (it is used to filter the `is_active` entities into the scenario).
+
+![Select scenario](./select_scenario.png)
+
+Next, we want to run three tools: *Export_to_CSV* (that will make input files suitable for FlexTool), *FlexTool3* (which is a Python script that calls the FlexTool model generator for each solve) and *Import_results* (which will take output files from FlexTool and drop their contents to the *Results* database with a particular `alternative` name. First, select the tools (select with left click while ctrl is pressed or draw an area with ctrl pressed, see figure below). Then, press *Execute_selected* from the menu bar. The three items should be executed and if all goes well, then green check marks appear on each of the tool once it has finished. You can explore the outputs of each item by selecting the item and looking at the *Console* widget.
+
+![Choose workflow items](./choose_workflow_items.png) 
+![Executed selected items](./execute_selected.png)
+
+It is now possible to explore model results for the *base* `scenario` using either the *Results* database or the Excel file that can be exported by executing the *To_Excel* exporter tool. When doing that, no scenarios should be selected so that the tool will create one Excel file with data from all the alternatives that are in the results database (which will make more sense once there are more scenario results). The generated Excel file can be found by selecting the *To_Excel* tool and clicking on the folder icon on top-right of the *Link properties* widget window.
 
 ## 2nd step - add a coal unit
 
