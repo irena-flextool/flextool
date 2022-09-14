@@ -42,13 +42,28 @@ Finally, **if you are a really experienced modeller**, it can be enough to check
 
 ## 1st step - a node with no units
 
+You should have the FlexTool project open in the Spine Toolbox. Then, open the `input_data` database by double-clicking it in the Spine Toolbox workflow.
+
 The test system is built using `alternatives`. 
 - Each step will add a new `alternative`, and the data it contains, on top of the previous ones. 
-- The first `alternative` is called *init* and it includes the parameters needed to establish a working model. 
-- At this stage the model has only one `node` (*west*) with demand inside the `inflow` parameter (negative values to indicate negative inflow, i.e. demand). The `inflow` timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. 
+- The first `alternative` will be called *init* and it will include the parameters needed to establish a working model.
+- The alternative is added in the 'Alternative/Scenario tree' widget of the 'Spine Database Editor', see figure below.
+
+![Add alternative](./add_alternative.png)
+
+Next step is to add an object for the first `node` that will be called *west*. 
+- Right-click on the `node` object class in the object tree to select 'Add objects'. 
+- Use the dialog to add the *west* `node` and click ok. See the figures below.
+- Later other objects will need to be added in the same manner - as well as relationships between objects.
+
+![Add object1](./add_object_dialog.png) 
+![Add object2](./add_object_dialog2.png)
+
+The newly minted *west* `node` will now need parameter data.
+- First `inflow` parameter with negative values to indicate negative inflow, i.e. demand. The `inflow` timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. 
 - There are no units to provide the demand. It will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. Also downward `penalty_down` is defined although the model is not using it at this stage. 
-- All parameters here are part of the *init* `alternative` - they will be used whenever a `scenario` includes the *init* `alternative`. 
-- Finally, the `node` *west* has a parameter called `is_active`. This picks up the *west* `node` and all the parameters defined for it to be sent to the model. 
+- The *west* `node` needs to have a parameter called `is_active` with value *yes*. This chooses the *west* `node` and all its parameters to be sent to the model. 
+- All parameters here should be part of the *init* `alternative` - they will be used whenever a `scenario` includes the *init* `alternative`. 
 
 ![First_node](./west_node.png)
 
