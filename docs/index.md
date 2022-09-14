@@ -62,7 +62,23 @@ The model will also need parameters that define the model structure for time rel
 
 ## 2nd step - add a coal unit
 
-In the second step, a coal unit is added. It needs `efficiency` and capacity (`existing`), but it also needs a new `node` *coal_market* from which it will get the *coal* `commodity` which needs a parameter for `price`. All these new parameters are part of the 'coal' `alternative`. A scenario with the initial node and the coal unit is then built by including both *init* and *coal* `alternatives` in the *coal* `scenario`. There are some extra parameters related to investments that will be useful later.
+In the second step, a coal unit is added. 
+- The first thing is to add a new `alternative` *coal* so that all new data added in this step will become part of the *coal* `alternative`.
+- Then one needs to add the objects:
+  - `unit` *coal_plant*
+  - `node` *coal_market* 
+  - `commodity` *coal*
+- And relationships:
+  - `unit__inputNode` *coal_plant, coal_market* to indicate that the *coal_plant* is using inputs from the *coal_market*
+  - `unit__outputNode` *coal_plant, west* to indicate that the *coal_plant* will output electricity to the *west* node
+  - `commodity__node` *coal, coal_market*
+- *coal_plant* needs the following parameters (all set for the *coal* alternative): 
+  - `efficiency` (e.g. 0.4 for 40% efficiency)
+  - `existing` to indicate the existing capacity in the coal_plant (e.g. 500 MW)
+  - `is_active` set to *yes* to include the *coal_plant* in the model0
+- *coal* `commodity` needs just one parameter for `price` (e.g. 50 €/MWh of fuel)
+- *coal_market* `node` needs to have `is_active` set to *yes* 
+- All these new parameters should be now part of the *coal* `alternative`. A `scenario` with the *init* `node` and the *coal_plant* `unit` is then built by including both *init* and *coal* `alternatives` in the *coal* `scenario`.
 
 ![Add unit](./add_unit.png)
 
