@@ -60,8 +60,8 @@ Next step is to add an object for the first `node` that will be called *west*.
 ![Add object2](./add_object_dialog2.png)
 
 The newly minted *west* `node` will now need parameter data.
-- First `inflow` parameter with negative values to indicate negative inflow, i.e. demand. The `inflow` timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. 
-- There are no units to provide the demand. It will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. Also downward `penalty_down` is defined although the model is not using it at this stage. 
+- First it needs an `inflow` parameter with negative values to indicate negative inflow, i.e. demand. The `inflow` timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. 
+- There are no electriciy generating units and the demand cannot be met by ordinary means. The model will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. Also downward `penalty_down` is defined although the model is not using it at this stage. 
 - The *west* `node` needs to have a parameter called `is_active` with value *yes*. This chooses the *west* `node` and all its parameters to be sent to the model. 
 - All parameters here should be part of the *west* `alternative` - they will be used whenever a `scenario` includes the *west* `alternative`. 
 
@@ -72,7 +72,7 @@ The model will also need parameters that define the model structure for time rel
 First, make a new `alternative` called *init* to keep all the model structure related data separate from the data on physical objects. All parameter data that will be added next, should go into the *init* `alternative`.
 
 Then, to get the model to run, these are needed:
-- `timeline` object called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains the name of each timestep in the first column (e.g. *t0001* or *2022-01-01-01*) and the length of the timestep in hours (e.g. *1.0*) in the second column. 
+- `timeline` object called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains the name of each timestep in the first column (e.g. *t0001* or *2022-01-01-01*) and the length of the timestep in hours (e.g. *1.0*) in the second column. The timestep names in the previously given `inflow` time series should match these timestep names - and any other timestep names in later time series.
 - `timeblockset` object called *2day* with a map-type parameter `block_duration` to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps (e.g. *t0001* and *1.0*).
 - `solve` object called *y2020_2day_dispatch* 
   - with a map-type parameter `period_timeblockSet` to define the what timeblockset each period in the model should use (in this example: `period` *y2020* in the first column of the map links to the `timeblockset` object *2day* in the second column of the map)
