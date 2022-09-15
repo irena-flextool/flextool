@@ -122,6 +122,8 @@ In the second step, a coal unit is added.
 
 ![Add unit](./add_unit.png)
 
+To see how the results change due to the coal power plant, make a new scenario *coal* that has the `alternatives` *init*, *west* and *coal*. Run the ***Export_to_CSV***, ***FlexTool3*** and ***Import_results*** to get the results to the ***Results*** database. If you start to get too many result `alternatives` in the ***Results*** database (e.g. if you happen to run the same scenario multiple times), you can delete old ones by removing the unwanted `alternatives` (right-click on the `alternative`) and then **committing** the database.
+
 ## 3rd step - add a wind power plant
 
 Next, a wind power plant is added. 
