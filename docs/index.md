@@ -10,7 +10,7 @@ The instructions for installing IRENA FlexTool are [here](https://github.com/ire
 
 This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the Irena FlexTool web-interface, the instructions still apply, but the example figures look different. If you are interested in the reference section, please find them in this [page](https://irena-flextool.github.io/flextool/reference). 
 
-The small system is also available in the FlexTool repository ('Init.sqlite') and can be opened with the Spine Toolbox database editor. However, the default workflow for IRENA FlexTool executes the scenarios from the 'Input_data' database. It is empty by default, so you need to copy the contents of the 'Init' database to the 'Input_data' database when you wish to run the scenarios in this tutorial. To copy the data, one needs to execute the `Initialize` workflow item: select the item, press `Execute selected` from the toolbar. The data will be also copied, along with running the model, if the whole workflow is executed using `Execute project`. More information on how to set-up and use the Spine Toolbox front-end in [here](https://irena-flextool.github.io/flextool/irena-flextool-workflow-shortly-explained).
+The small system is also available in the FlexTool repository (***Init*** SQLite database) and can be opened with the Spine Toolbox database editor. However, the default workflow for IRENA FlexTool executes the scenarios from the ***Input data*** database. It is empty by default, so you need to copy the contents of the ***Init*** database to the ***Input data*** database when you wish to run the scenarios in this tutorial. To copy the data, one needs to execute the ***Initialize*** workflow item: select the item, press ***Execute selected*** from the toolbar. The data will be also copied, along with running the model, if the whole workflow is executed using ***Execute project***. More information on how to set-up and use the Spine Toolbox front-end in [here](https://irena-flextool.github.io/flextool/irena-flextool-workflow-shortly-explained).
 
 - [Building a small test system](#building-a-small-test-system)
   - [1st step - a node with no units](#1st-step---a-node-with-no-units)
@@ -32,17 +32,17 @@ This tutorial can be used in couple of different ways - the best way depends on 
 
 First, **all users who are not familiar with the way FlexTool manages data using Spine Toolbox functionalities**, should read the [page on Spine Toolbox workflow](https://irena-flextool.github.io/flextool/spine_toolbox) and the [section on Spine Toolbox data structures](https://irena-flextool.github.io/flextool/spine_database).
 
-**If you are new to energy system modelling**, it is probably best to try to build the test system yourself while following the tutorial. This will take time and you will have to look up many data items from the `Init` database, but it will also force you to learn the concepts. You can also copy-paste data from the `Init` database to the `Input_data` database when writing the data becomes too tedious. Before you start, it can be a good idea to to check the [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference) from below to get an initial understanding of the concepts that will then grow as you learn more. 
+**If you are new to energy system modelling**, it is probably best to try to build the test system yourself while following the tutorial. This will take time and you will have to look up many data items from the ***Init*** database, but it will also force you to learn the concepts. You can also copy-paste data from the ***Init*** database to the ***Input data*** database when writing the data becomes too tedious. Before you start, it can be a good idea to to check the [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference) from below to get an initial understanding of the concepts that will then grow as you learn more. 
 
-If you have already run the whole workflow, then the `Input_data` database will be populated and you will need to delete the data before starting to build from scratch. This can be done by selecting all `alternatives` in the Database Editor, removing them (right click) and committing changes (ctrl-enter) - or with the 'purge' tool from the Database Editor menu.
+If you have already run the whole workflow, then the ***Input_data*** database will be populated and you will need to delete the data before starting to build from scratch. This can be done by selecting all `alternatives` in the Database Editor, removing them (right click) and committing changes (ctrl-enter) - or with the 'purge' tool from the Database Editor menu.
 
-**If you have experience in using other types of energy system models** - or perhaps older versions of FlexTool - it can be sufficient to follow the tutorial while also browsing the `Init` database using the database editor. Finding the entity classes, entities, and parameter values in the actual database will assist in the learning process. The [reference](https://irena-flextool.github.io/flextool/reference) page can also be useful.
+**If you have experience in using other types of energy system models** - or perhaps older versions of FlexTool - it can be sufficient to follow the tutorial while also browsing the ***Init*** database using the database editor. Finding the entity classes, entities, and parameter values in the actual database will assist in the learning process. The [reference](https://irena-flextool.github.io/flextool/reference) page can also be useful.
 
 Finally, **if you are a really experienced modeller**, it can be enough to check the reference section starting from [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference). 
 
 ## 1st step - a node with no units
 
-You should have the FlexTool project open in the Spine Toolbox. Then, open the `input_data` database by double-clicking it in the Spine Toolbox workflow.
+You should have the FlexTool project open in the Spine Toolbox. Then, open the ***Input data*** database by double-clicking it in the Spine Toolbox workflow.
 
 The test system is built using `alternatives`. 
 - Each step will add a new `alternative`, and the data it contains, on top of the previous ones. 
@@ -89,16 +89,16 @@ Even though the model is very simple and will not do anything interesting, it ca
 
 ![Add scenario](./add_scenario.png)
 
-Once the scenario has been committed to the database, it becomes available in the Spine Toolbox workflow. One can select scenarios to be executed from the arrow that leaves the `input_data` database. At this point, there will be only the *base* `scenario` available and should be selected. There is also a tool filter with *FlexTool3* pre-selected. This selection needs to be present when running scenarios (it is used to filter the `is_active` entities into the scenario).
+Once the scenario has been committed to the database, it becomes available in the Spine Toolbox workflow. One can select scenarios to be executed from the arrow that leaves the ***Input data*** database. At this point, there will be only the *base* `scenario` available and should be selected. There is also a tool filter with *FlexTool3* pre-selected. This selection needs to be present when running scenarios (it is used to filter the `is_active` entities into the scenario).
 
 ![Select scenario](./select_scenario.png)
 
-Next, we want to run three tools: *Export_to_CSV* (that will make input files suitable for FlexTool), *FlexTool3* (which is a Python script that calls the FlexTool model generator for each solve) and *Import_results* (which will take output files from FlexTool and drop their contents to the *Results* database with a particular `alternative` name. First, select the tools (select with left click while ctrl is pressed or draw an area with ctrl pressed, see figure below). Then, press *Execute_selected* from the menu bar. The three items should be executed and if all goes well, then green check marks appear on each of the tool once it has finished. You can explore the outputs of each item by selecting the item and looking at the *Console* widget.
+Next, we want to run three tools: ***Export_to_CSV*** (that will make input files suitable for FlexTool), ***FlexTool3*** (which is a Python script that calls the FlexTool model generator for each solve) and ***Import_results*** (which will take output files from FlexTool and drop their contents to the ***Results*** database with a particular `alternative` name. First, select the tools (select with left click while ctrl is pressed or draw an area with ctrl pressed, see figure below). Then, press ***Execute_selected*** from the menu bar. The three items should be executed and if all goes well, then green check marks appear on each of the tool once it has finished. You can explore the outputs of each item by selecting the item and looking at the ***Console*** widget window.
 
 ![Choose workflow items](./choose_workflow_items.png) 
 ![Executed selected items](./execute_selected.png)
 
-It is now possible to explore model results for the *base* `scenario` using either the *Results* database or the Excel file that can be exported by executing the *To_Excel* exporter tool. When doing that, no scenarios should be selected so that the tool will create one Excel file with data from all the alternatives that are in the results database (which will make more sense once there are more scenario results). The generated Excel file can be found by selecting the *To_Excel* tool and clicking on the folder icon on top-right of the *Link properties* widget window.
+It is now possible to explore model results for the *base* `scenario` using either the ***Results*** database or the Excel file that can be exported by executing the ***To_Excel*** exporter tool. When doing that, no scenarios should be selected so that the tool will create one Excel file with data from all the alternatives that are in the results database (which will make more sense once there are more scenario results). The generated Excel file can be found by selecting the ***To_Excel*** tool and clicking on the folder icon on top-right of the ***Link properties*** widget window.
 
 ## 2nd step - add a coal unit
 
@@ -164,7 +164,7 @@ Parameters from the `reserve__upDown__unit__node` class will be used to define h
 
 ***init - wind - battery***
 
-In the init.sqlite, there is a `scenario` *wind_battery* - the *wind_plant* alone is not able to meet the load in all conditions, but the *battery* will help it to improve the situation.
+In the ***Init*** SQLite database, there is a `scenario` *wind_battery* - the *wind_plant* alone is not able to meet the load in all conditions, but the *battery* will help it to improve the situation.
 
 In FlexTool, only `nodes` can have storage. This means that `existing` capacity and all investment parameters for `nodes` refer to the amount of storage the `node` can have. In this example, a *battery* `node` is established to describe the storage properties of the *battery* (e.g. `existing` capacity and `self_discharge_loss` in each hour). 
 
