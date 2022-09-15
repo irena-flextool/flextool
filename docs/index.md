@@ -1,6 +1,6 @@
-![irenalogo](./irena_flextool_logo.png)
-
 [Install](https://github.com/irena-flextool/flextool/tree/master#irena-flextool) | [Tutorial](https://irena-flextool.github.io/flextool) | [Reference](https://irena-flextool.github.io/flextool/reference) | [Data structure](https://irena-flextool.github.io/flextool/spine_database) | [Spine Toolbox interface](https://irena-flextool.github.io/flextool/spine_toolbox) | [Browser-interface](https://irena-flextool.github.io/flextool/browser_interface)
+
+![irenalogo](./irena_flextool_logo.png)
 
 # IRENA FlexTool tutorial
 
