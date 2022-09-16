@@ -957,6 +957,9 @@ check {(p, m) in process_method, t in time : m in method_2way_off} ptProcess[p, 
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
 check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
 
+printf 'Checking: Is there a timeline connected to a timeblockset\n';
+check sum{(tb, tl) in timeblockset__timeline} 1 > 0;
+
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
 
