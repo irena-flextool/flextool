@@ -101,26 +101,6 @@
                 ],
                 "disabled_filters": {
                     "db_url@Init": {
-                        "scenario_filter": [
-                            "base",
-                            "capacity_margin",
-                            "coal",
-                            "coal_chp",
-                            "coal_co2",
-                            "coal_min_load",
-                            "coal_retire",
-                            "coal_wind",
-                            "fullYear",
-                            "network_coal_wind",
-                            "network_coal_wind_battery_co2_fullYear",
-                            "network_coal_wind_capacity_margin",
-                            "network_coal_wind_reserve",
-                            "network_coal_wind_reserve_co2_capacity_margin",
-                            "water_pump",
-                            "wind",
-                            "wind_battery",
-                            "wind_battery_invest"
-                        ],
                         "tool_filter": [
                             "FlexTool3"
                         ]
@@ -173,8 +153,8 @@
                 "disabled_filters": {
                     "db_url@Results": {
                         "scenario_filter": [
-                            "network_coal_wind",
-                            "wind_battery"
+                            "coal",
+                            "network_coal_wind"
                         ]
                     }
                 }
@@ -186,17 +166,17 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 62.933522684556,
-            "y": 5.684840622564257,
+            "x": 64.09804166658873,
+            "y": 5.691330001121138,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": []
         },
         "Init": {
             "type": "Data Store",
             "description": "",
-            "x": -413.10214369086003,
-            "y": 72.72419469646616,
+            "x": -410.7601269696809,
+            "y": 73.89520305705574,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -211,8 +191,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -192.99515803771973,
-            "y": -41.612294375010976,
+            "x": -194.16941108758775,
+            "y": -16.94649094922572,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -227,10 +207,30 @@
         "Initialize": {
             "type": "Merger",
             "description": "",
-            "x": -289.52636425422753,
-            "y": 66.57786459482492,
+            "x": -290.6973726148171,
+            "y": 65.40685623423533,
             "cancel_on_error": true,
-            "purge_before_writing": false
+            "purge_before_writing": true,
+            "purge_settings": {
+                "object_class": false,
+                "relationship_class": false,
+                "parameter_value_list": false,
+                "parameter_definition": false,
+                "object": true,
+                "relationship": true,
+                "entity_group": true,
+                "parameter_value": false,
+                "alternative": true,
+                "scenario": true,
+                "scenario_alternative": true,
+                "feature": false,
+                "tool": false,
+                "tool_feature": false,
+                "tool_feature_method": false,
+                "metadata": false,
+                "entity_metadata": false,
+                "parameter_value_metadata": false
+            }
         },
         "Excel_input_data": {
             "type": "Data Connection",
@@ -253,7 +253,27 @@
             "y": -46.55260024983251,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
-            "purge_before_writing": false,
+            "purge_before_writing": true,
+            "purge_settings": {
+                "object_class": false,
+                "relationship_class": false,
+                "parameter_value_list": false,
+                "parameter_definition": false,
+                "object": true,
+                "relationship": true,
+                "entity_group": true,
+                "parameter_value": false,
+                "alternative": true,
+                "scenario": true,
+                "scenario_alternative": true,
+                "feature": false,
+                "tool": false,
+                "tool_feature": false,
+                "tool_feature_method": false,
+                "metadata": false,
+                "entity_metadata": false,
+                "parameter_value_metadata": false
+            },
             "on_conflict": "replace",
             "file_selection": [
                 [
@@ -265,8 +285,8 @@
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -55.21140617198526,
-            "y": -12.495423445371873,
+            "x": -51.46762697080552,
+            "y": -17.41021100714113,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -280,11 +300,31 @@
         "Import_results": {
             "type": "Importer",
             "description": "",
-            "x": 185.07830252199196,
-            "y": 24.767210910956983,
+            "x": 187.42031924317106,
+            "y": 23.36544843095646,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "purge_before_writing": false,
+            "purge_settings": {
+                "object_class": false,
+                "relationship_class": false,
+                "parameter_value_list": false,
+                "parameter_definition": false,
+                "object": true,
+                "relationship": true,
+                "entity_group": true,
+                "parameter_value": false,
+                "alternative": true,
+                "scenario": true,
+                "scenario_alternative": true,
+                "feature": false,
+                "tool": false,
+                "tool_feature": false,
+                "tool_feature_method": false,
+                "metadata": false,
+                "entity_metadata": false,
+                "parameter_value_metadata": false
+            },
             "on_conflict": "replace",
             "file_selection": [
                 [
@@ -296,7 +336,7 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 304.8756268694344,
+            "x": 307.21764359061365,
             "y": 32.99684979960071,
             "url": {
                 "dialect": "sqlite",
@@ -312,8 +352,8 @@
         "To_Excel": {
             "type": "Exporter",
             "description": "",
-            "x": 205.578563828954,
-            "y": 140.44922239338865,
+            "x": 205.57856382895397,
+            "y": 139.04745991338814,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [

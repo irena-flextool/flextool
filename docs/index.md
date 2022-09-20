@@ -1,12 +1,16 @@
+[Install](https://github.com/irena-flextool/flextool/tree/master#irena-flextool) | [Tutorial](https://irena-flextool.github.io/flextool) | [Reference](https://irena-flextool.github.io/flextool/reference) | [Data structure](https://irena-flextool.github.io/flextool/spine_database) | [Spine Toolbox interface](https://irena-flextool.github.io/flextool/spine_toolbox) | [Browser-interface](https://irena-flextool.github.io/flextool/browser_interface)
+
 ![irenalogo](./irena_flextool_logo.png)
 
-# IRENA FlexTool user guide and documentation
+# IRENA FlexTool tutorial
 
 IRENA FlexTool is an energy systems optimisation model developed for power and energy systems with high shares of wind and solar power. It can be used to find cost-effective sources of flexibility across the energy system to mitigate the increasing variability arising from the power systems. It can perform multi-year capacity expansion as well as unit commitment and economic dispatch in a user-defined sequence of solves. The aim has been to make it fast to learn and easy to use while including lot of functionality especially in the time scales relevant for investment planning and operational scheduling of energy systems.
 
 The instructions for installing IRENA FlexTool are [here](https://github.com/irena-flextool/flextool/tree/master#irena-flextool).
 
-This user guide will build a small system step-by-step. After that, there is a reference section for model properties. The small system is also available in the repository ('Init.sqlite') and can be opened with Spine Toolbox database editor. It can also be run with IRENA FlexTool (initialize the Input_data.sqlite with the Init.sqlite in the Spine Toolbox workflow when testing the modelling framework). More information on how to set-up and use the Spine Toolbox front-end in [here](https://github.com/irena-flextool/flextool#irena-flextool-workflow-shortly-explained).
+This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the IRENA FlexTool web-interface, the instructions still apply, but the example figures in this tutorial will not be as helpful. If you are interested in the IRENA FlexTool reference, please find them in this [page](https://irena-flextool.github.io/flextool/reference). 
+
+The small system is also available in the FlexTool repository (***Init*** SQLite database) and can be opened with the Spine Toolbox database editor. However, the default workflow for IRENA FlexTool executes the scenarios from the ***Input data*** database. It is empty by default, so you need to copy the contents of the ***Init*** database to the ***Input data*** database when you wish to run the scenarios in this tutorial. To copy the data, one needs to execute the ***Initialize*** workflow item: select the item, press ***Execute selected*** from the toolbar. The data will be also copied, along with running the model, if the whole workflow is executed using ***Execute project***. More information on how to set-up and use the Spine Toolbox front-end in [here](https://irena-flextool.github.io/flextool/irena-flextool-workflow-shortly-explained).
 
 - [Building a small test system](#building-a-small-test-system)
   - [1st step - a node with no units](#1st-step---a-node-with-no-units)
@@ -21,50 +25,140 @@ This user guide will build a small system step-by-step. After that, there is a r
   - [Adding CO2 emissions and costs](#adding-co2-emissions-and-costs)
   - [Full year model](#full-year-model)
   - [A system with coal, wind, network, battery and CO2 over a full year](#a-system-with-coal-wind-network-battery-and-co2-over-a-full-year)
-- [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system)
-- [How to define model properties](#how-to-define-model-properties)
-- [Additional objects for further functionality](#additional-objects-for-further-functionality)
-- [Nodes](#nodes)
-- [Units](#units)
-- [Connections](#connections)
-- [Commodities](#commodities)
-- [Profiles](#profiles)
 
 # Building a small test system
 
 This tutorial can be used in couple of different ways - the best way depends on your familiarity with energy system modelling. 
 
-First, **all users who are not familiar with the way FlexTool manages data using Spine Toolbox functionalities**, should read the [section on workflow](https://github.com/irena-flextool/flextool#irena-flextool-workflow-shortly-explained) and the [section on data structures](https://github.com/irena-flextool/flextool#database-editor-in-brief).
+First, **all users who are not familiar with the way FlexTool manages data using Spine Toolbox functionalities**, should read the [page on Spine Toolbox workflow](https://irena-flextool.github.io/flextool/spine_toolbox) and the [section on Spine Toolbox data structures](https://irena-flextool.github.io/flextool/spine_database).
 
-**If you are new to energy system modelling**, it is probably best to try to build the test system while following the tutorial. This will take time and you will probably have to check many data items from the Init database, but it will also force you to learn the concepts. You can also copy-paste data from the Init database to the Input_data database when writing the data becomes too tedious. Before you start, it can be a good idea to to check the [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system) from below to get an initial understanding of the concepts that will then grow as you learn more.
+**If you are new to energy system modelling**, it is probably best to try to build the test system yourself while following the tutorial. This will take time and you will have to look up many data items from the ***Init*** database, but it will also force you to learn the concepts. You can also copy-paste data from the ***Init*** database to the ***Input data*** database when writing the data becomes too tedious. Before you start, it can be a good idea to to check the [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference) from below to get an initial understanding of the concepts that will then grow as you learn more. 
 
-**If you have experience in using other types of energy system models** - or perhaps older versions of FlexTool - it can be sufficient to follow the tutorial while also browsing the Input_data database using the database editor. Finding the entity classes, entities, and parameter values in the actual database will assist in the learning process.
+If you have already run the whole workflow, then the ***Input_data*** database will be populated and you will need to delete the data before starting to build from scratch. This can be done by selecting all `alternatives` in the Database Editor, removing them (right click) and committing changes (ctrl-enter) - or with the 'purge' tool from the Database Editor menu.
 
-Finally, **if you are a really experienced modeller**, it can be enough to check the reference section starting from [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system). 
+**If you have experience in using other types of energy system models** - or perhaps older versions of FlexTool - it can be sufficient to follow the tutorial while also browsing the ***Init*** database using the database editor. Finding the entity classes, entities, and parameter values in the actual database will assist in the learning process. The [reference](https://irena-flextool.github.io/flextool/reference) page can also be useful.
+
+Finally, **if you are a really experienced modeller**, it can be enough to check the reference section starting from [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference). 
 
 ## 1st step - a node with no units
 
-The test system is built using `alternatives`. Each step will add a new `alternative`, and the data it contains, on top of the previous ones. The first `alternative` is called *init* and it includes the parameters needed to establish a working model. However, this model has only one `node` (*west*) with demand, but no units to provide the demand. It will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. All parameters here are part of the *init* `alternative` - they will be used whenever a `scenario` includes the *init* `alternative`.
+You should have the FlexTool project open in the Spine Toolbox. Then, open the ***Input data*** database by double-clicking it in the Spine Toolbox workflow.
 
-![First_model](./first_model.png)
+The test system is built using `alternatives`. 
+- Each step will add a new `alternative`, and the data it contains, on top of the previous ones. 
+- The first `alternative` will be called *west* to hold the data for the first `node`in the model.
+- The alternative is added in the 'Alternative/Scenario tree' widget of the 'Spine Database Editor', see figure below.
+
+![Add alternative](./add_alternative.png)
+
+Next step is to add an object for the first `node` that will be called *west*. 
+- Right-click on the `node` object class in the object tree to select 'Add objects'. 
+- Use the dialog to add the *west* `node` and click ok. See the figures below.
+- Later other objects will need to be added in the same manner - as well as relationships between objects.
+
+![Add object1](./add_object_dialog.png) 
+![Add object2](./add_object_dialog2.png)
+
+The newly minted *west* `node` will now need parameter data.
+- First it needs an `inflow` parameter with negative values to indicate negative inflow, i.e. demand. The `inflow` timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. 
+- There are no electriciy generating units and the demand cannot be met by ordinary means. The model will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. Also downward `penalty_down` is defined although the model is not using it at this stage. 
+- The *west* `node` needs to have a parameter called `is_active` with value *yes*. This chooses the *west* `node` and all its parameters to be sent to the model. 
+- All parameters here should be part of the *west* `alternative` - they will be used whenever a `scenario` includes the *west* `alternative`. 
+
+![First_node](./west_node.png)
+
+The model will also need parameters that define the model structure for time related issues. FlexTool time structure offers a lot of flexibility, but it is also bit complex to learn at first. At this stage not everything needs to be understood - the time structures will be explained in more detail later. 
+
+First, make a new `alternative` called *init* to keep all the model structure related data separate from the data on physical objects. All parameter data that will be added next, should go into the *init* `alternative`.
+
+Then, to get the model to run, these are needed:
+- `timeline` object called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains the name of each timestep in the first column (e.g. *t0001* or *2022-01-01-01*) and the length of the timestep in hours (e.g. *1.0*) in the second column. The timestep names in the previously given `inflow` time series should match these timestep names - and any other timestep names in later time series.
+- `timeblockset` object called *2day* with a map-type parameter `block_duration` to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps (e.g. *t0001* and *1.0*).
+- `timeblockset` *2day and `timeline` *y2020* need to have `timeblockset__timeline` relationship *2day*, *y2020*. Right-click on the `timeblockset__timeline` relationship class to 'Add relationships...'.
+- `solve` object called *y2020_2day_dispatch* 
+  - with a map-type parameter `period_timeblockSet` to define the what timeblockset each period in the model should use (in this example: `period` *y2020* in the first column of the map links to the `timeblockset` object *2day* in the second column of the map)
+  - with an array-type parameter `realised_periods` to define the periods that are realised from the `solve` named by the object (in this example: first column of the array is the index number *1* and the second column contains the period to be realized in the results: *y2020*)
+- Finally, the model will be a sequence of solves as defined by the `model` object. In this case *flexTool* `model` object contains just one solve *y2020_2day_dispatch* inside the array-type parameter.
+
+The new objects, relationships and parameters have now been staged. Even though it looks like they are in the database, they really are not - they need to be **committed** first. This can be done from the menu of the Database Editor (there is a *commit* command) or by pressing *ctrl-enter*. One should write an informative commit message about the changes that have been made. All commits, and the data they have affected, can be seen later from the *history* menu item.
+
+![Time_parameters](./first_model.png)
+
+## Interlude - creating a scenario and running the model
+
+Even though the model is very simple and will not do anything interesting, it can be executed. However, first there needs to be a scenario to be executed. Scenarios are created from `alternatives` in the Alternative/Scenario tree widget of the Database Editor. In the figure below, a `scenario` called *base* is created that should contain `alternatives` *west* and *init* in order to have both a node and a model structure included in the model. The new `scenario` must also be **committed**, before it can be used. A new scenario should be added after each step in the tutorial process. 
+
+![Add scenario](./add_scenario.png)
+
+Once the scenario has been committed to the database, it becomes available in the Spine Toolbox workflow. One can select scenarios to be executed from the arrow that leaves the ***Input data*** database. At this point, there will be only the *base* `scenario` available and should be selected. There is also a tool filter with *FlexTool3* pre-selected. This selection needs to be present when running scenarios (it is used to filter the `is_active` entities into the scenario).
+
+![Select scenario](./select_scenario.png)
+
+Next, we want to run three tools: ***Export_to_CSV*** (that will make input files suitable for FlexTool), ***FlexTool3*** (which is a Python script that calls the FlexTool model generator for each solve) and ***Import_results*** (which will take output files from FlexTool and drop their contents to the ***Results*** database with a particular `alternative` name. First, select the tools (select with left click while ctrl is pressed or draw an area with ctrl pressed, see figure below). Then, press ***Execute_selected*** from the menu bar. The three items should be executed and if all goes well, then green check marks appear on each of the tool once it has finished. You can explore the outputs of each item by selecting the item and looking at the ***Console*** widget window.
+
+![Choose workflow items](./choose_workflow_items.png) 
+![Executed selected items](./execute_selected.png)
+
+It is now possible to explore model results for the *base* `scenario` using either the ***Results*** database or the Excel file that can be exported by executing the ***To_Excel*** exporter tool. When doing that, no scenarios should be selected so that the tool will create one Excel file with data from all the alternatives that are in the results database (which will make more sense once there are more scenario results). The generated Excel file can be found by selecting the ***To_Excel*** tool and clicking on the folder icon on top-right of the ***Link properties*** widget window.
 
 ## 2nd step - add a coal unit
 
-In the second step, a coal unit is added. It needs `efficiency` and capacity (`existing`), but it also needs a new `node` *coal_market* from which it will get the *coal* `commodity` which needs a parameter for `price`. All these new parameters are part of the 'coal' `alternative`. A scenario with the initial node and the coal unit is then built by including both *init* and *coal* `alternatives` in the *coal* `scenario`. There are some extra parameters related to investments that will be useful later.
+In the second step, a coal unit is added. 
+- The first thing is to add a new `alternative` *coal* so that all new data added in this step will become part of the *coal* `alternative`.
+- Then one needs to add the objects:
+  - `unit` *coal_plant*
+  - `node` *coal_market* 
+  - `commodity` *coal*
+- And relationships:
+  - `unit__inputNode` *coal_plant, coal_market* to indicate that the *coal_plant* is using inputs from the *coal_market*
+  - `unit__outputNode` *coal_plant, west* to indicate that the *coal_plant* will output electricity to the *west* node
+  - `commodity__node` *coal, coal_market*
+- *coal_plant* needs the following parameters (all set for the *coal* alternative): 
+  - `efficiency` (e.g. 0.4 for 40% efficiency)
+  - `existing` to indicate the existing capacity in the coal_plant (e.g. 500 MW)
+  - `is_active` set to *yes* to include the *coal_plant* in the model
+- *coal* `commodity` needs just one parameter for `price` (e.g. 50 €/MWh of fuel)
+- *coal_market* `node` needs to have `is_active` set to *yes* 
+- All these new parameters should be now part of the *coal* `alternative`. A `scenario` with the *init* `node` and the *coal_plant* `unit` is then built by including both *init* and *coal* `alternatives` in the *coal* `scenario`.
 
 ![Add unit](./add_unit.png)
 
-Furthermore, the model needs to know that there is a link between the *coal_market* and *coal_plant* as well as *coal_plant* and the `node` *west*. These are established as relationships between objects. `unit__inputNode` relationship will therefore have *coal_plant--coal_market* relationship and `unit__outputNode` will include *coal_plant--west* relationship.
+To see how the results change due to the coal power plant, make a new scenario *coal* that has the `alternatives` *init*, *west* and *coal*. Run the ***Export_to_CSV***, ***FlexTool3*** and ***Import_results*** to get the results to the ***Results*** database. If you start to get too many result `alternatives` in the ***Results*** database (e.g. if you happen to run the same scenario multiple times), you can delete old ones by removing the unwanted `alternatives` (right-click on the `alternative`) and then **committing** the database.
 
 ## 3rd step - add a wind power plant
 
-Next, a wind power plant is added. The parameters for this unit include `conversion_method`, `efficiency`, `existing` and `is_active`. Note that wind does not require a commodity, but instead uses a profile to limit the generation to the available wind. A *wind_profile* object is added to the `profile` object class and the parameter `profile` is given a map of values where each time step gets the maximum available capacity factor for the time step. On the bottom of the the figure, the relationship class `unit__node__profile` gets a new member *wind_plant, west, wind_profile*, which tells the model to connect the *wind_profile* with the flow going from the *wind_plant* to the *west* `node`. There is also a parameter `profile_method` given to *wind_plant, west, wind_profile* relationship with the choice *upper_limit* selected. Now the *wind_plant* must generate at or below its capacity factor.
+Next, a wind power plant is added. 
+- Add a new `alternative` *wind*
+- Add objects:
+  - `unit` *wind_plant*
+  - `profile` *wind_profile* since *wind_plant* does not require a commodity, but instead uses a profile to limit the generation to the available wind.
+- Add relationships:
+  - `unit__node__profile` *wind_plant, west, wind_profile*
+  - `unit__outputNode` *wind_plant, west*
+- *wind_plant* needs the following parameters (all set for the *wind* alternative):
+  - `conversion_method` to choose a method for the conversion process (in this case *constant_efficiency*)
+  - `efficiency` for *wind_plant* should be set to 1
+  - `existing` capacity can be set to 500 MW
+  - `is_active` set to *yes* to include the *wind_plant* in the model
+- *wind_profile* needs the the parameter `profile` with a map of values where each time step gets the maximum available capacity factor for that time step (see figure). 
+- *wind_plant, west, wind_profile* relationship needs a parameter `profile_method` with the choice *upper_limit* selected. This means that the *wind_plant* must generate at or below its capacity factor.
+
+Remember to **commit**, execute and have a look at the results (there should be no more penalty values used, since the coal and wind plant can together meet the demand in all hours.
 
 ![Add another unit](./add_unit2.png)
 
 ## 4th step - add a network
 
- A *network* `alternative` introduces two new `nodes` (*east* and *north*) and three new `connections` between `nodes` (*east_north*, *west_east* and *west_north*). The new nodes are kept simple: they just have a constant negative `inflow` (i.e. demand) and penalty values for violating their energy balance, which is also required through the `has_balance` parameter. The *north* `node` has the lowest upward penalty, so the model will prefer to use that whenever the *coal* and *wind* units cannot meet all the demand. Sometimes the `existing` capacity of the new `connections` will not be sufficient to carry all the needed power, since both generators are producing to the *west* `node`.
+ A *network* `alternative` introduces 
+ - two new `nodes` (*east* and *north*) 
+ - three new `connections` between `nodes` (*east_north*, *west_east* and *west_north*). 
+  
+The new nodes are kept simple: 
+- they have a `has_balance` parameter set to *yes* (to force the node to maintain an energy balance)
+- they have a constant negative `inflow` (i.e. demand)
+- penalty values for violating their energy balance
+
+The *north* `node` has the lowest upward penalty, so the model will prefer to use that whenever the *coal* and *wind* units cannot meet all the demand. Sometimes the `existing` capacity of the new `connections` will not be sufficient to carry all the needed power, since both generators are producing to the *west* `node`. **Commit**, execute and explore.
 
  ![Add network](./add_network.png)
 
@@ -76,6 +170,8 @@ A relationship between *primary--up--electricity* in the `reserve__upDown__group
 
 Parameters from the `reserve__upDown__unit__node` class will be used to define how different units can contribute to different reserves. Parameter `max_share` says how large share of the total capacity of the unit can contribute to this reserve category (e.g. *coal_plant*, in this example, has ramping restrictions and can only provide 1% of it's capacity to this upward primary reserve. Meanwhile, parameter `reliability` affects what portion of the reserved capacity actually contributes to the reserve (e.g. in this contrived example, *wind_plant* must reduce output by 20 MW to provide 10 MW of reserve). 
 
+**Commit**, execute and explore how the reserve requirements affect the model results.
+
  ![Add a reserve](./reserves.png)
 
 # More functionality
@@ -84,7 +180,7 @@ Parameters from the `reserve__upDown__unit__node` class will be used to define h
 
 ***init - wind - battery***
 
-In the init.sqlite, there is a `scenario` *wind_battery* - the *wind_plant* alone is not able to meet the load in all conditions, but the *battery* will help it to improve the situation.
+In the ***Init*** SQLite database, there is a `scenario` *wind_battery* - the *wind_plant* alone is not able to meet the load in all conditions, but the *battery* will help it to improve the situation.
 
 In FlexTool, only `nodes` can have storage. This means that `existing` capacity and all investment parameters for `nodes` refer to the amount of storage the `node` can have. In this example, a *battery* `node` is established to describe the storage properties of the *battery* (e.g. `existing` capacity and `self_discharge_loss` in each hour). 
 
@@ -198,145 +294,3 @@ So far the model has been using only two days to keep it fast to run. This examp
 The final example shows a system many of the previous examples have been put into one model and run for one year. The graph below shows the physical objects in the example.
 
 ![Entity graph](./coal_wind_chp_battery_graph.png)
-
-# Essential objects for defining a power/energy system
-
-- [**node**](#nodes): maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
-- [**unit**](#units): power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
-- [**connection**](#connections): transmission lines or other transfer connections between nodes
-- [**commodity**](#commodities): fuels or other commodities that are either purchased or sold at a price outside of the model scope
-- [**profile**](#profiles): timeseries that can be used to constraint the behaviour of units, connections or storages
-
-See below for more detailed explanations.
-
-![Simple example grid](./simple_grid.png)
-
-# How to define model properties
-
-## Timesteps and periods
-
-FlexTool has two different kinds of time varying parameters. The first one represents a regular timeline based on timesteps. The duration of each timestep can be defined by the user. There can be multiple timelines in the database - the user needs to define which timeline to use (and what parts of the timeline should be used, as will be explained later). The timestep names in the timeline are defined by the user - they can be abstract like 't0001' or follow a datetime format of choice. However, the timestep names between different timelines must remain unique.
-
-The second time varying dimension is `period`, which is typically used to depict assumptions about the future. One model can include multiple `solves` that the model will solve in sequence (to allow multi-stage modelling). Each solve can include multiple `periods` (so that the user can change parameter values for different parts of the future).
-
-A parameter of particular type can be either constant/time-varying or constant/period-based. For example `inflow` is either a constant or time-varying, but it cannot be period-based.
-
-## Timeblocksets
-
-Timeblocks pick one or more sections from the `timeline` to form a `timeblockset`. Each timeblock defines a start and a duration. The aim of timeblocksets is to allow the modeller to create models with represeantive periods often used in the investment planning.
-
-## Definitions
-
-- **model**: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)
-  - *solves*: sequence of solves in the model represented with an array of solve names.
-- **solve**: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.
-  - *period_timeblockset*: map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name.
-  - *realized_periods*: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve
-  - *invest_periods*: array of periods where investements are allowed in this solve (applies only to objects that can be invested in)
-  - *discount_years*: how far in the future each period is from the start of this solve (in years). Index: period, value: years.
-  - *solver*: choice of solver (a list of possible values)
-  - *solve_mode*: a single shot or a rolling solve (not functional yet, always a single shot)
-- **timeblockset**: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)
-  - *block_duration* a map with index *timestep_name* that starts the timeblock and value that defines the duration of the block (how many timesteps)
-- **timeline**: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.
-  - *timestep_duration*: a map with *timestep_name* as an index and *duration* as a value.
-  - *timeline_duration_in_years* Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.
-- **timeblockset__timeline**: defines which timeline object particular timeblockset is using.
-
-
-# Additional objects for further functionality
-- **group**: include multiple objects in a group to define common constraints (e.g. minimum VRE share)
-- **reserve**: to define reserves for power systems
-- **constraint**: to create user defined constraints between flow, state, and capacity variables (for nodes, units and connections)
-
-# Nodes
-
-## Defining how the node functions
-
-These parameters will define how the node will behave and use the data it is given (available choices are marked in *italics*):
-
-- **'name'** - unique name identifier (case sensitive)
-- **'is_active'** - is the model/node/unit active in a specific scenario: *yes* (if not defined, then not active)
-- **'has_balance'** - does the node maintain a balance for inputs and outputs: *yes* (if not defined, then balance is not maintained)
-- **'has_state'** - does the node represent a storage and therefore have a state: *yes* (if not defined, then no storage)
-- **'invest_method'** - choice of investment method
-    - *only_invest* 
-    - *only_retire* 
-    - *invest_and_retire* 
-    - *not_allowed* 
-- **'inflow_method'** - choice how to treat inflow time series
-    - *use_original* - does not scale the original time series (no value defaults here)
-    - *no_inflow* - ignores any inserted inflow time series
-    - *scale_to_annual_flow* - will scale the time series to match the `annual_flow` so that the sum of inflow is multiplied by 8760/`hours_in_solve`
-    - *scale_in_proprotion* - calculates a scaling factor by dividing `annual_flow` with the sum of time series inflow (after it has been annualized using `timeline_duration_in_years`)
-
-![image.png](./nodes.png)
-
-## Data for nodes
-
-Input data is set with the following parameters:
-
-- **'inflow'** - inflow into the node (negative is outflow). Constant or time series.
-- **'annual_flow'** - annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.
-- **'existing'** - existing storage capacity (requires `has_state`). Constant.
-- **'invest_cost'** - investment cost for new storage capacity. Constant or period.
-- **'invest_max_total'** - maximum investment over all solves. Constant.
-- **'lifetime'** - life time of the storage unit represented by the node. Constant or period.
-- **'interest_rate'** - interest rate for investments. Constant or period.
-- **'fixed_cost'** - annual fixed cost for storage. Constat or period.
-- **'penalty_up'** - penalty cost for decreasing consumption in the node with a slack variable. Constant or time.
-- **'penalty_down'** - penalty cost for increasing consumption in the node with a slack variable. Constant or time.
-
-# Units
-
-Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine), but the can also have multiple inputs and/or outputs (e.g. combined heat and power plant). The input nodes are defined with the relationship `unit--inputNode` while the output nodes are defined through the relationship `unit--outputNode`.
-
-## Defining how the unit functions
-
-- `is_active` to state the alternative where the unit becomes active
-- 'conversion_method' to define the way unit converts inputs to outputs 
-- `startup_method` defines how the start-up mechanism is modelled
-- `minimum_time_method` - not functional at the moment
-
-## Main data items for units
-
-- Capacity: `existing` (and the investment and retirement parameters below)
-- Technical: `efficiency`, `min_load`, `efficiency_at_min_load`, `inertia_constant`
-- Economic: `variable_cost`, `startup_cost`, `fixed_cost` (fuel cost comes through the use of fuel commodities)
-
-## Investment parameters (for capacity expansion)
-
-- investment/retirement method
-- invest_cost, interest_rate, lifetime, invest_max_total, invest_max_period
-- salvage_cost, retire_max_total, retire_max_period
-
-![image](./generators.png)
-
-## Relationship of a unit to a node and determination of the type of relationship
-
-- If the unit’s outputs are flowing into the node, the node acts as output for the unit.
-- If the unit’s inputs are flowing out of the node (into the unit), the node acts as input for the unit.
-- Not all units necessary have an input or an output node. E.g. VRE generators have only output nodes and their generation is driven by profiles
-
-## Properties of unit--inputNode and unit--outputNode relationships
-
-- Flow (from/to node) coefficient (changes the accounts for efficiency of unit)
-- Variable cost of the particular flow of unit--inputNode or unit--outputNode
-
-## Units constrained by profiles
-
-Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` object with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile`object is given a `profile` time series (or it can also be a constant).
-
-# Connections
-
-Connections can have an `existing` transfer capacity as well as an opportunity to invest in new capacity and retire old capacity. The functional choices of connections include the `is_active`, `transfer_method`, `invest_method`, `startup_method` as well as a choice if the tranfer connection `is_DC`. Parameters for the connection are defined in the `connection` object, but the two `nodes` it connects are defined by establishing a relationship between `connection--leftNode--rightNode`.
-
-# Commodities
-
-Some `nodes` can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a `price` and be connected to those `nodes` that serve (or buy) that particular `commodity` at the given `price`. In other words, `commodity` is separate from `node` so that the user can use the same `commodity` properties for multiple nodes. Commodities can also have a `co2_content`. The `commodity` and its `nodes` are connected by establishin a new relationship between the `commodity` and each of its `nodes` (e.g. *coal--coal_market*).
-
-![image-1.png](./commodities.PNG)
-
-# Profiles
-
-Profiles are time series of data that will be multiplied by capacity to form a constraint for a unit flow, a connection flow or a storage state. The constraint can be *upper_limit*, *lower_limit* or *fixed*.
