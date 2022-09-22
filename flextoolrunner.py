@@ -316,7 +316,7 @@ class FlexToolRunner:
                     logging.error(f'glpsol mps writing failed: {did_fail}')
                     exit(did_fail)
                 print("GLPSOL wrote the problem as MPS file\n")
-                highs_step2 = ['highs flexModel3.mps', '--options_file=highs.opt']
+                highs_step2 = ['highs flexModel3.mps', '--options_file=highs.opt', '--presolve=off']
                 did_fail = os.system(" ".join(highs_step2))
                 if did_fail != 0:
                     logging.error(f'Highs solver failed: {did_fail}')

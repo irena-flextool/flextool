@@ -62,7 +62,10 @@
                 "to": [
                     "Results",
                     "left"
-                ]
+                ],
+                "options": {
+                    "write_index": 1
+                }
             },
             {
                 "name": "from Export_to_CSV to FlexTool3",
@@ -128,17 +131,6 @@
                 }
             },
             {
-                "name": "from Initialize to Input_data",
-                "from": [
-                    "Initialize",
-                    "right"
-                ],
-                "to": [
-                    "Input_data",
-                    "bottom"
-                ]
-            },
-            {
                 "name": "from Input_data to Export_to_CSV",
                 "from": [
                     "Input_data",
@@ -169,15 +161,18 @@
                 "to": [
                     "Plot_results",
                     "right"
+                ]
+            },
+            {
+                "name": "from Initialize to Input_data",
+                "from": [
+                    "Initialize",
+                    "right"
                 ],
-                "disabled_filters": {
-                    "db_url@Results": {
-                        "scenario_filter": [
-                            "network_coal_wind",
-                            "wind_battery"
-                        ]
-                    }
-                }
+                "to": [
+                    "Input_data",
+                    "left"
+                ]
             }
         ],
         "jumps": []
@@ -189,7 +184,7 @@
             "x": 62.933522684556,
             "y": 5.684840622564257,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": []
         },
         "Init": {
@@ -211,8 +206,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -192.99515803771973,
-            "y": -41.612294375010976,
+            "x": -176.35597739950867,
+            "y": -16.499145417665503,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -284,7 +279,7 @@
             "y": 24.767210910956983,
             "specification": "Import_flex3",
             "cancel_on_error": false,
-            "purge_before_writing": false,
+            "purge_before_writing": true,
             "on_conflict": "replace",
             "file_selection": [
                 [
@@ -327,8 +322,8 @@
         "Plot_results": {
             "type": "Tool",
             "description": "",
-            "x": 322.3362176541695,
-            "y": 247.63607832479053,
+            "x": 342.0517438379899,
+            "y": 202.04392402470603,
             "specification": "Plot",
             "execute_in_work": true,
             "cmd_line_args": [
