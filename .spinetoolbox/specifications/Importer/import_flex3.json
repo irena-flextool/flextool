@@ -814,7 +814,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "cost"
+                                "value": "cost_d"
                             },
                             {
                                 "map_type": "Alternative",
@@ -1472,7 +1472,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "co2 [Mt]"
+                                "value": "co2_d"
                             },
                             {
                                 "map_type": "Alternative",
@@ -1512,6 +1512,86 @@
                         ]
                     }
                 }
+            ],
+            "costs__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "model"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "hidden",
+                                "value": "cost"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "cost_dt"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "cost_type"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": "header"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -1533,7 +1613,8 @@
             "node_state__period__t",
             "group_inertia__period__t",
             "unit_capacity__period",
-            "node__period_co2"
+            "node__period_co2",
+            "costs__period__t"
         ],
         "table_options": {
             "node__period": {},
@@ -1555,7 +1636,8 @@
             "unit__outputNode__period": {},
             "connection__period__t": {},
             "unit__inputNode__period": {},
-            "node__period_co2": {}
+            "node__period_co2": {},
+            "costs__period__t": {}
         },
         "table_types": {
             "unit__outputNode__period": {
@@ -1695,10 +1777,9 @@
                 "12": "float"
             },
             "node_state__period__t": {
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float"
+                "0": "string",
+                "1": "string",
+                "2": "string"
             },
             "unit_online__period__t": {
                 "0": "string",
@@ -1718,6 +1799,21 @@
                 "1": "string",
                 "2": "string",
                 "3": "float"
+            },
+            "costs__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float"
             }
         },
         "table_row_types": {
