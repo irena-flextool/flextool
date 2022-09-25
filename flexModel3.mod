@@ -540,8 +540,21 @@ param pdGroup {g in group, param in groupPeriodParam, d in period} :=
 		  then p_group[g, param]
 		  else 0;
 
-set reserve__upDown__group__method_timeseries := {(r, ud, ng, r_m) in reserve__upDown__group__method : r_m = 'timeseries_only' || r_m = 'both'};
-set reserve__upDown__group__method_dynamic := {(r, ud, ng, r_m) in reserve__upDown__group__method : r_m = 'dynamic_only' || r_m = 'both'};
+set reserve__upDown__group__method_timeseries := {(r, ud, ng, r_m) in reserve__upDown__group__method 
+                                                       : r_m = 'timeseries_only'
+													   || r_m = 'timeseries_and_dynamic' 
+													   || r_m = 'timeseries_and_large_failure' 
+													   || r_m = 'all'};
+set reserve__upDown__group__method_dynamic := {(r, ud, ng, r_m) in reserve__upDown__group__method 
+                                                       : r_m = 'dynamic_only'
+													   || r_m = 'timeseries_and_dynamic' 
+													   || r_m = 'dynamic_and_large_failure' 
+													   || r_m = 'all'};
+set reserve__upDown__group__method_n_1 := {(r, ud, ng, r_m) in reserve__upDown__group__method
+                                                       : r_m = 'large_failure_only' 
+													   || r_m = 'timeseries_and_large_failure' 
+													   || r_m = 'dynamic_and_large_failure' 
+													   || r_m = 'all'};
 
 set process__method_indirect := {(p, m) in process_method : m in method_indirect};
 
@@ -882,6 +895,11 @@ set process_reserve_upDown_node_increase_reserve_ratio :=
         {(p, r, ud, n) in process_reserve_upDown_node_active :
 		    p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'] > 0
 		};
+set process_reserve_upDown_node_large_failure_ratio :=
+        {(p, r, ud, n) in process_reserve_upDown_node_active :
+		    p_process_reserve_upDown_node[p, r, ud, n, 'large_failure_ratio'] > 0
+		};
+set process_large_failure := setof {(p, r, ud, n) in process_reserve_upDown_node_large_failure_ratio} p;
 
 set group_commodity_node_period_co2 :=
         {g in group, (c, n) in commodity_node, d in period : 
@@ -1096,19 +1114,23 @@ display balance;
 
 s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__method_timeseries, (d, t) in dt} :
   + sum {(p, r, ud, n) in process_reserve_upDown_node_active 
-	      :  (sum{(p, m) in process_method : m not in method_1var_per_way} 1 || (p, n) in process_sink)
-		  && (ng, n) in group_node 
-		  && (r, ud, ng) in reserve__upDown__group} 
+	      : ( sum{(p, m) in process_method : m not in method_1var_per_way} 1   ## not 1var_per_way and source; not 1var_per_way and sink; 1var_per_way and sink 
+		        || (p, n) in process_sink
+			)
+		    && (ng, n) in group_node 
+		    && (r, ud, ng) in reserve__upDown__group} 
 	    ( v_reserve[p, r, ud, n, d, t] 
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
 	    )
-  + sum {(p, r, ud, n) in process_reserve_upDown_node_active  
-		  :  (sum{(p, m) in process_method : m in method_1var_per_way} 1 && (p, n) in process_source)
-		  && (ng, n) in group_node 
-		  && (r, ud, ng) in reserve__upDown__group} 
+  + sum {(p, r, ud, n) in process_reserve_upDown_node_active                   ## 1var_per_way and source  
+		  : ( sum{(p, m) in process_method : m in method_1var_per_way} 1 
+		        && (p, n) in process_source
+			)
+		    && (ng, n) in group_node 
+		    && (r, ud, ng) in reserve__upDown__group} 
 	    ( v_reserve[p, r, ud, n, d, t] 
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
-	          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	      * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
 		)
   + vq_reserve[r, ud, ng, d, t]
   >=
@@ -1117,28 +1139,103 @@ s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__m
 
 s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__method_dynamic, (d, t) in dt} :
   + sum {(p, r, ud, n) in process_reserve_upDown_node_active 
-	      : sum{(p, m) in process_method : m in method_1var_per_way} 1
-		  && (ng, n) in group_node 
-		  && (r, ud, ng) in reserve__upDown__group} 
+	      : ( sum{(p, m) in process_method : m not in method_1var_per_way} 1   ## not 1var_per_way and source; not 1var_per_way and sink; 1var_per_way and sink
+		        || (p, n) in process_sink
+			)
+		    && (ng, n) in group_node 
+		    && (r, ud, ng) in reserve__upDown__group} 
 	    ( v_reserve[p, r, ud, n, d, t] 
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
 	    )
-  + sum {(p, r, ud, n) in process_reserve_upDown_node_active
-		  : sum{(p, m) in process_method : m not in method_1var_per_way} 1
-		  && (ng, n) in group_node 
-		  && (r, ud, ng) in reserve__upDown__group} 
+  + sum {(p, r, ud, n) in process_reserve_upDown_node_active               
+		  : ( sum{(p, m) in process_method : m in method_1var_per_way} 1       ## 1var_per_way and source
+		        && (p, n) in process_source
+			)
+		    && (ng, n) in group_node 
+		    && (r, ud, ng) in reserve__upDown__group} 
 	    ( v_reserve[p, r, ud, n, d, t] 
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
-	          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	      * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
 		)
   + vq_reserve[r, ud, ng, d, t]
   >=
   + sum {(p, r, ud, n) in process_reserve_upDown_node_increase_reserve_ratio : (ng, n) in group_node 
           && (r, ud, ng) in reserve__upDown__group}
-	   (+ sum{(p, source, n) in process_source_sink} v_flow[p, source, n, d, t] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio']
-	    + sum{(p, n, sink) in process_source_sink} v_flow[p, n, sink, d, t] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio'])
+	   ( + sum{(p, source, n) in process_source_sink} v_flow[p, source, n, d, t] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio']
+	     + sum{(p, n, sink) in process_source_sink_noEff} v_flow[p, n, sink, d, t] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio']
+	     + sum{(p, n, sink) in process_source_sink_eff} v_flow[p, n, sink, d, t] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio']
+	                                                    * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	   )
   + sum {(n, ng) in group_node : p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio']}
 	   (pdtNodeInflow[n, d, t] * p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio'])
+;
+
+s.t. reserveBalance_up_n_1_eq{(r, 'up', ng, r_m) in reserve__upDown__group__method_n_1, p_n_1 in process_large_failure, (d, t) in dt :
+  sum{(p_n_1, sink) in process_sink : (ng, sink) in group_node} 1 } :
+  + sum {(p, r, 'up', n) in process_reserve_upDown_node_active 
+	      : p <> p_n_1
+		    && ( sum{(p, m) in process_method : m not in method_1var_per_way} 1  ## not 1var_per_way and source; not 1var_per_way and sink; 1var_per_way and sink
+		         || (p, n) in process_sink
+			   )
+		    && (ng, n) in group_node 
+		    && (r, 'up', ng) in reserve__upDown__group
+		} 
+	    ( v_reserve[p, r, 'up', n, d, t] 
+	      * p_process_reserve_upDown_node[p, r, 'up', n, 'reliability']
+	    )
+  + sum {(p, r, 'up', n) in process_reserve_upDown_node_active                 
+		  : p <> p_n_1
+ 		    && ( sum{(p, m) in process_method : m in method_1var_per_way} 1      ## 1var_per_way and source
+		         && (p, n) in process_source
+			   )
+		    && (ng, n) in group_node 
+		    && (r, 'up', ng) in reserve__upDown__group
+		} 
+	    ( v_reserve[p, r, 'up', n, d, t] 
+	      * p_process_reserve_upDown_node[p, r, 'up', n, 'reliability']
+	      * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+		)
+  + vq_reserve[r, 'up', ng, d, t]
+  >=
+  + sum{(p_n_1, source, n) in process_source_sink : (ng, n) in group_node} 
+      + v_flow[p_n_1, source, n, d, t] 
+	    * p_process_reserve_upDown_node[p_n_1, r, 'up', n, 'large_failure_ratio']
+;
+
+s.t. reserveBalance_down_n_1_eq{(r, 'down', ng, r_m) in reserve__upDown__group__method_n_1, p_n_1 in process_large_failure, (d, t) in dt :
+  sum{(p_n_1, source) in process_source : (ng, source) in group_node} 1 } :
+  + sum {(p, r, 'down', n) in process_reserve_upDown_node_active 
+	      : p <> p_n_1
+		    && ( sum{(p, m) in process_method : m not in method_1var_per_way} 1  ## not 1var_per_way and source; not 1var_per_way and sink; 1var_per_way and sink
+		         || (p, n) in process_sink
+			   )
+		    && (ng, n) in group_node 
+		    && (r, 'down', ng) in reserve__upDown__group
+		} 
+	    ( v_reserve[p, r, 'down', n, d, t] 
+	      * p_process_reserve_upDown_node[p, r, 'down', n, 'reliability']
+	    )
+  + sum {(p, r, 'down', n) in process_reserve_upDown_node_active                 
+		  : p <> p_n_1
+ 		    && ( sum{(p, m) in process_method : m in method_1var_per_way} 1      ## 1var_per_way and source
+		         && (p, n) in process_source
+			   )
+		    && (ng, n) in group_node 
+		    && (r, 'down', ng) in reserve__upDown__group
+		} 
+	    ( v_reserve[p, r, 'down', n, d, t] 
+	      * p_process_reserve_upDown_node[p, r, 'down', n, 'reliability']
+	      * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+		)
+  + vq_reserve[r, 'down', ng, d, t]
+  >=
+  + sum{(p_n_1, n, sink) in process_source_sink_noEff : (ng, n) in group_node} 
+      + v_flow[p_n_1, n, sink, d, t] 
+	    * p_process_reserve_upDown_node[p_n_1, r, 'down', n, 'large_failure_ratio']
+  + sum{(p_n_1, n, sink) in process_source_sink_eff : (ng, n) in group_node } 
+      + v_flow[p_n_1, n, sink, d, t] 
+	    * p_process_reserve_upDown_node[p_n_1, r, 'down', n, 'large_failure_ratio']
+	    * (if (p_n_1, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p_n_1, t] else 1 / ptProcess[p_n_1, 'efficiency', t])
 ;
 param reserves := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance;
 display reserves;
@@ -2948,12 +3045,12 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 
 #display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_variable_cost_dt[p, d, t];
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
 #display {p in process_online, (d, t) in dt : (d, t) in test_dt} : v_online_linear[p, d, t].val;
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
-#display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
-#display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
+display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
+display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val;
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val;
 #display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
@@ -2962,7 +3059,7 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
-display entityInvest, period_invest, ed_invest;
+display entityInvest, period_invest, ed_invest, process_method;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
-
+display process_method, process_source_sink, process__source__sink_isNodeSink_no2way, method_1var_per_way, process_source_sink_noEff, process_source_sink_eff, process_source, process_sink;
 end;
