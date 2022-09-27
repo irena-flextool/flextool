@@ -119,6 +119,7 @@
                             "network_coal_wind_capacity_margin",
                             "network_coal_wind_reserve",
                             "network_coal_wind_reserve_co2_capacity_margin",
+                            "network_coal_wind_reserve_n_1",
                             "water_pump",
                             "wind",
                             "wind_battery",
@@ -181,8 +182,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 62.933522684556,
-            "y": 5.684840622564257,
+            "x": 64.17662024054871,
+            "y": 5.684840622564259,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": []
@@ -206,8 +207,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -176.35597739950867,
-            "y": -16.499145417665503,
+            "x": -177.59907495550138,
+            "y": -7.7974625257165755,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -222,8 +223,8 @@
         "Initialize": {
             "type": "Merger",
             "description": "",
-            "x": -289.52636425422753,
-            "y": 66.57786459482492,
+            "x": -288.2878993599343,
+            "y": 71.53172417199832,
             "cancel_on_error": true,
             "purge_before_writing": false
         },
@@ -231,7 +232,7 @@
             "type": "Data Connection",
             "description": "",
             "x": -436.8582078041219,
-            "y": -47.77633185405136,
+            "y": -49.01942941004407,
             "file_references": [
                 {
                     "type": "path",
@@ -260,7 +261,7 @@
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -55.21140617198526,
+            "x": -52.72984372169921,
             "y": -12.495423445371873,
             "output_time_stamps": false,
             "cancel_on_error": true,
