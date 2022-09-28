@@ -404,7 +404,7 @@
             ],
             "connection_c": [
                 {
-                    "Mapping 1": {
+                    "data": {
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
@@ -443,7 +443,7 @@
                     }
                 },
                 {
-                    "Mapping 2": {
+                    "relationships": {
                         "mapping": [
                             {
                                 "map_type": "RelationshipClass",

@@ -90,7 +90,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "has_state"
+                    "filter_re": "has_storage"
                 },
                 {
                     "map_type": "ParameterValueList",

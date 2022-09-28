@@ -1,6 +1,6 @@
 {
     "project": {
-        "version": 7,
+        "version": 8,
         "name": "FlexTool3",
         "description": "",
         "specifications": {
@@ -64,7 +64,9 @@
                     "left"
                 ],
                 "options": {
-                    "write_index": 1
+                    "write_index": 1,
+                    "purge_before_writing": true,
+                    "purge_settings": null
                 }
             },
             {
@@ -182,8 +184,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 64.17662024054871,
-            "y": 5.684840622564259,
+            "x": 68.58121581361468,
+            "y": 4.557053020860472,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": []
@@ -208,7 +210,7 @@
             "type": "Data Store",
             "description": "",
             "x": -177.59907495550138,
-            "y": -7.7974625257165755,
+            "y": -8.925250127420362,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -216,7 +218,7 @@
                 "database": {
                     "type": "path",
                     "relative": true,
-                    "path": "Input_data.sqlite"
+                    "path": "Input_data_3.sqlite"
                 }
             }
         },
@@ -225,8 +227,7 @@
             "description": "",
             "x": -288.2878993599343,
             "y": 71.53172417199832,
-            "cancel_on_error": true,
-            "purge_before_writing": false
+            "cancel_on_error": true
         },
         "Excel_input_data": {
             "type": "Data Connection",
@@ -249,7 +250,6 @@
             "y": -46.55260024983251,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
-            "purge_before_writing": false,
             "on_conflict": "replace",
             "file_selection": [
                 [
@@ -261,8 +261,8 @@
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -52.72984372169921,
-            "y": -12.495423445371873,
+            "x": -51.602056119995424,
+            "y": -4.6009102334453615,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -280,7 +280,6 @@
             "y": 24.767210910956983,
             "specification": "Import_flex3",
             "cancel_on_error": false,
-            "purge_before_writing": true,
             "on_conflict": "replace",
             "file_selection": [
                 [
