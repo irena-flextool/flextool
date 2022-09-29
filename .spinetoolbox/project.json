@@ -122,6 +122,7 @@
                             "network_coal_wind_reserve",
                             "network_coal_wind_reserve_co2_capacity_margin",
                             "network_coal_wind_reserve_n_1",
+                            "network_wind_coal_battery_fullYear_invest",
                             "water_pump",
                             "wind",
                             "wind_battery",
@@ -184,8 +185,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 68.58121581361468,
-            "y": 4.557053020860472,
+            "x": 70.71578383689791,
+            "y": 5.624337032502094,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": []
@@ -261,8 +262,8 @@
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -51.602056119995424,
-            "y": -4.6009102334453615,
+            "x": -49.471945722840495,
+            "y": -5.840131952975536,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [

@@ -301,7 +301,7 @@ class FlexToolRunner:
         :return the output of glpsol.exe:
         """
         if self.solvers:
-            if self.solvers[current_solve] == "glpsol":
+            if self.solvers.get(current_solve, "glpsol"):
                 only_glpsol = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg'] + sys.argv[1:]
                 did_fail = os.system(" ".join(only_glpsol))
                 if did_fail != 0:
