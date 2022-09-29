@@ -1304,7 +1304,7 @@ s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink_
         - sum {(p, d_invest) in pd_divest : d_invest <= d} v_divest[p, d_invest] * p_entity_unitsize[p]
 	  )
 ;
-display node__profile__profile_method, nodeState;
+
 s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_method, (d, t) in dt} :
   + v_state[n, d, t] 
   <=
