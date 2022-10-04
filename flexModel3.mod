@@ -2571,21 +2571,34 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
   }
 
 printf 'Write ramps from units over time...\n';
-param fn_unit_ramp__dt symbolic := "output/unit_ramp__dt.csv";
+param fn_unit_ramp__sinkNode__dt symbolic := "output/unit_ramp__outputNode__dt.csv";
 for {i in 1..1 : p_model['solveFirst']}
   {
-    printf 'solve,period,time' > fn_unit_ramp__dt;  # Print the header on the first solve
-	for {(u, source, sink) in process_source_sink_alwaysProcess : u in process_unit} printf ',%s', u >> fn_unit_ramp__dt;
-	printf '\n,,' >> fn_unit_ramp__dt;
-	for {(u, source, sink) in process_source_sink_alwaysProcess : u in process_unit} printf ',%s', source >> fn_unit_ramp__dt;
-	printf '\n,,' >> fn_unit_ramp__dt;
-	for {(u, source, sink) in process_source_sink_alwaysProcess : u in process_unit} printf ',%s', sink >> fn_unit_ramp__dt;
+    printf 'solve,period,time' > fn_unit_ramp__sinkNode__dt;  # Print the header on the first solve
+	for {(u, sink) in process_sink : u in process_unit} printf ',%s', u >> fn_unit_ramp__sinkNode__dt;
+	printf '\n,,' >> fn_unit_ramp__sinkNode__dt;
+	for {(u, sink) in process_sink : u in process_unit} printf ',%s', sink >> fn_unit_ramp__sinkNode__dt;
   }
 for {s in solve_current, (d, t) in dt : d in period_realized}
   {
-	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__dt;
-	for {(u, source, sink) in process_source_sink_alwaysProcess : u in process_unit}
-      { printf ',%.8g', r_process_source_sink_ramp_dt[u, source, sink, d, t] >> fn_unit_ramp__dt; }
+	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sinkNode__dt;
+	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit}
+      { printf ',%.8g', r_process_source_sink_ramp_dt[u, source, sink, d, t] >> fn_unit_ramp__sinkNode__dt; }
+  } 
+
+param fn_unit_ramp__sourceNode__dt symbolic := "output/unit_ramp__inputNode__dt.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  {
+    printf 'solve,period,time' > fn_unit_ramp__sourceNode__dt;  # Print the header on the first solve
+	for {(u, source) in process_source : u in process_unit} printf ',%s', u >> fn_unit_ramp__sourceNode__dt;
+	printf '\n,,' >> fn_unit_ramp__sourceNode__dt;
+	for {(u, source) in process_source : u in process_unit} printf ',%s', source >> fn_unit_ramp__sourceNode__dt;
+  }
+for {s in solve_current, (d, t) in dt : d in period_realized}
+  {
+	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sourceNode__dt;
+	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}
+      { printf ',%.8g', r_process_source_sink_ramp_dt[u, source, sink, d, t] >> fn_unit_ramp__sourceNode__dt; }
   } 
 
 printf 'Write reserve from processes over time...\n';
@@ -2753,7 +2766,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {n in nodeState}
       { printf ',%s', n >> fn_nodeState__dt; }
   }
-for {s in solve_current, (d, t) in dt : d in period_realized && d not in period_invest}
+for {s in solve_current, (d, t) in dt : d in period_realized}
   { printf '\n%s,%s,%s', s, d, t >> fn_nodeState__dt;
     for {n in nodeState} 
       {
@@ -2865,7 +2878,7 @@ for {i in 1..1 : p_model['solveFirst']}
     printf '"units_down","connections_down","VRE_down"' >> fn_node_ramp__dt; }  # Print the header on the first solve
 for {n in nodeBalance, s in solve_current, (d, t) in dt : d in period_realized}
   {
-    printf '\n%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g'
+    printf '\n%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g'
 		, n, s, d, t
 		, + sum{(p, source, n) in process_source_sink_alwaysProcess} r_process_source_sink_flow_dt[p, source, n, d, t]
 		  - sum{(p, n, sink) in process_source_sink_alwaysProcess} r_process_source_sink_flow_dt[p, n, sink, d, t]
@@ -2876,7 +2889,6 @@ for {n in nodeBalance, s in solve_current, (d, t) in dt : d in period_realized}
 		, r_node_ramproom_units_down_dt[n, d, t]
 		, r_node_ramproom_connections_down_dt[n, d, t]
 		, r_node_ramproom_VRE_down_dt[n, d, t]
-		 
 	  >> fn_node_ramp__dt;
   }
 
@@ -2885,16 +2897,13 @@ param fn_group_inertia__dt symbolic := "output/group_inertia__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'solve,period,time' > fn_group_inertia__dt;
     for {g in groupInertia}
-	  { printf ',%s,%s', g, g >> fn_group_inertia__dt; }
-	printf '\n,,' >> fn_group_inertia__dt;
-    for {g in groupInertia}
-	  { printf ',inertia,penalty_variable' >> fn_group_inertia__dt; }
+	  { printf ',%s', g >> fn_group_inertia__dt; }
   }
 for {s in solve_current, (d, t) in dt : d in period_realized}
   {
     printf '\n%s,%s,%s', s, d, t >> fn_group_inertia__dt;
 	for {g in groupInertia}
-	  { printf ',%.8g,%.8g' 
+	  { printf ',%.8g' 
 		  , + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']} 
               ( + (if p in process_online then v_online_linear[p, d, t]) 
 	            + (if p not in process_online then v_flow[p, source, sink, d, t])
@@ -2903,7 +2912,6 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
               ( + (if p in process_online then v_online_linear[p, d, t]) 
 	            + (if p not in process_online then v_flow[p, source, sink, d, t])
               ) * p_process_sink[p, sink, 'inertia_constant']
-		  , vq_inertia[g, d, t]
   		  >> fn_group_inertia__dt;
 	  }
   }
@@ -2914,10 +2922,10 @@ for {i in 1..1 : p_model['solveFirst']}
   { printf 'solve,period,time' > fn_group_reserve_slack__dt; 
     for {(r, ud, g) in reserve__upDown__group}
       { printf ',%s', r >> fn_group_reserve_slack__dt; }
-    printf '\n,,,' >> fn_group_reserve_slack__dt;
+    printf '\n,,' >> fn_group_reserve_slack__dt;
     for {(r, ud, g) in reserve__upDown__group}
       { printf ',%s', ud >> fn_group_reserve_slack__dt; }
-    printf '\n,,,' >> fn_group_reserve_slack__dt;
+    printf '\n,,' >> fn_group_reserve_slack__dt;
     for {(r, ud, g) in reserve__upDown__group}
       { printf ',%s', g >> fn_group_reserve_slack__dt; }
   }
@@ -2946,6 +2954,24 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
 	        , s, d, t
 		    , vq_non_synchronous[g, d, t].val
 		    >> fn_group_nonsync_slack__dt;
+      }
+  }
+
+printf 'Write inertia slack variables over time...\n';
+param fn_group_inertia_slack__dt symbolic := "output/slack__inertia_group__period__t.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period,time' > fn_group_inertia_slack__dt; 
+    for {g in groupInertia}
+      { printf ',%s', g >> fn_group_inertia_slack__dt; }
+  }
+for {s in solve_current, (d, t) in dt : d in period_realized}
+  {
+    for {g in groupInertia}
+      {
+        printf '\n%s,%s,%s,%.8g'
+	        , s, d, t
+		    , vq_inertia[g, d, t].val
+		    >> fn_group_inertia_slack__dt;
       }
   }
 

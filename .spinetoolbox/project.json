@@ -65,7 +65,7 @@
                 ],
                 "options": {
                     "write_index": 1,
-                    "purge_before_writing": true,
+                    "purge_before_writing": false,
                     "purge_settings": null
                 }
             },
@@ -155,6 +155,7 @@
                             "coal_min_load",
                             "coal_retire",
                             "coal_wind",
+                            "coal_wind_inertia",
                             "fullYear",
                             "network_coal_wind",
                             "network_coal_wind_battery_co2_fullYear",
@@ -165,7 +166,8 @@
                             "network_wind_coal_battery_fullYear_invest",
                             "water_pump",
                             "wind",
-                            "wind_battery"
+                            "wind_battery",
+                            "wind_battery_invest"
                         ]
                     }
                 }
@@ -179,7 +181,14 @@
                 "to": [
                     "To_Excel",
                     "right"
-                ]
+                ],
+                "disabled_filters": {
+                    "db_url@Results": {
+                        "scenario_filter": [
+                            "coal_wind_inertia"
+                        ]
+                    }
+                }
             },
             {
                 "name": "from Results to Plot_results",
@@ -210,8 +219,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 70.71578383689791,
-            "y": 5.624337032502094,
+            "x": 66.42319099886677,
+            "y": -0.09912008487275425,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": []
@@ -235,8 +244,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -177.59907495550138,
-            "y": -8.925250127420362,
+            "x": -180.46080351418883,
+            "y": -8.925250127420366,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -302,8 +311,8 @@
         "Import_results": {
             "type": "Importer",
             "description": "",
-            "x": 185.07830252199196,
-            "y": 24.767210910956983,
+            "x": 185.078302521992,
+            "y": 27.628939469644404,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "on_conflict": "replace",
@@ -317,8 +326,8 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 304.8756268694344,
-            "y": 32.99684979960071,
+            "x": 304.87562686943437,
+            "y": 31.92956578795909,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
