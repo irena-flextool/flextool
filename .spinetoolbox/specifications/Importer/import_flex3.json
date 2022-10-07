@@ -1957,15 +1957,18 @@
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": -1
+                                "position": -1,
+                                "import_objects": true
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": -2
+                                "position": -2,
+                                "import_objects": true
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": -3
+                                "position": -3,
+                                "import_objects": true
                             },
                             {
                                 "map_type": "RelationshipMetadata",
@@ -2508,7 +2511,31 @@
                 "3": "float",
                 "4": "float",
                 "5": "float",
-                "6": "float"
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float",
+                "19": "float",
+                "20": "float",
+                "21": "float",
+                "22": "float",
+                "23": "float",
+                "24": "float",
+                "25": "float",
+                "26": "float",
+                "27": "float",
+                "28": "float",
+                "29": "float",
+                "30": "float"
             },
             "unit__outputNode__period__t": {
                 "0": "string",
@@ -2518,7 +2545,29 @@
                 "4": "float",
                 "5": "float",
                 "6": "float",
-                "7": "float"
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float",
+                "19": "float",
+                "20": "float",
+                "21": "float",
+                "22": "float",
+                "23": "float",
+                "24": "float",
+                "25": "float",
+                "26": "float",
+                "27": "float",
+                "28": "float",
+                "29": "float"
             },
             "unit_capacity__period": {
                 "0": "string",
@@ -2550,24 +2599,33 @@
                 "3": "float",
                 "4": "float",
                 "5": "float",
-                "6": "float"
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float",
+                "19": "float",
+                "20": "float",
+                "21": "float",
+                "22": "float",
+                "23": "float"
             },
             "connection__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float"
+                "2": "string"
             },
             "connection__period": {
                 "0": "string",
-                "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float"
+                "1": "string"
             },
             "costs__period": {
                 "0": "string",
@@ -2606,7 +2664,10 @@
                 "5": "float",
                 "6": "float",
                 "7": "float",
-                "8": "float"
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float"
             },
             "group_node__period": {
                 "0": "string",
@@ -2646,19 +2707,38 @@
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float"
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float",
+                "7": "float"
             },
             "unit_online__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float"
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float",
+                "19": "float"
             },
             "group_inertia__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float"
+                "2": "string"
             },
             "node__period_co2": {
                 "0": "string",
@@ -2692,8 +2772,7 @@
                 "7": "float",
                 "8": "float",
                 "9": "float",
-                "10": "float",
-                "11": "float"
+                "10": "float"
             },
             "process__reserve__upDown__node__period_average": {
                 "0": "string",
@@ -2701,7 +2780,24 @@
                 "2": "float",
                 "3": "float",
                 "4": "float",
-                "5": "float"
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float",
+                "19": "float",
+                "20": "float",
+                "21": "float",
+                "22": "float"
             },
             "slack__capacity_margin__period": {
                 "0": "string",
@@ -2718,18 +2814,49 @@
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float",
-                "4": "float"
+                "3": "float"
             },
             "unit_online__period_average": {
                 "0": "string",
                 "1": "string",
-                "2": "float"
+                "2": "float",
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float"
             },
             "unit_startup__period": {
                 "0": "string",
                 "1": "string",
-                "2": "float"
+                "2": "float",
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float"
             },
             "unit_ramp__inputNode__dt": {
                 "0": "string",
@@ -2738,7 +2865,31 @@
                 "3": "float",
                 "4": "float",
                 "5": "float",
-                "6": "float"
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float",
+                "19": "float",
+                "20": "float",
+                "21": "float",
+                "22": "float",
+                "23": "float",
+                "24": "float",
+                "25": "float",
+                "26": "float",
+                "27": "float",
+                "28": "float",
+                "29": "float",
+                "30": "float"
             },
             "unit_ramp__outputNode__dt": {
                 "0": "string",
@@ -2748,7 +2899,29 @@
                 "4": "float",
                 "5": "float",
                 "6": "float",
-                "7": "float"
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float",
+                "19": "float",
+                "20": "float",
+                "21": "float",
+                "22": "float",
+                "23": "float",
+                "24": "float",
+                "25": "float",
+                "26": "float",
+                "27": "float",
+                "28": "float",
+                "29": "float"
             },
             "slack__inertia_group__period__t": {
                 "0": "string",
@@ -2756,6 +2929,36 @@
                 "2": "string",
                 "3": "float"
             }
+        },
+        "table_default_column_type": {
+            "node__period": "float",
+            "unit__outputNode__period": "float",
+            "unit__inputNode__period": "float",
+            "process__reserve__upDown__node__period__t": "float",
+            "unit__inputNode__period__t": "float",
+            "unit_online__period__t": "float",
+            "unit__outputNode__period__t": "float",
+            "connection__period__t": "float",
+            "connection__period": "float",
+            "costs__period": "float",
+            "node_capacity__period": "float",
+            "node_prices__period__t": "float",
+            "group_node__period": "float",
+            "connection_capacity__period": "float",
+            "node__period__t": "float",
+            "node_state__period__t": "float",
+            "group_inertia__period__t": "float",
+            "costs__period__t": "float",
+            "node_ramp__period__t": "float",
+            "process__reserve__upDown__node__period_average": "float",
+            "slack__capacity_margin__period": "float",
+            "slack__nonsync_group__period__t": "float",
+            "slack__reserve__upDown__group__period__t": "float",
+            "unit_online__period_average": "float",
+            "unit_startup__period": "float",
+            "unit_ramp__inputNode__dt": "float",
+            "unit_ramp__outputNode__dt": "float",
+            "slack__inertia_group__period__t": "float"
         },
         "table_row_types": {
             "unit__outputNode__period": {

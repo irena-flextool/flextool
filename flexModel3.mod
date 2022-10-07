@@ -2782,68 +2782,35 @@ param r_node_ramproom_units_up_dt{n in nodeBalance, (d, t) in dt} :=
 			  		else entity_all_capacity[u, d]
 		          )
 			  - r_process_source_sink_flow_dt[u, source, n, d, t]
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'up'}
+				     v_reserve[u, r, ud, n, d, t].val
 			)
 		  + sum{(u, n, sink) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
 			  + r_process_source_sink_flow_dt[u, n, sink, d, t]
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'up'}
+				     v_reserve[u, r, ud, n, d, t].val
 			);
 
 param r_node_ramproom_units_down_dt{n in nodeBalance, (d, t) in dt} := 
-          + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
-			  - r_process_source_sink_flow_dt[u, source, n, d, t]
+          - sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
+			  + r_process_source_sink_flow_dt[u, source, n, d, t]
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
+				     v_reserve[u, r, ud, n, d, t].val
 			)
-		  + sum{(u, n, sink) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
+		  - sum{(u, n, sink) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
               + p_process_source_coefficient[u, n]
                 * ( if u in process_online 
 			  	    then v_online_linear[u, d, t] * p_process[u, 'min_load'] * p_entity_unitsize[u]
 					else entity_all_capacity[u, d]
 		          )
 			  - r_process_source_sink_flow_dt[u, n, sink, d, t]
-			);  
-
-param r_node_ramproom_connections_up_dt{n in nodeBalance, (d, t) in dt} :=  
-          + sum{(u, source, n) in process_source_sink_alwaysProcess : (u, n) in process_sink && u in process_connection && u not in process_VRE} ( 
-              + p_process_sink_coefficient[u, n]
-                * ( if u in process_online 
-			  	    then v_online_linear[u, d, t] * p_entity_unitsize[u]
-			  		else entity_all_capacity[u, d]
-		          )
-			  - r_process_source_sink_flow_dt[u, source, n, d, t]
-			)
-		  + sum{(u, n, sink) in process_source_sink_alwaysProcess : u in process_connection && u not in process_VRE} ( 
-			  + r_process_source_sink_flow_dt[u, n, sink, d, t]
-			);
-
-param r_node_ramproom_connections_down_dt{n in nodeBalance, (d, t) in dt} := 
-          + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_connection && u not in process_VRE && u not in process_isNodeSink_yes2way} ( 
-			  - r_process_source_sink_flow_dt[u, source, n, d, t]
-			)
-          + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_connection && u not in process_VRE && u in process_isNodeSink_yes2way} ( 
-			  - r_process_source_sink_flow_dt[u, source, n, d, t]
-              - p_process_sink_coefficient[u, n]
-                * ( if u in process_online 
-			  	    then v_online_linear[u, d, t] * p_process[u, 'min_load'] * p_entity_unitsize[u]
-					else entity_all_capacity[u, d]
-		          )
-			)
-		  + sum{(u, n, sink) in process_source_sink_alwaysProcess : (u, n) in process_source && u in process_connection && u not in process_VRE && u not in process_isNodeSink_yes2way} ( 
-			  + r_process_source_sink_flow_dt[u, n, sink, d, t]
-              - p_process_source_coefficient[u, n]
-                * ( if u in process_online 
-			  	    then v_online_linear[u, d, t] * p_process[u, 'min_load'] * p_entity_unitsize[u]
-					else entity_all_capacity[u, d]
-		          )
-			)
-		  + sum{(u, n, sink) in process_source_sink_alwaysProcess : (u, n) in process_source && u in process_connection && u not in process_VRE && u in process_isNodeSink_yes2way} ( 
-			  - r_process_source_sink_flow_dt[u, n, sink, d, t]
-              - p_process_source_coefficient[u, n]
-                * ( if u in process_online 
-			  	    then v_online_linear[u, d, t] * p_process[u, 'min_load'] * p_entity_unitsize[u]
-					else entity_all_capacity[u, d]
-		          )
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
+				     v_reserve[u, r, ud, n, d, t].val
 			);  
 
 param r_node_ramproom_VRE_up_dt{n in nodeBalance, (d, t) in dt} := 
-          + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
+          + r_node_ramproom_units_up_dt[n, d, t]
+		  + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
               + p_process_sink_coefficient[u, n]
                 * ( if u in process_online 
 			  	    then v_online_linear[u, d, t] * p_entity_unitsize[u]
@@ -2851,16 +2818,23 @@ param r_node_ramproom_VRE_up_dt{n in nodeBalance, (d, t) in dt} :=
 		          )
 				* sum{(u, source, n, f, 'upper_limit') in process__source__sink__profile__profile_method} pt_profile[f, t]
 			  - r_process_source_sink_flow_dt[u, source, n, d, t]
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'up'}
+				     v_reserve[u, r, ud, n, d, t].val
 			)
 		  + sum{(u, n, sink) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
 			  + r_process_source_sink_flow_dt[u, n, sink, d, t]
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'up'}
+				     v_reserve[u, r, ud, n, d, t].val
 			);
 
 param r_node_ramproom_VRE_down_dt{n in nodeBalance, (d, t) in dt} := 
-          + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
-			  - r_process_source_sink_flow_dt[u, source, n, d, t]
+          + r_node_ramproom_units_down_dt[n, d, t]
+          - sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
+			  + r_process_source_sink_flow_dt[u, source, n, d, t]
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
+				     v_reserve[u, r, ud, n, d, t].val
 			)
-		  + sum{(u, n, sink) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
+		  - sum{(u, n, sink) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
               + p_process_source_coefficient[u, n]
                 * ( if u in process_online 
 			  	    then v_online_linear[u, d, t] * p_process[u, 'min_load'] * p_entity_unitsize[u]
@@ -2868,27 +2842,73 @@ param r_node_ramproom_VRE_down_dt{n in nodeBalance, (d, t) in dt} :=
 		          )
 				* sum{(u, n, sink, f, 'upper_limit') in process__source__sink__profile__profile_method} pt_profile[f, t]
 			  - r_process_source_sink_flow_dt[u, n, sink, d, t]
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
+				     v_reserve[u, r, ud, n, d, t].val
 			);  
 
+param r_node_ramproom_connections_up_dt{n in nodeBalance, (d, t) in dt} :=  
+          + r_node_ramproom_VRE_up_dt[n, d, t]
+          + sum{(u, source, n) in process_source_sink_alwaysProcess : (u, n) in process_sink && u in process_connection && u not in process_VRE} ( 
+              + p_process_sink_coefficient[u, n]
+                * ( if u in process_online 
+			  	    then v_online_linear[u, d, t] * p_entity_unitsize[u]
+			  		else entity_all_capacity[u, d]
+		          )
+			  - r_process_source_sink_flow_dt[u, source, n, d, t]
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'up'}
+				     v_reserve[u, r, ud, n, d, t].val
+			)
+		  + sum{(u, n, sink) in process_source_sink_alwaysProcess : u in process_connection && u not in process_VRE} ( 
+			  + r_process_source_sink_flow_dt[u, n, sink, d, t]
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'up'}
+				     v_reserve[u, r, ud, n, d, t].val
+			);
+
+param r_node_ramproom_connections_down_dt{n in nodeBalance, (d, t) in dt} := 
+          + r_node_ramproom_VRE_down_dt[n, d, t]
+          - sum{(u, source, n) in process_source_sink_alwaysProcess : (u, n) in process_sink && u in process_connection && u not in process_VRE && u not in process_isNodeSink_yes2way} ( 
+			  + r_process_source_sink_flow_dt[u, source, n, d, t]
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
+				     v_reserve[u, r, ud, n, d, t].val
+			)
+          - sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_connection && u not in process_VRE && u in process_isNodeSink_yes2way} ( 
+              + p_process_sink_coefficient[u, n]
+                * ( if u in process_online 
+			  	    then v_online_linear[u, d, t] * p_process[u, 'min_load'] * p_entity_unitsize[u]
+					else entity_all_capacity[u, d]
+		          )
+			  + r_process_source_sink_flow_dt[u, source, n, d, t]
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
+				     v_reserve[u, r, ud, n, d, t].val
+			)
+		  - sum{(u, n, sink) in process_source_sink_alwaysProcess : (u, n) in process_source && u in process_connection && u not in process_VRE && u not in process_isNodeSink_yes2way} ( 
+              + p_process_source_coefficient[u, n]
+                * ( if u in process_online 
+			  	    then v_online_linear[u, d, t] * p_process[u, 'min_load'] * p_entity_unitsize[u]
+					else entity_all_capacity[u, d]
+		          )
+			  - r_process_source_sink_flow_dt[u, n, sink, d, t]
+			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
+				     v_reserve[u, r, ud, n, d, t].val
+			)
+;  
 
 printf 'Write node ramps for time...\n';
 param fn_node_ramp__dt symbolic := "output/node_ramp__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'node,solve,period,time,"actual","ramp","VRE_up","connections_up","units_up",' > fn_node_ramp__dt;
-    printf '"units_down","connections_down","VRE_down"' >> fn_node_ramp__dt; }  # Print the header on the first solve
+  { printf 'node,solve,period,time,"ramp","+connections_up","+VRE_up","units_up",' > fn_node_ramp__dt;
+    printf '"units_down","+VRE_down","+connections_down"' >> fn_node_ramp__dt; }  # Print the header on the first solve
 for {n in nodeBalance, s in solve_current, (d, t) in dt : d in period_realized}
   {
-    printf '\n%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g'
+    printf '\n%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g'
 		, n, s, d, t
-		, + sum{(p, source, n) in process_source_sink_alwaysProcess} r_process_source_sink_flow_dt[p, source, n, d, t]
-		  - sum{(p, n, sink) in process_source_sink_alwaysProcess} r_process_source_sink_flow_dt[p, n, sink, d, t]
 		, r_node_ramp_dt[n, d, t]
-		, r_node_ramproom_VRE_up_dt[n, d, t]
 		, r_node_ramproom_connections_up_dt[n, d, t]
+		, r_node_ramproom_VRE_up_dt[n, d, t]
         , r_node_ramproom_units_up_dt[n, d, t]
 		, r_node_ramproom_units_down_dt[n, d, t]
-		, r_node_ramproom_connections_down_dt[n, d, t]
 		, r_node_ramproom_VRE_down_dt[n, d, t]
+		, r_node_ramproom_connections_down_dt[n, d, t]
 	  >> fn_node_ramp__dt;
   }
 
