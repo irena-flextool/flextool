@@ -906,7 +906,7 @@
                             },
                             {
                                 "map_type": "ParameterValueIndex",
-                                "position": 1
+                                "position": "header"
                             },
                             {
                                 "map_type": "IndexName",
@@ -915,7 +915,7 @@
                             },
                             {
                                 "map_type": "ParameterValueIndex",
-                                "position": 2
+                                "position": 1
                             },
                             {
                                 "map_type": "IndexName",
@@ -924,7 +924,7 @@
                             },
                             {
                                 "map_type": "ParameterValueIndex",
-                                "position": "header"
+                                "position": 2
                             },
                             {
                                 "map_type": "ExpandedValue",
@@ -1448,67 +1448,6 @@
                             {
                                 "map_type": "ExpandedValue",
                                 "position": 2
-                            }
-                        ]
-                    }
-                }
-            ],
-            "node__period_co2": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden",
-                                "value": "node"
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": 0
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterDefinition",
-                                "position": "hidden",
-                                "value": "co2_d"
-                            },
-                            {
-                                "map_type": "Alternative",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValueMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValueType",
-                                "position": "hidden",
-                                "value": "map"
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "solve"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 1
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "period"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 2
-                            },
-                            {
-                                "map_type": "ExpandedValue",
-                                "position": 3
                             }
                         ]
                     }
@@ -2400,6 +2339,67 @@
                         ]
                     }
                 }
+            ],
+            "process__period_co2": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "process"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "co2_d"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 3
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -2421,7 +2421,6 @@
             "node_state__period__t",
             "group_inertia__period__t",
             "unit_capacity__period",
-            "node__period_co2",
             "costs__period__t",
             "node_ramp__period__t",
             "process__reserve__upDown__node__period_average",
@@ -2432,7 +2431,8 @@
             "unit_startup__period",
             "unit_ramp__inputNode__dt",
             "unit_ramp__outputNode__dt",
-            "slack__inertia_group__period__t"
+            "slack__inertia_group__period__t",
+            "process__period_co2"
         ],
         "table_options": {
             "node__period": {},
@@ -2464,7 +2464,6 @@
                 "has_header": false
             },
             "unit__inputNode__period": {},
-            "node__period_co2": {},
             "costs__period__t": {},
             "node_ramp__period__t": {},
             "process__reserve__upDown__node__period_average": {
@@ -2484,7 +2483,8 @@
             "unit_ramp__outputNode__dt": {
                 "has_header": false
             },
-            "slack__inertia_group__period__t": {}
+            "slack__inertia_group__period__t": {},
+            "process__period_co2": {}
         },
         "table_types": {
             "unit__outputNode__period": {
@@ -2498,76 +2498,18 @@
             },
             "unit__inputNode__period": {
                 "0": "string",
-                "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float"
+                "1": "string"
             },
             "unit__inputNode__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "float",
-                "21": "float",
-                "22": "float",
-                "23": "float",
-                "24": "float",
-                "25": "float",
-                "26": "float",
-                "27": "float",
-                "28": "float",
-                "29": "float",
-                "30": "float"
+                "2": "string"
             },
             "unit__outputNode__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "float",
-                "21": "float",
-                "22": "float",
-                "23": "float",
-                "24": "float",
-                "25": "float",
-                "26": "float",
-                "27": "float",
-                "28": "float",
-                "29": "float"
+                "3": "float"
             },
             "unit_capacity__period": {
                 "0": "string",
@@ -2621,11 +2563,13 @@
             "connection__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string"
+                "2": "string",
+                "3": "float"
             },
             "connection__period": {
                 "0": "string",
-                "1": "string"
+                "1": "string",
+                "2": "float"
             },
             "costs__period": {
                 "0": "string",
@@ -2716,35 +2660,12 @@
             "unit_online__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float"
+                "2": "string"
             },
             "group_inertia__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "string"
-            },
-            "node__period_co2": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "float"
             },
             "costs__period__t": {
                 "0": "string",
@@ -2924,6 +2845,12 @@
                 "29": "float"
             },
             "slack__inertia_group__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float"
+            },
+            "process__period_co2": {
                 "0": "string",
                 "1": "string",
                 "2": "string",

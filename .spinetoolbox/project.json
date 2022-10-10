@@ -149,6 +149,7 @@
                 "disabled_filters": {
                     "db_url@Input_data": {
                         "scenario_filter": [
+                            "all",
                             "base",
                             "capacity_margin",
                             "coal",
@@ -157,6 +158,7 @@
                             "coal_min_load",
                             "coal_retire",
                             "coal_wind",
+                            "coal_wind_ev",
                             "coal_wind_inertia",
                             "fullYear",
                             "network_coal_wind",
@@ -183,7 +185,15 @@
                 "to": [
                     "To_Excel",
                     "right"
-                ]
+                ],
+                "disabled_filters": {
+                    "db_url@Results": {
+                        "scenario_filter": [
+                            "Limit_fossil",
+                            "coal_co2"
+                        ]
+                    }
+                }
             },
             {
                 "name": "from Results to Plot_results",
@@ -239,8 +249,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -177.3410948713084,
-            "y": 7.012567737293049,
+            "x": -177.34109487130837,
+            "y": 6.001168560279744,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -255,7 +265,7 @@
         "Initialize": {
             "type": "Merger",
             "description": "",
-            "x": -288.2878993599343,
+            "x": -287.2765001829209,
             "y": 71.53172417199832,
             "cancel_on_error": true
         },
@@ -263,7 +273,7 @@
             "type": "Data Connection",
             "description": "",
             "x": -436.8582078041219,
-            "y": -49.01942941004407,
+            "y": -51.0422277640707,
             "file_references": [
                 {
                     "type": "path",
@@ -276,15 +286,15 @@
         "Import_from_Excel": {
             "type": "Importer",
             "description": "",
-            "x": -310.3946933768654,
-            "y": -46.55260024983251,
+            "x": -310.39469337686535,
+            "y": -47.563999426845825,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": true,
             "on_conflict": "replace",
             "file_selection": [
                 [
                     "<project>/FlexTool_import_template.xlsx",
-                    false
+                    true
                 ]
             ]
         },
@@ -306,8 +316,8 @@
         "Import_results": {
             "type": "Importer",
             "description": "",
-            "x": 183.63153975065552,
-            "y": 21.841888384298727,
+            "x": 182.62014057364226,
+            "y": 21.841888384298723,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "on_conflict": "replace",

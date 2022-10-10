@@ -910,10 +910,15 @@ set group_commodity_node_period_co2 :=
 
 set gcndt_co2 := {(g, c, n, d) in group_commodity_node_period_co2, t in time : (d, t) in dt};
 
+set process__commodity__node := {p in process, (c, n) in commodity_node : (p, n) in process_source || (p, n) in process_sink};
+
 set commodity_node_co2 :=
         {(c, n) in commodity_node : 
 			p_commodity[c, 'co2_content'] 
 		};
+
+set process__commodity__node_co2 := {p in process, (c, n) in commodity_node_co2 : (p, n) in process_source || (p, n) in process_sink};
+set process_co2 := setof{(p, c, n) in process__commodity__node_co2} p;
 
 set process__sink_nonSync :=
         {p in process, sink in node :
@@ -2064,7 +2069,7 @@ param r_node_ramp_dt{n in nodeBalance, (d, t) in dt} :=
 ;
 
 param r_process_source_sink_flow_d{(p, source, sink) in process_source_sink_alwaysProcess, d in period} :=
-  + sum {(d, t) in dt} r_process_source_sink_flow_dt[p, source, sink, d, t]
+  + sum {(d, t) in dt} r_process_source_sink_flow_dt [p, source, sink, d, t] * step_duration[d, t]
 ;
 param r_process_source_flow_d{(p, source) in process_source, d in period_realized} := 
   + sum {(p, source, sink) in process_source_sink_alwaysProcess} r_process_source_sink_flow_d[p, source, sink, d]
@@ -2089,8 +2094,15 @@ param r_cost_commodity_dt{(c, n) in commodity_node, (d, t) in dt} :=
 	    )
 ;
 
-param r_emissions_co2_dt{(c, n) in commodity_node_co2, (d, t) in dt} := 
-  + step_duration[d, t] 
+param r_process_commodity_d{(p, c, n) in process__commodity__node, d in period} :=
+ + sum{(p, n, sink) in process_source_sink_alwaysProcess}
+      + r_process_source_sink_flow_d[p, n, sink, d]
+ - sum{(p, source, n) in process_source_sink_alwaysProcess}	  
+      + r_process_source_sink_flow_d[p, source, n, d]
+;
+
+param r_process_emissions_co2_dt{(p, c, n) in process__commodity__node_co2, (d, t) in dt} := 
+  + step_duration[d, t]
       * p_commodity[c, 'co2_content'] 
       * ( + sum{(p, n, sink) in process_source_sink_alwaysProcess}
               + r_process_source_sink_flow_dt[p, n, sink, d, t]
@@ -2098,6 +2110,12 @@ param r_emissions_co2_dt{(c, n) in commodity_node_co2, (d, t) in dt} :=
               + r_process_source_sink_flow_dt[p, source, n, d, t]
         )
 ;	  
+
+param r_process_emissions_co2_d{(p, c, n) in process__commodity__node_co2, d in period} :=
+  + sum{t in time : (d, t) in dt} r_process_emissions_co2_dt[p, c, n, d, t];
+
+param r_emissions_co2_dt{(c, n) in commodity_node_co2, (d, t) in dt} :=
+  + sum{(p, c, n) in process__commodity__node_co2} r_process_emissions_co2_dt[p, c, n, d, t];
 
 param r_emissions_co2_d{(c, n) in commodity_node_co2, d in period} :=
   + sum{t in time : (d, t) in dt} r_emissions_co2_dt[c, n, d, t];
@@ -2199,9 +2217,10 @@ param r_costOper_and_penalty_dt{(d,t) in dt} :=
   + r_costPenalty_dt[d, t]
 ;
 
+param r_cost_process_variable_cost_d{p in process, d in period} := sum{(d, t) in dt} r_cost_process_variable_cost_dt[p, d, t];
 param r_cost_co2_d{d in period} := sum{(g, c, n, d, t) in gcndt_co2} r_cost_co2_dt[g, c, n, d, t];
 param r_cost_commodity_d{d in period} := sum{(c, n) in commodity_node, (d, t) in dt} r_cost_commodity_dt[c, n, d, t];
-param r_cost_variable_d{d in period} := sum{p in process, (d, t) in dt} r_cost_process_variable_cost_dt[p, d, t];
+param r_cost_variable_d{d in period} := sum{p in process} r_cost_process_variable_cost_d[p, d];
 #param r_cost_ramp_d{d in period} := sum{(p, source, sink, m) in process__source__sink__ramp_method, (d, t) in dt : m in ramp_cost_method} r_cost_process_ramp_cost_dt[p, d, t];
 param r_cost_startup_d{d in period} := sum{p in process_online, (d, t) in dt : pdProcess[p, 'startup_cost', d]} r_cost_startup_dt[p, d, t];
 
@@ -2256,16 +2275,16 @@ for {e in entity: e in entityInvest}
 printf 'Write unit capacity results...\n';
 param fn_unit_capacity symbolic := "output/unit_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'unit,solve,period,existing,invested,divested,total\n' > fn_unit_capacity; }  # Clear the file on the first solve
+  { printf 'unit,solve,period,existing,invested,divested,total,utilization,cost\n' > fn_unit_capacity; }  # Clear the file on the first solve
 for {s in solve_current, p in process_unit, d in period_realized}
   {
-    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
+    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
 	        p_entity_all_existing[p], 
 			(if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0), 
 			(if (p, d) in pd_divest then v_divest[p, d].val * p_entity_unitsize[p] else 0), 
-			+ p_entity_all_existing[p] 
-			+ (if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0)
-			- (if (p, d) in pd_divest then v_divest[p, d].val * p_entity_unitsize[p] else 0)
+			entity_all_capacity[p, d],
+			+ sum{(p, sink) in process_sink} (r_process_sink_flow_d[p, sink, d]) / entity_all_capacity[p,d],
+			+ r_cost_process_variable_cost_d[p, d]
 	>> fn_unit_capacity;
   }
 
@@ -2493,9 +2512,9 @@ param fn_unit__sinkNode__dt symbolic := "output/unit__outputNode__period__t.csv"
 for {i in 1..1 : p_model['solveFirst']}
   {
     printf 'solve,period,time' > fn_unit__sinkNode__dt;  # Print the header on the first solve
-	for {(u, sink) in process_sink : u in process_unit} printf ',%s', u >> fn_unit__sinkNode__dt;
+	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', u >> fn_unit__sinkNode__dt;
 	printf '\n,,' >> fn_unit__sinkNode__dt;
-	for {(u, sink) in process_sink : u in process_unit} printf ',%s', sink >> fn_unit__sinkNode__dt;
+	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', sink >> fn_unit__sinkNode__dt;
   }
 for {s in solve_current, (d, t) in dt : d in period_realized}
   {
@@ -2525,9 +2544,9 @@ param fn_unit__sourceNode__dt symbolic := "output/unit__inputNode__period__t.csv
 for {i in 1..1 : p_model['solveFirst']}
   {
     printf 'solve,period,time' > fn_unit__sourceNode__dt;  # Print the header on the first solve
-	for {(u, source) in process_source : u in process_unit} printf ',%s', u >> fn_unit__sourceNode__dt;
+	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', u >> fn_unit__sourceNode__dt;
 	printf '\n,,' >> fn_unit__sourceNode__dt;
-	for {(u, source) in process_source : u in process_unit} printf ',%s', source >> fn_unit__sourceNode__dt;
+	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', source >> fn_unit__sourceNode__dt;
   }
 for {s in solve_current, (d, t) in dt : d in period_realized}
   {
@@ -2575,9 +2594,9 @@ param fn_unit_ramp__sinkNode__dt symbolic := "output/unit_ramp__outputNode__dt.c
 for {i in 1..1 : p_model['solveFirst']}
   {
     printf 'solve,period,time' > fn_unit_ramp__sinkNode__dt;  # Print the header on the first solve
-	for {(u, sink) in process_sink : u in process_unit} printf ',%s', u >> fn_unit_ramp__sinkNode__dt;
+	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', u >> fn_unit_ramp__sinkNode__dt;
 	printf '\n,,' >> fn_unit_ramp__sinkNode__dt;
-	for {(u, sink) in process_sink : u in process_unit} printf ',%s', sink >> fn_unit_ramp__sinkNode__dt;
+	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', sink >> fn_unit_ramp__sinkNode__dt;
   }
 for {s in solve_current, (d, t) in dt : d in period_realized}
   {
@@ -2590,9 +2609,9 @@ param fn_unit_ramp__sourceNode__dt symbolic := "output/unit_ramp__inputNode__dt.
 for {i in 1..1 : p_model['solveFirst']}
   {
     printf 'solve,period,time' > fn_unit_ramp__sourceNode__dt;  # Print the header on the first solve
-	for {(u, source) in process_source : u in process_unit} printf ',%s', u >> fn_unit_ramp__sourceNode__dt;
+	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', u >> fn_unit_ramp__sourceNode__dt;
 	printf '\n,,' >> fn_unit_ramp__sourceNode__dt;
-	for {(u, source) in process_source : u in process_unit} printf ',%s', source >> fn_unit_ramp__sourceNode__dt;
+	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', source >> fn_unit_ramp__sourceNode__dt;
   }
 for {s in solve_current, (d, t) in dt : d in period_realized}
   {
@@ -2709,16 +2728,16 @@ for {n in node, s in solve_current, d in period_realized}
 	  >> fn_node__d;
   }
 
-printf 'Write node CO2 results for periods...\n';
-param fn_node_co2__d symbolic := "output/node__period_co2.csv";
+printf 'Write process CO2 results for periods...\n';
+param fn_process_co2__d symbolic := "output/process__period_co2.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'node,solve,period,"CO2 [Mt]"\n' > fn_node_co2__d; }  # Print the header on the first solve 
-for {n in node, s in solve_current, d in period_realized}
+  { printf 'process,solve,period,"CO2 [Mt]"\n' > fn_process_co2__d; }  # Print the header on the first solve 
+for {p in process_co2, s in solve_current, d in period_realized}
   {
     printf '%s,%s,%s,%.8g\n'
-		, n, s, d
-        , sum{(c, n) in commodity_node_co2} r_emissions_co2_d[c, n, d] / 1000000
-	  >> fn_node_co2__d;
+		, p, s, d
+        , sum{(p, c, n) in process__commodity__node_co2} r_process_emissions_co2_d[p, c, n, d] / 1000000
+	  >> fn_process_co2__d;
   }
 
 printf 'Write node results for time...\n';
@@ -2755,7 +2774,7 @@ for {s in solve_current, (d, t, t_previous, t_previous_within_block) in dttt : d
     printf '\n%s,%s,%s', s, d, t >> fn_nodal_prices__dt;
     for {n in nodeBalance}
 	  {
-	    printf ',%8g', nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual / p_discount_with_perpetuity_operations[d] * period_share_of_year[d] >> fn_nodal_prices__dt;
+	    printf ',%8g', -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual / p_discount_with_perpetuity_operations[d] * period_share_of_year[d] >> fn_nodal_prices__dt;
       }
   }
 
@@ -3110,7 +3129,7 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val;
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val;
 #display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
-#display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual / p_discount_with_perpetuity_operations[d] * period_share_of_year[d];
+#display {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block].dual / p_discount_with_perpetuity_operations[d] * period_share_of_year[d];
 #display {(p, source, sink) in process_source_sink, (d, t) in dt : (d, t) in test_dt && (p, sink) in process_sink}: maxToSink[p, source, sink, d, t].ub;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
