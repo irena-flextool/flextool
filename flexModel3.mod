@@ -2793,6 +2793,21 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
       }
   }
 
+printf 'Write marginal value for investment entities...\n';
+param fn_entity_invested_marginal symbolic := "output/entity_invest_marginal__period.csv";
+for {i in 1..1 : p_model['solveFirst']} 
+  { printf 'solve,period' > fn_entity_invested_marginal;
+    for {e in entityInvest}
+	  { printf ',%s', e >> fn_entity_invested_marginal; }
+  }
+for {s in solve_current, d in period_invest}
+  { printf '\n%s,%s', s, d >> fn_entity_invested_marginal;
+    for {e in entityInvest} 
+      {
+	    printf ',%.8g', (if (e, d) in ed_invest then v_invest[e, d].dual) >> fn_entity_invested_marginal;
+      }
+  }
+
 param r_node_ramproom_units_up_dt{n in nodeBalance, (d, t) in dt} := 
           + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
               + p_process_sink_coefficient[u, n]
@@ -3135,5 +3150,6 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 display v_invest, v_divest;
-#display {(e, d) in ed_invest} : v_invest[e, d].dual;
+display {(e, d) in ed_invest} : v_invest[e, d].dual;
+display entityInvest;
 end;

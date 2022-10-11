@@ -2853,21 +2853,7 @@
                                 "position": "hidden"
                             },
                             {
-                                "map_type": "ParameterValueType",
-                                "position": "hidden",
-                                "value": "map"
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "constraint"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 3
-                            },
-                            {
-                                "map_type": "ExpandedValue",
+                                "map_type": "ParameterValue",
                                 "position": "hidden"
                             }
                         ]
@@ -2972,21 +2958,7 @@
                                 "position": "hidden"
                             },
                             {
-                                "map_type": "ParameterValueType",
-                                "position": "hidden",
-                                "value": "map"
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "constraint"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 3
-                            },
-                            {
-                                "map_type": "ExpandedValue",
+                                "map_type": "ParameterValue",
                                 "position": "hidden"
                             }
                         ]
@@ -3500,7 +3472,7 @@
             },
             "reserve_group_t": {
                 "0": "string",
-                "1": "float",
+                "1": "string",
                 "2": "float",
                 "3": "float",
                 "4": "float",

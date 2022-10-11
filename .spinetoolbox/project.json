@@ -116,6 +116,7 @@
                             "coal_min_load",
                             "coal_retire",
                             "coal_wind",
+                            "coal_wind_ev",
                             "coal_wind_inertia",
                             "fullYear",
                             "network_coal_wind",
@@ -148,30 +149,8 @@
                 ],
                 "disabled_filters": {
                     "db_url@Input_data": {
-                        "scenario_filter": [
-                            "all",
-                            "base",
-                            "capacity_margin",
-                            "coal",
-                            "coal_chp",
-                            "coal_co2",
-                            "coal_min_load",
-                            "coal_retire",
-                            "coal_wind",
-                            "coal_wind_ev",
-                            "coal_wind_inertia",
-                            "fullYear",
-                            "network_coal_wind",
-                            "network_coal_wind_battery_co2_fullYear",
-                            "network_coal_wind_capacity_margin",
-                            "network_coal_wind_reserve",
-                            "network_coal_wind_reserve_co2_capacity_margin",
-                            "network_coal_wind_reserve_n_1",
-                            "network_wind_coal_battery_fullYear_invest",
-                            "water_pump",
-                            "wind",
-                            "wind_battery",
-                            "wind_battery_invest"
+                        "tool_filter": [
+                            "FlexTool3"
                         ]
                     }
                 }
@@ -233,8 +212,8 @@
         "Init": {
             "type": "Data Store",
             "description": "",
-            "x": -413.10214369086003,
-            "y": 72.72419469646616,
+            "x": -412.08173049379843,
+            "y": 69.66295510528136,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -249,8 +228,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -177.34109487130837,
-            "y": 6.001168560279744,
+            "x": -169.28176795272327,
+            "y": -3.0655742231284577,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -258,7 +237,7 @@
                 "database": {
                     "type": "path",
                     "relative": true,
-                    "path": "Input_data_3.sqlite"
+                    "path": "Input_data.sqlite"
                 }
             }
         },
@@ -266,7 +245,7 @@
             "type": "Merger",
             "description": "",
             "x": -287.2765001829209,
-            "y": 71.53172417199832,
+            "y": 53.398238605181916,
             "cancel_on_error": true
         },
         "Excel_input_data": {
@@ -331,8 +310,8 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 304.8756268694344,
-            "y": 30.482803016622672,
+            "x": 307.9368664606192,
+            "y": 30.48280301662267,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
