@@ -2283,7 +2283,7 @@ for {s in solve_current, p in process_unit, d in period_realized}
 			(if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0), 
 			(if (p, d) in pd_divest then v_divest[p, d].val * p_entity_unitsize[p] else 0), 
 			entity_all_capacity[p, d],
-			+ sum{(p, sink) in process_sink} (r_process_sink_flow_d[p, sink, d]) / entity_all_capacity[p,d],
+			+ (if entity_all_capacity[p, d] then sum{(p, sink) in process_sink} (r_process_sink_flow_d[p, sink, d]) / entity_all_capacity[p,d] else 0),
 			+ r_cost_process_variable_cost_d[p, d]
 	>> fn_unit_capacity;
   }
@@ -3150,6 +3150,5 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 display v_invest, v_divest;
-display {(e, d) in ed_invest} : v_invest[e, d].dual;
-display entityInvest;
+#display {(e, d) in ed_invest} : v_invest[e, d].dual;
 end;
