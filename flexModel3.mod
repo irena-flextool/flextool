@@ -926,7 +926,7 @@ set process__sink_nonSync :=
 			|| ( (p, sink) in process_sink && p in process_nonSync_connection )
 			|| ( (p, sink) in process_source && p in process_nonSync_connection )  
 	    };
-
+display p_model;
 param p_entity_all_existing {e in entity} :=
         + (if e in process then p_process[e, 'existing'])
         + (if e in node then p_node[e, 'existing'])
@@ -2275,16 +2275,16 @@ for {e in entity: e in entityInvest}
 printf 'Write unit capacity results...\n';
 param fn_unit_capacity symbolic := "output/unit_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'unit,solve,period,existing,invested,divested,total,utilization,cost\n' > fn_unit_capacity; }  # Clear the file on the first solve
+  { printf 'unit,solve,period,existing,invested,divested,total\n' > fn_unit_capacity; }  # Clear the file on the first solve
 for {s in solve_current, p in process_unit, d in period_realized}
   {
-    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
+    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
 	        p_entity_all_existing[p], 
 			(if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0), 
 			(if (p, d) in pd_divest then v_divest[p, d].val * p_entity_unitsize[p] else 0), 
-			entity_all_capacity[p, d],
-			+ (if entity_all_capacity[p, d] then sum{(p, sink) in process_sink} (r_process_sink_flow_d[p, sink, d]) / entity_all_capacity[p,d] else 0),
-			+ r_cost_process_variable_cost_d[p, d]
+			entity_all_capacity[p, d]
+#			+ (if entity_all_capacity[p, d] then sum{(p, sink) in process_sink} (r_process_sink_flow_d[p, sink, d]) / entity_all_capacity[p,d] else 0),
+#			+ r_cost_process_variable_cost_d[p, d]
 	>> fn_unit_capacity;
   }
 
