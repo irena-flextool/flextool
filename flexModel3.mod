@@ -1091,7 +1091,8 @@ display w_total_cost;
 
 # Energy balance in each node  
 s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_block) in dttt} :
-  + (if n in nodeState then (v_state[n, d, t] -  v_state[n, d, t_previous]))
+  + (if n in nodeState && (n, 'bind_within_timeblock') not in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous]))
+  + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]))
   =
   # n is sink
   + sum {(p, source, n) in process_source_sink} (
