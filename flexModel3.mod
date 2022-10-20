@@ -729,7 +729,12 @@ param p_discount_factor_operations{d in period} := 1/(1 + p_disc_rate) ^ (p_disc
 param p_discount_in_perpetuity_investment{d in period} := (if p_disc_rate then (1/(1+p_disc_rate)^(p_discount_years[d]+p_disc_offset_investment))/p_disc_rate else 1);
 param p_discount_in_perpetuity_operations{d in period} := (if p_disc_rate then (1/(1+p_disc_rate)^(p_discount_years[d]+p_disc_offset_operations))/p_disc_rate else 1);
 param p_discount_with_perpetuity_investment{d in period} := (if d not in period_last then sum{(d, dNext) in period__period_next} (p_discount_in_perpetuity_investment[d] - p_discount_in_perpetuity_investment[dNext]) else p_discount_in_perpetuity_investment[d]);
-param p_discount_with_perpetuity_operations{d in period} := (if d not in period_last then sum{(d, dNext) in period__period_next} (p_discount_in_perpetuity_operations[d] - p_discount_in_perpetuity_operations[dNext]) else p_discount_in_perpetuity_operations[d]);
+param p_discount_with_perpetuity_operations{d in period} := 
+  ( if d not in period_last 
+    then sum{(d, dNext) in period__period_next} 
+	          ( + p_discount_in_perpetuity_operations[d] 
+			    - p_discount_in_perpetuity_operations[dNext]) 
+    else p_discount_in_perpetuity_operations[d]);
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
           ( + (pdNode[e, 'invest_cost', d] * 1000 * ( pdNode[e, 'interest_rate', d] 
@@ -944,7 +949,7 @@ param d_flowInvest {(p, d) in pd_invest} default 0;
 param d_reserve_upDown_node {(p, r, ud, n, d, t) in prundt} default 0;
 param dq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} default 0;
 
-
+display node__inflow_method, node__inflow_method_read;
 #########################
 # Variable declarations
 var v_flow {(p, source, sink, d, t) in peedt};
@@ -2027,10 +2032,10 @@ display w_solve;
 
 param entity_all_capacity{e in entity, d in period_realized} :=
   + p_entity_all_existing[e]
-  + sum {(e, d_invest) in ed_invest : d <= d_invest} v_invest[e, d_invest].val * p_entity_unitsize[e]
-  - sum {(e, d_invest) in ed_divest : d <= d_invest} v_divest[e, d_invest].val * p_entity_unitsize[e]
+  + sum {(e, d2) in ed_invest : d2 <= d} v_invest[e, d2].val * p_entity_unitsize[e]
+  - sum {(e, d2) in ed_divest : d2 <= d} v_divest[e, d2].val * p_entity_unitsize[e]
 ;
-
+display entity_all_capacity;
 param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
   + sum {(p, m) in process_method : m in method_1var_per_way}
     ( + sum {(p, source, sink2) in process_source_toSink} 
@@ -2760,7 +2765,7 @@ for {n in node, s in solve_current, (d, t) in dt : d in period_realized}
 	    , (if n in nodeBalance then -vq_state_down[n, d, t].val else 0)
 	  >> fn_node__dt;
   }
-
+display p_discount_with_perpetuity_operations;
 printf 'Write nodal prices for time...\n';
 param fn_nodal_prices__dt symbolic := "output/node_prices__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
