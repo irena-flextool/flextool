@@ -1,7 +1,6 @@
 import csv
 import math
 import subprocess
-import itertools
 import logging
 import sys
 import os
@@ -294,13 +293,11 @@ class FlexToolRunner:
             steplist.append(self.steplist[i])
         return steplist
 
-    #@property
     def model_run(self, current_solve):
         """
         run the model executable once
         :return the output of glpsol.exe:
         """
-        did_fail = 1
         try:
             solver = self.solvers[current_solve]
         except KeyError:
@@ -308,32 +305,33 @@ class FlexToolRunner:
             solver = "highs"
         if solver == "glpsol":
             only_glpsol = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg'] + sys.argv[1:]
-            did_fail = os.system(" ".join(only_glpsol))
-            if did_fail != 0:
-                logging.error(f'glpsol failed: {did_fail}')
-                exit(did_fail)
-        if solver == "highs":
+            completed = subprocess.run(only_glpsol)
+            if completed.returncode != 0:
+                logging.error(f'glpsol failed: {completed.returncode}')
+                exit(completed.returncode)
+        elif solver == "highs":
             highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat',
-                           '--wfreemps', 'flexModel3.mps']
-            command = " ".join(highs_step1 + sys.argv[1:])
-            did_fail = os.system(command)
-            if did_fail != 0:
-                logging.error(f'glpsol mps writing failed: {did_fail}')
-                exit(did_fail)
+                           '--wfreemps', 'flexModel3.mps'] + sys.argv[1:]
+            completed = subprocess.run(highs_step1)
+            if completed.returncode != 0:
+                logging.error(f'glpsol mps writing failed: {completed.returncode}')
+                exit(completed.returncode)
             print("GLPSOL wrote the problem as MPS file\n")
             highs_step2 = ['highs', 'flexModel3.mps', '--options_file=highs.opt', '--presolve=off']
             completed = subprocess.run(highs_step2)
-            did_fail = completed.returncode != 0
-            if did_fail != 0:
-                logging.error(f'Highs solver failed: {did_fail}')
-                exit(did_fail)
+            if completed.returncode != 0:
+                logging.error(f'Highs solver failed: {completed.returncode}')
+                exit(completed.returncode)
             print("HiGHS solved the problem\n")
             highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r',
-                           'flexModel3.sol']
-            did_fail = os.system(" ".join(highs_step3 + sys.argv[1:]))
-            if did_fail == 0:
+                           'flexModel3.sol'] + sys.argv[1:]
+            completed = subprocess.run(highs_step3)
+            if completed.returncode == 0:
                 print("GLPSOL wrote the results into csv files\n")
-        return did_fail
+        else:
+            logging.error(f"Unknown solver '{solver}'. Currently supported options: highs, glpsol.")
+            exit(1)
+        return completed.returncode
 
     def get_active_time(self, current_solve, timeblocks_used_by_solves, timeblocks, timelines, timeblocks__timelines):
         """
