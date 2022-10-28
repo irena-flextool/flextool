@@ -831,7 +831,7 @@ param ed_invest_max_period{(e, d) in ed_invest} :=
   + (if e in process then pdProcess[e, 'invest_max_period', d])
   + (if e in node then pdNode[e, 'invest_max_period', d])
 ;  
-
+display processPeriodParam, process__param__period, pd_process, pdProcess, ed_invest_max_period;
 param ed_divest_max_period{(e, d) in ed_divest} :=
   + (if e in process then pdProcess[e, 'retire_max_period', d])
   + (if e in node then pdNode[e, 'retire_max_period', d])
@@ -1743,7 +1743,7 @@ s.t. minDivestGroup_entity_total {g in group : p_group[g, 'retire_min_total'] } 
   >=
   + p_group[g, 'retire_min_total']
 ;
-
+display ed_invest_max_period;
 s.t. maxInvest_entity_period {(e, d) in ed_invest : ed_invest_max_period[e, d]} :  # Covers both processes and nodes
   + v_invest[e, d] * p_entity_unitsize[e] 
   <= 
@@ -1770,30 +1770,30 @@ s.t. minDivest_entity_period {(e, d)  in ed_divest : ed_divest_min_period[e, d]}
 
 s.t. maxInvest_entity_total {e  in entityInvest : e_invest_max_total[e] && sum{(e, d) in ed_invest} 1} :  # Covers both processes and nodes
   + sum{(e, d) in ed_invest} v_invest[e, d] * p_entity_unitsize[e] 
+  + (if not p_model['solveFirst'] then p_entity_invested[e])
   <= 
   + e_invest_max_total[e]
-  + (if not p_model['solveFirst'] then p_entity_invested[e])
 ;
 
 s.t. maxDivest_entity_total {e  in entityDivest : e_divest_max_total[e] && sum{(e, d) in ed_divest} 1} :  # Covers both processes and nodes
   + sum{(e, d) in ed_divest} v_divest[e, d] * p_entity_unitsize[e] 
+  + (if not p_model['solveFirst'] then p_entity_divested[e])
   <= 
   + e_divest_max_total[e]
-  + (if not p_model['solveFirst'] then p_entity_divested[e])
 ;
 
 s.t. minInvest_entity_total {e  in entityInvest : e_invest_min_total[e] && sum{(e, d) in ed_invest} 1} :  # Covers both processes and nodes
   + sum{(e, d) in ed_invest} v_invest[e, d] * p_entity_unitsize[e] 
+  + (if not p_model['solveFirst'] then p_entity_invested[e])
   >= 
   + e_invest_min_total[e]
-  + (if not p_model['solveFirst'] then p_entity_invested[e])
 ;
 
 s.t. minDivest_entity_total {e  in entityDivest : e_divest_min_total[e] && sum{(e, d) in ed_divest} 1} :  # Covers both processes and nodes
   + sum{(e, d) in ed_divest} v_divest[e, d] * p_entity_unitsize[e] 
+  + (if not p_model['solveFirst'] then p_entity_divested[e])
   >= 
   + e_divest_min_total[e]
-  + (if not p_model['solveFirst'] then p_entity_divested[e])
 ;
 
 s.t. maxCumulative_flow_solve {g in group : p_group[g, 'max_cumulative_flow']} :
