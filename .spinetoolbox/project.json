@@ -237,6 +237,17 @@
                     "Input_data",
                     "left"
                 ]
+            },
+            {
+                "name": "from Plot_settings to Plot_results",
+                "from": [
+                    "Plot_settings",
+                    "left"
+                ],
+                "to": [
+                    "Plot_results",
+                    "bottom"
+                ]
             }
         ],
         "jumps": []
@@ -400,8 +411,26 @@
                 {
                     "type": "resource",
                     "arg": "db_url@Results"
+                },
+                {
+                    "type": "resource",
+                    "arg": "<project>/default_result_plots.json"
                 }
             ]
+        },
+        "Plot_settings": {
+            "type": "Data Connection",
+            "description": "",
+            "x": 465.1046693538269,
+            "y": 256.3648831078828,
+            "file_references": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "default_result_plots.json"
+                }
+            ],
+            "db_references": []
         }
     }
 }

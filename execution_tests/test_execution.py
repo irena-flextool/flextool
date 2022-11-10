@@ -13,6 +13,7 @@ from spinedb_api import DiffDatabaseMapping, \
     import_parameter_value_lists
 
 
+@unittest.skip("Not implemented properly")
 class ScenarioFilters(unittest.TestCase):
     _root_path = Path(__file__).parent
     _flextool_test_database_path = _root_path.parent / ".spinetoolbox" / "items" / "flextool3_test_data" / \

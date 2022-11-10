@@ -1,0 +1,72 @@
+{
+  "plots": [
+    {
+      "selection": {
+        "plotType": "line",
+        "entityClasses": ["model"],
+        "entities": [],
+        "parameters": ["cost_dt"],
+        "alternatives": [],
+        "solves": [],
+        "periods": []
+      },
+      "dimensions": {
+        "separatePlots": null,
+        "x1": null,
+        "x2": "period",
+        "x3": "solve"
+      }
+    },
+    {
+      "selection": {
+        "plotType": "stacked line",
+        "entityClasses": ["unit__node"],
+        "entities": [],
+        "parameters": ["ramp_dt"],
+        "alternatives": [],
+        "solves": [],
+        "periods": []
+      },
+      "dimensions": {
+        "separatePlots": "unit",
+        "x1": null,
+        "x2": "period",
+        "x3": "solve"
+      }
+    },
+    {
+      "selection": {
+        "plotType": "stacked bar",
+        "entityClasses": ["unit__node"],
+        "entities": [],
+        "parameters": ["flow_d"],
+        "alternatives": [],
+        "solves": [],
+        "periods": []
+      },
+      "dimensions": {
+        "separatePlots": null,
+        "x1": null,
+        "x2": "solve",
+        "x3": null
+      }
+    },
+    {
+      "selection": {
+        "plotType": "heatmap",
+        "entityClasses": ["node"],
+        "entities": [],
+        "parameters": ["ramp_dt"],
+        "alternatives": [],
+        "solves": [],
+        "periods": []
+      },
+      "dimensions": {
+        "separatePlots": "flow_type",
+        "x1": null,
+        "x2": null,
+        "x3": null
+      }
+    }
+  ]
+}

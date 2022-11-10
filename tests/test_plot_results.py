@@ -1,5 +1,8 @@
-from datetime import datetime
+import inspect
+from pathlib import Path
+import sys
 import unittest
+import numpy as np
 from spinedb_api import (
     DatabaseMapping,
     import_object_classes,
@@ -13,92 +16,11 @@ from spinedb_api import (
     import_relationship_parameters,
     import_relationship_parameter_values,
 )
-from .. import plot_results
+from spinetoolbox.plotting import TreeNode, XYData
 
+sys.path.insert(0, str(Path(inspect.getfile(inspect.currentframe())).parent.parent))
 
-class GatherPlottingDataTest(unittest.TestCase):
-    def test_simple_data(self):
-        """gather_plotting_data() yields correct data with single plottable dataset."""
-        leaf_component = plot_results.IndexComponent("index name 2")
-        leaf_component.content.update({"T1": 2.3, "T2": 23.0})
-        values = plot_results.IndexComponent("index name 1")
-        values.content["index 1,1"] = leaf_component
-        result = [xy_data for xy_data in plot_results.gather_plotting_data(values)]
-        expected = plot_results.XYData(
-            ["T1", "T2"],
-            [2.3, 23.0],
-            "index name 2",
-            "",
-            ["index 1,1"],
-            ["index name 1"],
-        )
-        self.assertEqual(result, [expected])
-
-    def test_two_leaves(self):
-        """gather_plotting_data() can handle multiple leaf components."""
-        leaf_component1 = plot_results.IndexComponent("x label 1")
-        leaf_component1.content.update({"T1": 2.3, "T2": 23.0})
-        leaf_component2 = plot_results.IndexComponent("x label 2")
-        leaf_component2.content.update({"T1": -2.3, "T2": -23.0})
-        intermediate_component1 = plot_results.IndexComponent("index name 2,1")
-        intermediate_component1.content["value 1"] = leaf_component1
-        intermediate_component1.content["value 2"] = leaf_component2
-        values = plot_results.IndexComponent("index name 1,1")
-        values.content["index 1,1"] = intermediate_component1
-        result = [xy_data for xy_data in plot_results.gather_plotting_data(values)]
-        expected = [
-            plot_results.XYData(
-                ["T1", "T2"],
-                [2.3, 23.0],
-                "x label 1",
-                "",
-                ["index 1,1", "value 1"],
-                ["index name 1,1", "index name 2,1"],
-            ),
-            plot_results.XYData(
-                ["T1", "T2"],
-                [-2.3, -23.0],
-                "x label 2",
-                "",
-                ["index 1,1", "value 2"],
-                ["index name 1,1", "index name 2,1"],
-            ),
-        ]
-        self.assertEqual(result, expected)
-
-    def test_two_roots(self):
-        """gather_plotting_data() can handle multiple root components."""
-        leaf_component1 = plot_results.IndexComponent("x label 1")
-        leaf_component1.content.update({"T1": 2.3, "T2": 23.0})
-        leaf_component2 = plot_results.IndexComponent("x label 2")
-        leaf_component2.content.update({"T1": -2.3, "T2": -23.0})
-        intermediate_component1 = plot_results.IndexComponent("index name 2,1")
-        intermediate_component1.content["value 1"] = leaf_component1
-        intermediate_component2 = plot_results.IndexComponent("index name 2,2")
-        intermediate_component2.content["value 2"] = leaf_component2
-        values = plot_results.IndexComponent("index name 1,1")
-        values.content["index 1,1"] = intermediate_component1
-        values.content["index 1,2"] = intermediate_component2
-        result = [xy_data for xy_data in plot_results.gather_plotting_data(values)]
-        expected = [
-            plot_results.XYData(
-                ["T1", "T2"],
-                [2.3, 23.0],
-                "x label 1",
-                "",
-                ["index 1,1", "value 1"],
-                ["index name 1,1", "index name 2,1"],
-            ),
-            plot_results.XYData(
-                ["T1", "T2"],
-                [-2.3, -23.0],
-                "x label 2",
-                "",
-                ["index 1,2", "value 2"],
-                ["index name 1,1", "index name 2,2"],
-            ),
-        ]
-        self.assertEqual(result, expected)
+import plot_results
 
 
 class QueryParameterValuesTest(unittest.TestCase):
@@ -111,9 +33,9 @@ class QueryParameterValuesTest(unittest.TestCase):
     def test_empty_database(self):
         """query_parameter_values() returns empty dict when there are no parameters in the database."""
         value_tree = plot_results.query_parameter_values(
-            plot_results.EntityType.OBJECT, self._db_map
+            plot_results.EntityType.OBJECT, (), None, self._db_map
         )
-        expected = plot_results.IndexComponent("class")
+        expected = TreeNode("class")
         self.assertEqual(value_tree, expected)
 
     def test_single_object_value(self):
@@ -137,17 +59,19 @@ class QueryParameterValuesTest(unittest.TestCase):
         )
         self._db_map.commit_session("Add test data.")
         value_tree = plot_results.query_parameter_values(
-            plot_results.EntityType.OBJECT, self._db_map
+            plot_results.EntityType.OBJECT, (), None, self._db_map
         )
-        value_component = plot_results.IndexComponent("my index")
+        value_component = TreeNode("my index")
         value_component.content.update({"T1": 2.3, "T2": 23.0})
-        scenario_component = plot_results.IndexComponent("scenario")
-        scenario_component.content["my_scenario"] = value_component
-        entity_component = plot_results.IndexComponent("object")
+        scenario_component = TreeNode("alternative")
+        scenario_component.content[
+            "my_scenario__Fake_Data_Store@2022-09-06T15:00:00"
+        ] = value_component
+        entity_component = TreeNode("object")
         entity_component.content["my_object"] = scenario_component
-        parameter_component = plot_results.IndexComponent("parameter")
+        parameter_component = TreeNode("parameter")
         parameter_component.content["my_parameter"] = entity_component
-        class_component = plot_results.IndexComponent("class")
+        class_component = TreeNode("class")
         class_component.content["my_class"] = parameter_component
         self.assertEqual(value_tree, class_component)
 
@@ -178,19 +102,219 @@ class QueryParameterValuesTest(unittest.TestCase):
         )
         self._db_map.commit_session("Add test data.")
         value_tree = plot_results.query_parameter_values(
-            plot_results.EntityType.RELATIONSHIP, self._db_map
+            plot_results.EntityType.RELATIONSHIP, (), None, self._db_map
         )
-        value_component = plot_results.IndexComponent("my index")
+        value_component = TreeNode("my index")
         value_component.content.update({"T1": 2.3, "T2": 23.0})
-        scenario_component = plot_results.IndexComponent("scenario")
-        scenario_component.content["my_scenario"] = value_component
-        entity_component = plot_results.IndexComponent("my_class")
+        scenario_component = TreeNode("alternative")
+        scenario_component.content[
+            "my_scenario__Fake_Data_Store@2022-09-06T15:00:00"
+        ] = value_component
+        entity_component = TreeNode("my_class")
         entity_component.content["my_object"] = scenario_component
-        parameter_component = plot_results.IndexComponent("parameter")
+        parameter_component = TreeNode("parameter")
         parameter_component.content["my_parameter"] = entity_component
-        class_component = plot_results.IndexComponent("class")
+        class_component = TreeNode("class")
         class_component.content["my_relationship_class"] = parameter_component
         self.assertEqual(value_tree, class_component)
+
+
+class CategoryTicksTest(unittest.TestCase):
+    def test_simple(self):
+        categories = {"imaginary": ["a", "b"], "real": ["a", "b"]}
+        dividers, labels = plot_results.category_ticks(categories)
+        self.assertEqual(dividers, [0.0, 0.5, 1.0])
+        self.assertEqual(labels, {"imaginary": 0.25, "real": 0.75})
+
+    def test_uneven_dividers(self):
+        categories = {"imaginary": ["a", "b"], "real": ["c"], "eerie": ["d", "e", "f"]}
+        dividers, labels = plot_results.category_ticks(categories)
+        self.assertEqual(dividers, [0.0, 2 / 6, 3 / 6, 1.0])
+        self.assertEqual(list(labels), ["imaginary", "real", "eerie"])
+        for label_position, expected in zip(labels.values(), [2 / 12, 5 / 12, 9 / 12]):
+            self.assertAlmostEqual(label_position, expected)
+
+
+class TileHorizontallyTest(unittest.TestCase):
+    def test_two_pieces_of_xy_data(self):
+        data_list = [
+            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
+            XYData(["a", "b"], [3.3, 4.4], "x", "y", ["idx2"], ["name 1"]),
+        ]
+        tiled, categories = plot_results.tile_horizontally(data_list)
+        expected = [
+            XYData([0, 1], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
+            XYData([2, 3], [3.3, 4.4], "x", "y", ["idx2"], ["name 1"]),
+        ]
+        self.assertEqual(tiled, expected)
+        expected_categories = {"idx1": ["a", "b"], "idx2": ["a", "b"]}
+        self.assertEqual(categories, expected_categories)
+
+    def test_same_last_data_index_gets_grouped_to_same_category(self):
+        data_list = [
+            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
+            XYData(["a", "b"], [3.3, 4.4], "x", "y", ["idx1"], ["name 1"]),
+        ]
+        tiled, categories = plot_results.tile_horizontally(data_list)
+        expected = [
+            XYData([0, 1], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
+            XYData([0, 1], [3.3, 4.4], "x", "y", ["idx1"], ["name 1"]),
+        ]
+        self.assertEqual(tiled, expected)
+        expected_categories = {"idx1": ["a", "b"]}
+        self.assertEqual(categories, expected_categories)
+
+    def test_incompatible_x_lengths_longer_first(self):
+        data_list = [
+            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
+            XYData(["a"], [3.3], "x", "y", ["idx1"], ["name 1"]),
+        ]
+        tiled, categories = plot_results.tile_horizontally(data_list)
+        expected = [
+            XYData([0, 1], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
+            XYData([0], [3.3], "x", "y", ["idx1"], ["name 1"]),
+        ]
+        self.assertEqual(tiled, expected)
+        expected_categories = {"idx1": ["a", "b"]}
+        self.assertEqual(categories, expected_categories)
+
+    def test_incompatible_x_lengths_shorter_first(self):
+        data_list = [
+            XYData(["a"], [1.1], "x", "y", ["idx1"], ["name 1"]),
+            XYData(["a", "b"], [2.2, 3.3], "x", "y", ["idx1"], ["name 1"]),
+        ]
+        tiled, categories = plot_results.tile_horizontally(data_list)
+        expected = [
+            XYData([0], [1.1], "x", "y", ["idx1"], ["name 1"]),
+            XYData([0, 1], [2.2, 3.3], "x", "y", ["idx1"], ["name 1"]),
+        ]
+        self.assertEqual(tiled, expected)
+        expected_categories = {"idx1": ["a", "b"]}
+        self.assertEqual(categories, expected_categories)
+
+
+class CategorizeFurtherTest(unittest.TestCase):
+    def test_single_subcategory(self):
+        data_list = [
+            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B"], ["index 1", "index 2"])
+        ]
+        categories = plot_results.categorize_further({"B": ["a", "b"]}, data_list)
+        expected = {"A": ["a", "b"]}
+        self.assertEqual(categories, expected)
+
+    def test_two_subcategories_within_single_category(self):
+        data_list = [
+            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B1"], ["name 1"]),
+            XYData(["a", "b"], [3.3, 4.4], "x", "y", ["A", "B2"], ["name 1"]),
+        ]
+        categories = plot_results.categorize_further(
+            {"B1": ["a", "b"], "B2": ["a", "b"]}, data_list
+        )
+        expected = {"A": ["a", "b", "a", "b"]}
+        self.assertEqual(categories, expected)
+
+
+class ShuffleDimensionsTest(unittest.TestCase):
+    def test_shuffle_data_indices(self):
+        data_list = [
+            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B"], ["index 1", "index 2"])
+        ]
+        inserted_list = plot_results.shuffle_dimensions({"index 1": 1}, data_list)
+        expected = [
+            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["B", "A"], ["index 2", "index 1"])
+        ]
+        self.assertEqual(inserted_list, expected)
+
+    def test_negative_target_moves_to_end(self):
+        data_list = [
+            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B"], ["index 1", "index 2"])
+        ]
+        inserted_list = plot_results.shuffle_dimensions({"index 1": -1}, data_list)
+        expected = [
+            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["B", "A"], ["index 2", "index 1"])
+        ]
+        self.assertEqual(inserted_list, expected)
+
+
+class InsertAsXTest(unittest.TestCase):
+    def test_switch_two_indexes(self):
+        data_list = [XYData(["a", "b"], [1.1, 2.2], "x", "y", ["idx"], ["my_index"])]
+        inserted_list = plot_results.insert_as_x("my_index", data_list)
+        expected = [
+            XYData(["idx"], [1.1], "my_index", "", ["a"], ["x"]),
+            XYData(["idx"], [2.2], "my_index", "", ["b"], ["x"]),
+        ]
+        self.assertEqual(inserted_list, expected)
+
+    def test_y_values_from_different_xy_data_get_merged_logically(self):
+        data_list = [
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                "x",
+                "y",
+                ["idx1", "cat 1"],
+                ["my index", "animate"],
+            ),
+            XYData(
+                ["a", "b"],
+                [3.3, 4.4],
+                "x",
+                "y",
+                ["idx2", "cat 1"],
+                ["my index", "animate"],
+            ),
+        ]
+        inserted_list = plot_results.insert_as_x("my index", data_list)
+        expected = [
+            XYData(
+                ["idx1", "idx2"],
+                [1.1, 3.3],
+                "my index",
+                "",
+                ["cat 1", "a"],
+                ["animate", "x"],
+            ),
+            XYData(
+                ["idx1", "idx2"],
+                [2.2, 4.4],
+                "my index",
+                "",
+                ["cat 1", "b"],
+                ["animate", "x"],
+            ),
+        ]
+        self.assertEqual(inserted_list, expected)
+
+
+class RelabelXAxisTest(unittest.TestCase):
+    def test_tick_gap_smaller_than_unity(self):
+        categories = {
+            "y2020_5week": ["p2020"],
+            "y2025_5week": ["p2025"],
+            "y2030_5week": ["p2030"],
+            "y2035_5week": ["p2035"],
+        }
+        x_ticks = np.array([-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0])
+        tick_positions, labels = plot_results.relabel_x_axis(categories, x_ticks)
+        self.assertEqual(list(tick_positions), [0.0, 1.0, 2.0, 3.0])
+        self.assertEqual(labels, ["p2020", "p2025", "p2030", "p2035"])
+
+    def test_tick_gap_greater_than_unity(self):
+        categories = {
+            "y2020_5week": [str(i) for i in range(10)],
+            "y2025_5week": [str(i) for i in range(10, 20)],
+            "y2030_5week": [str(i) for i in range(20, 40)],
+            "y2035_5week": [str(i) for i in range(30, 40)],
+        }
+        x_ticks = np.array(
+            [-10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0]
+        )
+        tick_positions, labels = plot_results.relabel_x_axis(categories, x_ticks)
+        self.assertEqual(
+            list(tick_positions), [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0]
+        )
+        self.assertEqual(labels, [str(i) for i in range(0, 40, 5)])
 
 
 if __name__ == "__main__":

@@ -11,4 +11,5 @@ results/
 *.log
 *.mps
 *.sol
+__pycache__
 .idea/
