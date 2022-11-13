@@ -148,37 +148,7 @@
                 "to": [
                     "Export_to_CSV",
                     "left"
-                ],
-                "disabled_filters": {
-                    "db_url@Input_data": {
-                        "scenario_filter": [
-                            "all",
-                            "base",
-                            "capacity_margin",
-                            "coal",
-                            "coal_chp",
-                            "coal_co2",
-                            "coal_min_load",
-                            "coal_retire",
-                            "coal_wind",
-                            "coal_wind_ev",
-                            "coal_wind_inertia",
-                            "fullYear",
-                            "multi_year_one_solve",
-                            "network_coal_wind",
-                            "network_coal_wind_battery_co2_fullYear",
-                            "network_coal_wind_capacity_margin",
-                            "network_coal_wind_reserve",
-                            "network_coal_wind_reserve_co2_capacity_margin",
-                            "network_coal_wind_reserve_n_1",
-                            "network_wind_coal_battery_fullYear_invest",
-                            "water_pump",
-                            "wind",
-                            "wind_battery",
-                            "wind_battery_invest"
-                        ]
-                    }
-                }
+                ]
             },
             {
                 "name": "from Results to To_Excel",
@@ -234,7 +204,7 @@
             "x": 64.93101331230629,
             "y": -2.611019051448025,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": []
         },
         "Init": {
