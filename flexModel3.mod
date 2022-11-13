@@ -732,7 +732,11 @@ param p_discount_factor_investment{d in period} := 1/(1 + p_disc_rate) ^ (p_disc
 param p_discount_factor_operations{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_operations);
 param p_discount_in_perpetuity_investment{d in period} := (if p_disc_rate then (1/(1+p_disc_rate)^(p_discount_years[d]+p_disc_offset_investment))/p_disc_rate else 1);
 param p_discount_in_perpetuity_operations{d in period} := (if p_disc_rate then (1/(1+p_disc_rate)^(p_discount_years[d]+p_disc_offset_operations))/p_disc_rate else 1);
-param p_discount_with_perpetuity_investment{d in period} := (if d not in period_last then sum{(d, dNext) in period__period_next} (p_discount_in_perpetuity_investment[d] - p_discount_in_perpetuity_investment[dNext]) else p_discount_in_perpetuity_investment[d]);
+param p_discount_with_perpetuity_investment{d in period} := (if d not in period_last 
+                                                             then sum{(d, dNext) in period__period_next} 
+															    (+ p_discount_in_perpetuity_investment[d] 
+																 - p_discount_in_perpetuity_investment[dNext]) 
+															 else p_discount_in_perpetuity_investment[d]);
 param p_discount_with_perpetuity_operations{d in period} := 
   ( if d not in period_last 
     then sum{(d, dNext) in period__period_next} 
@@ -1005,6 +1009,9 @@ check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m,
 
 printf 'Checking: Is there a timeline connected to a timeblockset\n';
 check sum{(tb, tl) in timeblockset__timeline} 1 > 0;
+
+printf 'Checking: Are discount factors set in models with investments and multiple periods\n';
+check {d in period : d not in period_first && (sum{(e, d) in ed_invest} 1 || sum{(e, d) in ed_divest} 1)} : p_discount_years[d] != 0;
 
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
@@ -2775,7 +2782,7 @@ for {n in node, s in solve_current, (d, t) in dt : d in period_realized}
 	    , (if n in nodeBalance then -vq_state_down[n, d, t].val else 0)
 	  >> fn_node__dt;
   }
-
+display p_discount_with_perpetuity_operations, period_share_of_year;
 printf 'Write nodal prices for time...\n';
 param fn_nodal_prices__dt symbolic := "output/node_prices__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
