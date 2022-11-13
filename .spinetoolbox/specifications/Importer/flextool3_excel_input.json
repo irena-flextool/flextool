@@ -3346,12 +3346,13 @@
                 "10": "float",
                 "11": "float",
                 "12": "float",
-                "13": "float",
+                "13": "string",
                 "14": "float",
                 "15": "float",
                 "16": "float",
                 "17": "float",
-                "18": "float"
+                "18": "float",
+                "19": "float"
             },
             "group_connection": {
                 "0": "string",

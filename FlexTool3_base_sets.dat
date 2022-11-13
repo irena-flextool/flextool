@@ -152,7 +152,9 @@ set nodeTimeParam := inflow, penalty_down, penalty_up, self_discharge_loss;
 set reserveParam := can_provide reservation reliability penalty_reserve,
                     increase_reserve_ratio large_failure_ratio max_share;
 set reserveTimeParam := reservation;
-set invest_method := only_invest, only_retire, invest_and_retire, not_allowed;
+set invest_method := not_allowed, invest_no_limit, invest_period, invest_total, invest_period_total, 
+                  retire_no_limit, retire_period, retire_total, retire_period_total, 
+				  invest_retire_no_limit, invest_retire_period, invest_retire_total, invest_retire_period_total;
 set modelParam := solveFirst, solveLast;
 set groupParam := has_capacity_margin, capacity_margin, has_inertia, inertia_limit, 
                   invest_max_total, invest_min_total, invest_max_period, invest_min_period,
@@ -165,8 +167,8 @@ set groupPeriodParam := capacity_margin, co2_price, inertia_limit, invest_max_pe
 				  non_synchronous_limit, penalty_inertia, penalty_non_synchronous,
 				  max_instant_flow, min_instant_flow, penalty_capacity_margin,
 				  retire_max_period, retire_min_period;
-set invest_method_not_allowed := not_allowed, only_retire;
-set divest_method_not_allowed := not_allowed, only_invest;
+set invest_method_not_allowed := not_allowed, retire_period, retire_total, retire_no_limit;
+set divest_method_not_allowed := not_allowed, invest_period, invest_total, invest_no_limit;
 set profile_method := upper_limit lower_limit fixed;
 set inflow_method := use_original scale_to_annual_flow no_inflow scale_in_proportion;
 set inflow_method_default := use_original;

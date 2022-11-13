@@ -119,6 +119,8 @@
                             "coal_wind_ev",
                             "coal_wind_inertia",
                             "fullYear",
+                            "multi_year",
+                            "multi_year_one_solve",
                             "network_coal_wind",
                             "network_coal_wind_battery_co2_fullYear",
                             "network_coal_wind_capacity_margin",
@@ -146,7 +148,37 @@
                 "to": [
                     "Export_to_CSV",
                     "left"
-                ]
+                ],
+                "disabled_filters": {
+                    "db_url@Input_data": {
+                        "scenario_filter": [
+                            "all",
+                            "base",
+                            "capacity_margin",
+                            "coal",
+                            "coal_chp",
+                            "coal_co2",
+                            "coal_min_load",
+                            "coal_retire",
+                            "coal_wind",
+                            "coal_wind_ev",
+                            "coal_wind_inertia",
+                            "fullYear",
+                            "multi_year_one_solve",
+                            "network_coal_wind",
+                            "network_coal_wind_battery_co2_fullYear",
+                            "network_coal_wind_capacity_margin",
+                            "network_coal_wind_reserve",
+                            "network_coal_wind_reserve_co2_capacity_margin",
+                            "network_coal_wind_reserve_n_1",
+                            "network_wind_coal_battery_fullYear_invest",
+                            "water_pump",
+                            "wind",
+                            "wind_battery",
+                            "wind_battery_invest"
+                        ]
+                    }
+                }
             },
             {
                 "name": "from Results to To_Excel",
@@ -157,17 +189,7 @@
                 "to": [
                     "To_Excel",
                     "right"
-                ],
-                "disabled_filters": {
-                    "db_url@Results": {
-                        "scenario_filter": [
-                            "Limit_fossil",
-                            "coal_co2",
-                            "coal_wind_ev",
-                            "wind_battery_invest"
-                        ]
-                    }
-                }
+                ]
             },
             {
                 "name": "from Results to Plot_results",
@@ -190,6 +212,17 @@
                     "Input_data",
                     "left"
                 ]
+            },
+            {
+                "name": "from Import_from_Excel to Input_data",
+                "from": [
+                    "Import_from_Excel",
+                    "right"
+                ],
+                "to": [
+                    "Input_data",
+                    "left"
+                ]
             }
         ],
         "jumps": []
@@ -198,17 +231,17 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 60.636139913521106,
-            "y": -1.5458828562091789,
+            "x": 64.93101331230629,
+            "y": -2.611019051448025,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": []
         },
         "Init": {
             "type": "Data Store",
             "description": "",
             "x": -412.08173049379843,
-            "y": 69.66295510528136,
+            "y": 68.64823590832064,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -223,8 +256,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -168.06871711133402,
-            "y": -5.298124523219979,
+            "x": -169.18205302767103,
+            "y": -7.426179636517748,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -240,7 +273,7 @@
             "type": "Merger",
             "description": "",
             "x": -287.2765001829209,
-            "y": 53.398238605181916,
+            "y": 52.33310240994308,
             "cancel_on_error": true
         },
         "Excel_input_data": {
@@ -275,8 +308,8 @@
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -49.4719457228405,
-            "y": -6.859631411677821,
+            "x": -48.49155514370959,
+            "y": -7.874350608638537,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -305,8 +338,8 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 307.9368664606192,
-            "y": 30.48280301662267,
+            "x": 308.95158565758,
+            "y": 29.46808381966196,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -336,8 +369,8 @@
         "Plot_results": {
             "type": "Tool",
             "description": "",
-            "x": 342.0517438379899,
-            "y": 202.04392402470603,
+            "x": 343.1157713946388,
+            "y": 203.10795158135494,
             "specification": "Plot",
             "execute_in_work": true,
             "cmd_line_args": [

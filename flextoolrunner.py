@@ -27,7 +27,10 @@ class FlexToolRunner:
         # read the data in
         self.timelines = self.get_timelines()
         self.model_solve = self.get_solves()
-        self.solve_modes = self.get_solve_modes()
+        self.solve_modes = self.get_solve_modes("solve_mode")
+        self.highs_presolve = self.get_solve_modes("highs_presolve")
+        self.highs_method = self.get_solve_modes("highs_method")
+        self.highs_parallel = self.get_solve_modes("highs_parallel")
         self.solve_period_discount_years = self.get_solve_period_discount_years()
         self.solvers = self.get_solver()
         self.timeblocks = self.get_timeblocks()
@@ -55,7 +58,7 @@ class FlexToolRunner:
                     break
         return model__solve
 
-    def get_solve_modes(self):
+    def get_solve_modes(self, parameter):
         """
         read in
         the list of solve modes, return it as a list of strings
@@ -64,7 +67,15 @@ class FlexToolRunner:
         with open("input/solve_mode.csv", 'r') as solvefile:
             header = solvefile.readline()
             solves = solvefile.readlines()
-        return [solve.split(",")[0] for solve in solves]
+            params = []
+            right_params = {}
+            for solve in solves:
+                solve_stripped = solve.rstrip()
+                params.append(solve_stripped.split(","))
+            for param in params:
+                if param[0] == parameter:
+                    right_params[param[1]] = param[2]
+        return right_params
 
     def get_solve_period_discount_years(self):
         """
@@ -317,7 +328,10 @@ class FlexToolRunner:
                 logging.error(f'glpsol mps writing failed: {completed.returncode}')
                 exit(completed.returncode)
             print("GLPSOL wrote the problem as MPS file\n")
-            highs_step2 = ['highs', 'flexModel3.mps', '--options_file=highs.opt', '--presolve=off']
+            highs_step2 = "highs flexModel3.mps --options_file=highs.opt --presolve=" \
+                + self.highs_presolve.get(current_solve, "on") + " --solver=" \
+                + self.highs_method.get(current_solve, "simplex") + " --parallel=" \
+                + self.highs_parallel.get(current_solve, "off")
             completed = subprocess.run(highs_step2)
             if completed.returncode != 0:
                 logging.error(f'Highs solver failed: {completed.returncode}')

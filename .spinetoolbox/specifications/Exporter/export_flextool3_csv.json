@@ -399,53 +399,6 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
-        "entityInvest__investMethod": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "entity__invest_method"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^node$|^unit$|^connection$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "invest_method"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": 0,
-                    "header": "entity"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValue",
-                    "position": 1,
-                    "header": "invest_method"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "group_fn": "no_group",
-            "use_fixed_table_name": true
-        },
         "process__source__connection": {
             "type": "relationships",
             "mapping": [
@@ -687,8 +640,9 @@
                 },
                 {
                     "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "solve_mode"
+                    "position": 0,
+                    "filter_re": "^solve_mode$|^highs_presolve$|^highs_method$|^highs_parallel$",
+                    "header": "param"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -697,7 +651,7 @@
                 },
                 {
                     "map_type": "Object",
-                    "position": 0,
+                    "position": 1,
                     "header": "solve"
                 },
                 {
@@ -710,8 +664,8 @@
                 },
                 {
                     "map_type": "ParameterValue",
-                    "position": 1,
-                    "header": "mode"
+                    "position": 2,
+                    "header": "value"
                 }
             ],
             "enabled": true,
@@ -1247,7 +1201,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^(?!has_|^output_results$)",
+                    "filter_re": "^(?!has_|^output_results$|^invest_method$)",
                     "header": "groupParam"
                 },
                 {
@@ -4221,6 +4175,100 @@
                     "map_type": "ParameterValue",
                     "position": 1,
                     "header": "storage_solve_horizon_method"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "group__investMethod": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "group__invest_method"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^group$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "invest_method"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "group"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 1,
+                    "header": "invest_method"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "entity__investMethod": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "entity__invest_method"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^node$|^unit$|^connection$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "invest_method"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "entity"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 1,
+                    "header": "invest_method"
                 }
             ],
             "enabled": true,

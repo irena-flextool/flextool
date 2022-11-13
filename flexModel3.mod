@@ -133,11 +133,14 @@ set method_1var_per_way within method;
 
 set invest_method 'methods available for investments';
 set invest_method_not_allowed 'method for denying investments' within invest_method;
-set divest_method_not_allowed 'method for denying investments' within invest_method;
+set divest_method_not_allowed 'method for denying divestments' within invest_method;
 set entity__invest_method 'the investment method applied to an entity' dimen 2 within {entity, invest_method};
-set entityInvest := setof {(e, m) in entity__invest_method : m not in invest_method_not_allowed} (e);
 set entityDivest := setof {(e, m) in entity__invest_method : m not in divest_method_not_allowed} (e);
+set entityInvest := setof {(e, m) in entity__invest_method : m not in invest_method_not_allowed} (e);
 param investableEntities := sum{e in entityInvest} 1;
+set group__invest_method 'the investment method applied to a group' dimen 2 within {group, invest_method};
+set group_invest := setof {(g, m) in group__invest_method : m not in invest_method_not_allowed} (g);
+set group_divest := setof {(g, m) in group__invest_method : m not in divest_method_not_allowed} (g);
 set nodeBalance 'nodes that maintain a node balance' within node;
 set nodeState 'nodes that have a state' within node;
 set inflow_method 'method for scaling the inflow';
@@ -291,6 +294,7 @@ table data IN 'CSV' 'input/process_unit.csv': process_unit <- [process_unit];
 # Multi dimension membership sets
 table data IN 'CSV' 'input/commodity__node.csv' : commodity_node <- [commodity,node];
 table data IN 'CSV' 'input/entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
+table data IN 'CSV' 'input/group__invest_method.csv' : group__invest_method <- [group,invest_method];
 table data IN 'CSV' 'input/node__inflow_method.csv' : node__inflow_method_read <- [node,inflow_method];
 table data IN 'CSV' 'input/node__storage_binding_method.csv' : node__storage_binding_method_read <- [node,storage_binding_method];
 table data IN 'CSV' 'input/node__storage_start_end_method.csv' : node__storage_start_end_method <- [node,storage_start_end_method];
@@ -801,11 +805,30 @@ set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, 
 set pssdt_varCost_eff := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && ptProcess_source[p, source, 'variable_cost', t]};
 
 set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d] || sum{(e, c) in process_capacity_constraint} 1 || sum{(e, c) in node_capacity_constraint} 1 };
+set ed_invest_period := {(e, d) in ed_invest : (e, 'invest_period') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method 
+                                               || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
+set e_invest_total := {e in entityInvest : (e, 'invest_total') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method 
+                                               || (e, 'invest_retire_total') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
 set pd_invest := {(p, d) in ed_invest : p in process};
 set nd_invest := {(n, d) in ed_invest : n in node};
 set ed_divest := {e in entityDivest, d in period_invest : ed_entity_annual_divest[e, d] || sum{(e, c) in process_capacity_constraint} 1 || sum{(e, c) in node_capacity_constraint} 1 };
+set ed_divest_period := {(e, d) in ed_invest : (e, 'retire_period') in entity__invest_method || (e, 'retire_period_total') in entity__invest_method 
+                                               || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
+set e_divest_total := {e in entityDivest : (e, 'retire_total') in entity__invest_method || (e, 'retire_period_total') in entity__invest_method 
+                                               || (e, 'invest_retire_total') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
 set pd_divest := {(p, d) in ed_divest : p in process};
 set nd_divest := {(n, d) in ed_divest : n in node};
+
+set gd_invest := {g in group_invest, d in period_invest : sum{(g, e) in group_entity : (e, d) in ed_invest} 1};
+set gd_invest_period := {(g, d) in gd_invest : (g, 'invest_period') in group__invest_method || (g, 'invest_period_total') in group__invest_method 
+                                               || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
+set g_invest_total := {g in group_invest : (g, 'invest_total') in group__invest_method || (g, 'invest_period_total') in group__invest_method 
+                                               || (g, 'invest_retire_total') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
+set gd_divest := {g in group_invest, d in period_invest : sum{(g, e) in group_entity : (e, d) in ed_invest} 1};
+set gd_divest_period := {(g, d) in gd_invest : (g, 'retire_period') in group__invest_method || (g, 'retire_period_total') in group__invest_method 
+                                               || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
+set g_divest_total := {g in group_divest : (g, 'retire_total') in group__invest_method || (g, 'retire_period_total') in group__invest_method 
+                                               || (g, 'invest_retire_total') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
 
 param e_invest_max_total{e in entityInvest} :=
   + (if e in process then p_process[e, 'invest_max_total'])
@@ -831,7 +854,7 @@ param ed_invest_max_period{(e, d) in ed_invest} :=
   + (if e in process then pdProcess[e, 'invest_max_period', d])
   + (if e in node then pdNode[e, 'invest_max_period', d])
 ;  
-display processPeriodParam, process__param__period, pd_process, pdProcess, ed_invest_max_period;
+
 param ed_divest_max_period{(e, d) in ed_divest} :=
   + (if e in process then pdProcess[e, 'retire_max_period', d])
   + (if e in node then pdNode[e, 'retire_max_period', d])
@@ -931,7 +954,6 @@ set process__sink_nonSync :=
 			|| ( (p, sink) in process_sink && p in process_nonSync_connection )
 			|| ( (p, sink) in process_source && p in process_nonSync_connection )  
 	    };
-display p_model;
 param p_entity_all_existing {e in entity} :=
         + (if e in process then p_process[e, 'existing'])
         + (if e in node then p_node[e, 'existing'])
@@ -949,7 +971,6 @@ param d_flowInvest {(p, d) in pd_invest} default 0;
 param d_reserve_upDown_node {(p, r, ud, n, d, t) in prundt} default 0;
 param dq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} default 0;
 
-display node__inflow_method, node__inflow_method_read;
 #########################
 # Variable declarations
 var v_flow {(p, source, sink, d, t) in peedt};
@@ -1680,116 +1701,104 @@ s.t. reserve_process_downward{(p, r, 'down', n, d, t) in prundt} :
 	  )		  
 ;
 
-s.t. maxInvestGroup_entity_period {g in group, d in period_invest : pdGroup[g, 'invest_max_period', d] } :
+s.t. maxInvestGroup_entity_period {(g, d) in gd_invest_period} :
   + sum{(g, e) in group_entity : (e, d) in ed_invest} v_invest[e, d] * p_entity_unitsize[e]
   <=
   + pdGroup[g, 'invest_max_period', d]
 ;
 
-s.t. maxDivestGroup_entity_period {g in group, d in period_invest : pdGroup[g, 'retire_max_period', d] } :
+s.t. maxDivestGroup_entity_period {(g, d) in gd_divest_period} :
   + sum{(g, e) in group_entity : (e, d) in ed_divest} v_divest[e, d] * p_entity_unitsize[e]
   <=
   + pdGroup[g, 'retire_max_period', d]
 ;
 
-s.t. minInvestGroup_entity_period {g in group, d in period_invest : pdGroup[g, 'invest_min_period', d] } :
+s.t. minInvestGroup_entity_period {(g, d) in gd_invest_period} :
   + sum{(g, e) in group_entity : (e, d) in ed_invest} v_invest[e, d] * p_entity_unitsize[e]
-  <=
+  >=
   + pdGroup[g, 'invest_min_period', d]
 ;
 
-s.t. minDivestGroup_entity_period {g in group, d in period_invest : pdGroup[g, 'retire_min_period', d] } :
+s.t. minDivestGroup_entity_period {(g, d) in gd_divest_period} :
   + sum{(g, e) in group_entity : (e, d) in ed_divest} v_invest[e, d] * p_entity_unitsize[e]
-  <=
+  >=
   + pdGroup[g, 'retire_min_period', d]
 ;
 
-s.t. maxInvestGroup_entity_total {g in group : p_group[g, 'invest_max_total'] } :
-  + sum{(g, e) in group_entity, d in period : (e, d) in ed_invest}
-    (
-      + v_invest[e, d]
-      + (if not p_model['solveFirst'] && e in entityInvest then p_entity_invested[e])
-	)
+s.t. maxInvestGroup_entity_total {g in g_invest_total} :
+  + sum{(g, e) in group_entity, d in period : e in entityInvest} v_invest[e, d] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity : e in entityInvest} (if not p_model['solveFirst'] then p_entity_invested[e])
   <=
   + p_group[g, 'invest_max_total']
 ;
 
-s.t. maxDivestGroup_entity_total {g in group : p_group[g, 'retire_max_total'] } :
-  + sum{(g, e) in group_entity, d in period : (e, d) in ed_divest}
-    (
-      + v_divest[e, d]
-      + (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
-	)
+s.t. maxDivestGroup_entity_total {g in g_divest_total} :
+  + sum{(g, e) in group_entity, d in period : e in entityDivest} v_divest[e, d] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity : e in entityDivest} (if not p_model['solveFirst'] then p_entity_divested[e])
   <=
   + p_group[g, 'retire_max_total']
 ;
 
-s.t. minInvestGroup_entity_total {g in group : p_group[g, 'invest_min_total'] } :
-  + sum{(g, e) in group_entity, d in period : (e, d) in ed_invest}
-    (
-      + v_invest[e, d]
-      + (if not p_model['solveFirst'] && e in entityInvest then p_entity_invested[e])
-	)
+s.t. minInvestGroup_entity_total {g in g_invest_total} :
+  + sum{(g, e) in group_entity, d in period : e in entityInvest} v_invest[e, d] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity : e in entityInvest} (if not p_model['solveFirst'] then p_entity_invested[e])
   >=
   + p_group[g, 'invest_min_total']
 ;
 
-s.t. minDivestGroup_entity_total {g in group : p_group[g, 'retire_min_total'] } :
-  + sum{(g, e) in group_entity, d in period : (e, d) in ed_divest}
-    (
-      + v_divest[e, d]
-      + (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
-	)
+s.t. minDivestGroup_entity_total {g in g_divest_total} :
+  + sum{(g, e) in group_entity, d in period : e in entityDivest} v_divest[e, d] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity : e in entityDivest} (if not p_model['solveFirst'] then p_entity_divested[e])
   >=
   + p_group[g, 'retire_min_total']
 ;
-display ed_invest_max_period;
-s.t. maxInvest_entity_period {(e, d) in ed_invest : ed_invest_max_period[e, d]} :  # Covers both processes and nodes
+
+s.t. maxInvest_entity_period {(e, d) in ed_invest_period} :  # Covers both processes and nodes
   + v_invest[e, d] * p_entity_unitsize[e] 
   <= 
   + ed_invest_max_period[e, d]
 ;
 
-s.t. maxDivest_entity_period {(e, d) in ed_divest : ed_divest_max_period[e, d]} :  # Covers both processes and nodes
+s.t. maxDivest_entity_period {(e, d) in ed_divest_period} :  # Covers both processes and nodes
   + v_divest[e, d] * p_entity_unitsize[e] 
   <= 
   + ed_divest_max_period[e, d]
 ;
 
-s.t. minInvest_entity_period {(e, d)  in ed_invest : ed_invest_min_period[e, d]} :  # Covers both processes and nodes
+s.t. minInvest_entity_period {(e, d)  in ed_invest_period} :  # Covers both processes and nodes
   + v_invest[e, d] * p_entity_unitsize[e] 
   >= 
   + ed_invest_min_period[e, d]
 ;
 
-s.t. minDivest_entity_period {(e, d)  in ed_divest : ed_divest_min_period[e, d]} :  # Covers both processes and nodes
+s.t. minDivest_entity_period {(e, d)  in ed_divest_period} :  # Covers both processes and nodes
   + v_divest[e, d] * p_entity_unitsize[e] 
   >= 
   + ed_divest_min_period[e, d]
 ;
 
-s.t. maxInvest_entity_total {e  in entityInvest : e_invest_max_total[e] && sum{(e, d) in ed_invest} 1} :  # Covers both processes and nodes
+s.t. maxInvest_entity_total {e in e_invest_total} :  # Covers both processes and nodes
   + sum{(e, d) in ed_invest} v_invest[e, d] * p_entity_unitsize[e] 
   + (if not p_model['solveFirst'] then p_entity_invested[e])
   <= 
   + e_invest_max_total[e]
 ;
 
-s.t. maxDivest_entity_total {e  in entityDivest : e_divest_max_total[e] && sum{(e, d) in ed_divest} 1} :  # Covers both processes and nodes
+s.t. maxDivest_entity_total {e in e_divest_total} :  # Covers both processes and nodes
   + sum{(e, d) in ed_divest} v_divest[e, d] * p_entity_unitsize[e] 
   + (if not p_model['solveFirst'] then p_entity_divested[e])
   <= 
   + e_divest_max_total[e]
 ;
 
-s.t. minInvest_entity_total {e  in entityInvest : e_invest_min_total[e] && sum{(e, d) in ed_invest} 1} :  # Covers both processes and nodes
+s.t. minInvest_entity_total {e in e_invest_total} :  # Covers both processes and nodes
   + sum{(e, d) in ed_invest} v_invest[e, d] * p_entity_unitsize[e] 
   + (if not p_model['solveFirst'] then p_entity_invested[e])
   >= 
   + e_invest_min_total[e]
 ;
 
-s.t. minDivest_entity_total {e  in entityDivest : e_divest_min_total[e] && sum{(e, d) in ed_divest} 1} :  # Covers both processes and nodes
+s.t. minDivest_entity_total {e in e_divest_total} :  # Covers both processes and nodes
   + sum{(e, d) in ed_divest} v_divest[e, d] * p_entity_unitsize[e] 
   + (if not p_model['solveFirst'] then p_entity_divested[e])
   >= 
@@ -2036,7 +2045,7 @@ param entity_all_capacity{e in entity, d in period_realized} :=
   + sum {(e, d2) in ed_invest : d2 <= d} v_invest[e, d2].val * p_entity_unitsize[e]
   - sum {(e, d2) in ed_divest : d2 <= d} v_divest[e, d2].val * p_entity_unitsize[e]
 ;
-display entity_all_capacity;
+
 param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
   + sum {(p, m) in process_method : m in method_1var_per_way}
     ( + sum {(p, source, sink2) in process_source_toSink} 
@@ -2766,7 +2775,7 @@ for {n in node, s in solve_current, (d, t) in dt : d in period_realized}
 	    , (if n in nodeBalance then -vq_state_down[n, d, t].val else 0)
 	  >> fn_node__dt;
   }
-display p_discount_with_perpetuity_operations;
+
 printf 'Write nodal prices for time...\n';
 param fn_nodal_prices__dt symbolic := "output/node_prices__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
