@@ -1013,6 +1013,9 @@ check sum{(tb, tl) in timeblockset__timeline} 1 > 0;
 printf 'Checking: Are discount factors set in models with investments and multiple periods\n';
 check {d in period : d not in period_first && (sum{(e, d) in ed_invest} 1 || sum{(e, d) in ed_divest} 1)} : p_discount_years[d] != 0;
 
+printf 'Checking: Does a node with has_storage also have has_balance set to yes\n';
+check {n in nodeState} : n in nodeBalance;
+
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
 minimize total_cost:
