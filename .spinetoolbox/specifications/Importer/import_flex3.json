@@ -99,12 +99,12 @@
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": "header",
+                                "position": -1,
                                 "import_objects": true
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": -1,
+                                "position": -2,
                                 "import_objects": true
                             },
                             {
@@ -181,12 +181,12 @@
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": "header",
+                                "position": -1,
                                 "import_objects": true
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": -1,
+                                "position": -2,
                                 "import_objects": true
                             },
                             {
@@ -450,7 +450,7 @@
                             },
                             {
                                 "map_type": "Object",
-                                "position": "header"
+                                "position": -1
                             },
                             {
                                 "map_type": "ObjectMetadata",
@@ -965,7 +965,7 @@
                             },
                             {
                                 "map_type": "Object",
-                                "position": "header"
+                                "position": -1
                             },
                             {
                                 "map_type": "ObjectMetadata",
@@ -1254,7 +1254,7 @@
                             },
                             {
                                 "map_type": "Object",
-                                "position": "header"
+                                "position": -1
                             },
                             {
                                 "map_type": "ObjectMetadata",
@@ -1324,7 +1324,7 @@
                             },
                             {
                                 "map_type": "Object",
-                                "position": "header"
+                                "position": -1
                             },
                             {
                                 "map_type": "ObjectMetadata",
@@ -1745,7 +1745,7 @@
                             },
                             {
                                 "map_type": "Object",
-                                "position": "header"
+                                "position": -1
                             },
                             {
                                 "map_type": "ObjectMetadata",
@@ -1806,7 +1806,7 @@
                             },
                             {
                                 "map_type": "Object",
-                                "position": "header"
+                                "position": -1
                             },
                             {
                                 "map_type": "ObjectMetadata",
@@ -1977,7 +1977,7 @@
                             },
                             {
                                 "map_type": "Object",
-                                "position": "header"
+                                "position": -1
                             },
                             {
                                 "map_type": "ObjectMetadata",
@@ -2038,7 +2038,7 @@
                             },
                             {
                                 "map_type": "Object",
-                                "position": "header"
+                                "position": -1
                             },
                             {
                                 "map_type": "ObjectMetadata",
@@ -2281,7 +2281,7 @@
                             },
                             {
                                 "map_type": "Object",
-                                "position": "header"
+                                "position": -1
                             },
                             {
                                 "map_type": "ObjectMetadata",
@@ -2502,15 +2502,21 @@
             "process__reserve__upDown__node__period__t": {
                 "has_header": false
             },
-            "node_prices__period__t": {},
+            "node_prices__period__t": {
+                "has_header": false
+            },
             "summary_solve": {},
             "node__period__t": {},
-            "node_state__period__t": {},
+            "node_state__period__t": {
+                "has_header": false
+            },
             "unit__inputNode__period__t": {
                 "has_header": false
             },
             "costs__period": {},
-            "unit_online__period__t": {},
+            "unit_online__period__t": {
+                "has_header": false
+            },
             "group_node__period": {},
             "unit__outputNode__period__t": {
                 "has_header": false
@@ -2519,33 +2525,49 @@
             "connection__period": {
                 "has_header": false
             },
-            "group_inertia__period__t": {},
+            "group_inertia__period__t": {
+                "has_header": false
+            },
             "unit_capacity__period": {},
-            "unit__outputNode__period": {},
+            "unit__outputNode__period": {
+                "has_header": false
+            },
             "connection__period__t": {
                 "has_header": false
             },
-            "unit__inputNode__period": {},
+            "unit__inputNode__period": {
+                "has_header": false
+            },
             "costs__period__t": {},
             "node_ramp__period__t": {},
             "process__reserve__upDown__node__period_average": {
                 "has_header": false
             },
             "result": {},
-            "slack__capacity_margin__period": {},
-            "slack__nonsync_group__period__t": {},
+            "slack__capacity_margin__period": {
+                "has_header": false
+            },
+            "slack__nonsync_group__period__t": {
+                "has_header": false
+            },
             "slack__reserve__upDown__group__period__t": {
                 "has_header": false
             },
-            "unit_online__period_average": {},
-            "unit_startup__period": {},
+            "unit_online__period_average": {
+                "has_header": false
+            },
+            "unit_startup__period": {
+                "has_header": false
+            },
             "unit_ramp__inputNode__dt": {
                 "has_header": false
             },
             "unit_ramp__outputNode__dt": {
                 "has_header": false
             },
-            "slack__inertia_group__period__t": {},
+            "slack__inertia_group__period__t": {
+                "has_header": false
+            },
             "process__period_co2": {},
             "entity_invest_marginal__period": {
                 "has_header": false
@@ -2558,23 +2580,33 @@
                 "2": "float",
                 "3": "float",
                 "4": "float",
-                "5": "float",
-                "6": "float"
+                "5": "float"
             },
             "unit__inputNode__period": {
                 "0": "string",
-                "1": "string"
+                "1": "string",
+                "2": "float",
+                "3": "float",
+                "4": "float",
+                "5": "float"
             },
             "unit__inputNode__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string"
+                "2": "string",
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float"
             },
             "unit__outputNode__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float"
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float"
             },
             "unit_capacity__period": {
                 "0": "string",
@@ -2602,28 +2634,7 @@
             "process__reserve__upDown__node__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "float",
-                "21": "float",
-                "22": "float",
-                "23": "float"
+                "2": "string"
             },
             "connection__period__t": {
                 "0": "string",
@@ -2669,14 +2680,7 @@
                 "1": "string",
                 "2": "string",
                 "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float"
+                "4": "float"
             },
             "group_node__period": {
                 "0": "string",
@@ -2715,17 +2719,13 @@
             "node_state__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float"
+                "2": "string"
             },
             "unit_online__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string"
+                "2": "string",
+                "3": "float"
             },
             "group_inertia__period__t": {
                 "0": "string",
@@ -2762,87 +2762,31 @@
             },
             "process__reserve__upDown__node__period_average": {
                 "0": "string",
-                "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "float",
-                "21": "float",
-                "22": "float"
+                "1": "string"
             },
             "slack__capacity_margin__period": {
                 "0": "string",
-                "1": "string",
-                "2": "float"
+                "1": "string"
             },
             "slack__nonsync_group__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float"
+                "2": "string"
             },
             "slack__reserve__upDown__group__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float"
+                "2": "string"
             },
             "unit_online__period_average": {
                 "0": "string",
                 "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float"
+                "2": "float"
             },
             "unit_startup__period": {
                 "0": "string",
                 "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float"
+                "2": "float"
             },
             "unit_ramp__inputNode__dt": {
                 "0": "string",
@@ -2851,31 +2795,7 @@
                 "3": "float",
                 "4": "float",
                 "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "float",
-                "21": "float",
-                "22": "float",
-                "23": "float",
-                "24": "float",
-                "25": "float",
-                "26": "float",
-                "27": "float",
-                "28": "float",
-                "29": "float",
-                "30": "float"
+                "6": "float"
             },
             "unit_ramp__outputNode__dt": {
                 "0": "string",
@@ -2884,36 +2804,12 @@
                 "3": "float",
                 "4": "float",
                 "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "float",
-                "21": "float",
-                "22": "float",
-                "23": "float",
-                "24": "float",
-                "25": "float",
-                "26": "float",
-                "27": "float",
-                "28": "float",
-                "29": "float"
+                "6": "float"
             },
             "slack__inertia_group__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float"
+                "2": "string"
             },
             "process__period_co2": {
                 "0": "string",
@@ -2923,9 +2819,7 @@
             },
             "entity_invest_marginal__period": {
                 "0": "string",
-                "1": "string",
-                "2": "float",
-                "3": "float"
+                "1": "string"
             }
         },
         "table_default_column_type": {
