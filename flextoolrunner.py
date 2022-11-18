@@ -386,23 +386,30 @@ class FlexToolRunner:
         """
         step_lengths = []
         period_start_pos = 0
-        for period, active_time in active_time_list.items():
+        period_counter = -1
+        first_period_name = list(active_time_list)[0]
+        last_period_name = list(active_time_list)[-1]
+        for period, active_time in reversed(active_time_list.items()):
+            period_counter -= 1
             period_last = len(active_time)
             block_last = len(active_time) - 1
+            if period == first_period_name:
+                previous_period_name = last_period_name
+            else:
+                previous_period_name = list(active_time_list)[period_counter]
             for i, step in enumerate(reversed(active_time)):
                 j = period_last - i - 1
+                if j == period_last - 1:
+                    store_last_time_step = step[0]
                 if j > 0:  # handle the first element of the period separately below
                     jump = active_time[j][1] - active_time[j - 1][1]
                     if jump > 1:
-                        jump_back = active_time[j][1] - active_time[block_last][1]
-                        step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0]))
+                        step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], period, active_time[j - 1][0]))
                         block_last = j - 1
                     else:
-                        step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[j - 1][0]))
+                        step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[j - 1][0], period, active_time[j - 1][0]))
                 else:  # first time step of the period is handled here
-                    jump = active_time[j][1] - active_time[len(active_time) - 1][1]
-                    step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0]))
-            period_start_pos = period_start_pos + period_last
+                    step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], previous_period_name, store_last_time_step))
         return step_lengths
 
     def write_step_jump(self, step_lengths):
@@ -413,7 +420,7 @@ class FlexToolRunner:
         :return:
         """
 
-        headers = ("period", "time", "previous", "previous_within_block")
+        headers = ("period", "time", "previous", "previous_within_block", "previous_period", "previous_within_solve")
         with open("solve_data/step_previous.csv", 'w', newline='\n') as stepfile:
             writer = csv.writer(stepfile, delimiter=',')
             writer.writerow(headers)

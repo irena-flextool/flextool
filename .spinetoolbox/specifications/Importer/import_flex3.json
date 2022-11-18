@@ -23,7 +23,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "flow_d"
+                                "value": "balance"
                             },
                             {
                                 "map_type": "Alternative",
@@ -114,7 +114,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "flow_d"
+                                "value": "flow"
                             },
                             {
                                 "map_type": "Alternative",
@@ -196,7 +196,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "flow_d"
+                                "value": "flow"
                             },
                             {
                                 "map_type": "Alternative",
@@ -298,7 +298,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "reservation"
+                                "value": "reservation_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -389,7 +389,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "flow_dt"
+                                "value": "flow_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -459,7 +459,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "online_dt"
+                                "value": "online_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -550,7 +550,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "flow_dt"
+                                "value": "flow_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -651,7 +651,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "flow_dt"
+                                "value": "flow_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -752,7 +752,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "flow_d"
+                                "value": "flow"
                             },
                             {
                                 "map_type": "Alternative",
@@ -814,7 +814,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "cost_d"
+                                "value": "cost"
                             },
                             {
                                 "map_type": "Alternative",
@@ -974,7 +974,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "price_dt"
+                                "value": "price_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -1184,7 +1184,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "flow_dt"
+                                "value": "balance_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -1263,7 +1263,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "state"
+                                "value": "state_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -1281,7 +1281,7 @@
                             {
                                 "map_type": "IndexName",
                                 "position": "hidden",
-                                "value": "solve_dt"
+                                "value": "solve"
                             },
                             {
                                 "map_type": "ParameterValueIndex",
@@ -1333,7 +1333,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "inertia_dt"
+                                "value": "inertia_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -1474,7 +1474,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "cost_dt"
+                                "value": "cost_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -1553,7 +1553,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "ramp_dt"
+                                "value": "ramp_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -1754,7 +1754,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "slack_capacity_margin_d"
+                                "value": "slack_capacity_margin"
                             },
                             {
                                 "map_type": "Alternative",
@@ -1815,7 +1815,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "slack_nonsync_dt"
+                                "value": "slack_nonsync_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -1916,7 +1916,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "slack_reserve"
+                                "value": "slack_reserve_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -2129,7 +2129,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "ramp_dt"
+                                "value": "ramp_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -2220,7 +2220,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "ramp_dt"
+                                "value": "ramp_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -2290,7 +2290,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "slack_inertia_dt"
+                                "value": "slack_inertia_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -2360,7 +2360,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "co2_d"
+                                "value": "co2"
                             },
                             {
                                 "map_type": "Alternative",
@@ -2421,7 +2421,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "invest_marginal_d"
+                                "value": "invest_marginal"
                             },
                             {
                                 "map_type": "Alternative",
@@ -2578,35 +2578,25 @@
                 "0": "string",
                 "1": "string",
                 "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float"
+                "3": "float"
             },
             "unit__inputNode__period": {
                 "0": "string",
                 "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float"
+                "2": "float"
             },
             "unit__inputNode__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float"
+                "3": "float"
             },
             "unit__outputNode__period__t": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
                 "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float"
+                "4": "float"
             },
             "unit_capacity__period": {
                 "0": "string",
@@ -2639,13 +2629,11 @@
             "connection__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float"
+                "2": "string"
             },
             "connection__period": {
                 "0": "string",
-                "1": "string",
-                "2": "float"
+                "1": "string"
             },
             "costs__period": {
                 "0": "string",
@@ -2679,8 +2667,7 @@
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float",
-                "4": "float"
+                "3": "float"
             },
             "group_node__period": {
                 "0": "string",
@@ -2724,8 +2711,7 @@
             "unit_online__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float"
+                "2": "string"
             },
             "group_inertia__period__t": {
                 "0": "string",
@@ -2780,31 +2766,24 @@
             },
             "unit_online__period_average": {
                 "0": "string",
-                "1": "string",
-                "2": "float"
+                "1": "string"
             },
             "unit_startup__period": {
                 "0": "string",
-                "1": "string",
-                "2": "float"
+                "1": "string"
             },
             "unit_ramp__inputNode__dt": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float"
+                "3": "float"
             },
             "unit_ramp__outputNode__dt": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
                 "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float"
+                "4": "float"
             },
             "slack__inertia_group__period__t": {
                 "0": "string",
@@ -2819,7 +2798,9 @@
             },
             "entity_invest_marginal__period": {
                 "0": "string",
-                "1": "string"
+                "1": "string",
+                "2": "float",
+                "3": "float"
             }
         },
         "table_default_column_type": {

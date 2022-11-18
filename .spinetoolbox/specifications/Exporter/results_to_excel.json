@@ -81,7 +81,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "cost_d"
+                    "value": "cost"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -91,7 +91,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^cost_d$"
+                    "filter_re": "^cost$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -291,7 +291,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "reserve"
+                    "value": "reserve_t"
                 },
                 {
                     "map_type": "RelationshipClass",
@@ -316,7 +316,8 @@
                 },
                 {
                     "map_type": "ParameterDefinition",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^reservation_t$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -392,7 +393,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "cost_dt"
+                    "value": "cost_t"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -402,7 +403,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^cost_dt$"
+                    "filter_re": "^cost_t$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -481,7 +482,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^inertia_dt$"
+                    "filter_re": "^inertia_t$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -540,7 +541,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "node_price"
+                    "value": "node_price_t"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -550,7 +551,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^price_dt$"
+                    "filter_re": "^price_t$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -610,7 +611,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "node_flow"
+                    "value": "node_balance_t"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -620,7 +621,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^flow_dt$"
+                    "filter_re": "^balance_t$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -688,7 +689,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "unit__node_flow"
+                    "value": "unit__node_flow_t"
                 },
                 {
                     "map_type": "RelationshipClass",
@@ -706,7 +707,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^flow_dt$"
+                    "filter_re": "^flow_t$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -774,7 +775,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "ramp_limits"
+                    "value": "ramp_limits_t"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -784,7 +785,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^ramp_dt$"
+                    "filter_re": "^ramp_t$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -851,7 +852,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "node_flow_d"
+                    "value": "node_balance"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -861,7 +862,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^flow_d$"
+                    "filter_re": "^balance$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -921,7 +922,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "node_price"
+                    "value": "node_state_t"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -991,7 +992,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "group_inertia"
+                    "value": "group_inertia_t"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -1001,7 +1002,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^slack_inertia_dt$"
+                    "filter_re": "^slack_inertia_t$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1060,7 +1061,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "group_inertia"
+                    "value": "group_inertia_t"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -1070,7 +1071,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^slack_nonsync_dt$"
+                    "filter_re": "^slack_nonsync_t$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1129,7 +1130,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "slack_capacity_margin_d"
+                    "value": "slack_capacity_margin"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -1139,7 +1140,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^slack_capacity_margin_d$"
+                    "filter_re": "^slack_capacity_margin$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1252,7 +1253,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "unit_online_dt"
+                    "value": "unit_online_t"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -1262,7 +1263,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^online_dt$"
+                    "filter_re": "^online_t$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1406,7 +1407,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^flow_d$"
+                    "filter_re": "^flow$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1470,7 +1471,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "connection_flow"
+                    "value": "connection_flow_t"
                 },
                 {
                     "map_type": "RelationshipClass",
@@ -1492,7 +1493,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^flow_dt$"
+                    "filter_re": "^flow_t$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1574,7 +1575,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^co2_d$"
+                    "filter_re": "^co2$"
                 },
                 {
                     "map_type": "ParameterValueList",
