@@ -2505,7 +2505,7 @@ for {i in 1..1 : p_model['solveFirst']}
   { 
     printf 'solve,period,time,commodity,CO2,variable,starts,"upward slack penalty","downward slack penalty",' > fn_summary_cost_dt;
 	printf '"inertia slack penalty","non-synchronous slack penalty","upward reserve slack penalty",' >> fn_summary_cost_dt;
-	printf '""downward reserves slack penalty"\n' >> fn_summary_cost_dt;
+	printf '"downward reserves slack penalty"\n' >> fn_summary_cost_dt;
   }
 for {s in solve_current, (d, t) in dt : d in period_realized}
   { 
