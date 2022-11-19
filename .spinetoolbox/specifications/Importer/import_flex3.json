@@ -2401,14 +2401,136 @@
                     }
                 }
             ],
-            "entity_invest_marginal__period": [
+            "connection_invest_marginal__period": [
                 {
                     "Mapping 1": {
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
                                 "position": "hidden",
-                                "value": "entity"
+                                "value": "connection"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": -1
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "invest_marginal"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "node_invest_marginal__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": -1
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "invest_marginal"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "unit_invest_marginal__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "unit"
                             },
                             {
                                 "map_type": "Object",
@@ -2494,7 +2616,9 @@
             "unit_ramp__outputNode__dt",
             "slack__inertia_group__period__t",
             "process__period_co2",
-            "entity_invest_marginal__period"
+            "connection_invest_marginal__period",
+            "node_invest_marginal__period",
+            "unit_invest_marginal__period"
         ],
         "table_options": {
             "node__period": {},
@@ -2569,7 +2693,13 @@
                 "has_header": false
             },
             "process__period_co2": {},
-            "entity_invest_marginal__period": {
+            "connection_invest_marginal__period": {
+                "has_header": false
+            },
+            "node_invest_marginal__period": {
+                "has_header": false
+            },
+            "unit_invest_marginal__period": {
                 "has_header": false
             }
         },
@@ -2633,7 +2763,11 @@
             },
             "connection__period": {
                 "0": "string",
-                "1": "string"
+                "1": "string",
+                "2": "float",
+                "3": "float",
+                "4": "float",
+                "5": "float"
             },
             "costs__period": {
                 "0": "string",
@@ -2716,7 +2850,8 @@
             "group_inertia__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string"
+                "2": "string",
+                "3": "float"
             },
             "costs__period__t": {
                 "0": "string",
@@ -2770,7 +2905,8 @@
             },
             "unit_startup__period": {
                 "0": "string",
-                "1": "string"
+                "1": "string",
+                "2": "float"
             },
             "unit_ramp__inputNode__dt": {
                 "0": "string",
@@ -2796,11 +2932,20 @@
                 "2": "string",
                 "3": "float"
             },
-            "entity_invest_marginal__period": {
+            "connection_invest_marginal__period": {
                 "0": "string",
                 "1": "string",
-                "2": "float",
-                "3": "float"
+                "2": "float"
+            },
+            "node_invest_marginal__period": {
+                "0": "string",
+                "1": "string",
+                "2": "float"
+            },
+            "unit_invest_marginal__period": {
+                "0": "string",
+                "1": "string",
+                "2": "float"
             }
         },
         "table_default_column_type": {
@@ -2832,7 +2977,6 @@
             "unit_ramp__inputNode__dt": "float",
             "unit_ramp__outputNode__dt": "float",
             "slack__inertia_group__period__t": "float",
-            "entity_invest_marginal__period": "float",
             "process__period_co2": "float"
         },
         "table_row_types": {

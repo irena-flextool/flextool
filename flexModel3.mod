@@ -19,7 +19,6 @@ display datetime0;
 set entity 'e - contains both nodes and processes';
 set process 'p - Particular activity that transfers, converts or stores commodities' within entity;
 set processUnit 'Unit processes' within process;
-set processTransfer 'Transfer processes' within process;
 set node 'n - Any location where a balance needs to be maintained' within entity;
 set group 'g - Any group of entities that have a set of common constraints';
 set commodity 'c - Stuff that is being processed';
@@ -2828,19 +2827,48 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
   }
 
 printf 'Write marginal value for investment entities...\n';
-param fn_entity_invested_marginal symbolic := "output/entity_invest_marginal__period.csv";
+param fn_unit_invested_marginal symbolic := "output/unit_invest_marginal__period.csv";
 for {i in 1..1 : p_model['solveFirst']} 
-  { printf 'solve,period' > fn_entity_invested_marginal;
-    for {e in entityInvest}
-	  { printf ',%s', e >> fn_entity_invested_marginal; }
+  { printf 'solve,period' > fn_unit_invested_marginal;
+    for {e in entityInvest : e in process_unit}
+	  { printf ',%s', e >> fn_unit_invested_marginal; }
   }
 for {s in solve_current, d in period_invest}
-  { printf '\n%s,%s', s, d >> fn_entity_invested_marginal;
-    for {e in entityInvest} 
+  { printf '\n%s,%s', s, d >> fn_unit_invested_marginal;
+    for {e in entityInvest : e in process_unit} 
       {
-	    printf ',%.8g', (if (e, d) in ed_invest then v_invest[e, d].dual) >> fn_entity_invested_marginal;
+	    printf ',%.8g', (if (e, d) in ed_invest then v_invest[e, d].dual) >> fn_unit_invested_marginal;
       }
   }
+
+param fn_connection_invested_marginal symbolic := "output/connection_invest_marginal__period.csv";
+for {i in 1..1 : p_model['solveFirst']} 
+  { printf 'solve,period' > fn_connection_invested_marginal;
+    for {e in entityInvest : e in process_connection}
+	  { printf ',%s', e >> fn_connection_invested_marginal; }
+  }
+for {s in solve_current, d in period_invest}
+  { printf '\n%s,%s', s, d >> fn_connection_invested_marginal;
+    for {e in entityInvest : e in process_connection} 
+      {
+	    printf ',%.8g', (if (e, d) in ed_invest then v_invest[e, d].dual) >> fn_connection_invested_marginal;
+      }
+  }
+
+param fn_node_invested_marginal symbolic := "output/node_invest_marginal__period.csv";
+for {i in 1..1 : p_model['solveFirst']} 
+  { printf 'solve,period' > fn_node_invested_marginal;
+    for {e in entityInvest : e in node}
+	  { printf ',%s', e >> fn_node_invested_marginal; }
+  }
+for {s in solve_current, d in period_invest}
+  { printf '\n%s,%s', s, d >> fn_node_invested_marginal;
+    for {e in entityInvest : e in node} 
+      {
+	    printf ',%.8g', (if (e, d) in ed_invest then v_invest[e, d].dual) >> fn_node_invested_marginal;
+      }
+  }
+
 
 param r_node_ramproom_units_up_dt{n in nodeBalance, (d, t) in dt} := 
           + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
