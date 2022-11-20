@@ -243,13 +243,11 @@
                         "mapping": [
                             {
                                 "map_type": "RelationshipClass",
-                                "position": "hidden",
-                                "value": "unit__reserve__upDown__node"
+                                "position": -1
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
-                                "position": "hidden",
-                                "value": "unit"
+                                "position": -2
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
@@ -273,22 +271,22 @@
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": -1,
-                                "import_objects": true
-                            },
-                            {
-                                "map_type": "RelationshipObject",
-                                "position": -2,
-                                "import_objects": true
-                            },
-                            {
-                                "map_type": "RelationshipObject",
                                 "position": -3,
                                 "import_objects": true
                             },
                             {
                                 "map_type": "RelationshipObject",
                                 "position": -4,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -5,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -6,
                                 "import_objects": true
                             },
                             {
@@ -1618,13 +1616,11 @@
                         "mapping": [
                             {
                                 "map_type": "RelationshipClass",
-                                "position": "hidden",
-                                "value": "unit__reserve__upDown__node"
+                                "position": -1
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
-                                "position": "hidden",
-                                "value": "unit"
+                                "position": -2
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
@@ -1648,22 +1644,22 @@
                             },
                             {
                                 "map_type": "RelationshipObject",
-                                "position": -1,
-                                "import_objects": true
-                            },
-                            {
-                                "map_type": "RelationshipObject",
-                                "position": -2,
-                                "import_objects": true
-                            },
-                            {
-                                "map_type": "RelationshipObject",
                                 "position": -3,
                                 "import_objects": true
                             },
                             {
                                 "map_type": "RelationshipObject",
                                 "position": -4,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -5,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -6,
                                 "import_objects": true
                             },
                             {
@@ -1709,26 +1705,6 @@
                             {
                                 "map_type": "ExpandedValue",
                                 "position": 7
-                            }
-                        ]
-                    }
-                }
-            ],
-            "result": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
-                                "position": "hidden"
                             }
                         ]
                     }
@@ -2346,12 +2322,11 @@
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
-                                "position": "hidden",
-                                "value": "process"
+                                "position": 0
                             },
                             {
                                 "map_type": "Object",
-                                "position": 0
+                                "position": 1
                             },
                             {
                                 "map_type": "ObjectMetadata",
@@ -2382,7 +2357,7 @@
                             },
                             {
                                 "map_type": "ParameterValueIndex",
-                                "position": 1
+                                "position": 2
                             },
                             {
                                 "map_type": "IndexName",
@@ -2391,11 +2366,11 @@
                             },
                             {
                                 "map_type": "ParameterValueIndex",
-                                "position": 2
+                                "position": 3
                             },
                             {
                                 "map_type": "ExpandedValue",
-                                "position": 3
+                                "position": 4
                             }
                         ]
                     }
@@ -2667,7 +2642,6 @@
             "process__reserve__upDown__node__period_average": {
                 "has_header": false
             },
-            "result": {},
             "slack__capacity_margin__period": {
                 "has_header": false
             },
@@ -2754,7 +2728,9 @@
             "process__reserve__upDown__node__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string"
+                "2": "string",
+                "3": "float",
+                "4": "float"
             },
             "connection__period__t": {
                 "0": "string",
@@ -2883,7 +2859,9 @@
             },
             "process__reserve__upDown__node__period_average": {
                 "0": "string",
-                "1": "string"
+                "1": "string",
+                "2": "float",
+                "3": "float"
             },
             "slack__capacity_margin__period": {
                 "0": "string",
@@ -2897,7 +2875,8 @@
             "slack__reserve__upDown__group__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string"
+                "2": "string",
+                "3": "float"
             },
             "unit_online__period_average": {
                 "0": "string",
@@ -2930,7 +2909,8 @@
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float"
+                "3": "string",
+                "4": "float"
             },
             "connection_invest_marginal__period": {
                 "0": "string",
@@ -3003,7 +2983,9 @@
             "process__reserve__upDown__node__period__t": {
                 "1": "string",
                 "2": "string",
-                "3": "string"
+                "3": "string",
+                "4": "string",
+                "5": "string"
             },
             "connection__period__t": {
                 "1": "string",
@@ -3016,7 +2998,9 @@
             "process__reserve__upDown__node__period_average": {
                 "1": "string",
                 "2": "string",
-                "3": "string"
+                "3": "string",
+                "4": "string",
+                "5": "string"
             },
             "slack__reserve__upDown__group__period__t": {
                 "1": "string",

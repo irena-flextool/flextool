@@ -2662,6 +2662,10 @@ printf 'Write reserve from processes over time...\n';
 param fn_process__reserve__upDown__node__dt symbolic := "output/process__reserve__upDown__node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'solve,period,time' > fn_process__reserve__upDown__node__dt;   # Print the header on the first solve
+    for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', (if p in process_unit then "unit__reserve__upDown__node" else "connection__reserve__upDown__node") >> fn_process__reserve__upDown__node__dt;
+	printf '\n,,' >> fn_process__reserve__upDown__node__dt;
+    for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', (if p in process_unit then "unit" else "connection") >> fn_process__reserve__upDown__node__dt;
+	printf '\n,,' >> fn_process__reserve__upDown__node__dt;
     for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', p >> fn_process__reserve__upDown__node__dt;
 	printf '\n,,' >> fn_process__reserve__upDown__node__dt;
     for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', r >> fn_process__reserve__upDown__node__dt;
@@ -2681,6 +2685,10 @@ printf 'Write average reserve from processes during periods...\n';
 param fn_process__reserve__upDown__node__d symbolic := "output/process__reserve__upDown__node__period_average.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'solve,period' > fn_process__reserve__upDown__node__d;   # Print the header on the first solve
+    for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', (if p in process_unit then "unit__reserve__upDown__node" else "connection__reserve__upDown__node") >> fn_process__reserve__upDown__node__d;
+	printf '\n,' >> fn_process__reserve__upDown__node__d;
+    for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', (if p in process_unit then "unit" else "connection") >> fn_process__reserve__upDown__node__d;
+	printf '\n,' >> fn_process__reserve__upDown__node__d;
     for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', p >> fn_process__reserve__upDown__node__d;
 	printf '\n,' >> fn_process__reserve__upDown__node__d;
     for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', r >> fn_process__reserve__upDown__node__d;
@@ -2769,11 +2777,11 @@ for {n in node, s in solve_current, d in period_realized}
 printf 'Write process CO2 results for periods...\n';
 param fn_process_co2__d symbolic := "output/process__period_co2.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'process,solve,period,"CO2 [Mt]"\n' > fn_process_co2__d; }  # Print the header on the first solve 
+  { printf 'class,process,solve,period,"CO2 [Mt]"\n' > fn_process_co2__d; }  # Print the header on the first solve 
 for {p in process_co2, s in solve_current, d in period_realized}
   {
-    printf '%s,%s,%s,%.8g\n'
-		, p, s, d
+    printf '%s,%s,%s,%s,%.8g\n'
+		, (if p in process_unit then "unit" else "connection"), p, s, d
         , sum{(p, c, n) in process__commodity__node_co2} r_process_emissions_co2_d[p, c, n, d] / 1000000
 	  >> fn_process_co2__d;
   }
