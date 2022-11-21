@@ -5,6 +5,18 @@ The outputs from the latest run are initially CSV files and can befound in the f
 of potential issues in the solve - it is a diagnostic file. The other files are all numerical results and will be imported to a Spine database by the FlexTool
 workflow.
 
+- [Costs](#costs)
+- [Prices](#prices)
+- [Energy flows](#energy-flows)
+- [Energy balance in nodes](#energy-balance-in-nodes)
+- [Group results](#group-results)
+- [Capacity and investment results](#capacity-and-investment-results)
+- [CO2 emissions](#co2-emissions)
+- [Reserves](#reserves)
+- [Inertia and non-synchronous generation](#inertia-and-non-synchronous-generation)
+- [Ramps](#ramps)
+- [Slack and penalty values](#slack-and-penalty-values)
+
 ## Costs
 
 - `model` object `cost` parameter - includes annualized total cost as well as annualized costs divided into 
@@ -86,6 +98,6 @@ workflow.
   - *connections_down* - adds downward ramp room from connections on top of the previous ramp rooms (does not consider whether the connected node has ramp room, but is simply the available capacity in the connection)
 - `unit__node` relationship `ramp_t` parameter - shows ramping of particular input or output flow between a unit and a node for each time step
 
-## Slack/penalty values
+## Slack and penalty values
 
 Slack and penalty values are listed in various places above (costs, energy balance, reserves, inertia and non-sychronous generation).
