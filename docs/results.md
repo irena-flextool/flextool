@@ -48,6 +48,13 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
 
 - `node` object `balance` parameter - cumulative inputs (positive) and (outputs) to the node from all the possible sources (*from_units*, *from_connection*, *to_units*, *to_connections*, *state change* over the period, *self discharge* during the period, *upward slack* for involuntary demand reduction and *downward slack* for involuntary demand increase)
 - `node` object `balance_t` parameter - same as above, but for each timestep
+- `node` object `state_t` parameter - storage state of the node in each timestep (typically MWh).
+
+## Unit online and startup
+
+- `unit` object `online_average` parameter - average online status of the unit (average number of units online during the period)
+- `unit` object `online_t` parameter - online status of the unit (number of units online in each timestep)
+- `unit` object `startup_cumulative` parameter - cumulative number of unit startups during the period
 
 ## Group results
 
@@ -66,6 +73,7 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
   - *retired* - capacity the model decided to retire in the beginning of the given period
   - *total* - sum of *existing*, *invested* and *retired* capacities
 - `unit`, `connection` and `node` objects `invest_marginal` parameter - marginal cost to invest in one more MW or MWh of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per MW or MWh; positive value means the cost is higher than the benefit by the stated amount per MW or MWh)
+- `group` parameter `slack_capacity_margin` - use of slack variable and the associated penalty cost to meet the capacity margin requirement in the period
 
 ## CO2 emissions
 
@@ -75,7 +83,8 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
 
 - `unit__reserve__upDown__node` relationship `reservation_t` parameter - how much upward or downward reserve particular unit was providing to a particular node in given timestep
 - `unit__reserve__upDown__node` relationship `reservation_average` parameter - how much upward or downward reserve particular unit was providing to a particular node in average during the period
-- `group__reserve__upDown` relationship `slack_reserve_t` parameter - use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement in each timesetp
+- `group__reserve__upDown` relationship `slack_reserve_t` parameter - use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement in each timestep
+- `group__reserve__upDown` relationship `slack_reserve` parameter - cumulative use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement during the period
 
 ## Inertia and non-synchronous generation
 
