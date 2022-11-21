@@ -84,6 +84,7 @@ workflow.
   - *unis_down* - additional room for downward ramps from non-VRE units connected to the node 
   - *VRE_down* - adds downward ramp room from VRE units on top of the ramp room from non-VRE units
   - *connections_down* - adds downward ramp room from connections on top of the previous ramp rooms (does not consider whether the connected node has ramp room, but is simply the available capacity in the connection)
+- `unit__node` relationship `ramp_t` parameter - shows ramping of particular input or output flow between a unit and a node for each time step
 
 ## Slack/penalty values
 
