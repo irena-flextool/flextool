@@ -49,11 +49,40 @@ workflow.
 
 ## Capacity and investment results
 
+- `unit`, `connection` and `node` objects `capacity` parameter - include the following parameters
+  - *existing* - capacity that was assumed to exist in the beginning of the solve
+  - *invested* - capacity the model decided to invest for the given period
+  - *retired* - capacity the model decided to retire in the beginning of the given period
+  - *total* - sum of *existing*, *invested* and *retired* capacities
+- `unit`, `connection` and `node` objects `invest_marginal` parameter - marginal cost to invest in one more MW or MWh of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per MW or MWh; positive value means the cost is higher than the benefit by the stated amount per MW or MWh)
+
 ## CO2 emissions
+
+- `unit` object `co2` parameter - how many tons of CO2 the unit has generated (by using commodity with CO2 content) or removed
 
 ## Reserves
 
+- `unit__reserve__upDown__node` relationship `reservation_t` parameter - how much upward or downward reserve particular unit was providing to a particular node in given timestep
+- `unit__reserve__upDown__node` relationship `reservation_average` parameter - how much upward or downward reserve particular unit was providing to a particular node in average during the period
+- `group__reserve__upDown` relationship `slack_reserve_t` parameter - use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement in each timesetp
+
 ## Inertia and non-synchronous generation
 
-## Penalty values
+- `group` object `inertia_t` parameter - the amount of inertia (MWs) in the group of nodes in each timestep
+- `group` object `slack_inertia_t` parameter - use of slack variable and the associated penalty cost to fulfill the inertia requirement in each timestep
+- `group` object `slack_nonsync_t` parameter - use of slack variable and the associated penalty cost to fulfill the non-synchronous share maximum share constraint in each timestep 
 
+## Ramps
+
+- `node` object `ramp_t` parameter - includes seven parameters that form the ramp room envelope (how much there is additional room to ramp in a give node)
+  - *ramp* - the actual ramp in the node from previous timestep to this timestep
+  - *units_up* - additional room for upward ramps from non-VRE units connected to the node
+  - *VRE_up* - adds upward ramp room from VRE units on top of the ramp room from non-VRE units
+  - *connections_up* - adds upward ramp room from connections on top of the previous ramp rooms (does not consider whether the connected node has ramp room, but is simply the available capacity in the connection)
+  - *unis_down* - additional room for downward ramps from non-VRE units connected to the node 
+  - *VRE_down* - adds downward ramp room from VRE units on top of the ramp room from non-VRE units
+  - *connections_down* - adds downward ramp room from connections on top of the previous ramp rooms (does not consider whether the connected node has ramp room, but is simply the available capacity in the connection)
+
+## Slack/penalty values
+
+Slack and penalty values are listed in various places above (costs, energy balance, reserves, inertia and non-sychronous generation).
