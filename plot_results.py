@@ -566,10 +566,10 @@ def plot_basic(
         data_list = drop_data_index_tail(data_list, len(category_list))
     plot_widget = plot_data(data_list, plot_type=toolbox_plot_type(plot_type))
     if category_list:
-        x_ticks_and_labels = relabel_x_axis(
+        x_ticks, x_labels = relabel_x_axis(
             category_list[0], plot_widget.canvas.axes.get_xticks()
         )
-        plot_widget.canvas.axes.set_xticks(*x_ticks_and_labels)
+        plot_widget.canvas.axes.set_xticks(x_ticks, labels=x_labels)
         for offset, categories in enumerate(category_list):
             category_dividers, category_labels = category_ticks(categories)
             add_category_spine(offset, category_labels, category_dividers, plot_widget)

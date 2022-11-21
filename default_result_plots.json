@@ -11,8 +11,8 @@
         "periods": []
       },
       "dimensions": {
-        "separatePlots": null,
-        "x1": null,
+        "separatePlots": "alternative",
+        "x1": "time",
         "x2": "period",
         "x3": "solve"
       }
@@ -28,8 +28,8 @@
         "periods": []
       },
       "dimensions": {
-        "separatePlots": "unit",
-        "x1": null,
+        "separatePlots": "alternative",
+        "x1": "time",
         "x2": "period",
         "x3": "solve"
       }
@@ -45,7 +45,7 @@
         "periods": []
       },
       "dimensions": {
-        "separatePlots": null,
+        "separatePlots": "alternative",
         "x1": null,
         "x2": "solve",
         "x3": null
