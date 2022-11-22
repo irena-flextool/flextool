@@ -7,7 +7,7 @@ paramNotWritten.dat
 .spinetoolbox/items/exporttocsv/exported.json
 .spinetoolbox/items/
 results/
-*.bak
+*.bak*
 *.log
 *.mps
 *.sol

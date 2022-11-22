@@ -8,6 +8,8 @@
     "inputfiles": [],
     "inputfiles_opt": [],
     "outputfiles": [],
-    "cmdline_args": [],
+    "cmdline_args": [
+        "--use-subprocess"
+    ],
     "includes_main_path": "../../.."
 }

@@ -45,17 +45,22 @@ x2: regroups or categorises the x-axis by this item
 x3: minor x-axis regrouping item; works only if x2 is defined
 
 """
+import subprocess
 import sys
 import traceback
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass, replace
 from enum import IntEnum, unique
 from itertools import accumulate, combinations
 import json
 from operator import attrgetter
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from time import sleep
 from typing import Dict, Iterator, Optional, List, Tuple
 import matplotlib
 import numpy as np
+from PySide2.QtCore import QTimer
 from PySide2.QtWidgets import QApplication
 from matplotlib.ticker import MaxNLocator
 from sqlalchemy.sql.expression import Alias, and_
@@ -99,9 +104,20 @@ def make_argument_parser() -> ArgumentParser:
     """Creates a command line argument parser."""
     parser = ArgumentParser(description="Plot FlexTool results.")
     parser.add_argument(
+        "--use-subprocess",
+        action="store_true",
+        help="create an independent process for plotting",
+    )
+    parser.add_argument(
         "url", metavar="URL", help="URL pointing to the result database"
     )
     parser.add_argument("settings", help="path to settings JSON file")
+    parser.add_argument(
+        "notification_file",
+        nargs="?",
+        default=None,
+        help="file to create when the application starts",
+    )
     return parser
 
 
@@ -641,21 +657,53 @@ def draw_image(data_list: List[XYData]) -> PlotWidget:
     return plot_widget
 
 
+def start_subprocess(args: Namespace) -> None:
+    """Restarts the script as subprocess and waits for the application to start."""
+    with TemporaryDirectory() as temp_dir:
+        notification_file = Path(temp_dir, ".plotting_started")
+        subprocess.Popen(
+            [
+                sys.executable,
+                sys.argv[0],
+                args.url,
+                args.settings,
+                str(notification_file),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        while True:
+            if notification_file.exists():
+                break
+            sleep(0.5)
+
+
+def notify_via_file(notification_file: str) -> None:
+    """Creates an empty notification file."""
+    Path(notification_file).touch()
+
+
 def main() -> None:
     """Main entry point to the script."""
     arg_parser = make_argument_parser()
     args = arg_parser.parse_args()
+    if args.use_subprocess:
+        start_subprocess(args)
+        return
     with open(args.settings) as settings_file:
         settings = json.load(settings_file)
     # The QApplication instance may already exist when running on Toolbox console
     app = QApplication.instance()
     if app is None:
-        app = QApplication([])
+        app = QApplication()
     app.setApplicationName("FlexTool results")
     did_plot = plot(args.url, settings)
     if not did_plot:
         print("Nothing to plot.")
         return
+    if args.notification_file is not None:
+        QTimer.singleShot(0, lambda: notify_via_file(args.notification_file))
     return_code = app.exec_()
     if return_code != 0:
         raise RuntimeError(f"Unexpected exit status {return_code}")
