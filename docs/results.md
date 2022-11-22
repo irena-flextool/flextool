@@ -54,9 +54,9 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
 
 ## Unit online and startup
 
-- `unit` object `online_average` parameter - average online status of the unit (average number of units online during the period)
-- `unit` object `online_t` parameter - online status of the unit (number of units online in each timestep)
-- `unit` object `startup_cumulative` parameter - cumulative number of unit startups during the period
+- `unit` object `online_average` parameter - [count] average online status of the unit (average number of units online during the period)
+- `unit` object `online_t` parameter - [count] online status of the unit (number of units online in each timestep)
+- `unit` object `startup_cumulative` parameter - [count] cumulative number of unit startups during the period
 
 ## Group results
 
