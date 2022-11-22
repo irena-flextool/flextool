@@ -701,6 +701,8 @@ def main() -> None:
     did_plot = plot(args.url, settings)
     if not did_plot:
         print("Nothing to plot.")
+        if args.notification_file is not None:
+            notify_via_file(args.notification_file)
         return
     if args.notification_file is not None:
         QTimer.singleShot(0, lambda: notify_via_file(args.notification_file))
