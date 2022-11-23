@@ -731,11 +731,6 @@ param p_discount_factor_investment{d in period} := 1/(1 + p_disc_rate) ^ (p_disc
 param p_discount_factor_operations{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_operations);
 param p_discount_in_perpetuity_investment{d in period} := (if p_disc_rate then (1/(1+p_disc_rate)^(p_discount_years[d]+p_disc_offset_investment))/p_disc_rate else 1);
 param p_discount_in_perpetuity_operations{d in period} := (if p_disc_rate then (1/(1+p_disc_rate)^(p_discount_years[d]+p_disc_offset_operations))/p_disc_rate else 1);
-param p_discount_with_perpetuity_investment{d in period} := (if d not in period_last 
-                                                             then sum{(d, dNext) in period__period_next} 
-															    (+ p_discount_in_perpetuity_investment[d] 
-																 - p_discount_in_perpetuity_investment[dNext]) 
-															 else p_discount_in_perpetuity_investment[d]);
 param p_discount_with_perpetuity_operations{d in period} := 
   ( if d not in period_last 
     then sum{(d, dNext) in period__period_next} 
@@ -1105,21 +1100,21 @@ minimize total_cost:
       * ( + (if e in node then pdNode[e, 'fixed_cost', d] * 1000)
 	      + (if e in process then pdProcess[e, 'fixed_cost', d] * 1000)
 		)
-	  * p_discount_with_perpetuity_investment[d]
+	  * p_discount_in_perpetuity_investment[d]
   + sum {(e, d) in ed_invest} 
     + v_invest[e, d]
       * p_entity_unitsize[e]
       * ed_entity_annual[e, d]
-	  * p_discount_with_perpetuity_investment[d]
+	  * p_discount_in_perpetuity_investment[d]
   - sum {(e, d) in ed_divest} 
     + v_divest[e, d]
       * p_entity_unitsize[e]
       * ed_entity_annual_divest[e, d]
-	  * p_discount_with_perpetuity_investment[d]
+	  * p_discount_in_perpetuity_investment[d]
   + sum {g in groupCapacityMargin, d in period_invest}
     + vq_capacity_margin[g, d]
 	  * pdGroup[g, 'penalty_capacity_margin', d]
-	  * p_discount_with_perpetuity_investment[d]
+	  * p_discount_in_perpetuity_investment[d]
 ;
 param w_total_cost := gmtime() - datetime0 - setup1 - w_calc_slope - setup2;
 display w_total_cost;
@@ -2224,14 +2219,14 @@ param r_cost_entity_invest_d{(e, d) in ed_invest} :=
   + v_invest[e, d]
       * p_entity_unitsize[e]
       * ed_entity_annual[e, d]
-	  * p_discount_with_perpetuity_investment[d]
+	  * p_discount_in_perpetuity_investment[d]
 ;
 
 param r_cost_entity_divest_d{(e, d) in ed_divest} :=
   - v_divest[e, d]
       * p_entity_unitsize[e]
       * ed_entity_annual_divest[e, d]
-	  * p_discount_with_perpetuity_investment[d]
+	  * p_discount_in_perpetuity_investment[d]
 ;
 
 param r_costOper_dt{(d, t) in dt} :=
@@ -2396,7 +2391,7 @@ for {d in period}
   { printf ',%.12g', p_discount_with_perpetuity_operations[d] >> fn_summary; }
 printf '\n"Investment discount factor"' >> fn_summary;
 for {d in period}
-  { printf ',%.12g', p_discount_with_perpetuity_investment[d] >> fn_summary; }
+  { printf ',%.12g', p_discount_in_perpetuity_investment[d] >> fn_summary; }
 printf '\n' >> fn_summary;
 
 printf '\nEmissions\n' >> fn_summary;
@@ -2487,11 +2482,11 @@ for {s in solve_current, d in period_realized}
     printf '%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
       s, d,
 	  (r_costOper_and_penalty_d[d] / period_share_of_year[d] 
-	    + r_costInvest_d[d] / p_discount_with_perpetuity_investment[d] 
-		+ r_costDivest_d[d] / p_discount_with_perpetuity_investment[d]) / 1000000,
-      (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_with_perpetuity_investment[d] / 1000000,
-      (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_with_perpetuity_investment[d] / 1000000,
-      (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_with_perpetuity_investment[d] / 1000000,
+	    + r_costInvest_d[d] / p_discount_in_perpetuity_investment[d] 
+		+ r_costDivest_d[d] / p_discount_in_perpetuity_investment[d]) / 1000000,
+      (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_in_perpetuity_investment[d] / 1000000,
+      (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_in_perpetuity_investment[d] / 1000000,
+      (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_in_perpetuity_investment[d] / 1000000,
 	  r_cost_commodity_d[d] / period_share_of_year[d] / 1000000,
 	  r_cost_co2_d[d] / period_share_of_year[d] / 1000000,
 	  r_cost_variable_d[d] / period_share_of_year[d] / 1000000,
