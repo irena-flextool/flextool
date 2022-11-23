@@ -8,7 +8,7 @@
 - [Connections](#connections)
 - [Commodities](#commodities)
 - [Profiles](#profiles)
-
+- [Groups](#groups)
 
 # Essential objects for defining a power/energy system
 
@@ -163,3 +163,40 @@ Some `nodes` can act as a source or a sink of commodities instead of forcing a b
 # Profiles
 
 Profiles are time series of data that will be multiplied by capacity to form a constraint for a unit flow, a connection flow or a storage state. The constraint can be *upper_limit*, *lower_limit* or *fixed*.
+
+# Groups
+
+Groups are used to make constraints that apply to a group of nodes, units and/or connections. A group is defined by creating a group object and then creating a relationship between the group and its members. The membership relationship classes are `group__node`, `group__unit`, `group__connection`, `group__unit__node`, `group__connection__node` and `reserve__upDown__group`. The choice of group members depends on what the group is trying to achieve. For instance a group that limits investments could have a set of `units` included in the group.
+
+## Capacity limits for nodes, units and connections
+
+- `invest_method` - the choice of method how to limit or force investments in capacity [MW or MWh] of the group members
+- `invest_max_total` - [MW or MWh] Maximum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves.
+- `invest_max_period` - [MW or MWh] Maximum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes.
+- `invest_min_total` - [MW or MWh] Minimum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves. 
+- `invest_min_period` - [MW or MWh] Minimum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes.
+
+## Cumulative and instant flow limits for `unit__node`s and `connection__node`s
+
+- `max_cumulative_flow` - [MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
+- `min_cumulative_flow` - [MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
+- `max_instant_flow` - [MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.
+- `min_instant_flow` - [MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.
+
+## Limits for nodes
+
+- `has_inertia` - A flag whether the group of nodes has an inertia constraint active.
+- `inertia_limit` - [MWs] Minimum for synchronous inertia in the group of nodes. Constant or period.
+- `penalty_inertia` - [CUR/MWs] Penalty for violating the inertia constraint. Constant or period.
+- `has_non_synchronous` - A flag whether the group of nodes has the non-synchronous share constraint active.
+- `non_synchronous_limit` - [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.
+- `penalty_non_synchronous` - [CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period.
+- `has_capacity_margin` - A flag whether the group of nodes has a capacity margin constraint in the investment mode.
+- `capacity_margin` - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode. Constant or period.
+- `penalty_capacity_margin` - [CUR/MWh] Penalty for violating the capacity margin constraint. Constant or period.
+
+## Controlling outputs
+
+Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example all electricity nodes could be groupped for aggragated output.
+
+- `output_results` - A flag to output aggregated results for the group members.
