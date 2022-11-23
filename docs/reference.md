@@ -1,14 +1,14 @@
 [Install](https://github.com/irena-flextool/flextool/tree/master#irena-flextool) | [Tutorial](https://irena-flextool.github.io/flextool) | [Results](https://irena-flextool.github.io/flextool/results) | [Reference](https://irena-flextool.github.io/flextool/reference) | [Data structure](https://irena-flextool.github.io/flextool/spine_database) | [Spine Toolbox interface](https://irena-flextool.github.io/flextool/spine_toolbox) | [Browser-interface](https://irena-flextool.github.io/flextool/browser_interface)
 
 - [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system)
-- [How to define model properties](#how-to-define-model-properties)
-- [Additional objects for further functionality](#additional-objects-for-further-functionality)
+- [How to define the temporal properties of the model](#how-to-define-temporal-properties-of-the-model)
 - [Nodes](#nodes)
 - [Units](#units)
 - [Connections](#connections)
 - [Commodities](#commodities)
 - [Profiles](#profiles)
 - [Groups](#groups)
+- [Additional objects for further functionality](#additional-objects-for-further-functionality)
 
 # Essential objects for defining a power/energy system
 
@@ -23,7 +23,7 @@ See below for more detailed explanations.
 ![Simple example grid](./simple_grid.png)
 
 
-# How to define model properties
+# How to define the temporal properties of the model
 
 ## Timesteps and periods
 
@@ -55,11 +55,6 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
   - *timeline_duration_in_years* Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.
 - **timeblockset__timeline**: defines which timeline object particular timeblockset is using.
 
-
-# Additional objects for further functionality
-- **group**: include multiple objects in a group to define common constraints (e.g. minimum VRE share)
-- **reserve**: to define reserves for power systems
-- **constraint**: to create user defined constraints between flow, state, and capacity variables (for nodes, units and connections)
 
 # Nodes
 
@@ -148,7 +143,7 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 ## Units constrained by profiles
 
-Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` object with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile`object is given a `profile` time series (or it can also be a constant).
+Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` object with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile` object is given a `profile` time series (or it can also be a constant). One needs to use `node__profile`, `unit__node__profile` or `connection__profile` to apply the profile to specific energy flow (or storage state in the case of `node__profile`).
 
 # Connections
 
@@ -159,10 +154,6 @@ Connections can have an `existing` transfer capacity as well as an opportunity t
 Some `nodes` can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a `price` and be connected to those `nodes` that serve (or buy) that particular `commodity` at the given `price`. In other words, `commodity` is separate from `node` so that the user can use the same `commodity` properties for multiple nodes. Commodities can also have a `co2_content`. The `commodity` and its `nodes` are connected by establishin a new relationship between the `commodity` and each of its `nodes` (e.g. *coal--coal_market*).
 
 ![image-1.png](./commodities.PNG)
-
-# Profiles
-
-Profiles are time series of data that will be multiplied by capacity to form a constraint for a unit flow, a connection flow or a storage state. The constraint can be *upper_limit*, *lower_limit* or *fixed*.
 
 # Groups
 
@@ -200,3 +191,9 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example all electricity nodes could be groupped for aggragated output.
 
 - `output_results` - A flag to output aggregated results for the group members.
+
+# Additional objects for further functionality
+
+- **reserve**: to define reserves for power systems
+- **constraint**: to create user defined constraints between flow, state, and capacity variables (for nodes, units and connections)
+
