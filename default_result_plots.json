@@ -2,10 +2,44 @@
   "plots": [
     {
       "selection": {
-        "plotType": "line",
+        "plotType": "stacked bar",
         "entityClasses": ["model"],
         "entities": [],
         "parameters": ["cost_t"],
+        "alternatives": [],
+        "solves": [],
+        "periods": []
+      },
+      "dimensions": {
+        "separatePlots": null,
+        "x1": "time",
+        "x2": "period",
+        "x3": "solve"
+      }
+    },
+    {
+      "selection": {
+        "plotType": "stacked bar",
+        "entityClasses": ["unit__node"],
+        "entities": [],
+        "parameters": ["flow"],
+        "alternatives": [],
+        "solves": [],
+        "periods": []
+      },
+      "dimensions": {
+        "separatePlots": null,
+        "x1": "period",
+        "x2": "solve",
+        "x3": "alternative"
+      }
+    },
+    {
+      "selection": {
+        "plotType": "line",
+        "entityClasses": ["node"],
+        "entities": [],
+        "parameters": ["ramp_t"],
         "alternatives": [],
         "solves": [],
         "periods": []
@@ -19,36 +53,19 @@
     },
     {
       "selection": {
-        "plotType": "line",
-        "entityClasses": ["model"],
+        "plotType": "stacked bar",
+        "entityClasses": ["unit","connection","node"],
         "entities": [],
-        "parameters": ["cost_t"],
-        "alternatives": [],
-        "solves": [],
-        "periods": []
-      },
-      "dimensions": {
-        "separatePlots": "alternative",
-        "x1": "period",
-        "x2": "time",
-        "x3": "solve"
-      }
-    },
-	{
-      "selection": {
-        "plotType": "line",
-        "entityClasses": ["group"],
-        "entities": [],
-        "parameters": ["slack_inertia_t","slack_nonsync_t"],
+        "parameters": ["capacity"],
         "alternatives": [],
         "solves": [],
         "periods": []
       },
       "dimensions": {
         "separatePlots": null,
-        "x1": "time",
-        "x2": "period",
-        "x3": "solve"
+        "x1": "period",
+        "x2": "solve",
+        "x3": "alternative"
       }
     }
   ]
