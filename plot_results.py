@@ -251,10 +251,6 @@ def categorize_further(
         category = xy_data.data_index[-2]
         subcategory = xy_data.data_index[-1]
         subcategory_lookup.setdefault(category, set()).add(subcategory)
-    if any(
-        not s1.isdisjoint(s2) for s1, s2 in combinations(subcategory_lookup.values(), 2)
-    ):
-        raise RuntimeError("failed to create x3: overlapping x2")
     current_subcategories = subcategories
     for category, contained_subcategories in subcategory_lookup.items():
         unused_subcategories = dict()
@@ -280,13 +276,17 @@ def drop_data_index_tail(data_list: List[XYData], count: int) -> List[XYData]:
 
 
 def category_ticks(
-    categories: Dict[str, List[str]]
+    categories: Dict[str, List[str]], x_min: float, x_max: float
 ) -> Tuple[List[float], Dict[str, float]]:
     """Calculates major and minor tick positions for category x-axis."""
-    category_sizes = [len(labels) for labels in categories.values()]
-    total = sum(category_sizes)
-    category_dividers = [0.0] + list(
-        accumulate(size / total for size in category_sizes)
+    x_width = x_max - x_min
+    first_divider = -x_min / x_width
+    category_sizes = list(accumulate(len(labels) for labels in categories.values()))
+    count = category_sizes[-1]
+    category_width = 1.0 - (x_max - x_min - (count - 1)) / x_width
+    step = category_width / count
+    category_dividers = [first_divider] + list(
+        first_divider + size * step for size in category_sizes
     )
     category_labels = {}
     for i, name in enumerate(categories):
@@ -493,20 +493,20 @@ def shuffle_dimensions(instructions: Dict, data_list: List[XYData]) -> List[XYDa
             continue
         new_list = []
         for xy_data in current_list:
-            usable_targe = target if target >= 0 else target + len(xy_data.data_index)
+            usable_target = target if target >= 0 else target + len(xy_data.data_index)
             source = xy_data.index_names.index(index_name)
-            if source == usable_targe:
+            if source == usable_target:
                 new_list.append(xy_data)
                 continue
             data_index = xy_data.data_index[source]
             new_data_index = [
                 i for n, i in enumerate(xy_data.data_index) if n != source
             ]
-            new_data_index.insert(usable_targe, data_index)
+            new_data_index.insert(usable_target, data_index)
             new_index_names = [
                 name for n, name in enumerate(xy_data.index_names) if n != source
             ]
-            new_index_names.insert(usable_targe, index_name)
+            new_index_names.insert(usable_target, index_name)
             new_list.append(
                 replace(xy_data, data_index=new_data_index, index_names=new_index_names)
             )
@@ -572,6 +572,7 @@ def filtered_data_list(
 def plot_basic(
     plot_type: PlotType, plot_dimensions: Dict, data_list: List[XYData]
 ) -> PlotWidget:
+    """Plots basic plot types, e.g. line, scatter etc."""
     category_list = []
     if plot_dimensions.get("x2") is not None:
         data_list, categories_1 = tile_horizontally(data_list)
@@ -582,12 +583,16 @@ def plot_basic(
         data_list = drop_data_index_tail(data_list, len(category_list))
     plot_widget = plot_data(data_list, plot_type=toolbox_plot_type(plot_type))
     if category_list:
+        x_min, x_max = plot_widget.canvas.axes.get_xlim()
+
         x_ticks, x_labels = relabel_x_axis(
             category_list[0], plot_widget.canvas.axes.get_xticks()
         )
         plot_widget.canvas.axes.set_xticks(x_ticks, labels=x_labels)
         for offset, categories in enumerate(category_list):
-            category_dividers, category_labels = category_ticks(categories)
+            category_dividers, category_labels = category_ticks(
+                categories, x_min, x_max
+            )
             add_category_spine(offset, category_labels, category_dividers, plot_widget)
     return plot_widget
 

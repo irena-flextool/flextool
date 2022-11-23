@@ -122,16 +122,28 @@ class QueryParameterValuesTest(unittest.TestCase):
 class CategoryTicksTest(unittest.TestCase):
     def test_simple(self):
         categories = {"imaginary": ["a", "b"], "real": ["a", "b"]}
-        dividers, labels = plot_results.category_ticks(categories)
+        dividers, labels = plot_results.category_ticks(categories, 0.0, 3.0)
         self.assertEqual(dividers, [0.0, 0.5, 1.0])
         self.assertEqual(labels, {"imaginary": 0.25, "real": 0.75})
 
     def test_uneven_dividers(self):
         categories = {"imaginary": ["a", "b"], "real": ["c"], "eerie": ["d", "e", "f"]}
-        dividers, labels = plot_results.category_ticks(categories)
+        dividers, labels = plot_results.category_ticks(categories, 0.0, 5.0)
         self.assertEqual(dividers, [0.0, 2 / 6, 3 / 6, 1.0])
         self.assertEqual(list(labels), ["imaginary", "real", "eerie"])
-        for label_position, expected in zip(labels.values(), [2 / 12, 5 / 12, 9 / 12]):
+
+    def test_long_axis(self):
+        categories = {"imaginary": ["a", "b"], "real": ["a", "b"]}
+        dividers, labels = plot_results.category_ticks(categories, -0.7, 3.7)
+        expected_dividers = [0.7 / (0.7 + 3.7), 0.5, 3.7 / (0.7 + 3.7)]
+        for divider, expected in zip(dividers, expected_dividers):
+            self.assertAlmostEqual(divider, expected)
+        self.assertEqual(list(labels), ["imaginary", "real"])
+        expected_positions = [
+            (0.7 / (0.7 + 3.7) + 0.5) / 2,
+            (0.5 + 3.7 / (0.7 + 3.7)) / 2,
+        ]
+        for label_position, expected in zip(labels.values(), expected_positions):
             self.assertAlmostEqual(label_position, expected)
 
 
@@ -232,6 +244,30 @@ class ShuffleDimensionsTest(unittest.TestCase):
         inserted_list = plot_results.shuffle_dimensions({"index 1": -1}, data_list)
         expected = [
             XYData(["a", "b"], [1.1, 2.2], "x", "y", ["B", "A"], ["index 2", "index 1"])
+        ]
+        self.assertEqual(inserted_list, expected)
+
+    def test_x_target_moves_to_x_axis(self):
+        data_list = [
+            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B"], ["index 1", "index 2"])
+        ]
+        inserted_list = plot_results.shuffle_dimensions({"index 1": "x"}, data_list)
+        expected = [
+            XYData(["A"], [1.1], "index 1", "", ["B", "a"], ["index 2", "x"]),
+            XYData(["A"], [2.2], "index 1", "", ["B", "b"], ["index 2", "x"]),
+        ]
+        self.assertEqual(inserted_list, expected)
+
+    def test_move_twice_works_as_expected(self):
+        data_list = [
+            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B"], ["index 1", "index 2"])
+        ]
+        inserted_list = plot_results.shuffle_dimensions(
+            {"index 2": "x", "index 1": -1}, data_list
+        )
+        expected = [
+            XYData(["B"], [1.1], "index 2", "", ["a", "A"], ["x", "index 1"]),
+            XYData(["B"], [2.2], "index 2", "", ["b", "A"], ["x", "index 1"]),
         ]
         self.assertEqual(inserted_list, expected)
 
