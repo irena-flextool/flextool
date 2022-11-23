@@ -1,6 +1,6 @@
 {
     "project": {
-        "version": 9,
+        "version": 8,
         "name": "FlexTool3",
         "description": "",
         "specifications": {
@@ -119,7 +119,6 @@
                             "coal_wind_ev",
                             "coal_wind_inertia",
                             "fullYear",
-                            "multi_year",
                             "multi_year_one_solve",
                             "network_coal_wind",
                             "network_coal_wind_battery_co2_fullYear",
@@ -132,9 +131,6 @@
                             "wind",
                             "wind_battery",
                             "wind_battery_invest"
-                        ],
-                        "tool_filter": [
-                            "FlexTool3"
                         ]
                     }
                 }
@@ -148,7 +144,37 @@
                 "to": [
                     "Export_to_CSV",
                     "left"
-                ]
+                ],
+                "disabled_filters": {
+                    "db_url@Input_data": {
+                        "scenario_filter": [
+                            "all",
+                            "base",
+                            "capacity_margin",
+                            "coal",
+                            "coal_chp",
+                            "coal_co2",
+                            "coal_min_load",
+                            "coal_retire",
+                            "coal_wind",
+                            "coal_wind_ev",
+                            "coal_wind_inertia",
+                            "fullYear",
+                            "multi_year_one_solve",
+                            "network_coal_wind",
+                            "network_coal_wind_battery_co2_fullYear",
+                            "network_coal_wind_capacity_margin",
+                            "network_coal_wind_reserve",
+                            "network_coal_wind_reserve_co2_capacity_margin",
+                            "network_coal_wind_reserve_n_1",
+                            "network_wind_coal_battery_fullYear_invest",
+                            "water_pump",
+                            "wind",
+                            "wind_battery",
+                            "wind_battery_invest"
+                        ]
+                    }
+                }
             },
             {
                 "name": "from Results to To_Excel",
@@ -170,7 +196,14 @@
                 "to": [
                     "Plot_results",
                     "right"
-                ]
+                ],
+                "disabled_filters": {
+                    "db_url@Results": {
+                        "scenario_filter": [
+                            "all"
+                        ]
+                    }
+                }
             },
             {
                 "name": "from Initialize to Input_data",
@@ -192,6 +225,17 @@
                 "to": [
                     "Input_data",
                     "left"
+                ]
+            },
+            {
+                "name": "from Plot_settings to Plot_results",
+                "from": [
+                    "Plot_settings",
+                    "left"
+                ],
+                "to": [
+                    "Plot_results",
+                    "bottom"
                 ]
             }
         ],
@@ -347,8 +391,26 @@
                 {
                     "type": "resource",
                     "arg": "db_url@Results"
+                },
+                {
+                    "type": "resource",
+                    "arg": "<project>/default_result_plots.json"
                 }
             ]
+        },
+        "Plot_settings": {
+            "type": "Data Connection",
+            "description": "",
+            "x": 465.1046693538269,
+            "y": 256.3648831078828,
+            "file_references": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "default_result_plots.json"
+                }
+            ],
+            "db_references": []
         }
     }
 }
