@@ -51,13 +51,13 @@ import traceback
 from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass, replace
 from enum import IntEnum, unique
-from itertools import accumulate, combinations
+from itertools import accumulate
 import json
 from operator import attrgetter
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import sleep
-from typing import Dict, Iterator, Optional, List, Tuple
+from typing import Any, Callable, Dict, Iterator, Optional, List, Tuple
 import matplotlib
 import numpy as np
 from PySide2.QtCore import QTimer
@@ -89,12 +89,16 @@ BASIC_PLOT_TYPES = {"line", "stacked line", "bar", "stacked bar"}
 
 @unique
 class EntityType(IntEnum):
+    """Spine database entity type enums."""
+
     OBJECT = 1
     RELATIONSHIP = 2
 
 
 @dataclass(frozen=True)
 class ImageData:
+    """Image data and metadata."""
+
     image: np.ndarray
     row_labels: List[str]
     column_labels: List[str]
@@ -128,21 +132,25 @@ def get_model_scenario(value_row) -> str:
 
 
 def reject_objects(objects: List[str], acceptable_objects: List[List[str]]) -> bool:
-    """Returns True if any object in objects list is not in any corresponding list of acceptable_objects."""
-    for o, acceptables in zip(objects, acceptable_objects):
-        if acceptables and o not in acceptables:
+    """
+    Returns True if any object in objects list is not
+    in any corresponding list of acceptable_objects.
+    """
+    for object_, acceptables in zip(objects, acceptable_objects):
+        if acceptables and object_ not in acceptables:
             return True
     return False
 
 
-def query_parameter_values(
-    entity_type: EntityType,
-    filter_conditions: Tuple,
-    accept_objects: Optional[List[List[str]]],
-    db_map: DatabaseMappingBase,
-) -> TreeNode:
-    """Reads parameter values from database."""
-    value_tree = TreeNode("class")
+def entity_handling_functions(
+    entity_type: EntityType
+) -> Tuple[
+    Callable[[object], str], Callable[[Any], List[str]], Callable[[Any], List[str]]
+]:
+    """
+    Generates callable suitable for retrieving information
+    from database row of given entity type.
+    """
     class_name_fields = {
         EntityType.OBJECT: "object_class_name",
         EntityType.RELATIONSHIP: "relationship_class_name",
@@ -158,6 +166,20 @@ def query_parameter_values(
     get_class_name = attrgetter(class_name_fields[entity_type])
     get_object_names = object_lists[entity_type]
     get_object_labels = object_labels[entity_type]
+    return get_class_name, get_object_names, get_object_labels
+
+
+def query_parameter_values(
+    entity_type: EntityType,
+    filter_conditions: Tuple,
+    accept_objects: Optional[List[List[str]]],
+    db_map: DatabaseMappingBase,
+) -> TreeNode:
+    """Reads parameter values from database."""
+    value_tree = TreeNode("class")
+    get_class_name, get_object_names, get_object_labels = entity_handling_functions(
+        entity_type
+    )
     subquery = {
         EntityType.OBJECT: db_map.object_parameter_value_sq,
         EntityType.RELATIONSHIP: db_map.relationship_parameter_value_sq,
@@ -170,26 +192,21 @@ def query_parameter_values(
             and reject_objects(objects, accept_objects)
         ):
             continue
-        class_name = get_class_name(row)
-        alternative = row.alternative_name
-        parameter_value = from_database(row.value, row.type)
-        parameter_subtree = value_tree.content.setdefault(
-            class_name, TreeNode("parameter")
-        )
         object_labels = get_object_labels(row)
-        entity_subtree = parameter_subtree.content.setdefault(
-            row.parameter_name, TreeNode(object_labels[0])
-        )
+        entity_subtree = value_tree.content.setdefault(
+            get_class_name(row), TreeNode("parameter")
+        ).content.setdefault(row.parameter_name, TreeNode(object_labels[0]))
         for entity, label in zip(objects[:-1], object_labels[1:]):
             entity_subtree = entity_subtree.content.setdefault(entity, TreeNode(label))
         alternative_subtree = entity_subtree.content.setdefault(
             objects[-1], TreeNode("alternative")
         )
+        parameter_value = from_database(row.value, row.type)
         if not isinstance(parameter_value, Map):
             parameter_value = convert_containers_to_maps(parameter_value)
-        alternative_subtree.content[alternative] = convert_indexed_value_to_tree(
-            parameter_value
-        )
+        alternative_subtree.content[
+            row.alternative_name
+        ] = convert_indexed_value_to_tree(parameter_value)
     return value_tree
 
 
@@ -253,7 +270,7 @@ def categorize_further(
         subcategory_lookup.setdefault(category, set()).add(subcategory)
     current_subcategories = subcategories
     for category, contained_subcategories in subcategory_lookup.items():
-        unused_subcategories = dict()
+        unused_subcategories = {}
         for subcategory, x in current_subcategories.items():
             if subcategory not in contained_subcategories:
                 unused_subcategories[subcategory] = x
@@ -469,6 +486,7 @@ def separate(separate_plots: str, data_list: List[XYData]) -> Iterator[List[XYDa
 
 
 def make_shuffle_instructions(plot_dimensions: Dict) -> Dict:
+    """Generates shuffle instructions based on plot settings."""
     instructions = {}
     x1 = plot_dimensions.get("x1")
     if x1 is not None:
@@ -627,7 +645,7 @@ def plot(url: str, settings: Dict) -> bool:
                 plot_widget.show()
                 did_plot = True
         return did_plot
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         traceback.print_exc(file=sys.stdout)
         return did_plot
     finally:
@@ -666,6 +684,7 @@ def start_subprocess(args: Namespace) -> None:
     """Restarts the script as subprocess and waits for the application to start."""
     with TemporaryDirectory() as temp_dir:
         notification_file = Path(temp_dir, ".plotting_started")
+        # pylint: disable=consider-using-with
         subprocess.Popen(
             [
                 sys.executable,
@@ -696,7 +715,7 @@ def main() -> None:
     if args.use_subprocess:
         start_subprocess(args)
         return
-    with open(args.settings) as settings_file:
+    with open(args.settings, encoding="utf-8") as settings_file:
         settings = json.load(settings_file)
     # The QApplication instance may already exist when running on Toolbox console
     app = QApplication.instance()
