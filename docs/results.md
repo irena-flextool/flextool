@@ -103,7 +103,7 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
   - *units_up* - [MW] additional room for upward ramps from non-VRE units connected to the node
   - *VRE_up* - [MW] adds upward ramp room from VRE units on top of the ramp room from non-VRE units
   - *connections_up* - [MW] adds upward ramp room from connections on top of the previous ramp rooms (does not consider whether the connected node has ramp room, but is simply the available capacity in the connection)
-  - *unis_down* - [MW] additional room for downward ramps from non-VRE units connected to the node 
+  - *units_down* - [MW] additional room for downward ramps from non-VRE units connected to the node 
   - *VRE_down* - [MW] adds downward ramp room from VRE units on top of the ramp room from non-VRE units
   - *connections_down* - [MW] adds downward ramp room from connections on top of the previous ramp rooms (does not consider whether the connected node has ramp room, but is simply the available capacity in the connection)
 - `unit__node` relationship `ramp_t` parameter - [MW] shows ramping of particular input or output flow between a unit and a node for each time step
