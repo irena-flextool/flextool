@@ -353,6 +353,13 @@ class RelabelXAxisTest(unittest.TestCase):
         )
         self.assertEqual(labels, [str(i) for i in range(0, 40, 5)])
 
+    def test_single_tick(self):
+        categories = {"y2020_2day_dispatch": ["p2020"]}
+        x_ticks = np.array([-0.1, 0.0, 0.1])
+        tick_positions, labels = plot_results.relabel_x_axis(categories, x_ticks)
+        self.assertEqual(list(tick_positions), [0.0])
+        self.assertEqual(labels, ["p2020"])
+
 
 class CheckEntityClassesTest(unittest.TestCase):
     def test_nothing_gets_printed_if_everything_is_ok(self):

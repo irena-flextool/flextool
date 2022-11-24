@@ -306,19 +306,28 @@ def add_category_spine(
     plot_widget: [PlotWidget],
 ):
     """Adds a category spine to plot widget."""
-    category_1_axis = plot_widget.canvas.axes.twiny()
-    point_offset = 35 + offset * 15
-    category_1_axis.spines["bottom"].set_position(("outward", point_offset))
-    category_1_axis.tick_params("both", length=0, width=0, which="minor")
-    category_1_axis.tick_params("both", direction="in", which="major")
-    category_1_axis.xaxis.set_ticks_position("bottom")
-    category_1_axis.xaxis.set_label_position("bottom")
-    category_1_axis.set_xticks(category_dividers)
-    category_1_axis.xaxis.set_major_formatter(matplotlib.ticker.NullFormatter())
-    category_1_axis.xaxis.set_minor_locator(
+    category_axis = plot_widget.canvas.axes.twiny()
+    point_offset = 35 + offset * 17
+    category_axis.spines["bottom"].set_position(("outward", point_offset))
+    category_axis.tick_params("both", length=0, width=0, which="minor")
+    category_axis.tick_params("both", direction="in", which="major")
+    category_axis.xaxis.set_ticks_position("bottom")
+    category_axis.xaxis.set_label_position("bottom")
+    if (
+        len(category_dividers) == 2
+        and category_dividers[0] - category_dividers[1] == 0.0
+    ):
+        category_axis.set_xticks([category_dividers[0]])
+        category_axis.xaxis.set_major_formatter(
+            matplotlib.ticker.FixedFormatter(list(category_labels))
+        )
+        return
+    category_axis.set_xticks(category_dividers)
+    category_axis.xaxis.set_major_formatter(matplotlib.ticker.NullFormatter())
+    category_axis.xaxis.set_minor_locator(
         matplotlib.ticker.FixedLocator(list(category_labels.values()))
     )
-    category_1_axis.xaxis.set_minor_formatter(
+    category_axis.xaxis.set_minor_formatter(
         matplotlib.ticker.FixedFormatter(list(category_labels))
     )
 
@@ -328,6 +337,8 @@ def relabel_x_axis(
 ) -> Tuple[List[float], List[str]]:
     """Replaces numerical x-axis by string labels."""
     all_labels = sum((labels for labels in categories.values()), [])
+    if len(all_labels) == 1:
+        return [0.0], all_labels[0:1]
     begin = max(0.0, round(x_ticks[0]))
     end = min(len(all_labels), round(x_ticks[-1]))
     tick_positions = [i for i in x_ticks if begin <= i < end and i == round(i)]
