@@ -48,7 +48,7 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
 
 ## Energy balance in nodes
 
-- `node` object `balance` parameter - [MWh] cumulative inputs (positive) and (outputs) to the node from all the possible sources (*from_units*, *from_connection*, *to_units*, *to_connections*, *state change* over the period, *self discharge* during the period, *upward slack* for involuntary demand reduction and *downward slack* for involuntary demand increase)
+- `node` object `balance` parameter - [MWh] cumulative inputs (positive) and outputs (negative) to the node from all the possible sources (*from_units*, *from_connection*, *to_units*, *to_connections*, *state change* over the period, *self discharge* during the period, *upward slack* for involuntary demand reduction and *downward slack* for involuntary demand increase)
 - `node` object `balance_t` parameter - [MWh] same as above, but for each timestep
 - `node` object `state_t` parameter - [MWh] storage state of the node in each timestep
 - `node` object `state_t` parameter - storage state of the node in each timestep (typically MWh).
