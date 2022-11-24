@@ -35,8 +35,8 @@
       }
     },
     {
+      "plot_type": "line",
       "selection": {
-        "plot_type": "line",
         "entity_class": ["node"],
         "entity": [],
         "parameter": ["ramp_t"],
