@@ -118,6 +118,7 @@
                             "coal_wind_ev",
                             "coal_wind_inertia",
                             "fullYear",
+                            "fusion",
                             "multi_year",
                             "multi_year_one_solve",
                             "network_coal_wind",
@@ -203,7 +204,7 @@
             "x": 64.93101331230629,
             "y": -2.611019051448025,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": []
         },
         "Init": {

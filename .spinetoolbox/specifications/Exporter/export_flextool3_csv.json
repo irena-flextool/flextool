@@ -1643,7 +1643,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^efficiency$|^efficiency_at_min_load$|^min_load$|^variable_cost$",
+                    "filter_re": "^efficiency$|^efficiency_at_min_load$|^min_load$|^other_operational_cost$",
                     "header": "processParam"
                 },
                 {
@@ -2087,7 +2087,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 2,
-                    "filter_re": "variable_cost",
+                    "filter_re": "^other_operational_cost$",
                     "header": "sourceSinkTimeParam"
                 },
                 {
@@ -2162,7 +2162,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 2,
-                    "filter_re": "variable_cost",
+                    "filter_re": "^other_operational_cost$",
                     "header": "sourceSinkTimeParam"
                 },
                 {
