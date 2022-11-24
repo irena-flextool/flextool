@@ -27,7 +27,7 @@ The structure of the JSON file is as follows:
 
 <plot type>: one of: "line", "stacked line", "bar", "stacked bar", "heatmap"
 <entity class list>: a list of entity class names to include in the plots
-<entity list>: a list of lists entity names to include in the plots; empty list includes all
+<entity list>: a list of lists of entity names to include in the plots; empty list includes all
     Examples:
         include all: []
         include selected objects: [["coal", "oil", "peat"]]
@@ -38,9 +38,9 @@ The structure of the JSON file is as follows:
 <period list>: a list of period names; empty list includes all
 
 The entries in "dimensions" object accept one of the following <item type> values:
-    null, entity class, parameter, alternative, solve, period, cost_type, flow_type etc.
+    null, object class name, "parameter", "alternative", "solve", "period", "cost_type", "flow_type" etc.
 separatePlots: each item of this type will get its own plot window
-x1: which item to use as the x-axis
+x1: which item to use as the x-axis; defaults to the last dimension, e.g. time for *_t parameters or period
 x2: regroups or categorises the x-axis by this item
 x3: minor x-axis regrouping item; works only if x2 is defined
 
@@ -51,6 +51,7 @@ import traceback
 from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass, replace
 from enum import IntEnum, unique
+from io import TextIOWrapper
 from itertools import accumulate
 import json
 from operator import attrgetter
@@ -407,7 +408,7 @@ def build_parameter_value_tree(
     object_classes = [
         class_
         for class_ in entity_classes
-        if entity_class_types[class_] == EntityType.OBJECT
+        if entity_class_types.get(class_) == EntityType.OBJECT
     ]
     if object_classes:
         filter_conditions = make_object_filter(
@@ -423,7 +424,7 @@ def build_parameter_value_tree(
     relationship_classes = [
         class_
         for class_ in entity_classes
-        if entity_class_types[class_] == EntityType.RELATIONSHIP
+        if entity_class_types.get(class_) == EntityType.RELATIONSHIP
     ]
     if relationship_classes:
         filter_conditions = make_relationship_filter(
@@ -615,12 +616,24 @@ def plot_basic(
     return plot_widget
 
 
+def check_entity_classes(
+    settings: Dict, entity_class_types: Dict[str, EntityType], file: TextIOWrapper = sys.stdout
+):
+    """Prints warnings if settings contain unknown entity classes."""
+    for plot_settings in settings["plots"]:
+        entity_classes = plot_settings["selection"]["entityClasses"]
+        for class_ in entity_classes:
+            if class_ not in entity_class_types:
+                print(f"entity class '{class_}' not in database; ignoring", file=file)
+
+
 def plot(url: str, settings: Dict) -> bool:
     """Plots data as defined in settings."""
     db_map = DatabaseMapping(url)
     did_plot = False
     try:
         entity_class_types = fetch_entity_class_types(db_map)
+        check_entity_classes(settings, entity_class_types)
         for plot_settings in settings["plots"]:
             plot_selection = plot_settings["selection"]
             parameter_values = build_parameter_value_tree(

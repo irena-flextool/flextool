@@ -1,4 +1,5 @@
 import inspect
+from io import StringIO
 from pathlib import Path
 import sys
 import unittest
@@ -351,6 +352,27 @@ class RelabelXAxisTest(unittest.TestCase):
             list(tick_positions), [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0]
         )
         self.assertEqual(labels, [str(i) for i in range(0, 40, 5)])
+
+
+class CheckEntityClassesTest(unittest.TestCase):
+    def test_nothing_gets_printed_if_everything_is_ok(self):
+        settings = {"plots": [{"selection": {"entityClasses": ["my_class"]}}]}
+        entity_class_types = {"my_class": plot_results.EntityType.OBJECT}
+        my_out = StringIO()
+        plot_results.check_entity_classes(settings, entity_class_types, my_out)
+        self.assertEqual(my_out.getvalue(), "")
+
+    def test_warns_about_missing_class(self):
+        settings = {
+            "plots": [{"selection": {"entityClasses": ["my_non_existent_class"]}}]
+        }
+        entity_class_types = {"my_class": plot_results.EntityType.OBJECT}
+        my_out = StringIO()
+        plot_results.check_entity_classes(settings, entity_class_types, my_out)
+        self.assertEqual(
+            my_out.getvalue(),
+            "entity class 'my_non_existent_class' not in database; ignoring\n",
+        )
 
 
 if __name__ == "__main__":
