@@ -356,7 +356,7 @@ class RelabelXAxisTest(unittest.TestCase):
 
 class CheckEntityClassesTest(unittest.TestCase):
     def test_nothing_gets_printed_if_everything_is_ok(self):
-        settings = {"plots": [{"selection": {"entityClasses": ["my_class"]}}]}
+        settings = {"plots": [{"selection": {"entity_class": ["my_class"]}}]}
         entity_class_types = {"my_class": plot_results.EntityType.OBJECT}
         my_out = StringIO()
         plot_results.check_entity_classes(settings, entity_class_types, my_out)
@@ -364,7 +364,7 @@ class CheckEntityClassesTest(unittest.TestCase):
 
     def test_warns_about_missing_class(self):
         settings = {
-            "plots": [{"selection": {"entityClasses": ["my_non_existent_class"]}}]
+            "plots": [{"selection": {"entity_class": ["my_non_existent_class"]}}]
         }
         entity_class_types = {"my_class": plot_results.EntityType.OBJECT}
         my_out = StringIO()

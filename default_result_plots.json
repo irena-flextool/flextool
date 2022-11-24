@@ -1,34 +1,34 @@
 {
   "plots": [
     {
+      "plot_type": "stacked bar",
       "selection": {
-        "plotType": "stacked bar",
-        "entityClasses": ["model"],
-        "entities": [],
-        "parameters": ["cost_t"],
-        "alternatives": [],
-        "solves": [],
-        "periods": []
+        "entity_class": ["model"],
+        "entity": [],
+        "parameter": ["cost_t"],
+        "alternative": [],
+        "solve": [],
+        "period": []
       },
       "dimensions": {
-        "separatePlots": null,
+        "separate_window": null,
         "x1": "time",
         "x2": "period",
         "x3": "solve"
       }
     },
     {
+      "plot_type": "stacked bar",
       "selection": {
-        "plotType": "stacked bar",
-        "entityClasses": ["unit__node"],
-        "entities": [],
-        "parameters": ["flow"],
-        "alternatives": [],
-        "solves": [],
-        "periods": []
+        "entity_class": ["unit__node"],
+        "entity": [],
+        "parameter": ["flow"],
+        "alternative": [],
+        "solve": [],
+        "period": []
       },
       "dimensions": {
-        "separatePlots": null,
+        "separate_window": null,
         "x1": "period",
         "x2": "solve",
         "x3": "alternative"
@@ -36,33 +36,33 @@
     },
     {
       "selection": {
-        "plotType": "line",
-        "entityClasses": ["node"],
-        "entities": [],
-        "parameters": ["ramp_t"],
-        "alternatives": [],
-        "solves": [],
-        "periods": []
+        "plot_type": "line",
+        "entity_class": ["node"],
+        "entity": [],
+        "parameter": ["ramp_t"],
+        "alternative": [],
+        "solve": [],
+        "period": []
       },
       "dimensions": {
-        "separatePlots": "alternative",
+        "separate_window": "alternative",
         "x1": "time",
         "x2": "period",
         "x3": "solve"
       }
     },
     {
+      "plot_type": "stacked bar",
       "selection": {
-        "plotType": "stacked bar",
-        "entityClasses": ["unit","connection","node"],
-        "entities": [],
-        "parameters": ["capacity"],
-        "alternatives": [],
-        "solves": [],
-        "periods": []
+        "entity_class": ["unit","connection","node"],
+        "entity": [],
+        "parameter": ["capacity"],
+        "alternative": [],
+        "solve": [],
+        "period": []
       },
       "dimensions": {
-        "separatePlots": null,
+        "separate_window": null,
         "x1": "period",
         "x2": "solve",
         "x3": "alternative"

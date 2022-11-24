@@ -6,17 +6,18 @@ The structure of the JSON file is as follows:
 {
   "plots": [
     {
+      "plot_type": <plot type>,
       "selection": {
-        "plotType": <plot type>,
-        "entityClasses": <entity class list>,
-        "entities": <entity list>,
-        "parameters": <parameter list>,
-        "alternatives": <alternative list>,
-        "solves": <solve list>,
-        "periods": <period list>
+        "entity_class": <entity class list>,
+        "entity": <entity list>,
+        "parameter": <parameter list>,
+        "alternative": <alternative list>,
+        "solve": <solve list>,
+        "period": <period list>
+        ...
       },
       "dimensions": {
-        "separatePlots": <item type>,
+        "separate_window": <item type>,
         "x1": <item type>,
         "x2": <item type>,
         "x3": <item type>
@@ -26,8 +27,10 @@ The structure of the JSON file is as follows:
 }
 
 <plot type>: one of: "line", "stacked line", "bar", "stacked bar", "heatmap"
-<entity class list>: a list of entity class names to include in the plots
-<entity list>: a list of lists of entity names to include in the plots; empty list includes all
+
+The entries in the selection object choose what is included in the plot.
+<entity class list>: a list of entity class names to include in the plot
+<entity list>: a list of lists of entity names to include in the plot; empty list includes all
     Examples:
         include all: []
         include selected objects: [["coal", "oil", "peat"]]
@@ -36,14 +39,14 @@ The structure of the JSON file is as follows:
 <alternative list>: a list of alternative names; empty list includes all
 <solve list>: a list of solve names; empty list includes all
 <period list>: a list of period names; empty list includes all
+It is possible to include other dimensions such as "cost_type" or "flow_type" in similar fashion.
 
 The entries in "dimensions" object accept one of the following <item type> values:
     null, object class name, "parameter", "alternative", "solve", "period", "cost_type", "flow_type" etc.
-separatePlots: each item of this type will get its own plot window
-x1: which item to use as the x-axis; defaults to the last dimension, e.g. time for *_t parameters or period
+separate_window: each item of this type will get its own plot window
+x1: which item to use as the x-axis; defaults to the last dimension, e.g. time for *_t parameters
 x2: regroups or categorises the x-axis by this item
 x3: minor x-axis regrouping item; works only if x2 is defined
-
 """
 import subprocess
 import sys
@@ -67,8 +70,6 @@ from matplotlib.ticker import MaxNLocator
 from sqlalchemy.sql.expression import Alias, and_
 from spinedb_api import convert_containers_to_maps, DatabaseMapping, from_database, Map
 from spinedb_api.db_mapping_base import DatabaseMappingBase
-from spinedb_api.filters.scenario_filter import SCENARIO_FILTER_TYPE
-from spinedb_api.filters.tools import name_from_dict, pop_filter_configs
 from spinetoolbox.plotting import (
     combine_data_with_same_indexes,
     convert_indexed_value_to_tree,
@@ -389,7 +390,7 @@ def build_parameter_value_tree(
     """Builds data tree according to given plot settings."""
     object_parameter_values = None
     relationship_parameter_values = None
-    entity_classes = plot_selection["entityClasses"]
+    entity_classes = plot_selection.get("entity_class", [])
     object_classes = [
         class_
         for class_ in entity_classes
@@ -398,9 +399,9 @@ def build_parameter_value_tree(
     if object_classes:
         filter_conditions = make_object_filter(
             object_classes,
-            plot_selection["entities"],
-            plot_selection["parameters"],
-            plot_selection["alternatives"],
+            plot_selection.get("entity", []),
+            plot_selection.get("parameter", []),
+            plot_selection.get("alternative", []),
             db_map.object_parameter_value_sq,
         )
         object_parameter_values = query_parameter_values(
@@ -414,14 +415,14 @@ def build_parameter_value_tree(
     if relationship_classes:
         filter_conditions = make_relationship_filter(
             relationship_classes,
-            plot_selection["parameters"],
-            plot_selection["alternatives"],
+            plot_selection.get("parameter", []),
+            plot_selection.get("alternative", []),
             db_map.relationship_parameter_value_sq,
         )
         relationship_parameter_values = query_parameter_values(
             EntityType.RELATIONSHIP,
             filter_conditions,
-            plot_selection["entities"],
+            plot_selection.get("entity", []),
             db_map,
         )
     if object_parameter_values is not None and object_parameter_values.content:
@@ -460,14 +461,14 @@ def filter_by_data_index(
     return filtered_list
 
 
-def separate(separate_plots: str, data_list: List[XYData]) -> Iterator[List[XYData]]:
+def separate(separate_window: str, data_list: List[XYData]) -> Iterator[List[XYData]]:
     """Yields chunks of data list that should be plotted separately."""
-    if not separate_plots:
+    if not separate_window:
         yield data_list
         return
     baskets: Dict[str, List[XYData]] = {}
     for xy_data in data_list:
-        baskets.setdefault(data_index_at(separate_plots, xy_data), []).append(xy_data)
+        baskets.setdefault(data_index_at(separate_window, xy_data), []).append(xy_data)
     yield from baskets.values()
 
 
@@ -568,8 +569,11 @@ def filtered_data_list(
 ) -> List[XYData]:
     """Turns parameter value tree into data list and filters by nodes and periods."""
     data_list = list(turn_node_to_xy_data(parameter_values, 1))
-    data_list = filter_by_data_index(data_list, "solve", plot_selection["solves"])
-    data_list = filter_by_data_index(data_list, "period", plot_selection["periods"])
+    used_index_names = {"entity_class", "entity", "parameter", "alternative"}
+    for index_name, accepted_values in plot_selection.items():
+        if index_name in used_index_names:
+            continue
+        data_list = filter_by_data_index(data_list, index_name, accepted_values)
     return data_list
 
 
@@ -608,7 +612,7 @@ def check_entity_classes(
 ):
     """Prints warnings if settings contain unknown entity classes."""
     for plot_settings in settings["plots"]:
-        entity_classes = plot_settings["selection"]["entityClasses"]
+        entity_classes = plot_settings["selection"].get("entity_class", [])
         for class_ in entity_classes:
             if class_ not in entity_class_types:
                 print(f"entity class '{class_}' not in database; ignoring", file=file)
@@ -629,12 +633,12 @@ def plot(url: str, settings: Dict) -> bool:
             if parameter_values is None:
                 continue
             data_list = filtered_data_list(plot_selection, parameter_values)
-            plot_type = plot_selection["plotType"]
+            plot_type = plot_settings["plot_type"]
             plot_dimensions = plot_settings["dimensions"]
             shuffle_instructions = make_shuffle_instructions(plot_dimensions)
             if shuffle_instructions:
                 data_list = shuffle_dimensions(shuffle_instructions, data_list)
-            for list_chunk in separate(plot_dimensions["separatePlots"], data_list):
+            for list_chunk in separate(plot_dimensions["separate_window"], data_list):
                 if plot_type in BASIC_PLOT_TYPES:
                     plot_widget = plot_basic(plot_type, plot_dimensions, list_chunk)
                 elif plot_type == "heatmap":
