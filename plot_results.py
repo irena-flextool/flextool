@@ -126,12 +126,6 @@ def make_argument_parser() -> ArgumentParser:
     return parser
 
 
-def get_model_scenario(value_row) -> str:
-    """Parses model scenario name from the alternative name in parameter value row."""
-    scenario, separator, remainder = value_row.alternative_name.partition("__")
-    return scenario
-
-
 def reject_objects(objects: List[str], acceptable_objects: List[List[str]]) -> bool:
     """
     Returns True if any object in objects list is not
@@ -209,15 +203,6 @@ def query_parameter_values(
             row.alternative_name
         ] = convert_indexed_value_to_tree(parameter_value)
     return value_tree
-
-
-def pop_filters(url: str) -> Tuple[Optional[str], str]:
-    """Pops filters from URL and parses active scenario name."""
-    configs, bare_url = pop_filter_configs(url)
-    for config in configs:
-        if config["type"] == SCENARIO_FILTER_TYPE:
-            return name_from_dict(config), bare_url
-    return None, bare_url
 
 
 def make_image(data_list: List[XYData]) -> ImageData:
@@ -617,7 +602,9 @@ def plot_basic(
 
 
 def check_entity_classes(
-    settings: Dict, entity_class_types: Dict[str, EntityType], file: TextIOWrapper = sys.stdout
+    settings: Dict,
+    entity_class_types: Dict[str, EntityType],
+    file: TextIOWrapper = sys.stdout,
 ):
     """Prints warnings if settings contain unknown entity classes."""
     for plot_settings in settings["plots"]:
