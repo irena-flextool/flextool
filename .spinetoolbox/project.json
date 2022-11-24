@@ -1,7 +1,6 @@
 {
     "project": {
         "version": 9,
-        "name": "FlexTool3",
         "description": "",
         "specifications": {
             "Importer": [
@@ -204,14 +203,14 @@
             "x": 64.93101331230629,
             "y": -2.611019051448025,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": []
         },
         "Init": {
             "type": "Data Store",
             "description": "",
-            "x": -412.08173049379843,
-            "y": 68.64823590832064,
+            "x": -413.0993717761298,
+            "y": 66.612953343658,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -308,7 +307,7 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 308.95158565758,
+            "x": 307.93893065146113,
             "y": 29.46808381966196,
             "url": {
                 "dialect": "sqlite",

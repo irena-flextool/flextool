@@ -3042,6 +3042,24 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
 	  }
   }
 
+param fn_group_inertia_largest_flow__dt symbolic := "output/group_inertia_largest_flow__period__t.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period,time' > fn_group_inertia_largest_flow__dt;
+    for {g in groupInertia}
+	  { printf ',%s', g >> fn_group_inertia_largest_flow__dt; }
+  }
+for {s in solve_current, (d, t) in dt : d in period_realized}
+  {
+    printf '\n%s,%s,%s', s, d, t >> fn_group_inertia_largest_flow__dt;
+	for {g in groupInertia}
+	  { printf ',%.8g' 
+		  , + max {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node} 
+              ( v_flow[p, source, sink, d, t] )
+  		  >> fn_group_inertia_largest_flow__dt;
+	  }
+  }
+
+
 printf 'Write reserve slack variables over time...\n';
 param fn_group_reserve_slack__dt symbolic := "output/slack__reserve__upDown__group__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
