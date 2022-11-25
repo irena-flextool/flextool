@@ -1,4 +1,5 @@
 import inspect
+from functools import partial
 from io import StringIO
 from pathlib import Path
 import sys
@@ -124,28 +125,44 @@ class CategoryTicksTest(unittest.TestCase):
     def test_simple(self):
         categories = {"imaginary": ["a", "b"], "real": ["a", "b"]}
         dividers, labels = plot_results.category_ticks(categories, 0.0, 3.0)
-        self.assertEqual(dividers, [0.0, 0.5, 1.0])
-        self.assertEqual(labels, {"imaginary": 0.25, "real": 0.75})
+        convert = partial(self._x_to_axis_units, x_min=0.0, x_max=3.0)
+        expected_positions = list(map(convert, (0.5, 2.5)))
+        for label_position, expected in zip(labels.values(), expected_positions):
+            self.assertAlmostEqual(label_position, expected)
+        self.assertEqual(list(labels), ["imaginary", "real"])
+        expected_dividers = list(map(convert, (-0.5, 1.5, 3.5)))
+        for divider, expected in zip(dividers, expected_dividers):
+            self.assertAlmostEqual(divider, expected)
 
     def test_uneven_dividers(self):
         categories = {"imaginary": ["a", "b"], "real": ["c"], "eerie": ["d", "e", "f"]}
         dividers, labels = plot_results.category_ticks(categories, 0.0, 5.0)
-        self.assertEqual(dividers, [0.0, 2 / 6, 3 / 6, 1.0])
+        convert = partial(self._x_to_axis_units, x_min=0.0, x_max=5.0)
+        expected_dividers = list(map(convert, (-0.5, 1.5, 2.5, 5.5)))
+        for divider, expected in zip(dividers, expected_dividers):
+            self.assertAlmostEqual(divider, expected)
+        expected_locations = list(map(convert, (0.5, 2.0, 4.0)))
+        for label_position, expected in zip(labels.values(), expected_locations):
+            self.assertAlmostEqual(label_position, expected)
         self.assertEqual(list(labels), ["imaginary", "real", "eerie"])
 
     def test_long_axis(self):
         categories = {"imaginary": ["a", "b"], "real": ["a", "b"]}
         dividers, labels = plot_results.category_ticks(categories, -0.7, 3.7)
-        expected_dividers = [0.7 / (0.7 + 3.7), 0.5, 3.7 / (0.7 + 3.7)]
+        convert = partial(self._x_to_axis_units, x_min=-0.7, x_max=3.7)
+        expected_dividers = list(map(convert, (-0.5, 1.5, 3.5)))
         for divider, expected in zip(dividers, expected_dividers):
             self.assertAlmostEqual(divider, expected)
         self.assertEqual(list(labels), ["imaginary", "real"])
-        expected_positions = [
-            (0.7 / (0.7 + 3.7) + 0.5) / 2,
-            (0.5 + 3.7 / (0.7 + 3.7)) / 2,
-        ]
+        expected_positions = list(map(convert, (0.5, 2.5)))
         for label_position, expected in zip(labels.values(), expected_positions):
             self.assertAlmostEqual(label_position, expected)
+
+    @staticmethod
+    def _x_to_axis_units(x, x_min, x_max):
+        width = x_max - x_min
+        step = 1.0 / width
+        return -x_min * step + x * step
 
 
 class TileHorizontallyTest(unittest.TestCase):

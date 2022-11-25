@@ -287,14 +287,13 @@ def category_ticks(
     categories: Dict[str, List[str]], x_min: float, x_max: float
 ) -> Tuple[List[float], Dict[str, float]]:
     """Calculates major and minor tick positions for category x-axis."""
-    x_width = x_max - x_min
-    first_divider = -x_min / x_width
+    axis_width_tick_units = x_max - x_min
+    tick_width_axis_units = 1.0 / axis_width_tick_units
+    first_tick_location_axis_units = max(x_min, -x_min / axis_width_tick_units)
     category_sizes = list(accumulate(len(labels) for labels in categories.values()))
-    count = category_sizes[-1]
-    category_width = 1.0 - (x_max - x_min - (count - 1)) / x_width
-    step = category_width / count
-    category_dividers = [first_divider] + list(
-        first_divider + size * step for size in category_sizes
+    first_divider_axis_units = first_tick_location_axis_units - tick_width_axis_units / 2
+    category_dividers = [first_divider_axis_units] + list(
+        first_divider_axis_units + tick_width_axis_units * size for size in category_sizes
     )
     category_labels = {}
     for i, name in enumerate(categories):
