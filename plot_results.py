@@ -55,7 +55,7 @@ from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass, replace
 from enum import IntEnum, unique
 from io import TextIOWrapper
-from itertools import accumulate
+from itertools import accumulate, zip_longest
 import json
 from operator import attrgetter
 from pathlib import Path
@@ -227,21 +227,25 @@ def tile_horizontally(
 ) -> Tuple[List[XYData], Dict[str, List[str]]]:
     """Creates 'ghost' x-axis such that each xy data is plotted next to each other."""
     tiled = []
-    next_first = 0
-    x_ranges = {}
     categories = {}
+    x_lookups_per_category = {}
+    for xy_data in data_list:
+        x_lookup = x_lookups_per_category.setdefault(xy_data.data_index[-1], {})
+        for x in xy_data.x:
+            if x not in x_lookup:
+                x_lookup[x] = len(x_lookup)
+    offsets = {}
+    current_offset = 0
+    for category, x_lookup in x_lookups_per_category.items():
+        offsets[category] = current_offset
+        current_offset += len(x_lookup)
+    for category, x_lookup in x_lookups_per_category.items():
+        categories[category] = list(x_lookup)
     for xy_data in data_list:
         category = xy_data.data_index[-1]
-        first, end = x_ranges.get(category, (None, 0))
-        size = len(xy_data.x)
-        if first is None or size > end - first:
-            if first is None:
-                first = next_first
-            end = first + size
-            x_ranges[category] = first, end
-            next_first = end
-            categories[category] = xy_data.x
-        tiled.append(replace(xy_data, x=list(range(first, min(end, first + size)))))
+        x_lookup = x_lookups_per_category[category]
+        offset = offsets[category]
+        tiled.append(replace(xy_data, x=[offset + x_lookup[x] for x in xy_data.x]))
     return tiled, categories
 
 
@@ -456,11 +460,9 @@ def build_parameter_value_tree(
 
 
 def filter_by_data_index(
-    data_list: List[XYData], index_label, accepted_values
+    data_list: List[XYData], index_label: str, accepted_values: List[str]
 ) -> List[XYData]:
     """Removes xy data that does not have an acceptable index data under given label."""
-    if not accepted_values:
-        return data_list
     filtered_list = []
     for xy_data in data_list:
         try:
@@ -582,7 +584,7 @@ def filtered_data_list(
     data_list = list(turn_node_to_xy_data(parameter_values, 1))
     used_index_names = {"entity_class", "entity", "parameter", "alternative"}
     for index_name, accepted_values in plot_selection.items():
-        if index_name in used_index_names:
+        if index_name in used_index_names or not accepted_values:
             continue
         data_list = filter_by_data_index(data_list, index_name, accepted_values)
     return data_list

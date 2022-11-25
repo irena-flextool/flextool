@@ -205,6 +205,20 @@ class TileHorizontallyTest(unittest.TestCase):
         expected_categories = {"idx1": ["a", "b"]}
         self.assertEqual(categories, expected_categories)
 
+    def test_same_tiling_data_index(self):
+        data_list = [
+            XYData(["a"], [1.1], "x", "y", ["idx1"], ["name 1"]),
+            XYData(["b"], [2.2], "x", "y", ["idx1"], ["name 1"]),
+        ]
+        tiled, categories = plot_results.tile_horizontally(data_list)
+        expected = [
+            XYData([0], [1.1], "x", "y", ["idx1"], ["name 1"]),
+            XYData([1], [2.2], "x", "y", ["idx1"], ["name 1"]),
+        ]
+        self.assertEqual(tiled, expected)
+        expected_categories = {"idx1": ["a", "b"]}
+        self.assertEqual(categories, expected_categories)
+
 
 class CategorizeFurtherTest(unittest.TestCase):
     def test_single_subcategory(self):
