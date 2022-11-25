@@ -113,8 +113,9 @@
                             "coal_chp",
                             "coal_co2",
                             "coal_min_load",
+                            "coal_min_load_MIP_wind",
+                            "coal_min_load_wind",
                             "coal_retire",
-                            "coal_wind",
                             "coal_wind_ev",
                             "coal_wind_inertia",
                             "fullYear",
@@ -226,7 +227,7 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -169.18205302767103,
+            "x": -170.19969431000234,
             "y": -7.426179636517748,
             "url": {
                 "dialect": "sqlite",
@@ -278,8 +279,8 @@
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -48.49155514370959,
-            "y": -7.874350608638537,
+            "x": -48.4915551437096,
+            "y": -8.891991890969848,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [

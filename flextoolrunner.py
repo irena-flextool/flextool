@@ -330,7 +330,7 @@ class FlexToolRunner:
             print("GLPSOL wrote the problem as MPS file\n")
             highs_step2 = "highs flexModel3.mps --options_file=highs.opt --presolve=" \
                 + self.highs_presolve.get(current_solve, "on") + " --solver=" \
-                + self.highs_method.get(current_solve, "simplex") + " --parallel=" \
+                + self.highs_method.get(current_solve, "choose") + " --parallel=" \
                 + self.highs_parallel.get(current_solve, "off")
             completed = subprocess.run(highs_step2)
             if completed.returncode != 0:
