@@ -149,7 +149,40 @@
                 "to": [
                     "Export_to_CSV",
                     "left"
-                ]
+                ],
+                "disabled_filters": {
+                    "db_url@Input_data": {
+                        "scenario_filter": [
+                            "all",
+                            "base",
+                            "capacity_margin",
+                            "coal",
+                            "coal_chp",
+                            "coal_co2",
+                            "coal_min_load",
+                            "coal_min_load_MIP_wind",
+                            "coal_min_load_wind",
+                            "coal_retire",
+                            "coal_wind_ev",
+                            "coal_wind_inertia",
+                            "fullYear",
+                            "fusion",
+                            "multi_year",
+                            "multi_year_one_solve",
+                            "network_coal_wind",
+                            "network_coal_wind_battery_co2_fullYear",
+                            "network_coal_wind_capacity_margin",
+                            "network_coal_wind_reserve",
+                            "network_coal_wind_reserve_co2_capacity_margin",
+                            "network_coal_wind_reserve_n_1",
+                            "network_wind_coal_battery_fullYear_invest",
+                            "water_pump",
+                            "wind",
+                            "wind_battery",
+                            "wind_battery_invest"
+                        ]
+                    }
+                }
             },
             {
                 "name": "from Results to To_Excel",
@@ -171,7 +204,16 @@
                 "to": [
                     "Plot_results",
                     "right"
-                ]
+                ],
+                "disabled_filters": {
+                    "db_url@Results": {
+                        "scenario_filter": [
+                            "coal",
+                            "coal_wind_inertia",
+                            "wind_battery_invest"
+                        ]
+                    }
+                }
             },
             {
                 "name": "from Initialize to Input_data",
@@ -202,10 +244,10 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 64.93101331230629,
+            "x": 67.00728659423874,
             "y": -2.611019051448025,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": []
         },
         "Init": {
@@ -279,8 +321,8 @@
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -48.4915551437096,
-            "y": -8.891991890969848,
+            "x": -46.41528186177715,
+            "y": -8.891991890969845,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [

@@ -2684,8 +2684,7 @@
             "connection_invest_marginal__period",
             "node_invest_marginal__period",
             "unit_invest_marginal__period",
-            "group_inertia_largest_flow__period__t",
-            "result"
+            "group_inertia_largest_flow__period__t"
         ],
         "table_options": {
             "node__period": {},
@@ -3025,8 +3024,7 @@
             "group_inertia_largest_flow__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float"
+                "2": "string"
             }
         },
         "table_default_column_type": {

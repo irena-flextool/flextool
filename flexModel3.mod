@@ -802,25 +802,27 @@ param ptProcess_slope{p in process, t in time_in_use} :=
 param w_calc_slope := gmtime() - datetime0 - setup1;
 display w_calc_slope;
 
-param ptProcess__source__sink__t_varCost {(p, source, sink) in process_source_sink, t in time_in_use} :=
+param ptProcess__source__sink__dt_varCost {(p, source, sink) in process_source_sink, (d, t) in dt} :=
   + (if (p, source) in process_source then ptProcess_source[p, source, 'other_operational_cost', t])
-#      * (if (p, source, sink) in process_source_sink_eff
-#	        then (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
-#			else 1
-#		)	
   + (if (p, sink) in process_sink then ptProcess_sink[p, sink, 'other_operational_cost', t])
-  + (if (p, source, sink) in process_source_sink then ptProcess[p, 'other_operational_cost', t])
+  + (if (p, source, sink) in process_source_sink then 
+      ( ( if (p, 'other_operational_cost', t) in process__param__time then ptProcess[p, 'other_operational_cost', t]
+	      else (if (p, 'other_operational_cost', d) in process__param__period then pdProcess[p, 'other_operational_cost', d]))
+	  )
+	)
 ;
 
-param ptProcess__source__sink__t_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, t in time_in_use} :=
+param ptProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
   + (if (p, source) in process_source then ptProcess_source[p, source, 'other_operational_cost', t])
   + (if (p, sink) in process_sink then ptProcess_sink[p, sink, 'other_operational_cost', t])
   + (if (p, source, sink) in process_source_sink_alwaysProcess 
         && ((p, sink) in process_sink || (p, sink) in process_source)
-	 then ptProcess[p, 'other_operational_cost', t])
+	 then ( if (p, 'other_operational_cost', t) in process__param__time then ptProcess[p, 'other_operational_cost', t]
+	      else (if (p, 'other_operational_cost', d) in process__param__period then pdProcess[p, 'other_operational_cost', d]))
+    )
 ;
 
-set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : ptProcess__source__sink__t_varCost[p, source, sink, t]};
+set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : ptProcess__source__sink__dt_varCost[p, source, sink, d, t]};
 set pssdt_varCost_eff := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && ptProcess_source[p, source, 'other_operational_cost', t]};
 
 set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d] || sum{(e, c) in process_capacity_constraint} 1 || sum{(e, c) in node_capacity_constraint} 1 };
@@ -1096,7 +1098,7 @@ minimize total_cost:
 	      * p_entity_unitsize[p]) * step_duration[d, t] 
 		  * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
   + sum {(p, source, sink, d, t) in pssdt_varCost_noEff}
-    ( + ptProcess__source__sink__t_varCost[p, source, sink, t]
+    ( + ptProcess__source__sink__dt_varCost[p, source, sink, d, t]
 	    * v_flow[p, source, sink, d, t]
         * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
 	)
@@ -2269,7 +2271,7 @@ param r_cost_co2_dt{(g, c, n, d, t) in gcndt_co2} :=
 param r_cost_process_other_operational_cost_dt{p in process, (d, t) in dt} :=
   + step_duration[d, t]
       * sum{(p, source, sink) in process_source_sink_alwaysProcess}
-          + ptProcess__source__sink__t_varCost_alwaysProcess[p, source, sink, t]
+          + ptProcess__source__sink__dt_varCost_alwaysProcess[p, source, sink, d, t]
 	          * r_process_source_sink_flow_dt[p, source, sink, d, t]
 #	  * ( + sum {(p, source, sink, 'other_operational_cost') in process__source__sink__param_t}
 #	        ( + sum{(p, n, sink) in process_source_sink_alwaysProcess : (p, sink) in process_sink}
@@ -3325,5 +3327,4 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 display v_invest, v_divest;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
-display time_in_use;
 end;

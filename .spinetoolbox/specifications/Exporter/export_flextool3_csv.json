@@ -1667,7 +1667,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -1833,7 +1834,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^invest_forced$|^invest_max_period$|^invest_min_period$|^retire_forced$|^retire_max_period$|^retire_min_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$",
+                    "filter_re": "^invest_forced$|^invest_max_period$|^invest_min_period$|^retire_forced$|^retire_max_period$|^retire_min_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$|^other_operational_cost$",
                     "header": "processParam"
                 },
                 {
@@ -1857,7 +1858,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!time)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
