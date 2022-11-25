@@ -198,7 +198,7 @@ set dt dimen 2 within period_time;
 set dtttdt dimen 6;
 set period_invest dimen 1 within period;
 set period_realized dimen 1 within period;
-
+set time_in_use := setof {(d, t) in dt} (t);
 
 set startTime dimen 1 within time;
 set startNext dimen 1 within time;
@@ -596,7 +596,7 @@ param pdNode {n in node, param in nodePeriodParam, d in period} :=
         + if (n, param, d) in node__param__period
 		  then pd_node[n, param, d]
 		  else p_node[n, param];
-param ptNode {n in node, param in nodeTimeParam, t in time} :=
+param ptNode {n in node, param in nodeTimeParam, t in time_in_use} :=
         + if (n, param, t) in node__param__time
 		  then pt_node[n, param, t]
 		  else p_node[n, param];
@@ -655,7 +655,7 @@ param pdProcess {p in process, param in processPeriodParam, d in period} :=
 		  else if (p, param) in process__param
 		  then p_process[p, param]
 		  else 0;
-param ptProcess {p in process, param in processTimeParam, t in time} :=
+param ptProcess {p in process, param in processTimeParam, t in time_in_use} :=
         + if (p, param, t) in process__param__time
 		  then pt_process[p, param, t]
 		  else if (p, param) in process__param
@@ -685,21 +685,21 @@ param pProcess_source_sink {(p, source, sink, param) in process__source__sink__p
 		  then p_process_sink[p, sink, param]
 		  else 0;
 
-param ptProcess_source {(p, source) in process_source, param in sourceSinkTimeParam, t in time} :=  # : sum{d in period : (d, t) in dt} 1
+param ptProcess_source {(p, source) in process_source, param in sourceSinkTimeParam, t in time_in_use} :=  # : sum{d in period : (d, t) in dt} 1
         + if (p, source, param, t) in process__source__param__time
 		  then pt_process_source[p, source, param, t]
 		  else if (p, source, param) in process__source__param
 		  then p_process_source[p, source, param]
 		  else 0;
         
-param ptProcess_sink {(p, sink) in process_sink, param in sourceSinkTimeParam, t in time} :=  #  : sum{d in period : (d, t) in dt} 1
+param ptProcess_sink {(p, sink) in process_sink, param in sourceSinkTimeParam, t in time_in_use} :=  #  : sum{d in period : (d, t) in dt} 1
         + if (p, sink, param, t) in process__sink__param__time
 		  then pt_process_sink[p, sink, param, t]
 		  else if (p, sink, param) in process__sink__param
 		  then p_process_sink[p, sink, param]
 		  else 0;
 
-param ptProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, t in time} := #  : sum{d in period : (d, t) in dt} 1
+param ptProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, t in time_in_use} := #  : sum{d in period : (d, t) in dt} 1
         + if (p, sink, param, t) in process__sink__param__time
 		  then pt_process_sink[p, sink, param, t]
           else if (p, source, param, t) in process__source__param__time
@@ -715,7 +715,7 @@ param ptProcess_source_sink {(p, source, sink, param) in process__source__sink__
 		  else 0;
 
 
-param ptReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, t in time} :=
+param ptReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, t in time_in_use} :=
         + if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
 		  then pt_reserve_upDown_group[r, ud, g, param, t]
 		  else p_reserve_upDown_group[r, ud, g, param];
@@ -787,12 +787,12 @@ param ed_entity_annual_divest{e in entityDivest, d in period_invest} :=
 
 
 set process_minload := {p in process : (p, 'min_load_efficiency') in process__ct_method};
-param ptProcess_section{p in process_minload, t in time} := 
+param ptProcess_section{p in process_minload, t in time_in_use} := 
         + 1 / ptProcess[p, 'efficiency', t] 
     	- ( 1 / ptProcess[p, 'efficiency', t] - ptProcess[p, 'min_load', t] / ptProcess[p, 'efficiency_at_min_load', t] ) 
 			    / (1 - ptProcess[p, 'min_load', t])
 		; 
-param ptProcess_slope{p in process, t in time} := 
+param ptProcess_slope{p in process, t in time_in_use} := 
         1 / ptProcess[p, 'efficiency', t] 
 		- (if p in process_minload then ptProcess_section[p, t] else 0);
 
@@ -802,7 +802,7 @@ param ptProcess_slope{p in process, t in time} :=
 param w_calc_slope := gmtime() - datetime0 - setup1;
 display w_calc_slope;
 
-param ptProcess__source__sink__t_varCost {(p, source, sink) in process_source_sink, t in time : sum{d in period : (d, t) in dt} 1} :=
+param ptProcess__source__sink__t_varCost {(p, source, sink) in process_source_sink, t in time_in_use} :=
   + (if (p, source) in process_source then ptProcess_source[p, source, 'other_operational_cost', t])
 #      * (if (p, source, sink) in process_source_sink_eff
 #	        then (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
@@ -812,7 +812,7 @@ param ptProcess__source__sink__t_varCost {(p, source, sink) in process_source_si
   + (if (p, source, sink) in process_source_sink then ptProcess[p, 'other_operational_cost', t])
 ;
 
-param ptProcess__source__sink__t_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, t in time : sum{d in period : (d, t) in dt} 1} :=
+param ptProcess__source__sink__t_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, t in time_in_use} :=
   + (if (p, source) in process_source then ptProcess_source[p, source, 'other_operational_cost', t])
   + (if (p, sink) in process_sink then ptProcess_sink[p, sink, 'other_operational_cost', t])
   + (if (p, source, sink) in process_source_sink_alwaysProcess 
@@ -955,7 +955,7 @@ set group_commodity_node_period_co2 :=
 			&& pdGroup[g, 'co2_price', d]
 		};
 
-set gcndt_co2 := {(g, c, n, d) in group_commodity_node_period_co2, t in time : (d, t) in dt};
+set gcndt_co2 := {(g, c, n, d) in group_commodity_node_period_co2, t in time_in_use : (d, t) in dt};
 
 set process__commodity__node := {p in process, (c, n) in commodity_node : (p, n) in process_source || (p, n) in process_sink};
 
@@ -1014,13 +1014,13 @@ var vq_capacity_margin {g in groupCapacityMargin, d in period_invest} >= 0;
 #########################
 ## Data checks 
 printf 'Checking: Eff. data for 1 variable conversions directly from source to sink (and possibly back)\n';
-check {(p, m) in process_method, t in time : m in method_1var && not (p, 'none') in process__ct_method } ptProcess[p, 'efficiency', t] != 0 ;
+check {(p, m) in process_method, t in time_in_use : m in method_1var && not (p, 'none') in process__ct_method } ptProcess[p, 'efficiency', t] != 0 ;
 
 printf 'Checking: Efficiency data for 1-way conversions with an online variable\n';
-check {(p, m) in process_method, t in time : m in method_1way_on} ptProcess[p, 'efficiency', t] != 0;
+check {(p, m) in process_method, t in time_in_use : m in method_1way_on} ptProcess[p, 'efficiency', t] != 0;
 
 printf 'Checking: Efficiency data for 2-way linear conversions without online variables\n';
-check {(p, m) in process_method, t in time : m in method_2way_off} ptProcess[p, 'efficiency', t] != 0;
+check {(p, m) in process_method, t in time_in_use : m in method_2way_off} ptProcess[p, 'efficiency', t] != 0;
 
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
 check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
@@ -2253,13 +2253,13 @@ param r_process_emissions_co2_dt{(p, c, n) in process__commodity__node_co2, (d, 
 ;	  
 
 param r_process_emissions_co2_d{(p, c, n) in process__commodity__node_co2, d in period} :=
-  + sum{t in time : (d, t) in dt} r_process_emissions_co2_dt[p, c, n, d, t];
+  + sum{t in time_in_use : (d, t) in dt} r_process_emissions_co2_dt[p, c, n, d, t];
 
 param r_emissions_co2_dt{(c, n) in commodity_node_co2, (d, t) in dt} :=
   + sum{(p, c, n) in process__commodity__node_co2} r_process_emissions_co2_dt[p, c, n, d, t];
 
 param r_emissions_co2_d{(c, n) in commodity_node_co2, d in period} :=
-  + sum{t in time : (d, t) in dt} r_emissions_co2_dt[c, n, d, t];
+  + sum{t in time_in_use : (d, t) in dt} r_emissions_co2_dt[c, n, d, t];
 
 param r_cost_co2_dt{(g, c, n, d, t) in gcndt_co2} := 
   + r_emissions_co2_dt[c, n, d, t] 
@@ -3325,4 +3325,5 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 display v_invest, v_divest;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
+display time_in_use;
 end;
