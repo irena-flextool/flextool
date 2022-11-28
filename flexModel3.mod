@@ -547,7 +547,6 @@ set process__source__sink_isNodeSink := {(p, source, sink) in process_source_sin
 set process_online_linear 'processes with an online status using linear variable' := setof {(p, m) in process_method : m in method_LP} p;
 set process_online_integer 'processes with an online status using integer variable' := setof {(p, m) in process_method : m in method_MIP} p;
 set process_online := process_online_linear union process_online_integer;
-display process_method;
 set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
 
 
@@ -2616,34 +2615,77 @@ printf 'Write group results for process_nodes...\n';
 param fn_groupProcessNode__d symbolic := "output/group__process__node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf 'group,solve,period,"sum of annualized flows [MWh]"\n' > fn_groupProcessNode__d;
+    printf 'group,solve,period,"sum flow"\n' > fn_groupProcessNode__d;
   }
 for {g in groupOutput, s in solve_current, d in period_realized : sum{(g, p, n) in group_process_node} 1}
   {
     printf '%s,%s,%s,%.8g\n', g, s, d 
        , + sum{(p, source, n) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_sink} 
-	             r_process_source_sink_flow_d[p, source, n, d]  
+	             r_process_source_sink_flow_d[p, source, n, d] / period_share_of_year[d] 
          + sum{(p, n, sink) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_source} 
-		         r_process_source_sink_flow_d[p, n, sink, d] 
+		         r_process_source_sink_flow_d[p, n, sink, d] / period_share_of_year[d]
 	>> fn_groupProcessNode__d;
   }
+
+printf 'Write discount rates for realized periods...\n';
+param fn_discount symbolic := "output/discount_factors__period.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { 
+    printf 'solve,period,"operations discount factor",' > fn_discount;
+	printf '"investments discount factor"\n' >> fn_discount;
+  }
+for {s in solve_current, d in period_realized}
+  { 
+    printf '%s,%s,%.12g,%.12g\n', 
+      s, d,
+	  p_discount_with_perpetuity_operations[d],
+	  p_discount_in_perpetuity_investment[d]
+	>> fn_discount;
+  }
+
+printf 'Write discounted total cost for each cost type...\n';
+param fn_costs_total_discounted symbolic := "output/costs_total_discounted.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { 
+    printf 'solve,"unit investment/retirement","connection investment/retirement",' > fn_costs_total_discounted;
+    printf '"storage investment/retirement",commodity,CO2,"variable cost",starts,"upward penalty",' >> fn_costs_total_discounted;
+	printf '"downward penalty","inertia penalty","non-synchronous penalty","capacity margin penalty",' >> fn_costs_total_discounted;
+	printf '"upward reserve penalty","downward reserve penalty"\n' >> fn_costs_total_discounted;
+  }
+for {s in solve_current}
+  {
+    printf '%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
+      s,
+	  sum{d in period_realized} ((r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_in_perpetuity_investment[d]) / 1000000,
+      sum{d in period_realized} ((r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_in_perpetuity_investment[d]) / 1000000,
+      sum{d in period_realized} ((r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_in_perpetuity_investment[d]) / 1000000,
+	  sum{d in period_realized} (r_cost_commodity_d[d] / period_share_of_year[d]) / 1000000,
+	  sum{d in period_realized} (r_cost_co2_d[d] / period_share_of_year[d]) / 1000000,
+	  sum{d in period_realized} (r_cost_variable_d[d] / period_share_of_year[d]) / 1000000,
+	  sum{d in period_realized} (r_cost_startup_d[d] / period_share_of_year[d]) / 1000000,
+	  sum{d in period_realized} (sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'up', d] / period_share_of_year[d])) / 1000000,
+	  sum{d in period_realized} (sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / period_share_of_year[d])) / 1000000,
+	  sum{d in period_realized} (sum{g in groupInertia} (r_costPenalty_inertia_d[g, d] / period_share_of_year[d])) / 1000000,
+	  sum{d in period_realized} (sum{g in groupNonSync} (r_costPenalty_non_synchronous_d[g, d] / period_share_of_year[d])) / 1000000,
+	  sum{d in period_realized} (sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d] / period_share_of_year[d])) / 1000000,
+	  sum{d in period_realized} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d])) / 1000000,
+	  sum{d in period_realized} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d])) / 1000000
+	>> fn_costs_total_discounted;
+  } 
 
 printf 'Write annualized cost summary for realized periods...\n';
 param fn_summary_cost symbolic := "output/costs__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf 'solve,period,total,"unit investment/retirement","connection investment/retirement",' > fn_summary_cost;
+    printf 'solve,period,"unit investment/retirement","connection investment/retirement",' > fn_summary_cost;
     printf '"storage investment/retirement",commodity,CO2,"variable cost",starts,"upward penalty",' >> fn_summary_cost;
 	printf '"downward penalty","inertia penalty","non-synchronous penalty","capacity margin penalty",' >> fn_summary_cost;
 	printf '"upward reserve penalty","downward reserve penalty"\n' >> fn_summary_cost;
   }
 for {s in solve_current, d in period_realized}
   { 
-    printf '%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
+    printf '%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
       s, d,
-	  (r_costOper_and_penalty_d[d] / period_share_of_year[d] 
-	    + r_costInvest_d[d] / p_discount_in_perpetuity_investment[d] 
-		+ r_costDivest_d[d] / p_discount_in_perpetuity_investment[d]) / 1000000,
       (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_in_perpetuity_investment[d] / 1000000,
       (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_in_perpetuity_investment[d] / 1000000,
       (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_in_perpetuity_investment[d] / 1000000,
@@ -3368,6 +3410,6 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
-display v_invest, v_divest, ed_entity_annual;
+display v_invest, v_divest;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
 end;
