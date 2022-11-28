@@ -2480,9 +2480,7 @@ for {s in solve_current, p in process_connection, d in period_realized}
 	        p_entity_all_existing[p],
 			(if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0),
 			(if (p, d) in pd_divest then v_divest[p, d].val * p_entity_unitsize[p] else 0),
-			+ p_entity_all_existing[p] 
-			+ (if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0)
-			- (if (p, d) in pd_divest then v_divest[p, d].val * p_entity_unitsize[p] else 0)
+			+ entity_all_capacity[p, d] 
 	>> fn_connection_capacity;
   }
 
@@ -2496,9 +2494,7 @@ for {s in solve_current, e in nodeState, d in period_realized}
 	        p_entity_all_existing[e],
 			(if (e, d) in ed_invest then v_invest[e, d].val * p_entity_unitsize[e] else 0),
 			(if (e, d) in ed_divest then v_divest[e, d].val * p_entity_unitsize[e] else 0),
-			+ p_entity_all_existing[e]
-			+ (if (e, d) in ed_invest then v_invest[e, d].val * p_entity_unitsize[e] else 0)
-			- (if (e, d) in ed_divest then v_divest[e, d].val * p_entity_unitsize[e] else 0)
+			+ entity_all_capacity[e, d]
 	 >> fn_node_capacity;
   }
 
@@ -2598,7 +2594,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '"curtailed VRE share, [\% of annual inflow]","upward slack [\% of annual inflow]",' >> fn_groupNode__d;
 	printf '"downward slack [\% of annual inflow]"\n' >> fn_groupNode__d;
   }
-for {g in groupOutput, s in solve_current, d in period_realized : sum{(g, n) in group_node} pdNodeInflow[n, d]}
+for {g in groupOutput, s in solve_current, d in period_realized : sum{(g, n) in group_node} 1 && sum{(g, n) in group_node} pdNodeInflow[n, d]}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g\n', g, s, d 
        , sum{(g, n) in group_node} pdNodeInflow[n, d] / period_share_of_year[d]
@@ -2616,6 +2612,21 @@ for {g in groupOutput, s in solve_current, d in period_realized : sum{(g, n) in 
 	>> fn_groupNode__d;
   }
 
+printf 'Write group results for process_nodes...\n';
+param fn_groupProcessNode__d symbolic := "output/group__process__node__period.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { 
+    printf 'group,solve,period,"sum of annualized flows [MWh]"\n' > fn_groupProcessNode__d;
+  }
+for {g in groupOutput, s in solve_current, d in period_realized : sum{(g, p, n) in group_process_node} 1}
+  {
+    printf '%s,%s,%s,%.8g\n', g, s, d 
+       , + sum{(p, source, n) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_sink} 
+	             r_process_source_sink_flow_d[p, source, n, d]  
+         + sum{(p, n, sink) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_source} 
+		         r_process_source_sink_flow_d[p, n, sink, d] 
+	>> fn_groupProcessNode__d;
+  }
 
 printf 'Write annualized cost summary for realized periods...\n';
 param fn_summary_cost symbolic := "output/costs__period.csv";
