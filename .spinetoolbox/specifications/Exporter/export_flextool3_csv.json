@@ -1893,7 +1893,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^annual_flow$|^invest_forced$|^invest_max_period$|^invest_min_period$|^retire_forced$|^retire_max_period$|^retire_min_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$|^storage_state_reference_price$",
+                    "filter_re": "^annual_flow$|^peak_inflow$|^invest_forced$|^invest_max_period$|^invest_min_period$|^retire_forced$|^retire_max_period$|^retire_min_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$|^storage_state_reference_price$",
                     "header": "nodeParam"
                 },
                 {

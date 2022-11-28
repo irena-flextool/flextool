@@ -729,21 +729,53 @@ param hours_in_solve := sum {(d, t) in dt} (step_duration[d, t]);
 param period_share_of_year{d in period} := hours_in_period[d] / 8760;
 param solve_share_of_year := hours_in_solve / 8760;
 
-param period_share_of_annual_flow {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
-        abs(sum{(d, t) in dt} (ptNode[n, 'inflow', t])) / pdNode[n, 'annual_flow', d];
-param period_flow_annual_multiplier {n in node, d in period : (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]} := 
-        period_share_of_year[d] / period_share_of_annual_flow[n, d];
+param period_share_of_annual_flow {n in node, d in period : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
+        && pdNode[n, 'annual_flow', d]} := abs(sum{(d, t) in dt} (ptNode[n, 'inflow', t])) / pdNode[n, 'annual_flow', d];
+param period_flow_annual_multiplier {n in node, d in period : ((n, 'scale_to_annual_flow') in node__inflow_method)
+        && pdNode[n, 'annual_flow', d]} := period_share_of_year[d] / period_share_of_annual_flow[n, d];
+param orig_flow_sum {n in node, d in period : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
+        && pdNode[n, 'annual_flow', d]}  := sum{t in time_in_use} ptNode[n, 'inflow', t];
 param period_flow_proportional_multiplier {n in node, d in period : (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d]} :=
         pdNode[n, 'annual_flow', d] / (abs(sum{t in time} (ptNode[n, 'inflow', t])) / sum{(d, tl) in period__timeline} p_timeline_duration_in_years[tl]);
-param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  := 
-        + ptNode[n, 'inflow', t] *
-        ( if (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] then
-		    + period_flow_annual_multiplier[n, d]
-		  else if (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d] then
-		    + period_flow_proportional_multiplier[n, d]
-		  else 1
-		);
+param new_peak_sign{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+        (if pdNode[n, 'peak_inflow', d] >= 0 then 1 else -1);
+param old_peak_max{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+        max{t in time} ptNode[n, 'inflow', t];
+param old_peak_min{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+        min{t in time} ptNode[n, 'inflow', t];
+param old_peak_sign{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
+        (if abs(old_peak_max[n, d]) >= abs(old_peak_min[n, d]) then 1 else -1);
+param old_peak{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
+        (if abs(old_peak_max[n, d]) >= abs(old_peak_min[n, d]) then old_peak_max[n, d] else old_peak_min[n, d]);
+printf ('Checking if the sign of new peak inflow is the same as the sign ');
+printf ('of the peak inflow in the original inflow time series\n');
+check {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} new_peak_sign[n, d] = old_peak_sign[n, d];
 
+param new_peak_divided_by_old_peak {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+        pdNode[n, 'peak_inflow', d] / old_peak[n, d];
+param new_peak_divide_by_old_peak_sum_inflow {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+        new_peak_divided_by_old_peak[n, d] * orig_flow_sum[n, d] / period_share_of_year[d];
+param new_peak_inflow_sum {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+        pdNode[n, 'peak_inflow', d] * 8760;
+param new_old_multiplier {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+        old_peak_sign[n, d] *
+		( old_peak_sign[n, d] * new_peak_divide_by_old_peak_sum_inflow[n, d] - pdNode[n, 'annual_flow', d] 
+		)
+		/ ( new_peak_inflow_sum[n, d] - new_peak_divide_by_old_peak_sum_inflow[n, d] );
+param new_old_slope {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
+        new_peak_divided_by_old_peak[n, d] * ( 1 + new_old_multiplier[n, d] );
+param new_old_section {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
+        pdNode[n, 'peak_inflow', d] * new_old_multiplier[n, d];
+param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  := 
+        ( if (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] then
+		    + period_flow_annual_multiplier[n, d] * ptNode[n, 'inflow', t]
+		  else if (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d] then
+		    + period_flow_proportional_multiplier[n, d] * ptNode[n, 'inflow', t]
+		  else if (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d] then
+		    + new_old_slope[n, d] * ptNode[n, 'inflow', t]
+			- new_old_section[n, d]
+		  else ptNode[n, 'inflow', t]
+		);
 set period__period_next := {d in period, dNext in period : 1 + sum{d2 in period : d2 <=d} 1 = sum{dNext2 in period : dNext2 <=dNext} 1};
 param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0.05);
 param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_discount_offset_investment[m] else 0);
@@ -3325,6 +3357,6 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
-display v_invest, v_divest;
+display v_invest, v_divest, ed_entity_annual;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
 end;

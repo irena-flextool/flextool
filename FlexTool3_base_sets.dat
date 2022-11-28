@@ -136,14 +136,14 @@ set processPeriodParam := fixed_cost interest_rate invest_cost salvage_value
 set processTimeParam := efficiency efficiency_at_min_load min_load other_operational_cost;
 set sourceSinkParam := efficiency, efficiency_at_min_load, min_load, coefficient, flow_unitsize, other_operational_cost, ramp_cost, ramp_limit, inertia_constant;
 set sourceSinkTimeParam := efficiency, efficiency_at_min_load, min_load, other_operational_cost;
-set nodeParam := annual_flow, existing, fixed_cost, inflow, interest_rate, invest_cost, salvage_value,
+set nodeParam := annual_flow, peak_inflow, existing, fixed_cost, inflow, interest_rate, invest_cost, salvage_value,
                  invest_max_total, invest_min_total, lifetime,
 				 invest_max_period, invest_min_period, retire_max_period, retire_min_period,
                  penalty_down, penalty_up, retire_forced, retire_min_total, 
 				 retire_max_total, self_discharge_loss, virtual_unitsize,
 				 storage_state_start, storage_state_end, storage_state_reference_value,
 				 storage_state_reference_price;
-set nodePeriodParam := annual_flow, fixed_cost, interest_rate, invest_cost, salvage_value,
+set nodePeriodParam := annual_flow, peak_inflow, fixed_cost, interest_rate, invest_cost, salvage_value,
                  invest_max_period, invest_min_period, lifetime,
                  retire_forced, retire_max_period, retire_min_period, virtual_unitsize,
 				 storage_state_reference_price;
@@ -169,7 +169,7 @@ set groupPeriodParam := capacity_margin, co2_price, inertia_limit, invest_max_pe
 set invest_method_not_allowed := not_allowed, retire_period, retire_total, retire_no_limit;
 set divest_method_not_allowed := not_allowed, invest_period, invest_total, invest_no_limit;
 set profile_method := upper_limit lower_limit fixed;
-set inflow_method := use_original scale_to_annual_flow no_inflow scale_in_proportion;
+set inflow_method := use_original scale_to_annual_flow no_inflow scale_in_proportion scale_to_annual_and_peak_flow;
 set inflow_method_default := use_original;
 set storage_binding_method := bind_within_timeblock bind_within_period bind_within_solve bind_within_model bind_forward_only;
 set storage_binding_method_default := bind_within_period;
