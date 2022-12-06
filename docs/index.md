@@ -156,9 +156,17 @@ Remember to **commit**, execute and have a look at the results (there should be 
  - three new `connections` between `nodes` (*east_north*, *west_east* and *west_north*). 
   
 The new nodes are kept simple: 
+- they have a `is_active` parameter set to *yes*
 - they have a `has_balance` parameter set to *yes* (to force the node to maintain an energy balance)
 - they have a constant negative `inflow` (i.e. demand)
 - penalty values for violating their energy balance
+
+The three connections have the following parameters:
+- they have a `is_active` parameter set to *yes*
+- they have a `existing` parameter to indicate the existing interconnection capacity between the nodes
+- they have a `efficiency` parameter  (e.g. 0.9 for 90% efficiency).
+
+It is also necessary to create the relationships `connection__node__node` for *east_north | east | north*, *west_north | west | north* and *west_east | west | east*.
 
 The *north* `node` has the lowest upward penalty, so the model will prefer to use that whenever the *coal* and *wind* units cannot meet all the demand. Sometimes the `existing` capacity of the new `connections` will not be sufficient to carry all the needed power, since both generators are producing to the *west* `node`. **Commit**, execute and explore.
 
