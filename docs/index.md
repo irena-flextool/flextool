@@ -10,7 +10,7 @@ The instructions for installing IRENA FlexTool are [here](https://github.com/ire
 
 This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the IRENA FlexTool web-interface, the instructions still apply, but the example figures in this tutorial will not be as helpful. IRENA FlexTool concepts are explained in more depth at this [page](https://irena-flextool.github.io/flextool/reference). 
 
-The small system is also available in the FlexTool repository (***Init*** SQLite database) and can be opened with the Spine Toolbox database editor. However, the default workflow for IRENA FlexTool executes the scenarios from the ***Input data*** database. It is empty by default, so you need to copy the contents of the ***Init*** database to the ***Input data*** database when you wish to run the scenarios in this tutorial. To copy the data, one needs to execute the ***Initialize*** workflow item: select the item, press ***Execute selected*** from the toolbar. The data will be also copied, along with running the model, if the whole workflow is executed using ***Execute project***. More information on how to set-up and use the Spine Toolbox front-end in [here](https://irena-flextool.github.io/flextool/irena-flextool-workflow-shortly-explained).
+The small system to be built is also directly available in the FlexTool repository (***Init*** SQLite database) and can be opened with the Spine Toolbox database editor. The default workflow for IRENA FlexTool executes the scenarios from the ***Input data*** database (and not from the ***Init*** SQLite database). The ***Input data*** database is empty by default. Therefore, if you want to use directly the contents of the ***Init*** database (instead of building the small system step-by-step), you need to copy them to the ***Input data*** database before running the scenarios in this tutorial. To copy the data, you need to execute the ***Initialize*** workflow item: select the item, press ***Execute selection*** from the toolbar. Alternatively, the data will be also copied, along with running the model, if the whole workflow is executed using ***Execute project***. More information on how to set-up and use the Spine Toolbox front-end in [here](https://irena-flextool.github.io/flextool/irena-flextool-workflow-shortly-explained). Remark: in case you had already populated the ***Input data*** database, you need to delete the data before importing from ***Init*** SQLite database. This can be done by selecting all `alternatives` in the Database Editor, removing them (right click) and committing changes (ctrl-enter) - or with the 'purge' tool from the Database Editor menu.
 
 - [Building a small test system](#building-a-small-test-system)
   - [1st step - a node with no units](#1st-step---a-node-with-no-units)
@@ -59,26 +59,27 @@ Next step is to add an object for the first `node` that will be called *west*.
 ![Add object1](./add_object_dialog.png) 
 ![Add object2](./add_object_dialog2.png)
 
-The newly minted *west* `node` will now need parameter data.
-- First it needs an `inflow` parameter with negative values to indicate negative inflow, i.e. demand. The `inflow` timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. 
-- There are no electriciy generating units and the demand cannot be met by ordinary means. The model will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. Also downward `penalty_down` is defined although the model is not using it at this stage. 
+Then, add parameter data to the newly minted *west* `node`:
+- First add an `inflow` parameter with negative values to indicate negative inflow, i.e. demand. The `inflow` timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. 
+- There are no electricity generating units and the demand cannot be met by ordinary means. The model will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. Also downward `penalty_down` is defined although the model is not using it at this stage. 
 - The *west* `node` needs to have a parameter called `is_active` with value *yes*. This chooses the *west* `node` and all its parameters to be sent to the model. 
-- All parameters here should be part of the *west* `alternative` - they will be used whenever a `scenario` includes the *west* `alternative`. 
+- All parameters here should be part of the *west* `alternative` (column alternative_name) - they will be used whenever a `scenario` includes the *west* `alternative`. 
 
 ![First_node](./west_node.png)
 
 The model will also need parameters that define the model structure for time related issues. FlexTool time structure offers a lot of flexibility, but it is also bit complex to learn at first. At this stage not everything needs to be understood - the time structures will be explained in more detail later. 
 
-First, make a new `alternative` called *init* to keep all the model structure related data separate from the data on physical objects. All parameter data that will be added next, should go into the *init* `alternative`.
+First, make a new `alternative` called *init* to keep all the model structure related data separate from the data on physical objects. All parameter data that will be added next should go into the *init* `alternative`.
 
-Then, to get the model to run, these are needed:
-- `timeline` object called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains the name of each timestep in the first column (e.g. *t0001* or *2022-01-01-01*) and the length of the timestep in hours (e.g. *1.0*) in the second column. The timestep names in the previously given `inflow` time series should match these timestep names - and any other timestep names in later time series.
-- `timeblockset` object called *2day* with a map-type parameter `block_duration` to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps (e.g. *t0001* and *1.0*).
+Then, to get the model to run, you need to create the following objects and relationships:
+- `timeline` object called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains, in the first column, the name of each timestep (e.g. *t0001* or *2022-01-01-01*) and, in the second column, the length of the timestep in hours (e.g. *1.0*). The timestep names in the previously given `inflow` time series must match these timestep names - and any other timestep names in later time series.
+- `timeblockset` object called *2day* with a map-type parameter `block_duration` to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps (e.g. *t0001* and *48.0*).
 - `timeblockset` *2day and `timeline` *y2020* need to have `timeblockset__timeline` relationship *2day*, *y2020*. Right-click on the `timeblockset__timeline` relationship class to 'Add relationships...'.
 - `solve` object called *y2020_2day_dispatch* 
-  - with a map-type parameter `period_timeblockSet` to define the what timeblockset each period in the model should use (in this example: `period` *y2020* in the first column of the map links to the `timeblockset` object *2day* in the second column of the map)
-  - with an array-type parameter `realised_periods` to define the periods that are realised from the `solve` named by the object (in this example: first column of the array is the index number *1* and the second column contains the period to be realized in the results: *y2020*)
-- Finally, the model will be a sequence of solves as defined by the `model` object. In this case *flexTool* `model` object contains just one solve *y2020_2day_dispatch* inside the array-type parameter.
+  - with a map-type parameter `period_timeblockSet` to define the timeblockset to be used by each period (in this example: `period` *p2020* in the first column of the map links to the `timeblockset` object *2day* in the second column of the map)
+  - with an array-type parameter `realized_periods` to define the periods that are realised from the `solve` named by the object (in this example: first column of the array is the index number *1* and the second column contains the period to be realized in the results: *p2020*)
+  - with a parameter `solve_mode`, to be set to *dispatch_single*.
+- Finally, the `model` object needs to be created. It must contain the sequence of solves. In this case *flexTool* `model` object contains just one solve *y2020_2day_dispatch* inside the array-type parameter.
 
 The new objects, relationships and parameters have now been staged. Even though it looks like they are in the database, they really are not - they need to be **committed** first. This can be done from the menu of the Database Editor (there is a *commit* command) or by pressing *ctrl-enter*. One should write an informative commit message about the changes that have been made. All commits, and the data they have affected, can be seen later from the *history* menu item.
 
@@ -86,7 +87,7 @@ The new objects, relationships and parameters have now been staged. Even though 
 
 ## Interlude - creating a scenario and running the model
 
-Even though the model is very simple and will not do anything interesting, it can be executed. However, first there needs to be a scenario to be executed. Scenarios are created from `alternatives` in the Alternative/Scenario tree widget of the Database Editor. In the figure below, a `scenario` called *base* is created that should contain `alternatives` *west* and *init* in order to have both a node and a model structure included in the model. The new `scenario` must also be **committed**, before it can be used. A new scenario should be added after each step in the tutorial process. 
+Even though the model is very simple and will not do anything interesting, it can be executed. It is first necessary to create the scenario to be executed. Scenarios are created from `alternatives` in the Alternative/Scenario tree widget of the Database Editor. In the figure below, a `scenario` called *base* is created that should contain `alternatives` *west* and *init* in order to have both a node and a model structure included in the model. The new `scenario` must also be **committed**, before it can be used. A new scenario should be added after each step in the tutorial process. 
 
 ![Add scenario](./add_scenario.png)
 
@@ -94,7 +95,7 @@ Once the scenario has been committed to the database, it becomes available in th
 
 ![Select scenario](./select_scenario.png)
 
-Next, we want to run three tools: ***Export_to_CSV*** (that will make input files suitable for FlexTool), ***FlexTool3*** (which is a Python script that calls the FlexTool model generator for each solve) and ***Import_results*** (which will take output files from FlexTool and drop their contents to the ***Results*** database with a particular `alternative` name. First, select the tools (select with left click while ctrl is pressed or draw an area with ctrl pressed, see figure below). Then, press ***Execute_selected*** from the menu bar. The three items should be executed and if all goes well, then green check marks appear on each of the tool once it has finished. You can explore the outputs of each item by selecting the item and looking at the ***Console*** widget window.
+Next, we want to run three tools: ***Export_to_CSV*** (that will make input files suitable for FlexTool), ***FlexTool3*** (which is a Python script that calls the FlexTool model generator for each solve) and ***Import_results*** (which will take output files from FlexTool and drop their contents to the ***Results*** database with a particular `alternative` name. First, select the three tools (select with left click while ctrl is pressed or draw an area with ctrl pressed, see figure below). Then, press ***Execute selection*** from the menu bar. The three items should be executed and if all goes well, then green check marks appear on each of the tool once it has finished. You can explore the outputs of each item by selecting the item and looking at the ***Console*** widget window.
 
 ![Choose workflow items](./choose_workflow_items.png) 
 ![Executed selected items](./execute_selected.png)
@@ -117,7 +118,7 @@ In the second step, a coal unit is added.
   - `efficiency` (e.g. 0.4 for 40% efficiency)
   - `existing` to indicate the existing capacity in the coal_plant (e.g. 500 MW)
   - `is_active` set to *yes* to include the *coal_plant* in the model
-- *coal* `commodity` needs just one parameter for `price` (e.g. 50 €/MWh of fuel)
+- *coal* `commodity` needs just one parameter for `price` (e.g. 20 €/MWh of fuel)
 - *coal_market* `node` needs to have `is_active` set to *yes* 
 - All these new parameters should be now part of the *coal* `alternative`. A `scenario` with the *init* `node` and the *coal_plant* `unit` is then built by including both *init* and *coal* `alternatives` in the *coal* `scenario`.
 
@@ -143,7 +144,8 @@ Next, a wind power plant is added.
 - *wind_profile* needs the the parameter `profile` with a map of values where each time step gets the maximum available capacity factor for that time step (see figure). 
 - *wind_plant, west, wind_profile* relationship needs a parameter `profile_method` with the choice *upper_limit* selected. This means that the *wind_plant* must generate at or below its capacity factor.
 
-Remember to **commit**, execute and have a look at the results (there should be no more penalty values used, since the coal and wind plant can together meet the demand in all hours.
+You can now create a new scenario *wind*,  that has the `alternatives` *init*, *west*, *coal* and *wind*.
+Remember to **commit**, execute and have a look at the results (there should be no more penalty values used, since the coal and wind plant can together meet the demand in all hours).
 
 ![Add another unit](./add_unit2.png)
 
