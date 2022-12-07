@@ -123,7 +123,7 @@ class QueryParameterValuesTest(unittest.TestCase):
 
 class CategoryTicksTest(unittest.TestCase):
     def test_simple(self):
-        categories = {"imaginary": ["a", "b"], "real": ["a", "b"]}
+        categories = {("imaginary",): ["a", "b"], ("real",): ["a", "b"]}
         dividers, labels = plot_results.category_ticks(categories, 0.0, 3.0)
         convert = partial(self._x_to_axis_units, x_min=0.0, x_max=3.0)
         expected_positions = list(map(convert, (0.5, 2.5)))
@@ -135,7 +135,11 @@ class CategoryTicksTest(unittest.TestCase):
             self.assertAlmostEqual(divider, expected)
 
     def test_uneven_dividers(self):
-        categories = {"imaginary": ["a", "b"], "real": ["c"], "eerie": ["d", "e", "f"]}
+        categories = {
+            ("imaginary",): ["a", "b"],
+            ("real",): ["c"],
+            ("eerie",): ["d", "e", "f"],
+        }
         dividers, labels = plot_results.category_ticks(categories, 0.0, 5.0)
         convert = partial(self._x_to_axis_units, x_min=0.0, x_max=5.0)
         expected_dividers = list(map(convert, (-0.5, 1.5, 2.5, 5.5)))
@@ -147,7 +151,7 @@ class CategoryTicksTest(unittest.TestCase):
         self.assertEqual(list(labels), ["imaginary", "real", "eerie"])
 
     def test_long_axis(self):
-        categories = {"imaginary": ["a", "b"], "real": ["a", "b"]}
+        categories = {("imaginary",): ["a", "b"], ("real",): ["a", "b"]}
         dividers, labels = plot_results.category_ticks(categories, -0.7, 3.7)
         convert = partial(self._x_to_axis_units, x_min=-0.7, x_max=3.7)
         expected_dividers = list(map(convert, (-0.5, 1.5, 3.5)))
@@ -171,13 +175,13 @@ class TileHorizontallyTest(unittest.TestCase):
             XYData(["a", "b"], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
             XYData(["a", "b"], [3.3, 4.4], "x", "y", ["idx2"], ["name 1"]),
         ]
-        tiled, categories = plot_results.tile_horizontally(data_list)
+        tiled, categories = plot_results.tile_horizontally(data_list, 1)
         expected = [
             XYData([0, 1], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
             XYData([2, 3], [3.3, 4.4], "x", "y", ["idx2"], ["name 1"]),
         ]
         self.assertEqual(tiled, expected)
-        expected_categories = {"idx1": ["a", "b"], "idx2": ["a", "b"]}
+        expected_categories = {("idx1",): ["a", "b"], ("idx2",): ["a", "b"]}
         self.assertEqual(categories, expected_categories)
 
     def test_same_last_data_index_gets_grouped_to_same_category(self):
@@ -185,13 +189,13 @@ class TileHorizontallyTest(unittest.TestCase):
             XYData(["a", "b"], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
             XYData(["a", "b"], [3.3, 4.4], "x", "y", ["idx1"], ["name 1"]),
         ]
-        tiled, categories = plot_results.tile_horizontally(data_list)
+        tiled, categories = plot_results.tile_horizontally(data_list, 1)
         expected = [
             XYData([0, 1], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
             XYData([0, 1], [3.3, 4.4], "x", "y", ["idx1"], ["name 1"]),
         ]
         self.assertEqual(tiled, expected)
-        expected_categories = {"idx1": ["a", "b"]}
+        expected_categories = {("idx1",): ["a", "b"]}
         self.assertEqual(categories, expected_categories)
 
     def test_incompatible_x_lengths_longer_first(self):
@@ -199,13 +203,13 @@ class TileHorizontallyTest(unittest.TestCase):
             XYData(["a", "b"], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
             XYData(["a"], [3.3], "x", "y", ["idx1"], ["name 1"]),
         ]
-        tiled, categories = plot_results.tile_horizontally(data_list)
+        tiled, categories = plot_results.tile_horizontally(data_list, 1)
         expected = [
             XYData([0, 1], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
             XYData([0], [3.3], "x", "y", ["idx1"], ["name 1"]),
         ]
         self.assertEqual(tiled, expected)
-        expected_categories = {"idx1": ["a", "b"]}
+        expected_categories = {("idx1",): ["a", "b"]}
         self.assertEqual(categories, expected_categories)
 
     def test_incompatible_x_lengths_shorter_first(self):
@@ -213,13 +217,13 @@ class TileHorizontallyTest(unittest.TestCase):
             XYData(["a"], [1.1], "x", "y", ["idx1"], ["name 1"]),
             XYData(["a", "b"], [2.2, 3.3], "x", "y", ["idx1"], ["name 1"]),
         ]
-        tiled, categories = plot_results.tile_horizontally(data_list)
+        tiled, categories = plot_results.tile_horizontally(data_list, 1)
         expected = [
             XYData([0], [1.1], "x", "y", ["idx1"], ["name 1"]),
             XYData([0, 1], [2.2, 3.3], "x", "y", ["idx1"], ["name 1"]),
         ]
         self.assertEqual(tiled, expected)
-        expected_categories = {"idx1": ["a", "b"]}
+        expected_categories = {("idx1",): ["a", "b"]}
         self.assertEqual(categories, expected_categories)
 
     def test_same_tiling_data_index(self):
@@ -227,13 +231,31 @@ class TileHorizontallyTest(unittest.TestCase):
             XYData(["a"], [1.1], "x", "y", ["idx1"], ["name 1"]),
             XYData(["b"], [2.2], "x", "y", ["idx1"], ["name 1"]),
         ]
-        tiled, categories = plot_results.tile_horizontally(data_list)
+        tiled, categories = plot_results.tile_horizontally(data_list, 1)
         expected = [
             XYData([0], [1.1], "x", "y", ["idx1"], ["name 1"]),
             XYData([1], [2.2], "x", "y", ["idx1"], ["name 1"]),
         ]
         self.assertEqual(tiled, expected)
-        expected_categories = {"idx1": ["a", "b"]}
+        expected_categories = {("idx1",): ["a", "b"]}
+        self.assertEqual(categories, expected_categories)
+
+    def test_extra_tiling_dimension(self):
+        data_list = [
+            XYData(
+                ["a", "b"], [1.1, 2.2], "x", "y", ["idx", "A"], ["name 1", "name 2"]
+            ),
+            XYData(
+                ["a", "b"], [3.3, 4.4], "x", "y", ["idx", "B"], ["name 1", "name 2"]
+            ),
+        ]
+        tiled, categories = plot_results.tile_horizontally(data_list)
+        expected = [
+            XYData([0, 1], [1.1, 2.2], "x", "y", ["idx", "A"], ["name 1", "name 2"]),
+            XYData([2, 3], [3.3, 4.4], "x", "y", ["idx", "B"], ["name 1", "name 2"]),
+        ]
+        self.assertEqual(tiled, expected)
+        expected_categories = {("idx", "A"): ["a", "b"], ("idx", "B"): ["a", "b"]}
         self.assertEqual(categories, expected_categories)
 
 
@@ -242,19 +264,21 @@ class CategorizeFurtherTest(unittest.TestCase):
         data_list = [
             XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B"], ["index 1", "index 2"])
         ]
-        categories = plot_results.categorize_further({"B": ["a", "b"]}, data_list)
-        expected = {"A": ["a", "b"]}
+        categories = plot_results.categorize_further(
+            {("A", "B"): ["a", "b"]}, data_list
+        )
+        expected = {("A",): ["a", "b"]}
         self.assertEqual(categories, expected)
 
     def test_two_subcategories_within_single_category(self):
         data_list = [
-            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B1"], ["name 1"]),
-            XYData(["a", "b"], [3.3, 4.4], "x", "y", ["A", "B2"], ["name 1"]),
+            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B1"], ["name 1", "name 2"]),
+            XYData(["a", "b"], [3.3, 4.4], "x", "y", ["A", "B2"], ["name 1", "name 2"]),
         ]
         categories = plot_results.categorize_further(
-            {"B1": ["a", "b"], "B2": ["a", "b"]}, data_list
+            {("A", "B1"): ["a", "b"], ("A", "B2"): ["a", "b"]}, data_list
         )
-        expected = {"A": ["a", "b", "a", "b"]}
+        expected = {("A",): ["a", "b", "a", "b"]}
         self.assertEqual(categories, expected)
 
 

@@ -55,7 +55,7 @@ from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass, replace
 from enum import IntEnum, unique
 from io import TextIOWrapper
-from itertools import accumulate, zip_longest
+from itertools import accumulate
 import json
 from operator import attrgetter
 from pathlib import Path
@@ -223,14 +223,16 @@ def make_image(data_list: List[XYData]) -> ImageData:
 
 
 def tile_horizontally(
-    data_list: List[XYData]
-) -> Tuple[List[XYData], Dict[str, List[str]]]:
+    data_list: List[XYData], category_depth: int = 2
+) -> Tuple[List[XYData], Dict[Tuple[str, ...], List[str]]]:
     """Creates 'ghost' x-axis such that each xy data is plotted next to each other."""
     tiled = []
     categories = {}
     x_lookups_per_category = {}
     for xy_data in data_list:
-        x_lookup = x_lookups_per_category.setdefault(xy_data.data_index[-1], {})
+        x_lookup = x_lookups_per_category.setdefault(
+            tuple(xy_data.data_index[-category_depth:]), {}
+        )
         for x in xy_data.x:
             if x not in x_lookup:
                 x_lookup[x] = len(x_lookup)
@@ -242,7 +244,7 @@ def tile_horizontally(
     for category, x_lookup in x_lookups_per_category.items():
         categories[category] = list(x_lookup)
     for xy_data in data_list:
-        category = xy_data.data_index[-1]
+        category = tuple(xy_data.data_index[-category_depth:])
         x_lookup = x_lookups_per_category[category]
         offset = offsets[category]
         tiled.append(replace(xy_data, x=[offset + x_lookup[x] for x in xy_data.x]))
@@ -250,14 +252,14 @@ def tile_horizontally(
 
 
 def categorize_further(
-    subcategories: Dict[str, List[str]], data_list: List[XYData]
-) -> Dict[str, List[str]]:
+    subcategories: Dict[Tuple[str, ...], List[str]], data_list: List[XYData]
+) -> Dict[Tuple[str, ...], List[str]]:
     """Creates 'ghost' x-axis such that each xy data is plotted next to each other."""
     categories = {}
     subcategory_lookup = {}
     for xy_data in data_list:
-        category = xy_data.data_index[-2]
-        subcategory = xy_data.data_index[-1]
+        category = (xy_data.data_index[-2],)
+        subcategory = tuple(xy_data.data_index[-2:])
         subcategory_lookup.setdefault(category, set()).add(subcategory)
     current_subcategories = subcategories
     for category, contained_subcategories in subcategory_lookup.items():
@@ -284,21 +286,26 @@ def drop_data_index_tail(data_list: List[XYData], count: int) -> List[XYData]:
 
 
 def category_ticks(
-    categories: Dict[str, List[str]], x_min: float, x_max: float
+    categories: Dict[Tuple[str, ...], List[str]], x_min: float, x_max: float
 ) -> Tuple[List[float], Dict[str, float]]:
     """Calculates major and minor tick positions for category x-axis."""
     axis_width_tick_units = x_max - x_min
     tick_width_axis_units = 1.0 / axis_width_tick_units
     first_tick_location_axis_units = max(x_min, -x_min / axis_width_tick_units)
     category_sizes = list(accumulate(len(labels) for labels in categories.values()))
-    first_divider_axis_units = first_tick_location_axis_units - tick_width_axis_units / 2
+    first_divider_axis_units = (
+        first_tick_location_axis_units - tick_width_axis_units / 2
+    )
     category_dividers = [first_divider_axis_units] + list(
-        first_divider_axis_units + tick_width_axis_units * size for size in category_sizes
+        first_divider_axis_units + tick_width_axis_units * size
+        for size in category_sizes
     )
     category_labels = {}
-    for i, name in enumerate(categories):
+    for i, last_data_indexes in enumerate(categories):
         first_major = category_dividers[i]
-        category_labels[name] = (first_major + category_dividers[i + 1]) / 2.0
+        category_labels[last_data_indexes[-1]] = (
+            first_major + category_dividers[i + 1]
+        ) / 2.0
     return category_dividers, category_labels
 
 
@@ -336,7 +343,7 @@ def add_category_spine(
 
 
 def relabel_x_axis(
-    categories: Dict[str, List[str]], x_ticks: np.ndarray
+    categories: Dict[Tuple[str, ...], List[str]], x_ticks: np.ndarray
 ) -> Tuple[List[float], List[str]]:
     """Replaces numerical x-axis by string labels."""
     all_labels = sum((labels for labels in categories.values()), [])
