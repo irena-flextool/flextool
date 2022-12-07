@@ -195,6 +195,7 @@ set constraint__sense dimen 2 within {constraint, sense};
 set commodity_node dimen 2 within {commodity, node}; 
 
 set dt dimen 2 within period_time;
+param dt_jump {(d, t) in dt};
 set dtttdt dimen 6;
 set period_invest dimen 1 within period;
 set period_realized dimen 1 within period;
@@ -373,6 +374,7 @@ table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,
 table data IN 'CSV' 'solve_data/first_timesteps.csv' : period__time_first <- [period,step];
 table data IN 'CSV' 'solve_data/last_timesteps.csv' : period__time_last <- [period,step];
 table data IN 'CSV' 'solve_data/step_previous.csv' : dtttdt <- [period, time, previous, previous_within_block, previous_period, previous_within_solve];
+table data IN 'CSV' 'solve_data/step_previous.csv' : [period, time], dt_jump~jump;
 table data IN 'CSV' 'solve_data/realized_periods_of_current_solve.csv' : period_realized <- [period];
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
 table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
@@ -922,21 +924,27 @@ param ed_divest_min_period{(e, d) in ed_divest} :=
   + (if e in node then pdNode[e, 'retire_min_period', d])
 ;  
 
-set process_source_sink_ramp_limit_up :=
+set process_source_sink_ramp_limit_source_up :=
     {(p, source, sink) in process_source_sink
 	    : ( sum{(p, source, m) in process_node_ramp_method : m in ramp_limit_method} 1
 		    && p_process_source[p, source, 'ramp_speed_up'] > 0
-		  ) || 
-		  ( sum{(p, sink, m) in process_node_ramp_method : m in ramp_limit_method} 1
+		  )
+	};
+set process_source_sink_ramp_limit_sink_up :=
+    {(p, source, sink) in process_source_sink
+	    : ( sum{(p, sink, m) in process_node_ramp_method : m in ramp_limit_method} 1
 		    && p_process_sink[p, sink, 'ramp_speed_up'] > 0
 		  )
 	};
-set process_source_sink_ramp_limit_down :=
+set process_source_sink_ramp_limit_source_down :=
     {(p, source, sink) in process_source_sink
 	    : ( sum{(p, source, m) in process_node_ramp_method : m in ramp_limit_method} 1
 		    && p_process_source[p, source, 'ramp_speed_down'] > 0
-		  ) ||
-		  ( sum{(p, sink, m) in process_node_ramp_method : m in ramp_limit_method} 1
+		  )
+	};
+set process_source_sink_ramp_limit_sink_down :=
+    {(p, source, sink) in process_source_sink
+	    : ( sum{(p, sink, m) in process_node_ramp_method : m in ramp_limit_method} 1
 		    && p_process_sink[p, sink, 'ramp_speed_down'] > 0
 		  )
 	};
@@ -946,30 +954,28 @@ set process_source_sink_ramp_cost :=
 		  || sum{(p, sink, m) in process_node_ramp_method : m in ramp_cost_method} 1
 	};
 set process_source_sink_ramp :=
-    process_source_sink_ramp_limit_up 
-	union process_source_sink_ramp_limit_down 
+    process_source_sink_ramp_limit_source_up 
+    union process_source_sink_ramp_limit_sink_up 
+	union process_source_sink_ramp_limit_source_down 
+	union process_source_sink_ramp_limit_sink_down 
 	union process_source_sink_ramp_cost;
 
-set process_source_sink_dt_ramp_up :=
-        {(p, source, sink) in process_source_sink_ramp_limit_up, (d, t) in dt :
- 		    p_process[p, 'ramp_speed_up'] * 60 < step_duration[d, t]
+set process_source_sink_dtttdt_ramp_limit_source_up :=
+        {(p, source, sink) in process_source_sink_ramp_limit_source_up, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt :
+ 		    p_process_source[p, source, 'ramp_speed_up'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
         };
-set process_source_sink_dt_ramp_down :=
-        {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t) in dt :
- 		    p_process[p, 'ramp_speed_down'] * 60 < step_duration[d, t]
-		};
-set process_source_sink_dt_ramp :=
-        {(p, source, sink) in process_source_sink_ramp, (d, t) in dt :
-		    (p, source, sink) in process_source_sink_ramp_cost
-		    || (p, source, sink, d, t) in process_source_sink_dt_ramp_down
-            || (p, source, sink, d, t) in process_source_sink_dt_ramp_up
+set process_source_sink_dtttdt_ramp_limit_sink_up :=
+        {(p, source, sink) in process_source_sink_ramp_limit_sink_up, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt :
+ 		    p_process_sink[p, sink, 'ramp_speed_up'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
         };
-
-set process_source_sink_dtttdt_ramp_up := {(p, source, sink) in process_source_sink_ramp_limit_up, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt
-		: (p, source, sink, d, t) in process_source_sink_dt_ramp};
-
-set process_source_sink_dtttdt_ramp_down := {(p, source, sink) in process_source_sink_ramp_limit_down, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt
-		: (p, source, sink, d, t) in process_source_sink_dt_ramp};
+set process_source_sink_dtttdt_ramp_limit_source_down :=
+        {(p, source, sink) in process_source_sink_ramp_limit_source_down, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt :
+ 		    p_process_source[p, source, 'ramp_speed_down'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
+        };
+set process_source_sink_dtttdt_ramp_limit_sink_down :=
+        {(p, source, sink) in process_source_sink_ramp_limit_sink_down, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt :
+ 		    p_process_sink[p, sink, 'ramp_speed_down'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
+        };
 
 set process_reserve_upDown_node_increase_reserve_ratio :=
         {(p, r, ud, n) in process_reserve_upDown_node_active :
@@ -1751,17 +1757,14 @@ s.t. ramp_up_variable {(p, source, sink) in process_source_sink_ramp, (d, t, t_p
   - v_flow[p, source, sink, d, t_previous]
 ;
 
-s.t. ramp_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_up} :
+s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_up} :
   + v_ramp[p, source, sink, d, t]
-  + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node_active} 
-         (v_reserve[p, r, 'up', sink, d, t] / step_duration[d, t])
+  + sum {r in reserve : (p, r, 'up', source) in process_reserve_upDown_node_active} 
+         (v_reserve[p, r, 'up', source, d, t] / step_duration[d, t])
   <=
-  + p_process[p, 'ramp_speed_up']
-    * 60
-	* step_duration[d, t]
-	* ( + if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
-        + if (p, source) in process_source then p_process_source_coefficient[p, source]
-      )
+  + p_process_source[p, source, 'ramp_speed_up']
+    * 60 * step_duration[d, t]
+	* p_process_source_coefficient[p, source]
     * ( + p_entity_all_existing[p]
 	    + ( if (p, d) in ed_invest then v_invest[p, d] * p_entity_unitsize[p] )
 		- ( if (p, d) in ed_divest then v_divest[p, d] * p_entity_unitsize[p] )
@@ -1770,17 +1773,46 @@ s.t. ramp_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_b
   + ( if p in process_online_integer then v_startup_integer[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
 ;
 
-s.t. ramp_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_down} :
+s.t. ramp_sink_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_sink_up} :
+  + v_ramp[p, source, sink, d, t]
+  + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node_active} 
+         (v_reserve[p, r, 'up', sink, d, t] / step_duration[d, t])
+  <=
+  + p_process_sink[p, sink, 'ramp_speed_up']
+    * 60 * step_duration[d, t]
+	* p_process_sink_coefficient[p, sink]
+    * ( + p_entity_all_existing[p]
+	    + ( if (p, d) in ed_invest then v_invest[p, d] * p_entity_unitsize[p] )
+		- ( if (p, d) in ed_divest then v_divest[p, d] * p_entity_unitsize[p] )
+	  )
+  + ( if p in process_online_linear then v_startup_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
+  + ( if p in process_online_integer then v_startup_integer[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
+;
+
+s.t. ramp_source_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_down} :
+  + v_ramp[p, source, sink, d, t]
+  + sum {r in reserve : (p, r, 'down', source) in process_reserve_upDown_node_active} 
+         (v_reserve[p, r, 'down', source, d, t] / step_duration[d, t])
+  >=
+  - p_process_sink[p, source, 'ramp_speed_down']
+    * 60 * step_duration[d, t]
+	* p_process_source_coefficient[p, source]
+    * ( + p_entity_all_existing[p]
+	    + ( if (p, d) in ed_invest then v_invest[p, d] * p_entity_unitsize[p] )
+		- ( if (p, d) in ed_divest then v_divest[p, d] * p_entity_unitsize[p] )
+	  )
+  - ( if p in process_online_linear then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
+  - ( if p in process_online_integer then v_shutdown_integer[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
+;
+
+s.t. ramp_sink_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_sink_down} :
   + v_ramp[p, source, sink, d, t]
   + sum {r in reserve : (p, r, 'down', sink) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'down', sink, d, t] / step_duration[d, t])
   >=
-  - p_process[p, 'ramp_speed_down']
-    * 60
-	* step_duration[d, t]
-	* ( + if (p, sink) in process_sink then p_process_sink_coefficient[p, sink]
-        + if (p, source) in process_source then p_process_source_coefficient[p, source]
-      )
+  - p_process_sink[p, sink, 'ramp_speed_down']
+    * 60 * step_duration[d, t]
+	* p_process_sink_coefficient[p, sink]
     * ( + p_entity_all_existing[p]
 	    + ( if (p, d) in ed_invest then v_invest[p, d] * p_entity_unitsize[p] )
 		- ( if (p, d) in ed_divest then v_divest[p, d] * p_entity_unitsize[p] )
