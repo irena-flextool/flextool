@@ -27,6 +27,7 @@
         "input/groupInertia.csv",
         "input/groupNonSync.csv",
         "input/groupOutput.csv",
+        "input/group__co2_method.csv",
         "input/group__invest_method.csv",
         "input/group__node.csv",
         "input/group__process.csv",
