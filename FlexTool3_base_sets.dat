@@ -154,14 +154,18 @@ set reserveTimeParam := reservation;
 set invest_method := not_allowed, invest_no_limit, invest_period, invest_total, invest_period_total, 
                   retire_no_limit, retire_period, retire_total, retire_period_total, 
 				  invest_retire_no_limit, invest_retire_period, invest_retire_total, invest_retire_period_total;
+set co2_method := no_method, price, period, total, price_period, price_total, period_total, price_period_total;
+set co2_price_method := price, price_period, price_total, price_period_total;
+set co2_max_period_method := period, price_period, period_total, price_period_total;
+set co2_max_total_method := total, price_total, period_total, price_period_total;
 set modelParam := solveFirst, solveLast;
 set groupParam := has_capacity_margin, capacity_margin, has_inertia, inertia_limit, 
                   invest_max_total, invest_min_total, invest_max_period, invest_min_period,
                   retire_max_total, retire_min_total, retire_max_period, retire_min_period,
-				  non_synchronous_limit, co2_price, penalty_inertia, penalty_non_synchronous
-				  max_cumulative_flow, min_cumulative_flow, max_instant_flow, min_instant_flow,
-				  output_results, penalty_capacity_margin;
-set groupPeriodParam := capacity_margin, co2_price, inertia_limit, invest_max_period,
+				  non_synchronous_limit, co2_price, co2_max_period, co2_max_total, 
+				  penalty_inertia, penalty_non_synchronous, max_cumulative_flow, min_cumulative_flow, 
+				  max_instant_flow, min_instant_flow, output_results, penalty_capacity_margin;
+set groupPeriodParam := capacity_margin, co2_price, co2_max_period, co2_max_total, inertia_limit, invest_max_period,
                   invest_min_period, max_cumulative_flow, min_cumulative_flow,
 				  non_synchronous_limit, penalty_inertia, penalty_non_synchronous,
 				  max_instant_flow, min_instant_flow, penalty_capacity_margin,

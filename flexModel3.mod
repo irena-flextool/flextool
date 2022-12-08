@@ -133,6 +133,10 @@ set method_1var_per_way within method;
 set invest_method 'methods available for investments';
 set invest_method_not_allowed 'method for denying investments' within invest_method;
 set divest_method_not_allowed 'method for denying divestments' within invest_method;
+set co2_method 'methods available for co2 price and limits';
+set co2_price_method within co2_method;
+set co2_max_period_method within co2_method;
+set co2_max_total_method within co2_method;
 set entity__invest_method 'the investment method applied to an entity' dimen 2 within {entity, invest_method};
 set entityDivest := setof {(e, m) in entity__invest_method : m not in divest_method_not_allowed} (e);
 set entityInvest := setof {(e, m) in entity__invest_method : m not in invest_method_not_allowed} (e);
@@ -140,6 +144,10 @@ param investableEntities := sum{e in entityInvest} 1;
 set group__invest_method 'the investment method applied to a group' dimen 2 within {group, invest_method};
 set group_invest := setof {(g, m) in group__invest_method : m not in invest_method_not_allowed} (g);
 set group_divest := setof {(g, m) in group__invest_method : m not in divest_method_not_allowed} (g);
+set group__co2_method 'the investment method applied to a group' dimen 2 within {group, co2_method};
+set group_co2_price := setof {(g, m) in group__co2_method : m in co2_price_method} (g);
+set group_co2_max_period := setof {(g, m) in group__co2_method : m in co2_max_period_method} (g);
+set group_co2_max_total := setof {(g, m) in group__co2_method : m in co2_max_total_method} (g);
 set nodeBalance 'nodes that maintain a node balance' within node;
 set nodeState 'nodes that have a state' within node;
 set inflow_method 'method for scaling the inflow';
@@ -295,6 +303,7 @@ table data IN 'CSV' 'input/process_unit.csv': process_unit <- [process_unit];
 table data IN 'CSV' 'input/commodity__node.csv' : commodity_node <- [commodity,node];
 table data IN 'CSV' 'input/entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
 table data IN 'CSV' 'input/group__invest_method.csv' : group__invest_method <- [group,invest_method];
+table data IN 'CSV' 'input/group__co2_method.csv' : group__co2_method <- [group,co2_method];
 table data IN 'CSV' 'input/node__inflow_method.csv' : node__inflow_method_read <- [node,inflow_method];
 table data IN 'CSV' 'input/node__storage_binding_method.csv' : node__storage_binding_method_read <- [node,storage_binding_method];
 table data IN 'CSV' 'input/node__storage_start_end_method.csv' : node__storage_start_end_method <- [node,storage_start_end_method];
@@ -987,14 +996,29 @@ set process_reserve_upDown_node_large_failure_ratio :=
 		};
 set process_large_failure := setof {(p, r, ud, n) in process_reserve_upDown_node_large_failure_ratio} p;
 
-set group_commodity_node_period_co2 :=
+set group_commodity_node_period_co2_price :=
         {g in group, (c, n) in commodity_node, d in period : 
 		    (g, n) in group_node 
 			&& p_commodity[c, 'co2_content'] 
+			&& g in group_co2_price
 			&& pdGroup[g, 'co2_price', d]
 		};
+set gcndt_co2_price := {(g, c, n, d) in group_commodity_node_period_co2_price, t in time_in_use : (d, t) in dt};
 
-set gcndt_co2 := {(g, c, n, d) in group_commodity_node_period_co2, t in time_in_use : (d, t) in dt};
+set group_commodity_node_period_co2_period :=
+        {g in group, (c, n) in commodity_node, d in period : 
+		    (g, n) in group_node 
+			&& p_commodity[c, 'co2_content'] 
+			&& g in group_co2_max_period
+		};
+
+set group_commodity_node_period_co2_total :=
+        {g in group, (c, n) in commodity_node : 
+		    (g, n) in group_node 
+			&& p_commodity[c, 'co2_content'] 
+			&& g in group_co2_max_total
+		};
+
 
 set process__commodity__node := {p in process, (c, n) in commodity_node : (p, n) in process_source || (p, n) in process_sink};
 
@@ -1101,7 +1125,7 @@ minimize total_cost:
 		)
 	  * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
 	)
-  + sum {(g, c, n, d, t) in gcndt_co2} 
+  + sum {(g, c, n, d, t) in gcndt_co2_price} 
 	( p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
 	  * (
 		  # Paying for CO2 (increases the objective function)
@@ -2136,6 +2160,36 @@ s.t. inertia_constraint {g in groupInertia, (d, t) in dt} :
   + pdGroup[g, 'inertia_limit', d]
 ;
 
+s.t. co2_max_period{(g, c, n, d) in group_commodity_node_period_co2_period} :
+  + ( p_commodity[c, 'co2_content']  
+	* (
+	    # CO2 increases 
+	    + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt } 
+		  ( + v_flow[p, n, sink, d, t] * step_duration[d, t] )
+		+ sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } 
+		  ( ( + v_flow[p, n, sink, d, t]
+			    * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+			    * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
+		      + ( if (p, 'min_load_efficiency') in process__ct_method then 
+			      + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
+			          + (if p in process_online_integer then v_online_integer[p, d, t])
+				    )
+				    * ptProcess_section[p, t]
+				    * p_entity_unitsize[p]
+			    )	  
+			) * step_duration[d, t]
+		  )		  
+		# CO2 removals
+		- sum {(p, source, n) in process_source_sink, (d, t) in dt } 
+		  ( + v_flow[p, source, n, d, t] * step_duration[d, t]
+		  )  
+	  ) / period_share_of_year[d]
+	)
+  <=
+  + pdGroup[g, 'co2_max_period', d]
+;
+
+
 s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
   + sum {(p, source, sink) in process_source_sink : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
     ( + v_flow[p, source, sink, d, t] )
@@ -2318,15 +2372,15 @@ param r_process_emissions_co2_dt{(p, c, n) in process__commodity__node_co2, (d, 
 ;	  
 
 param r_process_emissions_co2_d{(p, c, n) in process__commodity__node_co2, d in period} :=
-  + sum{t in time_in_use : (d, t) in dt} r_process_emissions_co2_dt[p, c, n, d, t];
+  + sum{t in time_in_use : (d, t) in dt} ( r_process_emissions_co2_dt[p, c, n, d, t] ) / period_share_of_year[d];
 
 param r_emissions_co2_dt{(c, n) in commodity_node_co2, (d, t) in dt} :=
   + sum{(p, c, n) in process__commodity__node_co2} r_process_emissions_co2_dt[p, c, n, d, t];
 
 param r_emissions_co2_d{(c, n) in commodity_node_co2, d in period} :=
-  + sum{t in time_in_use : (d, t) in dt} r_emissions_co2_dt[c, n, d, t];
+  + sum{t in time_in_use : (d, t) in dt} ( r_emissions_co2_dt[c, n, d, t] ) / period_share_of_year[d];
 
-param r_cost_co2_dt{(g, c, n, d, t) in gcndt_co2} := 
+param r_cost_co2_dt{(g, c, n, d, t) in gcndt_co2_price} := 
   + r_emissions_co2_dt[c, n, d, t] 
     * pdGroup[g, 'co2_price', d]
 ;	  
@@ -2411,7 +2465,7 @@ param r_cost_entity_divest_d{(e, d) in ed_divest} :=
 
 param r_costOper_dt{(d, t) in dt} :=
   + sum{(c, n) in commodity_node} r_cost_commodity_dt[c, n, d, t]
-  + sum{(g, c, n, d, t) in gcndt_co2} r_cost_co2_dt[g, c, n, d, t]
+  + sum{(g, c, n, d, t) in gcndt_co2_price} r_cost_co2_dt[g, c, n, d, t]
   + sum{p in process} r_cost_process_other_operational_cost_dt[p, d, t]
 #  + sum{(p, source, sink, m) in process__source__sink__ramp_method : m in ramp_cost_method}
 #      + r_cost_process_ramp_cost_dt[p, d, t]
@@ -2431,7 +2485,7 @@ param r_costOper_and_penalty_dt{(d,t) in dt} :=
 ;
 
 param r_cost_process_other_operational_cost_d{p in process, d in period} := sum{(d, t) in dt} r_cost_process_other_operational_cost_dt[p, d, t];
-param r_cost_co2_d{d in period} := sum{(g, c, n, d, t) in gcndt_co2} r_cost_co2_dt[g, c, n, d, t];
+param r_cost_co2_d{d in period} := sum{(g, c, n, d, t) in gcndt_co2_price} r_cost_co2_dt[g, c, n, d, t];
 param r_cost_commodity_d{d in period} := sum{(c, n) in commodity_node, (d, t) in dt} r_cost_commodity_dt[c, n, d, t];
 param r_cost_variable_d{d in period} := sum{p in process} r_cost_process_other_operational_cost_d[p, d];
 #param r_cost_ramp_d{d in period} := sum{(p, source, sink, m) in process__source__sink__ramp_method, (d, t) in dt : m in ramp_cost_method} r_cost_process_ramp_cost_dt[p, d, t];
@@ -2571,8 +2625,8 @@ for {d in period}
 printf '\n' >> fn_summary;
 
 printf '\nEmissions\n' >> fn_summary;
-printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for all periods"\n', sum{(c, n) in commodity_node_co2, d in period} (r_emissions_co2_d[c, n, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
-printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for realized periods"\n', sum{(c, n) in commodity_node_co2, d in period_realized} (r_emissions_co2_d[c, n, d] / period_share_of_year[d]) / 1000000 >> fn_summary;
+printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for all periods"\n', sum{(c, n) in commodity_node_co2, d in period} (r_emissions_co2_d[c, n, d] ) / 1000000 >> fn_summary;
+printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for realized periods"\n', sum{(c, n) in commodity_node_co2, d in period_realized} (r_emissions_co2_d[c, n, d]) / 1000000 >> fn_summary;
 
 printf '\n"Slack variables (creating or removing energy/matter, creating inertia, ' >> fn_summary;
 printf 'changing non-synchronous generation to synchronous)"\n' >> fn_summary;
@@ -2748,7 +2802,7 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
     printf '%s,%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
       s, d, t,
 	  sum{(c, n) in commodity_node} r_cost_commodity_dt[c, n, d, t],
-	  sum{(g, c, n, d, t) in gcndt_co2} r_cost_co2_dt[g, c, n, d, t],
+	  sum{(g, c, n, d, t) in gcndt_co2_price} r_cost_co2_dt[g, c, n, d, t],
 	  sum{p in process} r_cost_process_other_operational_cost_dt[p, d, t],
 	  sum{p in process_online : pdProcess[p, 'startup_cost', d]} r_cost_startup_dt[p, d, t],
 	  sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_dt[n, 'up', d, t]),
@@ -3008,7 +3062,7 @@ for {n in node, s in solve_current, d in period_realized}
 printf 'Write process CO2 results for periods...\n';
 param fn_process_co2__d symbolic := "output/process__period_co2.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'class,process,solve,period,"CO2 [Mt]"\n' > fn_process_co2__d; }  # Print the header on the first solve 
+  { printf 'class,process,solve,period,"CO2 [Mt/a]"\n' > fn_process_co2__d; }  # Print the header on the first solve 
 for {p in process_co2, s in solve_current, d in period_realized}
   {
     printf '%s,%s,%s,%s,%.8g\n'

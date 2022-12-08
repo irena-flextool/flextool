@@ -94,8 +94,7 @@
         "input/timeblocks__timeline.csv",
         "input/timeblocks_in_use.csv",
         "input/timeline.csv",
-        "input/timeline_duration_in_years.csv",
-        "p_node_constraint_state_coefficient.csv"
+        "input/timeline_duration_in_years.csv"
     ],
     "inputfiles_opt": [],
     "outputfiles": [
