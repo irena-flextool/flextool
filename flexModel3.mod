@@ -1,7 +1,7 @@
 # © International Renewable Energy Agency 2018-2022
 
 #The FlexTool is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License
-#as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+#as published by the Free Software Foundation, either §ersion 3 of the License, or (at your option) any later version.
 
 #The FlexTool is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; 
 #without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for more details.
@@ -2730,6 +2730,23 @@ for {s in solve_current, d in period_realized}
 	>> fn_discount;
   }
 
+printf 'Write investmenet annuities for each entity...\n';
+param fn_annuity symbolic := "output/entity_annuity.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { 
+    printf 'solve,period' > fn_annuity;
+	for {e in entity : e in entityInvest} printf ',%s', e >> fn_annuity;
+	  printf '\n' >> fn_annuity;
+  }
+for {s in solve_current, d in period_invest : d in period_realized}
+  { 
+    printf '%s,%s', s, d >> fn_annuity;
+	for {e in entityInvest}
+	  printf ',%.12g', ed_entity_annual[e, d] >> fn_annuity;
+	printf '\n' >> fn_annuity;
+  }
+
+
 printf 'Write discounted total cost for each cost type...\n';
 param fn_costs_total_discounted symbolic := "output/costs_total_discounted.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -3481,11 +3498,11 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 #}
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
-display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_other_operational_cost_dt[p, d, t];
-display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
-display {p in process_online, (d, t) in dt : (d, t) in test_dt} : r_process_online_dt[p, d, t];
+#display {p in process_online, (d, t) in dt : (d, t) in test_dt} : r_process_online_dt[p, d, t];
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
