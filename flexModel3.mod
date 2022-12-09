@@ -1067,7 +1067,7 @@ var v_startup_integer {p in process_online_integer, (d, t) in dt} >=0, integer;
 var v_shutdown_integer {p in process_online_integer, (d, t) in dt} >=0, integer;
 var v_invest {(e, d) in ed_invest} >= 0;
 var v_divest {(e, d) in ed_divest} >= 0;
-var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
+var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0, <= max(0, -pdtNodeInflow[n, d, t]);
 var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0;
@@ -2440,6 +2440,7 @@ param r_costPenalty_non_synchronous_dt{g in groupNonSync, (d, t) in dt} :=
 param r_costPenalty_capacity_margin_d{g in groupCapacityMargin, d in period_invest} :=
   + vq_capacity_margin[g, d]
       * pdGroup[g, 'penalty_capacity_margin', d]
+	  * p_discount_in_perpetuity_investment[d]
 ;
 
 param r_costPenalty_reserve_upDown_dt{(r, ud, ng) in reserve__upDown__group, (d, t) in dt} :=
@@ -2742,20 +2743,20 @@ for {s in solve_current}
   {
     printf '%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
       s,
-	  sum{d in period_realized} ((r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_in_perpetuity_investment[d]) / 1000000,
-      sum{d in period_realized} ((r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_in_perpetuity_investment[d]) / 1000000,
-      sum{d in period_realized} ((r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_in_perpetuity_investment[d]) / 1000000,
-	  sum{d in period_realized} (r_cost_commodity_d[d] / period_share_of_year[d]) / 1000000,
-	  sum{d in period_realized} (r_cost_co2_d[d] / period_share_of_year[d]) / 1000000,
-	  sum{d in period_realized} (r_cost_variable_d[d] / period_share_of_year[d]) / 1000000,
-	  sum{d in period_realized} (r_cost_startup_d[d] / period_share_of_year[d]) / 1000000,
-	  sum{d in period_realized} (sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'up', d] / period_share_of_year[d])) / 1000000,
-	  sum{d in period_realized} (sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / period_share_of_year[d])) / 1000000,
-	  sum{d in period_realized} (sum{g in groupInertia} (r_costPenalty_inertia_d[g, d] / period_share_of_year[d])) / 1000000,
-	  sum{d in period_realized} (sum{g in groupNonSync} (r_costPenalty_non_synchronous_d[g, d] / period_share_of_year[d])) / 1000000,
-	  sum{d in period_realized} (sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d] / period_share_of_year[d])) / 1000000,
-	  sum{d in period_realized} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d])) / 1000000,
-	  sum{d in period_realized} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d])) / 1000000
+	  sum{d in period_realized} (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / 1000000,
+      sum{d in period_realized} (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / 1000000,
+      sum{d in period_realized} (r_costInvestState_d[d] + r_costDivestState_d[d]) / 1000000,
+	  sum{d in period_realized} (r_cost_commodity_d[d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d]) / 1000000,
+	  sum{d in period_realized} (r_cost_co2_d[d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d]) / 1000000,
+	  sum{d in period_realized} (r_cost_variable_d[d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d]) / 1000000,
+	  sum{d in period_realized} (r_cost_startup_d[d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d]) / 1000000,
+	  sum{d in period_realized} (sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'up', d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000,
+	  sum{d in period_realized} (sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000,
+	  sum{d in period_realized} (sum{g in groupInertia} (r_costPenalty_inertia_d[g, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000,
+	  sum{d in period_realized} (sum{g in groupNonSync} (r_costPenalty_non_synchronous_d[g, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000,
+	  sum{d in period_realized} (sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d])) / 1000000,
+	  sum{d in period_realized} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000,
+	  sum{d in period_realized} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000
 	>> fn_costs_total_discounted;
   } 
 
@@ -2783,7 +2784,7 @@ for {s in solve_current, d in period_realized}
 	  sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / period_share_of_year[d]) / 1000000,
 	  sum{g in groupInertia} (r_costPenalty_inertia_d[g, d] / period_share_of_year[d]) / 1000000,
 	  sum{g in groupNonSync} (r_costPenalty_non_synchronous_d[g, d] / period_share_of_year[d]) / 1000000,
-	  sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d] / period_share_of_year[d]) / 1000000,
+	  sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d] / p_discount_in_perpetuity_investment[d]) / 1000000,
 	  sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d]) / 1000000,
 	  sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d]) / 1000000
 	>> fn_summary_cost;
@@ -3498,4 +3499,5 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 display v_invest, v_divest;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
+display ed_entity_annual;
 end;
