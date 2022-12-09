@@ -1152,11 +1152,11 @@ minimize total_cost:
 	)
   + sum {(p, d, t) in pdt_online_linear} 
       ( v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d] 
-	      * p_entity_unitsize[p]) * step_duration[d, t] 
+	      * p_entity_unitsize[p]) 
 		  * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
   + sum {(p, d, t) in pdt_online_integer} 
       ( v_startup_integer[p, d, t] * pdProcess[p, 'startup_cost', d] 
-	      * p_entity_unitsize[p]) * step_duration[d, t] 
+	      * p_entity_unitsize[p]) 
 		  * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
   + sum {(p, source, sink, d, t) in pssdt_varCost_noEff}
     ( + ptProcess__source__sink__dt_varCost[p, source, sink, d, t]
@@ -2276,6 +2276,10 @@ param entity_all_capacity{e in entity, d in period_realized} :=
   - sum {(e, d2) in ed_divest : d2 <= d} v_divest[e, d2].val * p_entity_unitsize[e]
 ;
 
+param r_process_online_dt{p in process_online, (d, t) in dt} :=
+  + (if p in process_online_linear then v_online_linear[p, d, t].val)
+  + (if p in process_online_integer then v_online_integer[p, d, t].val);
+
 param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
   + sum {(p, m) in process_method : m in method_1var_per_way}
     ( + sum {(p, source, sink2) in process_source_toSink} 
@@ -2283,9 +2287,7 @@ param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alw
 	          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
 	  		  * (if p in process_unit then p_process_sink_coefficient[p, sink2] / p_process_source_coefficient[p, source] else 1)
           + (if (p, 'min_load_efficiency') in process__ct_method then 
-			  + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
-			      + (if p in process_online_integer then v_online_integer[p, d, t])
-				)
+			  + r_process_online_dt[p, d, t]
 			    * ptProcess_section[p, t] * p_entity_unitsize[p])
 	    )
       + sum {(p, source2, sink) in process_source_toSink} 
@@ -2330,9 +2332,6 @@ param r_process_source_flow_d{(p, source) in process_source, d in period_realize
 param r_process_sink_flow_d{(p, sink) in process_sink, d in period_realized} := 
   + sum {(p, source, sink) in process_source_sink_alwaysProcess} r_process_source_sink_flow_d[p, source, sink, d]
 ;
-param r_process_online_dt{p in process_online, (d, t) in dt} :=
-  + (if p in process_online_linear then v_online_linear[p, d, t].val)
-  + (if p in process_online_integer then v_online_integer[p, d, t].val);
 
 param r_nodeState_change_dt{n in nodeState, (d, t_previous) in dt} := sum {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} (
       + (if (n, 'bind_forward_only') in node__storage_binding_method && ((d, t) not in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]))
@@ -2415,6 +2414,7 @@ param r_process_startup_dt{p in process, (d, t) in dt : p in process_online} :=
 param r_cost_startup_dt{p in process, (d, t) in dt : p in process_online && pdProcess[p, 'startup_cost', d]} :=
   ( r_process_startup_dt[p, d, t]
     * pdProcess[p, 'startup_cost', d]
+	* p_entity_unitsize[p]
   );
 
 param r_costPenalty_nodeState_upDown_dt{n in nodeBalance, ud in upDown, (d, t) in dt} :=
@@ -3481,11 +3481,11 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 #}
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
 
-#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_other_operational_cost_dt[p, d, t];
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
-#display {p in process_online, (d, t) in dt : (d, t) in test_dt} : r_process_online_dt[p, d, t];
+display {p in process_online, (d, t) in dt : (d, t) in test_dt} : r_process_online_dt[p, d, t];
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
@@ -3499,5 +3499,4 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 display v_invest, v_divest;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
-display ed_entity_annual;
 end;
