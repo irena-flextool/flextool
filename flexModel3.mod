@@ -3142,6 +3142,42 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
       }
   }
 
+printf 'Write reserve prices over time...\n';
+param fn_group_reserve_price__dt symbolic := "output/reserve_price__upDown__group__period__t.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period,time' > fn_group_reserve_price__dt; 
+    for {(r, ud, g) in reserve__upDown__group}
+      { printf ',%s', r >> fn_group_reserve_price__dt; }
+    printf '\n,,' >> fn_group_reserve_price__dt;
+    for {(r, ud, g) in reserve__upDown__group}
+      { printf ',%s', ud >> fn_group_reserve_price__dt; }
+    printf '\n,,' >> fn_group_reserve_price__dt;
+    for {(r, ud, g) in reserve__upDown__group}
+      { printf ',%s', g >> fn_group_reserve_price__dt; }
+  }
+for {s in solve_current, (d, t) in dt : d in period_realized}
+  {
+    printf '\n%s,%s,%s', s, d, t >> fn_group_reserve_price__dt;
+    for {(r, ud, g) in reserve__upDown__group}
+      {
+    for {(r, ud, g, r_m) in reserve__upDown__group__method : r_m <> 'no_reserve'}
+        printf ',%.8g', ( if ud = 'up' then
+		                    max(( if (r, ud, g, r_m) in reserve__upDown__group__method_timeseries then reserveBalance_timeseries_eq[r, ud, g, r_m, d, t].dual else 0 ),
+							    ( if (r, ud, g, r_m) in reserve__upDown__group__method_dynamic    then reserveBalance_dynamic_eq[r, ud, g, r_m, d, t].dual else 0 ),
+							    ( if (r, ud, g, r_m) in reserve__upDown__group__method_n_1        
+								  then max{p_n_1 in process_large_failure : sum{(p_n_1, sink) in process_sink : (g, sink) in group_node} 1} reserveBalance_up_n_1_eq[r, g, r_m, p_n_1, d, t].dual else 0 )
+							   )
+						  else
+		                    max(( if (r, ud, g, r_m) in reserve__upDown__group__method_timeseries then reserveBalance_timeseries_eq[r, ud, g, r_m, d, t].dual else 0 ),
+							    ( if (r, ud, g, r_m) in reserve__upDown__group__method_dynamic    then reserveBalance_dynamic_eq[r, ud, g, r_m, d, t].dual else 0 ),
+							    ( if (r, ud, g, r_m) in reserve__upDown__group__method_n_1        
+								  then max{p_n_1 in process_large_failure : sum{(p_n_1, source) in process_source : (g, source) in group_node} 1} reserveBalance_down_n_1_eq[r, g, r_m, p_n_1, d, t].dual else 0 )
+							   )
+						) / p_discount_with_perpetuity_operations[d] * period_share_of_year[d]
+		    >> fn_group_reserve_price__dt;
+      }
+  }
+
 printf 'Write marginal value for investment entities...\n';
 param fn_unit_invested_marginal symbolic := "output/unit_invest_marginal__period.csv";
 for {i in 1..1 : p_model['solveFirst']} 
@@ -3510,10 +3546,12 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val;
 #display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_with_perpetuity_operations[d] * period_share_of_year[d];
+#display {(r, ud, g, r_m) in reserve__upDown__group__method_timeseries, (d, t) in dt : (d, t) in test_dt}: reserveBalance_timeseries_eq[r, ud, g, r_m, d, t].dual;
 #display {(p, source, sink) in process_source_sink, (d, t) in dt : (d, t) in test_dt && (p, sink) in process_sink}: maxToSink[p, source, sink, d, t].ub;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 display v_invest, v_divest;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
+display {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } : v_reserve[p, r, ud, n, d, t].dual;
 end;
