@@ -2,7 +2,8 @@
 
 IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.
 
-This is IRENA FlexTool v3.0 in beta testing. Report any bugs or difficulties in the [issue tracker](https://github.com/irena-flextool/flextool/issues). Previous version of IRENA FlexTool can be found in https://www.irena.org/energytransition/Energy-System-Models-and-Data/IRENA-FlexTool.
+This is IRENA FlexTool v3.0 in beta testing. Report any bugs or difficulties in the [issue tracker](https://github.com/irena-flextool/flextool/issues). 
+The previous version of IRENA FlexTool can be found in https://www.irena.org/energytransition/Energy-System-Models-and-Data/IRENA-FlexTool.
 
 User guide and documentation are under development, but the current version can be found [here](https://irena-flextool.github.io/flextool/).
 
@@ -69,9 +70,21 @@ See https://github.com/irena-flextool/flextool-web-interface#installation
   ```shell
   python -m spinetoolbox
   ```
-- Open FlexTool3 project in Spine Toolbox (Choose the flextool *folder* from the Open project dialog)
+- Open FlexTool3 project in Spine Toolbox (Choose the flextool *folder* from File > Open project dialog)
 
 In case of problems when installing Spine Toolbox, more instructions are available at: https://github.com/Spine-project/Spine-Toolbox#installation
+
+### Run
+1. Open a conda prompt.
+2. Activate the environment
+  ```shell
+  conda activate flextool
+  ```
+3. Launch Spine Toolbox
+  ```shell
+  python -m spinetoolbox
+  ```
+4. Open FlexTool3 project in Spine Toolbox (Choose the flextool *folder* from File > Open project dialog)
 
 <!---
 ### Using Excel as an interface
