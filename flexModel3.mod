@@ -229,6 +229,7 @@ set process__sink__param__time dimen 4 within {process_sink, sourceSinkTimeParam
 set process__sink__param_t := setof {(p, sink, param, t) in process__sink__param__time} (p, sink, param);
 
 set node__param__time dimen 3 within {node, nodeTimeParam, time};
+set node__param_t := setof {(n, param, t) in node__param__time} (n, param);
 
 param p_model {modelParam};
 param p_commodity {c in commodity, commodityParam} default 0;
@@ -750,13 +751,20 @@ param period_flow_proportional_multiplier {n in node, d in period : (n, 'scale_i
 param new_peak_sign{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
         (if pdNode[n, 'peak_inflow', d] >= 0 then 1 else -1);
 param old_peak_max{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
-        max{t in time} ptNode[n, 'inflow', t];
+        if (n, 'inflow') in node__param_t
+		then max{t in time} pt_node[n, 'inflow', t]
+		else p_node[n, 'inflow'];
 param old_peak_min{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
-        min{t in time} ptNode[n, 'inflow', t];
+        if (n, 'inflow') in node__param_t
+		then min{t in time} pt_node[n, 'inflow', t]
+		else p_node[n, 'inflow'];
 param old_peak_sign{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        (if abs(old_peak_max[n, d]) >= abs(old_peak_min[n, d]) then 1 else -1);
+		( if (n, 'inflow') in node__param_t
+		  then (if abs(old_peak_max[n, d]) >= abs(old_peak_min[n, d]) then 1 else -1)
+		  else (if p_node[n, 'inflow'] >= 0 then 1 else -1)
+		);
 param old_peak{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-        (if abs(old_peak_max[n, d]) >= abs(old_peak_min[n, d]) then old_peak_max[n, d] else old_peak_min[n, d]);
+        (if old_peak_sign[n, d] >= 0 then old_peak_max[n, d] else old_peak_min[n, d]);
 printf ('Checking if the sign of new peak inflow is the same as the sign ');
 printf ('of the peak inflow in the original inflow time series\n');
 check {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} new_peak_sign[n, d] = old_peak_sign[n, d];
