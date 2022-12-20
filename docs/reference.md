@@ -1,6 +1,6 @@
 [Install](https://github.com/irena-flextool/flextool/tree/master#irena-flextool) | [Tutorial](https://irena-flextool.github.io/flextool) | [Results](https://irena-flextool.github.io/flextool/results) | [Reference](https://irena-flextool.github.io/flextool/reference) | [Data structure](https://irena-flextool.github.io/flextool/spine_database) | [Spine Toolbox interface](https://irena-flextool.github.io/flextool/spine_toolbox) | [Browser-interface](https://irena-flextool.github.io/flextool/browser_interface)
 
-- [Essential objects for defining a power/energy system](#essential-objects-for-defining-a-powerenergy-system)
+- [Main entities to define a power/energy system](#main-entities-to-define-a-powerenergy-system)
 - [How to define the temporal properties of the model](#how-to-define-temporal-properties-of-the-model)
 - [Nodes](#nodes)
 - [Units](#units)
@@ -11,13 +11,23 @@
 - [Reserves](#reserves)
 - [Additional objects for further functionality](#additional-objects-for-further-functionality)
 
-# Essential objects for defining a power/energy system
+# Main entities to define a power/energy system
 
+Elemental entities (one dimensional):
 - [**node**](#nodes): maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
 - [**unit**](#units): power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
 - [**connection**](#connections): transmission lines or other transfer connections between nodes
 - [**commodity**](#commodities): fuels or other commodities that are either purchased or sold at a price outside of the model scope
 - [**profile**](#profiles): timeseries that can be used to constraint the behaviour of units, connections or storages
+- [**reserve**](#reserves): reserve categories to withhold capacity to cope with issues outside of model scope
+
+Entities with two or more dimensions:
+- **unit__inputNode** and **unit__outputNode**: defines the inputs, outputs and their properties for the conversion units
+- **connection__node__node**: defines which nodes a connection will connect
+- **unit__node__profile** and **connection__profile**: defines a profile limit (upper, lower or fixed) for an energy flow
+- **node__profile**: defines a profile limit (upper, lower, or fixed) for the storage state of the node
+- **commodity__node**: defines if a node is a source or sink for a commodity
+- **reserve__upDown__unit__node** and **reserve__upDown__connection__node**: reserve capacity from a source to the target node
 
 See below for more detailed explanations.
 
@@ -36,7 +46,7 @@ A parameter of particular type can be either constant/time-varying or constant/p
 
 ## Timeblocksets
 
-Timeblocks pick one or more sections from the `timeline` to form a `timeblockset`. Each timeblock defines a start and a duration. The aim of timeblocksets is to allow the modeller to create models with represeantive periods often used in the investment planning.
+Timeblocks pick one or more sections from the `timeline` to form a `timeblockset`. Each timeblock defines a start and a duration. The aim of timeblocksets is to allow the modeller to create models with representative periods often used in the investment planning.
 
 ## Definitions
 
