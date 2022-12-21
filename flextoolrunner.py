@@ -520,6 +520,8 @@ class FlexToolRunner:
         """
         with open("solve_data/p_entity_invested.csv", 'w') as firstfile:
             firstfile.write("entity,p_entity_invested\n")
+        with open("solve_data/p_entity_divested.csv", 'w') as firstfile:
+            firstfile.write("entity,p_entity_divested\n")
 
 
 def main():

@@ -391,6 +391,7 @@ table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
 
 # After rolling forward the investment model
 table data IN 'CSV' 'solve_data/p_entity_invested.csv' : [entity], p_entity_invested;
+table data IN 'CSV' 'solve_data/p_entity_divested.csv' : [entity], p_entity_divested;
 
 
 set process__fork_method_yes dimen 2 within {process, fork_method} := 
@@ -1048,6 +1049,7 @@ param p_entity_all_existing {e in entity} :=
         + (if e in process then p_process[e, 'existing'])
         + (if e in node then p_node[e, 'existing'])
 		+ (if not p_model['solveFirst'] && e in entityInvest then p_entity_invested[e])
+		- (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
 ;
 
 
@@ -2540,12 +2542,23 @@ param potentialVREgen{(p, n) in process_sink, d in period_realized : p in proces
 printf 'Transfer investments to the next solve...\n';
 param fn_entity_invested symbolic := "solve_data/p_entity_invested.csv";
 printf 'entity,p_entity_invested\n' > fn_entity_invested;
-for {e in entity: e in entityInvest} 
+for {e in entityInvest} 
   {
     printf '%s,%.8g\n', e, 
 	  + (if not p_model['solveFirst'] then p_entity_invested[e] else 0)
 	  + sum {(e, d_invest) in ed_invest} v_invest[e, d_invest].val * p_entity_unitsize[e]
 	>> fn_entity_invested;
+  }
+
+printf 'Transfer divestments to the next solve...\n';
+param fn_entity_divested symbolic := "solve_data/p_entity_divested.csv";
+printf 'entity,p_entity_divested\n' > fn_entity_divested;
+for {e in entityDivest} 
+  {
+    printf '%s,%.8g\n', e, 
+	  + (if not p_model['solveFirst'] then p_entity_divested[e] else 0)
+	  + sum {(e, d_divest) in ed_divest} v_divest[e, d_divest].val * p_entity_unitsize[e]
+	>> fn_entity_divested;
   }
 
 printf 'Write unit capacity results...\n';
