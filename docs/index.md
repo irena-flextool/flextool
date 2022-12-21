@@ -25,6 +25,9 @@ The small system to be built is also directly available in the FlexTool reposito
   - [Adding CO2 emissions and costs](#adding-co2-emissions-and-costs)
   - [Full year model](#full-year-model)
   - [A system with coal, wind, network, battery and CO2 over a full year](#a-system-with-coal-wind-network-battery-and-co2-over-a-full-year)
+  - [Representative periods](#representative-periods)
+  - [Multi-year model](#multi-year-model)
+  - [Discount calculations](#discounting)
 
 # Building a small test system
 
@@ -324,7 +327,7 @@ When using the model for investment decisions, the model can often become too la
 
 ![Representative periods](./representative_periods.png)
 
-## Multi-year model and discounting
+## Multi-year model
 
 ***init - west - wind - coal - coal_invest - 5weeks - multi-year***
 
@@ -345,7 +348,7 @@ Next figure shows the values needed to define one solve (out of the four solves 
 
 ![Solve data](./data_for_one_solve.png)
 
-### Discount calculations
+## Discount calculations
 
 Each asset that can be invested in should have `invest_cost`, `lifetime` and `interest_rate` parameters set and could have an optional `fixed_cost`. These are used to calculate the annuity of the investment. Annuity is used to annualize the investment cost, since FlexTool scales all costs (operational, investment and fixed) to annual level in order to make them comparable. Annuity is calculated as follows:
 
