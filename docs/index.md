@@ -27,7 +27,7 @@ The small system to be built is also directly available in the FlexTool reposito
   - [A system with coal, wind, network, battery and CO2 over a full year](#a-system-with-coal-wind-network-battery-and-co2-over-a-full-year)
   - [Representative periods](#representative-periods)
   - [Multi-year model](#multi-year-model)
-  - [Discount calculations](#discounting)
+  - [Discount calculations](#discount-calculations)
 
 # Building a small test system
 
