@@ -25,6 +25,9 @@ The small system to be built is also directly available in the FlexTool reposito
   - [Adding CO2 emissions and costs](#adding-co2-emissions-and-costs)
   - [Full year model](#full-year-model)
   - [A system with coal, wind, network, battery and CO2 over a full year](#a-system-with-coal-wind-network-battery-and-co2-over-a-full-year)
+  - [Representative periods](#representative-periods)
+  - [Multi-year model](#multi-year-model)
+  - [Discount calculations](#discount-calculations)
 
 # Building a small test system
 
@@ -324,7 +327,7 @@ When using the model for investment decisions, the model can often become too la
 
 ![Representative periods](./representative_periods.png)
 
-## Multi-year model and discounting
+## Multi-year model
 
 ***init - west - wind - coal - coal_invest - 5weeks - multi-year***
 
@@ -345,7 +348,7 @@ Next figure shows the values needed to define one solve (out of the four solves 
 
 ![Solve data](./data_for_one_solve.png)
 
-### Discount calculations
+## Discount calculations
 
 Each asset that can be invested in should have `invest_cost`, `lifetime` and `interest_rate` parameters set and could have an optional `fixed_cost`. These are used to calculate the annuity of the investment. Annuity is used to annualize the investment cost, since FlexTool scales all costs (operational, investment and fixed) to annual level in order to make them comparable. Annuity is calculated as follows:
 
@@ -357,4 +360,4 @@ The next step is to consider discounting - future is valued less than the presen
 
 Operational costs are also discounted using the same `discount_rate`. However, with operational costs it is assumed that they take place on average at the middle of the year whereas investment costs are assumed to take place at the beginning of the year (they are available for the whole year). These can be tweaked with the `discount_offset_investments` and `discount_offset_operations` parameters (given in years). Please note that given this formulation, **`invest_cost` should be the overnight built cost** (the model does not assume any construction time).
 
-Finally, the retirements work similar to investments using the same `discount_rate` and `interest_rate` parameters but with `salvage_value` as the benefit from retiring the unit. The current formulation (Dec. 2022) assumes that once an investment has been made, it will remain in the system in perpetuity (unless retired). In other words, **the asset does not disappear from the model at the end of the lifetime automatically**. It will only happen if it is retired. Therefore, the `salvage_value` should not only reflect the actual salvage value, but also the investment cost (so that the model will stop the automatic re-investing). This is bit awkward formulation and is to be improved at a later stage (#35).
+Finally, the retirements work similar to investments using the same `discount_rate` and `interest_rate` parameters but with `salvage_value` as the benefit from retiring the unit. The current formulation (Dec. 2022) assumes that once an investment has been made, it will remain in the system in perpetuity (unless retired). In other words, **the asset does not disappear from the model at the end of the lifetime automatically**. It will only happen if it is retired. Therefore, the `salvage_value` should not only reflect the actual salvage value, but also the investment cost (then the model will stop the automatic re-investing while also stops paying the discounted investment cost). When building models with these capabilities, the timing of the investments and retirements should be carefully considered so that they can match with the asset lifetime. This is bit awkward formulation and is to be improved at a later stage (https://github.com/irena-flextool/flextool/issues/35).
