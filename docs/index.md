@@ -199,7 +199,7 @@ Create the scenario, **commit**, execute and explore how the reserve requirement
 
 ## Adding a storage unit (battery)
 
-***init - wind - battery***
+***init - west - wind - battery***
 
 In the ***Init*** SQLite database, there is a `scenario` *wind_battery* - the *wind_plant* alone is not able to meet the load in all conditions, but the *battery* will help it to improve the situation.
 
@@ -213,7 +213,7 @@ The `transfer_method` can be used by all types of connections, but in this case 
 
 ##  Adding battery investment capabilities 
 
-***init - wind - battery - battery_invest***
+***init - west - wind - battery - battery_invest***
 
 To make the *wind_battery* `scenario` more interesting, an option to invest in *battery* and *battery_inverter* is added. It also demonstrates how FlexTool can have more complicated constraints that the user defines through data. 
 
@@ -257,7 +257,7 @@ Finally, FlexTool can actually mix three different types of constraint coefficie
 
 ## Combined heat and power (CHP) example
 
-***init - coal_chp - heat***
+***init - west - coal_chp - heat***
 
 This CHP plant is an another example where the user defined `constraint` (see the last equation in the previous example) is used to achieve desired behaviour. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plant the relation is more complicated - there is an allowed operating area between heat and power. Both can be depicted in FlexTool, but here a backpressure example is given. An extraction plant would require two or more *greater_than* and/or *lesser_than* `constraints` to define an operating area.
 
@@ -271,7 +271,7 @@ This is done by adding a new `constraint` *coal_chp_fix* where the heat and powe
 
 ## Minimum load example
 
-***init - coal - coal_min_load***
+***init - west - coal - coal_min_load***
 
 The next example is simpler. It adds a minimum load behavior to the *coal_plant* `unit`. Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a `startup_method` needs to be defined and an optional `startup_cost` can be given. The options are *no_startup*, *linear* and *binary*. *binary* would require an integer variable so *linear* is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (*flow* >= *min_load* x *capacity_online*).
 
@@ -294,7 +294,7 @@ By default, `input_coefficient` and `output_coefficient` are 1, but if there is 
 
 ## Adding CO2 emissions and costs
 
-***init - coal - co2***
+***init - west - coal - co2***
 
 Carbon dioxide emissions are added to FlexTool by associating relevant `commodities` (e.g. *coal*) with a `co2_content` parameter (CO2 content per MWh of energy contained in the fuel). To set a price for the CO2, the nodes that use those commodities will need to be linked to a `group` of `nodes` that set the `co2_price` (currency / CO2 ton). Therefore, in addition to what is visible in the figure below, a relationship *co2_price--coal_market* must be established so that the model knows to point the `CO2_price` to the `commodity` used from the *coal_market* `node` based on the `co2_content` of the *coal* `commodity`.
 
@@ -302,7 +302,7 @@ Carbon dioxide emissions are added to FlexTool by associating relevant `commodit
 
 ## Full year model
 
-***init - fullYear***
+***init - west - fullYear***
 
 So far the model has been using only two days to keep it fast to run. This example extends the model horizon to a full year. To do so, a new `solve` object *y2020_fullYear_dispatch* is added. Each `solve` object needs to know what `periods` it will contain and what `periods` it will realize (print out results). `solve_mode` does not do anything at present, but will be used when FlexTool can be set to do automatic rolling window optimization (at present, it needs to be set manually using multiple solves). The key difference here is that the `period_timeblockSet` parameter points the *p2020* period to a timeblockSet definition that covers the full year instead of the two days used before.
 
@@ -310,8 +310,51 @@ So far the model has been using only two days to keep it fast to run. This examp
 
 ## A system with coal, wind, network, battery and CO2 over a full year
 
-***init - coal - wind - network - battery - co2 - fullYear***
+***init - west - coal - wind - network - battery - co2 - fullYear***
 
-The final example shows a system where many of the previous examples have been put into one model and run for one year. The graph below shows the physical objects in the example.
+This example shows a system where many of the previous examples have been put into one model and run for one year. The graph below shows the physical objects in the example.
 
 ![Entity graph](./coal_wind_chp_battery_graph.png)
+
+## Representative periods
+
+***init - west - wind - battery - battery_invest - 5weeks***
+
+When using the model for investment decisions, the model can often become too large to solve. Representative periods can be used to take a sample of a full year that tries to depict the dynamics in a reasonable manner. In FlexTool, this is done with the `block_duration` parameter. It needs to contain the starting timestep and the duration of each period as shown in figure below.
+
+![Representative periods](./representative_periods.png)
+
+## Multi-year model and discounting
+
+***init - west - wind - coal - coal_invest - 5weeks - multi-year***
+
+A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. The `inflow` time series are scaled to match the value in `annual_flow`. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be a `discount_rate` parameter set for the `model` object *flexTool* if something else than the model default of 5% (0.05 value) is to be used.
+
+![Multi-year model data](./multi_year_solves.png)
+
+A multi-year model could be solved at one go or by rolling through several solves where each solve has a foresight horizon and a realisation horizon as can be seen from the figure below. In this example, the model rolls through several solves and therefore, in the figure above, the `model` object *flexTool* has four values in the `solves` array. Each value respresents one solve and it's position in the sequence of solves.
+
+![One vs multi solve](./one_multi_solve.png)
+
+Next figure shows the values needed to define one solve (out of the four solves in the example). All of these need to be repeated for each solve in the model.
+
+- `discount_years` parameter is used by the model to calculate the discounting factors for the present year and the future years. It should state the distance (in years) from the first period to the later periods. 
+- `invest_periods` parameter says in which periods the model is allowed to make investments
+- `realized_periods` parameter states the periods that will be realized in this solve (results output)
+- `period_timeblockset` defines the set of representative 'periods' (timeblocks in FlexTool) to be used in each FlexTool `period`.
+
+![Solve data](./data_for_one_solve.png)
+
+### Discount calculations
+
+Each asset that can be invested in should have `invest_cost`, `lifetime` and `interest_rate` parameters set and could have an optional `fixed_cost`. These are used to calculate the annuity of the investment. Annuity is used to annualize the investment cost, since FlexTool scales all costs (operational, investment and fixed) to annual level in order to make them comparable. Annuity is calculated as follows:
+
+`invest_cost` * `interest_rate` / { 1 - [ 1 / ( 1 + `interest_rate` ) ] ^ `lifetime` } + `fixed_cost`
+
+The next step is to consider discounting - future is valued less than the present. There is a model-wide assumption for the `discount_rate`. By default it is 0.05 (i.e. 5%), but it can be changed through the `discount_rate` parameter set for the *flexTool* `model` object. Discount factor for every period in the model is calculated from the `discount_rate` using the `discount_years` parameter of each `solve`, which states how many years there are from the decision time to the `period` at hand. The formula is:
+
+[ 1 / ( 1 + `discount_rate` ) ] ^ `discount_years`
+
+Operational costs are also discounted using the same `discount_rate`. However, with operational costs it is assumed that they take place on average at the middle of the year whereas investment costs are assumed to take place at the beginning of the year (they are available for the whole year). These can be tweaked with the `discount_offset_investments` and `discount_offset_operations` parameters (given in years). Please note that given this formulation, **`invest_cost` should be the overnight built cost** (the model does not assume any construction time).
+
+Finally, the retirements work similar to investments using the same `discount_rate` and `interest_rate` parameters but with `salvage_value` as the benefit from retiring the unit. The current formulation (Dec. 2022) assumes that once an investment has been made, it will remain in the system in perpetuity (unless retired). In other words, **the asset does not disappear from the model at the end of the lifetime automatically**. It will only happen if it is retired. Therefore, the `salvage_value` should not only reflect the actual salvage value, but also the investment cost (so that the model will stop the automatic re-investing). This is bit awkward formulation and is to be improved at a later stage (#35).
