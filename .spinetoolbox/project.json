@@ -209,7 +209,7 @@
             "x": 68.02521782823442,
             "y": -4.631817794157001,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": []
         },
         "Init": {
@@ -231,8 +231,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -166.07272991727308,
-            "y": -9.44739811400915,
+            "x": -162.9016014404568,
+            "y": -8.390355288403725,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
