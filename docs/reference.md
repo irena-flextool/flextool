@@ -38,7 +38,7 @@ See below for more detailed explanations.
 
 ## Timesteps and periods
 
-FlexTool has two different kinds of time varying parameters. The first one represents a regular timeline based on timesteps. The duration of each timestep can be defined by the user. There can be multiple timelines in the database - the user needs to define which timeline to use (and what parts of the timeline should be used, as will be explained later). The timestep names in the timeline are defined by the user - they can be abstract like 't0001' or follow a datetime format of choice. However, the timestep names between different timelines must remain unique.
+FlexTool has two different kinds of time varying parameters. The first one represents a regular timeline based on timesteps. The duration of each timestep can be defined by the user. There can be multiple timelines in the database - the user needs to define which timeline to use (and what parts of the timeline should be used, as will be explained later). The timestep names in the timeline are defined by the user - they can be abstract like 't0001' or follow a datetime format of choice. However, the timestep names between different timelines must remain unique (usually there should be only one timeline in a database and therefore no issues).
 
 The second time varying dimension is `period`, which is typically used to depict assumptions about the future. One model can include multiple `solves` that the model will solve in sequence (to allow multi-stage modelling). Each solve can include multiple `periods` (so that the user can change parameter values for different parts of the future).
 
@@ -57,7 +57,7 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
   - *realized_periods*: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve
   - *invest_periods*: array of periods where investements are allowed in this solve (applies only to objects that can be invested in)
   - *discount_years*: how far in the future each period is from the start of this solve (in years). Index: period, value: years.
-  - *solver*: choice of solver (a list of possible values)
+  - *solver*: choice of a solver (a list of possible values)
   - *solve_mode*: a single shot or a rolling solve (not functional yet, always a single shot)
 - **timeblockset**: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)
   - *block_duration* a map with index *timestep_name* that starts the timeblock and value that defines the duration of the block (how many timesteps)
