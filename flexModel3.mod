@@ -2951,6 +2951,38 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
 	  { printf ',%.8g', r_process_source_sink_flow_dt[c, c, output, d, t] - r_process_source_sink_flow_dt[c, c, input, d, t] >> fn_connection__dt; }
   }
 
+printf 'Write unit__outputNode capacity factors for periods...\n';
+param fn_unit__sinkNode__d_cf symbolic := "output/unit_cf__outputNode__period.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { 
+    printf 'solve,period' > fn_unit__sinkNode__d_cf;  # Print the header on the first solve
+	for {(u, sink) in process_sink : u in process_unit} printf ',%s', u >> fn_unit__sinkNode__d_cf;
+	printf '\n,' >> fn_unit__sinkNode__d_cf;
+	for {(u, sink) in process_sink : u in process_unit} printf ',%s', sink >> fn_unit__sinkNode__d_cf;
+  }
+for {s in solve_current, d in period_realized}
+  {
+	printf '\n%s,%s', s, d >> fn_unit__sinkNode__d_cf;
+    for {(u, sink) in process_sink : u in process_unit}
+      { printf ',%.8g', r_process_sink_flow_d[u, sink, d] / hours_in_period[d] / entity_all_capacity[u, d] >> fn_unit__sinkNode__d_cf; }
+  } 
+
+printf 'Write unit__node capacity factors for periods...\n';
+param fn_unit__sourceNode__d_cf symbolic := "output/unit_cf__inputNode__period.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  {
+    printf 'solve,period' > fn_unit__sourceNode__d_cf;  # Print the header on the first solve
+	for {(u, source) in process_source : u in process_unit} printf ',%s', u >> fn_unit__sourceNode__d_cf;
+	printf '\n,' >> fn_unit__sourceNode__d_cf;
+	for {(u, source) in process_source : u in process_unit} printf ',%s', source >> fn_unit__sourceNode__d_cf;
+  }
+for {s in solve_current, d in period_realized}
+  {
+	printf '\n%s,%s', s, d >> fn_unit__sourceNode__d_cf;
+    for {(u, source) in process_source : u in process_unit}
+      { printf ',%.8g', r_process_source_flow_d[u, source, d] / hours_in_period[d] / entity_all_capacity[u, d] >> fn_unit__sourceNode__d_cf; }
+  } 
+
 printf 'Write ramps from units over time...\n';
 param fn_unit_ramp__sinkNode__dt symbolic := "output/unit_ramp__outputNode__dt.csv";
 for {i in 1..1 : p_model['solveFirst']}
