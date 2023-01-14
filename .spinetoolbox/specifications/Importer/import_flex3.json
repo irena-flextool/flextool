@@ -3015,6 +3015,98 @@
                         ]
                     }
                 }
+            ],
+            "connection_cf__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "RelationshipClass",
+                                "position": "hidden",
+                                "value": "connection__node__node"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "connection"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Relationship",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -1,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -2,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -3,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "cf"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 5
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -3057,7 +3149,8 @@
             "discount_factors__period",
             "entity_annuity",
             "unit_cf__inputNode__period",
-            "unit_cf__outputNode__period"
+            "unit_cf__outputNode__period",
+            "connection_cf__period"
         ],
         "table_options": {
             "node__period": {},
@@ -3159,6 +3252,9 @@
             },
             "unit_cf__outputNode__period": {
                 "has_header": false
+            },
+            "connection_cf__period": {
+                "has_header": false
             }
         },
         "table_types": {
@@ -3226,8 +3322,7 @@
                 "1": "string",
                 "2": "float",
                 "3": "float",
-                "4": "float",
-                "5": "float"
+                "4": "float"
             },
             "costs__period": {
                 "0": "string",
@@ -3458,6 +3553,13 @@
                 "1": "string",
                 "2": "float",
                 "3": "float"
+            },
+            "connection_cf__period": {
+                "0": "string",
+                "1": "string",
+                "2": "float",
+                "3": "float",
+                "4": "float"
             }
         },
         "table_default_column_type": {
@@ -3559,6 +3661,10 @@
             "unit_cf__outputNode__period": {
                 "1": "string",
                 "0": "string"
+            },
+            "connection_cf__period": {
+                "1": "string",
+                "2": "string"
             }
         },
         "source_type": "DataPackageConnector"
