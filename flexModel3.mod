@@ -2455,7 +2455,7 @@ param r_costPenalty_non_synchronous_dt{g in groupNonSync, (d, t) in dt} :=
       * vq_non_synchronous[g, d, t] 
 	  * pdGroup[g, 'penalty_non_synchronous', d]
 ;
-display group, groupCapacityMargin, period_invest, pdGroup, p_discount_in_perpetuity_investment;
+
 param r_costPenalty_capacity_margin_d{g in groupCapacityMargin, d in period_invest} :=
   + vq_capacity_margin[g, d]
       * pdGroup[g, 'penalty_capacity_margin', d]
@@ -2468,7 +2468,7 @@ param r_costPenalty_reserve_upDown_dt{(r, ud, ng) in reserve__upDown__group, (d,
           + vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']
 	    )
 ;
-		
+
 param r_cost_entity_invest_d{(e, d) in ed_invest} :=
   + v_invest[e, d]
       * p_entity_unitsize[e]
@@ -2973,9 +2973,11 @@ for {s in solve_current, d in period_realized}
   {
 	printf '\n%s,%s', s, d >> fn_unit__sinkNode__d_cf;
     for {(u, sink) in process_sink : u in process_unit}
-      { printf ',%.8g', r_process_sink_flow_d[u, sink, d] / hours_in_period[d] / entity_all_capacity[u, d] >> fn_unit__sinkNode__d_cf; }
+      { printf ',%.8g', ( if entity_all_capacity[u, d] 
+					      then r_process_sink_flow_d[u, sink, d] / hours_in_period[d] / entity_all_capacity[u, d]
+						  else 0 ) >> fn_unit__sinkNode__d_cf; }
   } 
-
+		
 printf 'Write unit__inputNode capacity factors for periods...\n';
 param fn_unit__sourceNode__d_cf symbolic := "output/unit_cf__inputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -2989,7 +2991,9 @@ for {s in solve_current, d in period_realized}
   {
 	printf '\n%s,%s', s, d	 >> fn_unit__sourceNode__d_cf;
     for {(u, source) in process_source : u in process_unit}
-      { printf ',%.8g', r_process_source_flow_d[u, source, d] / hours_in_period[d] / entity_all_capacity[u, d] >> fn_unit__sourceNode__d_cf; }
+      { printf ',%.8g', ( if entity_all_capacity[u, d] 
+	                      then r_process_source_flow_d[u, source, d] / hours_in_period[d] / entity_all_capacity[u, d]
+ 						  else 0 ) >> fn_unit__sourceNode__d_cf; }
   } 
 
 printf 'Write connection capacity factor for periods...\n';
@@ -3006,11 +3010,13 @@ for {s in solve_current, d in period_realized}
   {
 	printf '\n%s,%s', s, d >> fn_connection_cf__d;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
-	  { printf ',%.8g', sum{(d, t) in dt} ( abs(r_connection_dt[c, d, t]) 
-	                                        / hours_in_period[d] 
-											/ entity_all_capacity[c, d] ) >> fn_connection_cf__d; }
+	  { printf ',%.8g', sum{(d, t) in dt} ( if entity_all_capacity[c, d] 
+	                                        then ( abs(r_connection_dt[c, d, t]) 
+	                                               / hours_in_period[d] 
+											       / entity_all_capacity[c, d] )
+										    else 0 ) >> fn_connection_cf__d; }
   }
-
+		
 printf 'Write ramps from units over time...\n';
 param fn_unit_ramp__sinkNode__dt symbolic := "output/unit_ramp__outputNode__dt.csv";
 for {i in 1..1 : p_model['solveFirst']}
