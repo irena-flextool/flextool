@@ -2455,7 +2455,7 @@ param r_costPenalty_non_synchronous_dt{g in groupNonSync, (d, t) in dt} :=
       * vq_non_synchronous[g, d, t] 
 	  * pdGroup[g, 'penalty_non_synchronous', d]
 ;
-
+display group, groupCapacityMargin, period_invest, pdGroup, p_discount_in_perpetuity_investment;
 param r_costPenalty_capacity_margin_d{g in groupCapacityMargin, d in period_invest} :=
   + vq_capacity_margin[g, d]
       * pdGroup[g, 'penalty_capacity_margin', d]
@@ -2517,7 +2517,7 @@ param r_costPenalty_non_synchronous_d{g in groupNonSync, d in period} := sum{(d,
 param r_costPenalty_reserve_upDown_d{(r, ud, ng) in reserve__upDown__group, d in period} := sum{(d, t) in dt} r_costPenalty_reserve_upDown_dt[r, ud, ng, d, t];
 
 param r_costOper_d{d in period} := sum{(d, t) in dt} r_costOper_dt[d, t] * step_duration[d, t];
-param r_costPenalty_d{d in period} := sum{(d, t) in dt} r_costPenalty_dt[d, t] * step_duration[d, t] + sum{g in groupCapacityMargin} r_costPenalty_capacity_margin_d[g, d];
+param r_costPenalty_d{d in period} := sum{(d, t) in dt} r_costPenalty_dt[d, t] * step_duration[d, t] + sum{g in groupCapacityMargin : d in period_invest} r_costPenalty_capacity_margin_d[g, d];
 param r_costOper_and_penalty_d{d in period} := + r_costOper_d[d] + r_costPenalty_d[d];
 
 param r_costInvestUnit_d{d in period} :=
@@ -2801,7 +2801,7 @@ for {s in solve_current}
 	  sum{d in period_realized} (sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000,
 	  sum{d in period_realized} (sum{g in groupInertia} (r_costPenalty_inertia_d[g, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000,
 	  sum{d in period_realized} (sum{g in groupNonSync} (r_costPenalty_non_synchronous_d[g, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000,
-	  sum{d in period_realized} (sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d])) / 1000000,
+	  sum{d in period_realized : d in period_invest} (sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d])) / 1000000,	
 	  sum{d in period_realized} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000,
 	  sum{d in period_realized} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000
 	>> fn_costs_total_discounted;
@@ -2831,7 +2831,7 @@ for {s in solve_current, d in period_realized}
 	  sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / period_share_of_year[d]) / 1000000,
 	  sum{g in groupInertia} (r_costPenalty_inertia_d[g, d] / period_share_of_year[d]) / 1000000,
 	  sum{g in groupNonSync} (r_costPenalty_non_synchronous_d[g, d] / period_share_of_year[d]) / 1000000,
-	  sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d] / p_discount_in_perpetuity_investment[d]) / 1000000,
+	  sum{g in groupCapacityMargin : d in period_invest} (r_costPenalty_capacity_margin_d[g, d] / p_discount_in_perpetuity_investment[d]) / 1000000,
 	  sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d]) / 1000000,
 	  sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d]) / 1000000
 	>> fn_summary_cost;
@@ -2976,7 +2976,7 @@ for {s in solve_current, d in period_realized}
       { printf ',%.8g', r_process_sink_flow_d[u, sink, d] / hours_in_period[d] / entity_all_capacity[u, d] >> fn_unit__sinkNode__d_cf; }
   } 
 
-printf 'Write unit__node capacity factors for periods...\n';
+printf 'Write unit__inputNode capacity factors for periods...\n';
 param fn_unit__sourceNode__d_cf symbolic := "output/unit_cf__inputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   {
@@ -2987,7 +2987,7 @@ for {i in 1..1 : p_model['solveFirst']}
   }
 for {s in solve_current, d in period_realized}
   {
-	printf '\n%s,%s', s, d >> fn_unit__sourceNode__d_cf;
+	printf '\n%s,%s', s, d	 >> fn_unit__sourceNode__d_cf;
     for {(u, source) in process_source : u in process_unit}
       { printf ',%.8g', r_process_source_flow_d[u, source, d] / hours_in_period[d] / entity_all_capacity[u, d] >> fn_unit__sourceNode__d_cf; }
   } 
