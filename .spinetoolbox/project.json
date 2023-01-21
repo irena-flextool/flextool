@@ -103,45 +103,48 @@
                     "Initialize",
                     "left"
                 ],
-                "disabled_filters": {
-                    "db_url@Init": {
-                        "scenario_filter": [
-                            "all",
-                            "base",
-                            "capacity_margin",
-                            "coal",
-                            "coal_chp",
-                            "coal_co2",
-                            "coal_min_load",
-                            "coal_min_load_MIP_wind",
-                            "coal_min_load_wind",
-                            "coal_ramp_limit",
-                            "coal_retire",
-                            "coal_wind_ev",
-                            "coal_wind_inertia",
-                            "fullYear",
-                            "fusion",
-                            "multi_year",
-                            "multi_year_one_solve",
-                            "multi_year_one_solve_battery",
-                            "multi_year_one_solve_co2_limit",
-                            "network_coal_wind",
-                            "network_coal_wind_battery_co2_fullYear",
-                            "network_coal_wind_capacity_margin",
-                            "network_coal_wind_reserve",
-                            "network_coal_wind_reserve_co2_capacity_margin",
-                            "network_coal_wind_reserve_n_1",
-                            "network_wind_coal_battery_fullYear_invest",
-                            "scale_to_peak_flow",
-                            "water_pump",
-                            "wind",
-                            "wind_battery",
-                            "wind_battery_invest"
-                        ],
-                        "tool_filter": [
-                            "FlexTool3"
-                        ]
-                    }
+                "filter_settings": {
+                    "known_filters": {
+                        "db_url@Init": {
+                            "scenario_filter": {
+                                "all": false,
+                                "base": false,
+                                "capacity_margin": false,
+                                "coal": false,
+                                "coal_chp": false,
+                                "coal_co2": false,
+                                "coal_min_load": false,
+                                "coal_min_load_MIP_wind": false,
+                                "coal_min_load_wind": false,
+                                "coal_ramp_limit": false,
+                                "coal_retire": false,
+                                "coal_wind_ev": false,
+                                "coal_wind_inertia": false,
+                                "fullYear": false,
+                                "fusion": false,
+                                "multi_year": false,
+                                "multi_year_one_solve": false,
+                                "multi_year_one_solve_battery": false,
+                                "multi_year_one_solve_co2_limit": false,
+                                "network_coal_wind": false,
+                                "network_coal_wind_battery_co2_fullYear": false,
+                                "network_coal_wind_capacity_margin": false,
+                                "network_coal_wind_reserve": false,
+                                "network_coal_wind_reserve_co2_capacity_margin": false,
+                                "network_coal_wind_reserve_n_1": false,
+                                "network_wind_coal_battery_fullYear_invest": false,
+                                "scale_to_peak_flow": false,
+                                "water_pump": false,
+                                "wind": false,
+                                "wind_battery": false,
+                                "wind_battery_invest": false
+                            },
+                            "tool_filter": {
+                                "FlexTool3": false
+                            }
+                        }
+                    },
+                    "auto_online": false
                 }
             },
             {
@@ -153,7 +156,18 @@
                 "to": [
                     "Export_to_CSV",
                     "left"
-                ]
+                ],
+                "filter_settings": {
+                    "known_filters": {
+                        "db_url@Input_data": {
+                            "scenario_filter": {},
+                            "tool_filter": {
+                                "FlexTool3": true
+                            }
+                        }
+                    },
+                    "auto_online": true
+                }
             },
             {
                 "name": "from Results to To_Excel",
@@ -164,7 +178,22 @@
                 "to": [
                     "To_Excel",
                     "right"
-                ]
+                ],
+                "filter_settings": {
+                    "known_filters": {
+                        "db_url@Results": {
+                            "scenario_filter": {
+                                "network_coal_wind": false,
+                                "network_coal_wind_battery_co2_fullYear": false,
+                                "wind": false,
+                                "wind_battery": false,
+                                "wind_battery_invest": false,
+                                "Base": false
+                            }
+                        }
+                    },
+                    "auto_online": false
+                }
             },
             {
                 "name": "from Results to Plot_results",
@@ -175,7 +204,17 @@
                 "to": [
                     "Plot_results",
                     "right"
-                ]
+                ],
+                "filter_settings": {
+                    "known_filters": {
+                        "db_url@Results": {
+                            "scenario_filter": {
+                                "Base": false
+                            }
+                        }
+                    },
+                    "auto_online": false
+                }
             },
             {
                 "name": "from Initialize to Input_data",
@@ -206,7 +245,7 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 68.02521782823442,
+            "x": 69.07227089196864,
             "y": -4.631817794157001,
             "specification": "FlexTool3",
             "execute_in_work": true,
@@ -261,6 +300,11 @@
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool_import_template.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "FlexTool3_Case1.xlsx"
                 }
             ],
             "db_references": []
@@ -275,8 +319,12 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "<project>/FlexTool_import_template.xlsx",
+                    "<project>/FlexTool3_Case1.xlsx",
                     true
+                ],
+                [
+                    "<project>/FlexTool_import_template.xlsx",
+                    false
                 ]
             ]
         },
@@ -313,8 +361,8 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 307.9389306514611,
-            "y": 28.45014908176916,
+            "x": 308.9859837151953,
+            "y": 28.450149081769155,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -329,7 +377,7 @@
         "To_Excel": {
             "type": "Exporter",
             "description": "",
-            "x": 208.35783160205096,
+            "x": 209.40488466578518,
             "y": 140.44922239338862,
             "output_time_stamps": false,
             "cancel_on_error": true,
