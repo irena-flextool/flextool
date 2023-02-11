@@ -2483,6 +2483,14 @@ param r_cost_entity_divest_d{(e, d) in ed_divest} :=
 	  * p_discount_in_perpetuity_investment[d]
 ;
 
+param r_cost_entity_existing_fixed{e in entity, d in period : (e, d) not in ed_invest} :=
+  + p_entity_all_existing[e]
+      * ( + if e in process then pdProcess[e, 'fixed_cost', d] else 0 
+	      + if e in node then pdNode[e, 'fixed_cost', d] else 0 
+		)
+	  * p_discount_in_perpetuity_investment[d]
+;
+
 param r_costOper_dt{(d, t) in dt} :=
   + sum{(c, n) in commodity_node} r_cost_commodity_dt[c, n, d, t]
   + sum{(g, c, n, d, t) in gcndt_co2_price} r_cost_co2_dt[g, c, n, d, t]
@@ -2520,27 +2528,16 @@ param r_costOper_d{d in period} := sum{(d, t) in dt} r_costOper_dt[d, t] * step_
 param r_costPenalty_d{d in period} := sum{(d, t) in dt} r_costPenalty_dt[d, t] * step_duration[d, t] + sum{g in groupCapacityMargin : d in period_invest} r_costPenalty_capacity_margin_d[g, d];
 param r_costOper_and_penalty_d{d in period} := + r_costOper_d[d] + r_costPenalty_d[d];
 
-param r_costInvestUnit_d{d in period} :=
-  + sum{(e, d) in ed_invest : e in process_unit} r_cost_entity_invest_d[e, d]
-;
-param r_costDivestUnit_d{d in period} :=
-  + sum{(e, d) in ed_divest : e in process_unit} r_cost_entity_divest_d[e, d]
-;
-param r_costInvestConnection_d{d in period} :=
-  + sum{(e, d) in ed_invest : e in process_connection} r_cost_entity_invest_d[e, d]
-;
-param r_costDivestConnection_d{d in period} :=
-  + sum{(e, d) in ed_divest : e in process_connection} r_cost_entity_divest_d[e, d]
-;
-param r_costInvestState_d{d in period} :=
-  + sum{(e, d) in ed_invest : e in nodeState} r_cost_entity_invest_d[e, d]
-;
-param r_costDivestState_d{d in period} :=
-  + sum{(e, d) in ed_divest : e in nodeState} r_cost_entity_divest_d[e, d]
-;
+param r_costInvestUnit_d{d in period} := sum{(e, d) in ed_invest : e in process_unit} r_cost_entity_invest_d[e, d];
+param r_costDivestUnit_d{d in period} := sum{(e, d) in ed_divest : e in process_unit} r_cost_entity_divest_d[e, d];
+param r_costInvestConnection_d{d in period} := sum{(e, d) in ed_invest : e in process_connection} r_cost_entity_invest_d[e, d];
+param r_costDivestConnection_d{d in period} := sum{(e, d) in ed_divest : e in process_connection} r_cost_entity_divest_d[e, d];
+param r_costInvestState_d{d in period} := sum{(e, d) in ed_invest : e in nodeState} r_cost_entity_invest_d[e, d];
+param r_costDivestState_d{d in period} := sum{(e, d) in ed_divest : e in nodeState} r_cost_entity_divest_d[e, d];
 
 param r_costInvest_d{d in period} := r_costInvestUnit_d[d] + r_costInvestConnection_d[d] + r_costInvestState_d[d];
 param r_costDivest_d{d in period} := r_costDivestUnit_d[d] + r_costDivestConnection_d[d] + r_costDivestState_d[d];
+param r_costExistingFixed_d{d in period} := sum{e in entity : (e, d) not in ed_invest} r_cost_entity_existing_fixed[e, d];
 
 param pdNodeInflow{n in node, d in period} := sum{(d, t) in dt} pdtNodeInflow[n, d, t];
 
@@ -2639,6 +2636,7 @@ printf '"Investment costs for realized periods (M CUR)",%.12g\n', sum{d in perio
            + r_costInvest_d[d] / 1000000 >> fn_summary;
 printf '"Retirement costs (negative salvage value) for realized periods (M CUR)",%.12g\n', sum{d in period_realized} 
            + r_costDivest_d[d] / 1000000 >> fn_summary;
+printf '"Fixed costs for existing units (M CUR)",%.12g\n', sum{d in period_realized} r_costExistingFixed_d[d] / 1000000 >> fn_summary;
 printf '"Penalty (slack) costs for realized periods (M CUR)",%.12g\n', sum{d in period_realized} 
            + r_costPenalty_d[d] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d] / 1000000 >> fn_summary;
 printf '\nPeriod' >> fn_summary;
@@ -2782,17 +2780,19 @@ param fn_costs_total_discounted symbolic := "output/costs_total_discounted.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
     printf 'solve,"unit investment/retirement","connection investment/retirement",' > fn_costs_total_discounted;
-    printf '"storage investment/retirement",commodity,CO2,"variable cost",starts,"upward penalty",' >> fn_costs_total_discounted;
-	printf '"downward penalty","inertia penalty","non-synchronous penalty","capacity margin penalty",' >> fn_costs_total_discounted;
-	printf '"upward reserve penalty","downward reserve penalty"\n' >> fn_costs_total_discounted;
+    printf '"storage investment/retirement","fixed cost of existing assets",commodity,CO2,' >> fn_costs_total_discounted;
+	printf '"variable cost",starts,"upward penalty","downward penalty","inertia penalty",' >> fn_costs_total_discounted;
+	printf '"non-synchronous penalty","capacity margin penalty","upward reserve penalty",' >> fn_costs_total_discounted;
+	printf '"downward reserve penalty"\n' >> fn_costs_total_discounted;
   }
 for {s in solve_current}
   {
-    printf '%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
+    printf '%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
       s,
 	  sum{d in period_realized} (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / 1000000,
       sum{d in period_realized} (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / 1000000,
       sum{d in period_realized} (r_costInvestState_d[d] + r_costDivestState_d[d]) / 1000000,
+	  sum{d in period_realized} (r_costExistingFixed_d[d]) / 1000000,
 	  sum{d in period_realized} (r_cost_commodity_d[d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d]) / 1000000,
 	  sum{d in period_realized} (r_cost_co2_d[d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d]) / 1000000,
 	  sum{d in period_realized} (r_cost_variable_d[d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d]) / 1000000,
@@ -2812,17 +2812,19 @@ param fn_summary_cost symbolic := "output/costs__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
     printf 'solve,period,"unit investment/retirement","connection investment/retirement",' > fn_summary_cost;
-    printf '"storage investment/retirement",commodity,CO2,"variable cost",starts,"upward penalty",' >> fn_summary_cost;
-	printf '"downward penalty","inertia penalty","non-synchronous penalty","capacity margin penalty",' >> fn_summary_cost;
-	printf '"upward reserve penalty","downward reserve penalty"\n' >> fn_summary_cost;
+    printf '"storage investment/retirement","fixed cost of existing assets",commodity,CO2,' >> fn_summary_cost;
+	printf '"variable cost",starts,"upward penalty","downward penalty","inertia penalty",' >> fn_summary_cost;
+	printf '"non-synchronous penalty","capacity margin penalty","upward reserve penalty",' >> fn_summary_cost;
+	printf '"downward reserve penalty"\n' >> fn_summary_cost;
   }
 for {s in solve_current, d in period_realized}
   { 
-    printf '%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
+    printf '%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
       s, d,
       (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_in_perpetuity_investment[d] / 1000000,
       (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_in_perpetuity_investment[d] / 1000000,
       (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_in_perpetuity_investment[d] / 1000000,
+	  r_costExistingFixed_d[d] / 1000000,
 	  r_cost_commodity_d[d] / period_share_of_year[d] / 1000000,
 	  r_cost_co2_d[d] / period_share_of_year[d] / 1000000,
 	  r_cost_variable_d[d] / period_share_of_year[d] / 1000000,
