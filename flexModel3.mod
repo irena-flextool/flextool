@@ -2488,6 +2488,7 @@ param r_cost_entity_existing_fixed{e in entity, d in period : (e, d) not in ed_i
       * ( + if e in process then pdProcess[e, 'fixed_cost', d] else 0 
 	      + if e in node then pdNode[e, 'fixed_cost', d] else 0 
 		)
+	  * 1000
 	  * p_discount_in_perpetuity_investment[d]
 ;
 
@@ -2758,7 +2759,7 @@ for {s in solve_current, d in period_realized}
 	>> fn_discount;
   }
 
-printf 'Write investmenet annuities for each entity...\n';
+printf 'Write investment annuities for each entity...\n';
 param fn_annuity symbolic := "output/entity_annuity.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
