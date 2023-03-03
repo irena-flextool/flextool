@@ -2824,7 +2824,7 @@ for {s in solve_current, d in period_realized}
       (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_in_perpetuity_investment[d] / 1000000,
       (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_in_perpetuity_investment[d] / 1000000,
       (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_in_perpetuity_investment[d] / 1000000,
-	  r_costExistingFixed_d[d] / 1000000,
+	  r_costExistingFixed_d[d] / p_discount_in_perpetuity_investment[d] / 1000000,
 	  r_cost_commodity_d[d] / period_share_of_year[d] / 1000000,
 	  r_cost_co2_d[d] / period_share_of_year[d] / 1000000,
 	  r_cost_variable_d[d] / period_share_of_year[d] / 1000000,
