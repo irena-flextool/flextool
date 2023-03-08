@@ -874,8 +874,8 @@ param ptProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in pr
 ;
 
 set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : ptProcess__source__sink__dt_varCost[p, source, sink, d, t]};
-set pssdt_varCost_eff := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && ptProcess_source[p, source, 'other_operational_cost', t]};
-
+set pssdt_varCost_eff := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && ptProcess_source[p, source, 'other_operational_cost', t]}
+						union {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && ptProcess_sink[p, sink, 'other_operational_cost', t]};
 set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d] || sum{(e, c) in process_capacity_constraint} 1 || sum{(e, c) in node_capacity_constraint} 1 };
 set ed_invest_period := {(e, d) in ed_invest : (e, 'invest_period') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method 
                                                || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
@@ -1162,38 +1162,44 @@ minimize total_cost:
 	)
   + sum {(p, d, t) in pdt_online_linear} 
       ( v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d] 
-	      * p_entity_unitsize[p]) 
+	      * p_entity_unitsize[p] 
 		  * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
+	  )
   + sum {(p, d, t) in pdt_online_integer} 
       ( v_startup_integer[p, d, t] * pdProcess[p, 'startup_cost', d] 
-	      * p_entity_unitsize[p]) 
+	      * p_entity_unitsize[p] 
 		  * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
+	  )
   + sum {(p, source, sink, d, t) in pssdt_varCost_noEff}
     ( + ptProcess__source__sink__dt_varCost[p, source, sink, d, t]
 	    * v_flow[p, source, sink, d, t]
         * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
 	)
-  + sum {(p, source, sink, d, t) in pssdt_varCost_eff}
-    ( + ptProcess_source[p, source, 'other_operational_cost', t]
-	    * v_flow[p, source, sink, d, t] 
-			   * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
-			   * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, source] else 1)
-	  + ( if (p, 'min_load_efficiency') in process__ct_method then 
+  + sum {(p, source, sink, d, t) in pssdt_varCost_eff : (p, source) in process_source}
+    (  
+	  ( + ptProcess_source[p, source, 'other_operational_cost', t]
+	      * v_flow[p, source, sink, d, t] 
+		  	     * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+			     * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, source] else 1)
+	    + ( if (p, 'min_load_efficiency') in process__ct_method then 
 	        + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 			    + (if p in process_online_integer then v_online_integer[p, d, t])
 			  )
 			  * ptProcess_section[p, t]
 			  * p_entity_unitsize[p]
-		)	  
-    ) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
-  + sum {(p, source, sink, d, t) in pssdt_varCost_eff}
+		  )	  
+      ) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
+	)
+  + sum {(p, source, sink, d, t) in pssdt_varCost_eff : (p, sink) in process_sink}
     ( + ptProcess_sink[p, sink, 'other_operational_cost', t]
 	    * v_flow[p, source, sink, d, t] 
-    ) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
+        * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
+	)
   + sum {(p, source, sink, d, t) in pssdt_varCost_eff}
     ( + ptProcess[p, 'other_operational_cost', t]
  	   * v_flow[p, source, sink, d, t] 
-    ) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
+       * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
+	)
 #  + sum {(p, source, sink, m) in process__source__sink__ramp_method, (d, t) in dt : m in ramp_cost_method}
 #    ( + v_ramp[p, source, sink, d, t] * pProcess_source_sink[p, source, sink, 'ramp_cost'] ) * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
   + sum {g in groupInertia, (d, t) in dt} vq_inertia[g, d, t] * pdGroup[g, 'penalty_inertia', d] * step_duration[d, t] * p_discount_with_perpetuity_operations[d] / period_share_of_year[d]
@@ -3642,6 +3648,7 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
+#display {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in test_dt}: ptProcess_sink[p, sink, param, t];
 display v_invest, v_divest;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
 end;
