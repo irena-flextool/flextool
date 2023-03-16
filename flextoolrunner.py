@@ -31,6 +31,7 @@ class FlexToolRunner:
         self.highs_presolve = self.get_solve_modes("highs_presolve")
         self.highs_method = self.get_solve_modes("highs_method")
         self.highs_parallel = self.get_solve_modes("highs_parallel")
+        self.solve_period_years_represented = self.get_solve_period_years_represented()
         self.solve_period_discount_years = self.get_solve_period_discount_years()
         self.solvers = self.get_solver()
         self.timeblocks = self.get_timeblocks()
@@ -76,6 +77,23 @@ class FlexToolRunner:
                 if param[0] == parameter:
                     right_params[param[1]] = param[2]
         return right_params
+
+    def get_solve_period_years_represented(self):
+        """
+        read the years presented by each period in a solve
+        :return: dict : (period name, years represented)
+        """
+        with open('input/solve__period__years_represented.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            years_represented = defaultdict(list)
+            while True:
+                try:
+                    datain = next(filereader)
+                    years_represented[datain[0]].append((datain[1], datain[2]))
+                except StopIteration:
+                    break
+        return years_represented
 
     def get_solve_period_discount_years(self):
         """
@@ -278,7 +296,25 @@ class FlexToolRunner:
                     outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
 
 
-    def write_discount_years(self, discount_years, filename):
+    def write_years_represented(self, years_represented, filename):
+        """
+        write to file a list of periods with the number of years the period represents before the next period starts
+        :param filename: filename to write to
+        :param years_represented: dict of periods with the number of years represented
+        :return: nothing
+        """
+        with open(filename, 'w') as outfile:
+            # prepend with a header
+            outfile.write('period,years_from_solve,p_years_from_solve,p_years_represented\n')
+            year_count = 0
+            for period__years in years_represented:
+                for i in range(int(max(1.0, float(period__years[1])))):
+                    years_to_cover_within_year = min(1, float(period__years[1]))
+                    outfile.write(period__years[0] + ',y' + str(year_count) + ',' + str(year_count) + ','
+                                  + str(years_to_cover_within_year) + '\n')
+                    year_count = year_count + years_to_cover_within_year
+
+    def write_discount_years(self, years_represented, filename):
         """
         write to file a list of timesteps as defined by the active timeline of the current solve
         :param filename: filename to write to
@@ -288,8 +324,10 @@ class FlexToolRunner:
         with open(filename, 'w') as outfile:
             # prepend with a header
             outfile.write('period,p_discount_years\n')
-            for period__discount_year in discount_years:
-                outfile.write(period__discount_year[0] + ',' + period__discount_year[1] + '\n')
+            year_count = 0
+            for period__year in years_represented:
+                outfile.write(period__year[0] + ',' + str(year_count) + '\n')
+                year_count += float(period__year[1])
 
     def make_block_timeline(self, start, length):
         """
@@ -503,13 +541,13 @@ class FlexToolRunner:
             else:
                 p_model_file.write("solveLast,0\n")
 
-    def write_currentSolve(self, solve, filename):
+    def write_currentSolve(self, solve, period, year, filename):
         """
         make a file with the current solve name
         """
         with open(filename, 'w') as solvefile:
-            solvefile.write("solve\n")
-            solvefile.write(solve + "\n")
+            solvefile.write("solve,period,year\n")
+            solvefile.write(solve + "," + period + "," + year + "\n")
 
     def write_empty_investment_file(self):
         """
@@ -558,8 +596,9 @@ def main():
         runner.write_step_jump(jump_lists[solve])
         runner.write_periods(solve, runner.realized_periods, 'solve_data/realized_periods_of_current_solve.csv')
         runner.write_periods(solve, runner.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
-        runner.write_discount_years(runner.solve_period_discount_years[solve], 'solve_data/p_discount_years.csv')
-        runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
+        runner.write_years_represented(runner.solve_period_years_represented[solve], 'solve_data/p_years_represented.csv')
+        runner.write_discount_years(runner.solve_period_years_represented[solve], 'solve_data/p_discount_years.csv')
+        runner.write_currentSolve(solve, runner.realized_periods[0][1], runner.solve_period_years_represented[solve][0][1], 'solve_data/solve_current.csv')
         runner.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
         runner.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
         last = i == len(solves) - 1

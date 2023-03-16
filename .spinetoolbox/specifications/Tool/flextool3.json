@@ -87,6 +87,7 @@
         "input/reserve__upDown__group__method.csv",
         "input/solve__invest_period.csv",
         "input/solve__period__discount_years.csv",
+        "input/solve__period__years_represented.csv",
         "input/solve__realized_period.csv",
         "input/solve_mode.csv",
         "input/solver.csv",
@@ -101,6 +102,5 @@
         "output/*.csv"
     ],
     "cmdline_args": [],
-    "execute_in_work": true,
     "includes_main_path": "../../.."
 }
