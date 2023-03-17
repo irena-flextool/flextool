@@ -86,7 +86,6 @@
         "input/pt_reserve__upDown__group.csv",
         "input/reserve__upDown__group__method.csv",
         "input/solve__invest_period.csv",
-        "input/solve__period__discount_years.csv",
         "input/solve__period__years_represented.csv",
         "input/solve__realized_period.csv",
         "input/solve_mode.csv",

@@ -173,45 +173,13 @@
                     "left"
                 ],
                 "options": {
-                    "require_scenario_filter": true,
+                    "require_scenario_filter": false,
                     "require_tool_filter": true
                 },
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input_data": {
-                            "scenario_filter": {
-                                "all": false,
-                                "base": false,
-                                "capacity_margin": false,
-                                "coal": false,
-                                "coal_chp": false,
-                                "coal_co2": false,
-                                "coal_min_load": false,
-                                "coal_min_load_MIP_wind": false,
-                                "coal_min_load_wind": false,
-                                "coal_ramp_limit": false,
-                                "coal_retire": false,
-                                "coal_wind_ev": false,
-                                "coal_wind_inertia": false,
-                                "fullYear": false,
-                                "fusion": false,
-                                "multi_year": false,
-                                "multi_year_one_solve": false,
-                                "multi_year_one_solve_battery": true,
-                                "multi_year_one_solve_co2_limit": false,
-                                "network_coal_wind": false,
-                                "network_coal_wind_battery_co2_fullYear": false,
-                                "network_coal_wind_capacity_margin": false,
-                                "network_coal_wind_reserve": false,
-                                "network_coal_wind_reserve_co2_capacity_margin": false,
-                                "network_coal_wind_reserve_n_1": false,
-                                "network_wind_coal_battery_fullYear_invest": false,
-                                "scale_to_peak_flow": false,
-                                "water_pump": false,
-                                "wind": false,
-                                "wind_battery": false,
-                                "wind_battery_invest": false
-                            },
+                            "scenario_filter": {},
                             "tool_filter": {
                                 "FlexTool3": true
                             }
@@ -344,10 +312,11 @@
             "type": "Tool",
             "description": "",
             "x": 68.39093946001248,
-            "y": -6.323772469886496,
+            "y": -1.998273429602957,
             "specification": "FlexTool3",
-            "execute_in_work": false,
-            "cmd_line_args": []
+            "execute_in_work": true,
+            "cmd_line_args": [],
+            "kill_completed_processes": false
         },
         "Init": {
             "type": "Data Store",
@@ -398,21 +367,6 @@
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool_import_template.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_Case1.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool_import_template_Case2.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_import_template_Case1_static reserve.xlsx"
                 }
             ],
             "db_references": []
@@ -427,20 +381,8 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "<project>/FlexTool3_Case1.xlsx",
-                    false
-                ],
-                [
-                    "<project>/FlexTool3_import_template_Case1_static reserve.xlsx",
-                    true
-                ],
-                [
                     "<project>/FlexTool_import_template.xlsx",
-                    false
-                ],
-                [
-                    "<project>/FlexTool_import_template_Case2.xlsx",
-                    false
+                    true
                 ]
             ]
         },
@@ -517,7 +459,8 @@
                     "type": "resource",
                     "arg": "db_url@Results"
                 }
-            ]
+            ],
+            "kill_completed_processes": false
         },
         "Import_FlexTool2": {
             "type": "Importer",

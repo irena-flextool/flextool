@@ -32,7 +32,6 @@ class FlexToolRunner:
         self.highs_method = self.get_solve_modes("highs_method")
         self.highs_parallel = self.get_solve_modes("highs_parallel")
         self.solve_period_years_represented = self.get_solve_period_years_represented()
-        self.solve_period_discount_years = self.get_solve_period_discount_years()
         self.solvers = self.get_solver()
         self.timeblocks = self.get_timeblocks()
         self.timeblocks__timeline = self.get_timeblocks_timelines()
@@ -94,24 +93,6 @@ class FlexToolRunner:
                 except StopIteration:
                     break
         return years_represented
-
-    def get_solve_period_discount_years(self):
-        """
-        read in the timelines including step durations for all simulation steps
-        timeline is the only inputfile that contains the full timelines for all timeblocks.
-        :return: list of tuples in a dict timeblocks : (timestep name, duration)
-        """
-        with open('input/solve__period__discount_years.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            discount_years = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    discount_years[datain[0]].append((datain[1], datain[2]))
-                except StopIteration:
-                    break
-        return discount_years
 
     def get_solver(self):
         """
