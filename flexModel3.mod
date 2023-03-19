@@ -269,7 +269,7 @@ param step_duration{(d, t) in dt};
 param p_timeline_duration_in_years{timeline};
 param p_discount_years{d in period} default 0;
 param p_discount_rate{model} default 0.05;
-param p_discount_offset_investment{model} default 0;    # Calculate investment cost discounting while assuming they are made at the begining of the year (unless other value is given)
+param p_discount_offset_investment{model} default 1;    # Calculate investment cost discounting while assuming they are made at the begining of the year (unless other value is given)
 param p_discount_offset_operations{model} default 0.5;  # Calculate operational costs assuming they are on average taking place at the middle of the year (unless other value is given)
 
 param p_entity_invested {e in entity : e in entityInvest};
@@ -797,7 +797,7 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 		);
 set period__period_next := {d in period, dNext in period : 1 + sum{d2 in period : d2 <=d} 1 = sum{dNext2 in period : dNext2 <=dNext} 1};
 param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0.05);
-param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_discount_offset_investment[m] else 0);
+param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_discount_offset_investment[m] else 1);
 param p_disc_offset_operations := (if sum{m in model} 1 then max{m in model} p_discount_offset_operations[m] else 0.5);
 param p_discount_factor_investment{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_investment);
 param p_discount_factor_operations{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_operations);
