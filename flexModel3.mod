@@ -808,10 +808,14 @@ param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_d
 param p_disc_offset_operations := (if sum{m in model} 1 then max{m in model} p_discount_offset_operations[m] else 0.5);
 param p_discount_factor_investment{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_investment);
 param p_discount_factor_operations{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_operations);
-param p_discount_factor_investment_yearly{d in period} := sum{(d, y) in period__year} ( ( 1/(1 + p_disc_rate) 
-             ^ (p_discount_years[d] + p_disc_offset_investment) ) * p_years_represented[d, y] );
-param p_discount_factor_operations_yearly{d in period} := sum{(d, y) in period__year} ( ( 1/(1 + p_disc_rate) 
-             ^ (p_years_from_solve[d, y] + p_disc_offset_operations) ) * p_years_represented[d, y] );
+param p_discount_factor_investment_yearly{d in period} := 
+		if sum{y in year} p_years_represented[d, y]
+		then sum{(d, y) in period__year} ( ( 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_investment) ) * p_years_represented[d, y] )
+		else 1;
+param p_discount_factor_operations_yearly{d in period} := 
+		if sum{y in year} p_years_represented[d, y]
+		then sum{(d, y) in period__year} ( ( 1/(1 + p_disc_rate) ^ (p_years_from_solve[d, y] + p_disc_offset_operations) ) * p_years_represented[d, y] )
+		else 1;
 param p_discount_in_perpetuity_investment{d in period} := (if p_disc_rate then (1/(1+p_disc_rate)^(p_discount_years[d]+p_disc_offset_investment))/p_disc_rate else 1);
 param p_discount_in_perpetuity_operations{d in period} := (if p_disc_rate then (1/(1+p_disc_rate)^(p_discount_years[d]+p_disc_offset_operations))/p_disc_rate else 1);
 param p_discount_with_perpetuity_operations{d in period} := 
