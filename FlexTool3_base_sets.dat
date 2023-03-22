@@ -187,6 +187,6 @@ set test_dt := (p2020, t0015) (p2020, t0016) (p2020, t0017);
 #set test_dt := (p2020, t2589) (p2020, t2590) (p2020, t2591);
 #set test_dt := (p2020, t0001) (p2020, t0009) (p2020, t0015) (p2020, t0020) (p2020, t0024);
 
-param scale_the_objective := 0.0000001;
+param scale_the_objective := 0.000000001;
 param scale_the_state := 1000;
 end;
