@@ -1054,6 +1054,7 @@ param p_entity_all_existing {e in entity} :=
 		- (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
 ;
 
+  
 
 set process_VRE := {p in process_unit : not (sum{(p, source) in process_source} 1)
                                         && (sum{(p, n, prof, m) in process__node__profile__profile_method : m = 'upper_limit'} 1)};
