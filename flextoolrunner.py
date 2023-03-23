@@ -522,13 +522,13 @@ class FlexToolRunner:
             else:
                 p_model_file.write("solveLast,0\n")
 
-    def write_currentSolve(self, solve, period, year, filename):
+    def write_currentSolve(self, solve, filename):
         """
         make a file with the current solve name
         """
         with open(filename, 'w') as solvefile:
-            solvefile.write("solve,period,year\n")
-            solvefile.write(solve + "," + period + "," + year + "\n")
+            solvefile.write("solve\n")
+            solvefile.write(solve + "\n")
 
     def write_empty_investment_file(self):
         """
@@ -579,7 +579,7 @@ def main():
         runner.write_periods(solve, runner.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
         runner.write_years_represented(runner.solve_period_years_represented[solve], 'solve_data/p_years_represented.csv')
         runner.write_discount_years(runner.solve_period_years_represented[solve], 'solve_data/p_discount_years.csv')
-        runner.write_currentSolve(solve, runner.realized_periods[0][1], runner.solve_period_years_represented[solve][0][1], 'solve_data/solve_current.csv')
+        runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
         runner.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
         runner.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
         last = i == len(solves) - 1
