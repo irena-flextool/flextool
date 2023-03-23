@@ -273,12 +273,13 @@ param p_years_represented{d in period, y in year} default 1;
 param p_years_from_solve{d in period, y in year} default 0;
 param p_discount_years{d in period} default 0;
 param p_discount_rate{model} default 0.05;
-param p_discount_offset_investment{model} default 0;    # Calculate investment cost discounting while assuming they are made at the begining of the year (unless other value is given)
 param p_discount_offset_operations{model} default 0.5;  # Calculate operational costs assuming they are on average taking place at the middle of the year (unless other value is given)
 
 param p_entity_invested {e in entity : e in entityInvest};
 param p_entity_divested {e in entity : e in entityInvest};
 
+param scale_the_objective;
+param scale_the_state;
 
 #########################
 # Read data
@@ -827,6 +828,7 @@ param p_discount_with_perpetuity_operations{d in period} :=
 
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
+
           ( + ( pdNode[e, 'invest_cost', d] * 1000 
 		        * ( pdNode[e, 'interest_rate', d] 
 			        / (1 - (1 / (1 + pdNode[e, 'interest_rate', d])^pdNode[e, 'lifetime', d] ) ) 
@@ -1108,6 +1110,7 @@ param p_entity_all_existing {e in entity} :=
 		- (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
 ;
 
+  
 
 set process_VRE := {p in process_unit : not (sum{(p, source) in process_source} 1)
                                         && (sum{(p, n, prof, m) in process__node__profile__profile_method : m = 'upper_limit'} 1)};
@@ -1166,7 +1169,7 @@ check {n in nodeState} : n in nodeBalance;
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
 minimize total_cost:
-  + sum {(c, n) in commodity_node, (d, t) in dt} 
+( + sum {(c, n) in commodity_node, (d, t) in dt} 
 	( pdCommodity[c, 'price', d]
 	  * (
 		  # Buying a commodity (increases the objective function)
@@ -1265,7 +1268,7 @@ minimize total_cost:
   + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve'] * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
   - sum {n in nodeState, (d, t) in period__time_last : (n, 'use_reference_price') in node__storage_solve_horizon_method && d in period_last}
       + pdNode[n, 'storage_state_reference_price', d]
-        * v_state[n, d, t]
+        * v_state[n, d, t] * scale_the_state
 		* step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
   + sum {e in entity, d in period}  # This is constant term and will be dropped by the solver. Here for completeness.
     + p_entity_all_existing[e]
@@ -1285,16 +1288,17 @@ minimize total_cost:
     + vq_capacity_margin[g, d]
 	  * pdGroup[g, 'penalty_capacity_margin', d]
 	  * p_discount_in_perpetuity_investment[d]
+) * scale_the_objective
 ;
 param w_total_cost := gmtime() - datetime0 - setup1 - w_calc_slope - setup2;
 display w_total_cost;
 
 # Energy balance in each node  
 s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
-  + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]))
-  + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]))
-  + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous]))
-  + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]))
+  + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * scale_the_state)
+  + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * scale_the_state)
+  + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * scale_the_state)
+  + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * scale_the_state)
   =
   # n is sink
   + sum {(p, source, n) in process_source_sink} (
@@ -1320,7 +1324,9 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   - (if n in nodeSelfDischarge then 
       + v_state[n, d, t] 
 	      * ptNode[n, 'self_discharge_loss', t] 
-		  * step_duration[d, t])
+		  * step_duration[d, t]
+		   * scale_the_state
+    )
   + vq_state_up[n, d, t]
   - vq_state_down[n, d, t]
 ;
@@ -1525,7 +1531,7 @@ s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink_
 ;
 
 s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_method, (d, t) in dt} :
-  + v_state[n, d, t] 
+  + v_state[n, d, t] * scale_the_state
   <=
   + pt_profile[f, t]
     * ( + p_entity_all_existing[n]
@@ -1535,7 +1541,7 @@ s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_
 ;
 
 s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_method, (d, t) in dt} :
-  + v_state[n, d, t] 
+  + v_state[n, d, t] * scale_the_state
   >=
   + pt_profile[f, t]
     * ( + p_entity_all_existing[n]
@@ -1545,7 +1551,7 @@ s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_
 ;
 
 s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, t) in dt} :
-  + v_state[n, d, t] 
+  + v_state[n, d, t] * scale_the_state
   =
   + pt_profile[f, t]
     * ( + p_entity_all_existing[n]
@@ -1558,7 +1564,7 @@ s.t. storage_state_start {n in nodeState, (d, t) in period__time_first
      : p_model['solveFirst'] 
 	 && d in period_first 
 	 && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)} :
-  + v_state[n, d, t]
+  + v_state[n, d, t] * scale_the_state
   =
   + p_node[n,'storage_state_start']
     * ( + p_entity_all_existing[n]
@@ -1571,7 +1577,7 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
      : p_model['solveLast'] 
 	 && d in period_last 
 	 && ((n, 'fix_end') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)} :
-  + v_state[n, d, t]
+  + v_state[n, d, t] * scale_the_state
   =
   + p_node[n,'storage_state_end']
     * ( + p_entity_all_existing[n]
@@ -1583,7 +1589,7 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
 s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in period__time_last
      : d in period_last
 	 && (n, 'use_reference_value') in node__storage_solve_horizon_method} :
-  + v_state[n, d, t]
+  + v_state[n, d, t] * scale_the_state
   =
   + p_node[n,'storage_state_reference_value']
     * ( + p_entity_all_existing[n]
@@ -1604,6 +1610,7 @@ s.t. constraint_greater_than {(c, 'greater_than') in constraint__sense, (d, t) i
   + sum {(n, c) in node_state_constraint}
     ( + v_state[n, d, t]
 	      * p_node_constraint_state_coefficient[n, c]
+		  * scale_the_state
 	)
   + sum {(n, c) in node_capacity_constraint : d in period_invest}
     ( ( + (if (n, d) in ed_invest then v_invest[n, d])
@@ -1633,6 +1640,7 @@ s.t. process_constraint_less_than {(c, 'lesser_than') in constraint__sense, (d, 
   + sum {(n, c) in node_state_constraint}
     ( + v_state[n, d, t]
 	      * p_node_constraint_state_coefficient[n, c]
+		  * scale_the_state
 	)
   + sum {(n, c) in node_capacity_constraint : d in period_invest}
     ( ( + (if (n, d) in ed_invest then v_invest[n, d])
@@ -1662,6 +1670,7 @@ s.t. process_constraint_equal {(c, 'equal') in constraint__sense, (d, t) in dt} 
   + sum {(n, c) in node_state_constraint}
     ( + v_state[n, d, t]
 	      * p_node_constraint_state_coefficient[n, c]
+		  * scale_the_state
 	)
   + sum {(n, c) in node_capacity_constraint : d in period_invest}
     ( ( + (if (n, d) in ed_invest then v_invest[n, d])
@@ -1680,7 +1689,7 @@ s.t. process_constraint_equal {(c, 'equal') in constraint__sense, (d, t) in dt} 
 ;
 
 s.t. maxState {n in nodeState, (d, t) in dt} :
-  + v_state[n, d, t]
+  + v_state[n, d, t] * scale_the_state
   <=
   + p_entity_all_existing[n]
   + sum {(p, d_invest) in pd_invest : d_invest <= d} v_invest[p, d_invest] * p_entity_unitsize[n]
@@ -2325,10 +2334,10 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
   >=
   + sum {(g, n) in group_node} 
     ( - (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
-      + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && ((d, t) not in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]))
-      + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]))
-      + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous]))
-      + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]))
+      + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && ((d, t) not in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * scale_the_state)
+      + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * scale_the_state)
+      + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * scale_the_state)
+      + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * scale_the_state)
 	)
   + pdGroup[g, 'capacity_margin', d]
 ;
@@ -2413,13 +2422,13 @@ param r_connection_d{c in process_connection, d in period_realized} :=
 ;
 
 param r_nodeState_change_dt{n in nodeState, (d, t_previous) in dt} := sum {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} (
-      + (if (n, 'bind_forward_only') in node__storage_binding_method && ((d, t) not in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]))
-      + (if (n, 'bind_within_solve') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]))
-      + (if (n, 'bind_within_period') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous]))
-      + (if (n, 'bind_within_timeblock') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]))
+      + (if (n, 'bind_forward_only') in node__storage_binding_method && ((d, t) not in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * scale_the_state)
+      + (if (n, 'bind_within_solve') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * scale_the_state)
+      + (if (n, 'bind_within_period') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * scale_the_state)
+      + (if (n, 'bind_within_timeblock') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * scale_the_state)
 );
 param r_nodeState_change_d{n in nodeState, d in period} := sum {(d, t) in dt} r_nodeState_change_dt[n, d, t];
-param r_selfDischargeLoss_dt{n in nodeSelfDischarge, (d, t) in dt} := v_state[n, d, t] * ptNode[n, 'self_discharge_loss', t] * step_duration[d, t];
+param r_selfDischargeLoss_dt{n in nodeSelfDischarge, (d, t) in dt} := v_state[n, d, t] * ptNode[n, 'self_discharge_loss', t] * step_duration[d, t] * scale_the_state;
 param r_selfDischargeLoss_d{n in nodeSelfDischarge, d in period} := sum{(d, t) in dt} r_selfDischargeLoss_dt[n, d, t];
 
 param r_cost_commodity_dt{(c, n) in commodity_node, (d, t) in dt} := 
@@ -3288,7 +3297,7 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
   { printf '\n%s,%s,%s', s, d, t >> fn_nodeState__dt;
     for {n in nodeState} 
       {
-	    printf ',%.8g', v_state[n, d, t].val >> fn_nodeState__dt;
+	    printf ',%.8g', v_state[n, d, t].val * scale_the_state >> fn_nodeState__dt;
       }
   }
 
@@ -3638,8 +3647,8 @@ for {d in debug} {
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 
 ## Objective test
-printf (if (sum{d in debug} 1 && total_cost.val <> d_obj) 
-        then 'Objective value test fails. Model value: %.8g, test value: %.8g\n' else ''), total_cost.val, d_obj >> unitTestFile;
+printf (if (sum{d in debug} 1 && total_cost.val / scale_the_objective <> d_obj) 
+        then 'Objective value test fails. Model value: %.8g, test value: %.8g\n' else ''), total_cost.val / 1000000 / scale_the_objective , d_obj >> unitTestFile;
 
 ## Testing flows from and to node
 for {n in node : 'method_1way_1var' in debug || 'mini_system' in debug} {
@@ -3690,7 +3699,7 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
 #display {p in process_online, (d, t) in dt : (d, t) in test_dt} : r_process_online_dt[p, d, t];
-#display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
+#display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val * scale_the_state;
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val;
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val;
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val;
