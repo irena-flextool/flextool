@@ -1088,8 +1088,8 @@ var v_online_linear {p in process_online_linear,(d, t) in dt} >=0, <= p_entity_m
 var v_startup_linear {p in process_online_linear, (d, t) in dt} >=0, <= p_entity_max_units[p, d];
 var v_shutdown_linear {p in process_online_linear, (d, t) in dt} >=0, <= p_entity_max_units[p, d];
 var v_online_integer {p in process_online_integer, (d, t) in dt} >=0, <= p_entity_max_units[p, d], integer;
-var v_startup_integer {p in process_online_integer, (d, t) in dt} >=0, <= p_entity_max_units[p, d], integer;
-var v_shutdown_integer {p in process_online_integer, (d, t) in dt} >=0, <= p_entity_max_units[p, d], integer;
+var v_startup_integer {p in process_online_integer, (d, t) in dt} >=0, <= p_entity_max_units[p, d];
+var v_shutdown_integer {p in process_online_integer, (d, t) in dt} >=0, <= p_entity_max_units[p, d];
 var v_invest {(e, d) in ed_invest} >= 0, <= p_entity_max_units[e, d];
 var v_divest {(e, d) in ed_divest} >= 0, <= p_entity_max_units[e, d];
 var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0, <= 1;
@@ -3671,4 +3671,5 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in test_dt}: ptProcess_sink[p, sink, param, t];
 display v_invest, v_divest;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
+#display v_startup_integer;
 end;
