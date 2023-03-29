@@ -1,71 +1,139 @@
 {
   "plots": [
     {
-      "plot_type": "stacked bar",
-      "selection": {
-        "entity_class": ["model"],
-        "entity": [],
-        "parameter": ["cost_t"],
-        "alternative": [],
-        "solve": [],
-        "period": []
-      },
       "dimensions": {
-        "separate_window": null,
-        "x1": "time",
-        "x2": "period",
-        "x3": "solve"
+        "separate_window": "scenario",
+        "x1": "X_flow_type",
+        "x2": "X_period",
+        "x3": "X_solve"
+      },
+      "plot_type": "bar",
+      "selection": {
+        "X_flow_type": [],
+        "X_period": [],
+        "X_solve": [],
+        "entity_class": [
+          "node"
+        ],
+        "entity_0": [],
+        "parameter": [
+          "balance"
+        ]
       }
     },
     {
-      "plot_type": "stacked bar",
-      "selection": {
-        "entity_class": ["unit__node"],
-        "entity": [],
-        "parameter": ["flow"],
-        "alternative": [],
-        "solve": [],
-        "period": []
-      },
       "dimensions": {
-        "separate_window": null,
-        "x1": "period",
-        "x2": "solve",
-        "x3": "alternative"
+        "separate_window": "scenario",
+        "x1": "X_time",
+        "x2": "X_period",
+        "x3": null
+      },
+      "plot_type": "stacked line",
+      "selection": {
+        "X_period": [],
+        "X_solve": [],
+        "X_time": [],
+        "entity_class": [
+          "unit__node"
+        ],
+        "entity_0": [],
+        "entity_1": [],
+        "entity_2": [],
+        "parameter": [
+          "flow_t"
+        ]
       }
     },
     {
-      "plot_type": "line",
-      "selection": {
-        "entity_class": ["node"],
-        "entity": [],
-        "parameter": ["ramp_t"],
-        "alternative": [],
-        "solve": [],
-        "period": []
-      },
       "dimensions": {
-        "separate_window": "alternative",
-        "x1": "time",
-        "x2": "period",
-        "x3": "solve"
+        "separate_window": "entity_0",
+        "x1": null,
+        "x2": null,
+        "x3": null
+      },
+      "plot_type": "bar",
+      "selection": {
+        "X_period": [],
+        "X_solve": [],
+        "entity_class": [
+          "group"
+        ],
+        "entity_0": [],
+        "parameter": [
+          "sum flow"
+        ]
       }
     },
     {
-      "plot_type": "stacked bar",
-      "selection": {
-        "entity_class": ["unit","connection","node"],
-        "entity": [],
-        "parameter": ["capacity"],
-        "alternative": [],
-        "solve": [],
-        "period": []
+      "dimensions": {
+        "separate_window": "scenario",
+        "x1": "X_period",
+        "x2": null,
+        "x3": null
       },
+      "plot_type": "bar",
+      "selection": {
+        "X_capacity": [],
+        "X_capacity_type": [
+          "invested"
+        ],
+        "X_period": [],
+        "X_solve": [],
+        "entity_class": [
+          "unit",
+          "connection"
+        ],
+        "entity_0": [],
+        "parameter": [
+          "capacity"
+        ]
+      }
+    },
+    {
       "dimensions": {
         "separate_window": null,
-        "x1": "period",
-        "x2": "solve",
-        "x3": "alternative"
+        "x1": "scenario",
+        "x2": null,
+        "x3": null
+      },
+      "plot_type": "stacked bar",
+      "selection": {
+        "X_cost_type": [],
+        "X_period": [],
+        "X_solve": [],
+        "entity_class": [
+          "model"
+        ],
+        "entity_0": [
+          "cost"
+        ],
+        "parameter": [
+          "cost"
+        ]
+      }
+    },
+    {
+      "dimensions": {
+        "separate_window": "scenario",
+        "x1": "X_time",
+        "x2": "X_period",
+        "x3": "X_solve"
+      },
+      "plot_type": "stacked line",
+      "selection": {
+        "X_cost_type": [],
+        "X_period": [],
+        "X_solve": [],
+        "X_time": [],
+        "entity_class": [
+          "model"
+        ],
+        "entity_0": [
+          "cost"
+        ],
+        "parameter": [
+          "cost_t"
+        ]
       }
     }
   ]

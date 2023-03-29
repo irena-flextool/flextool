@@ -18,7 +18,7 @@ from spinedb_api import (
     import_relationship_parameters,
     import_relationship_parameter_values,
 )
-from spinetoolbox.plotting import TreeNode, XYData
+from spinetoolbox.plotting import IndexName, TreeNode, XYData
 
 sys.path.insert(0, str(Path(inspect.getfile(inspect.currentframe())).parent.parent))
 
@@ -37,7 +37,7 @@ class QueryParameterValuesTest(unittest.TestCase):
         value_tree = plot_results.query_parameter_values(
             plot_results.EntityType.OBJECT, (), None, self._db_map
         )
-        expected = TreeNode("class")
+        expected = TreeNode("entity_class")
         self.assertEqual(value_tree, expected)
 
     def test_single_object_value(self):
@@ -65,15 +65,15 @@ class QueryParameterValuesTest(unittest.TestCase):
         )
         value_component = TreeNode("my index")
         value_component.content.update({"T1": 2.3, "T2": 23.0})
-        scenario_component = TreeNode("alternative")
+        scenario_component = TreeNode("scenario")
         scenario_component.content[
             "my_scenario__Fake_Data_Store@2022-09-06T15:00:00"
         ] = value_component
-        entity_component = TreeNode("object")
+        entity_component = TreeNode("entity_0")
         entity_component.content["my_object"] = scenario_component
         parameter_component = TreeNode("parameter")
         parameter_component.content["my_parameter"] = entity_component
-        class_component = TreeNode("class")
+        class_component = TreeNode("entity_class")
         class_component.content["my_class"] = parameter_component
         self.assertEqual(value_tree, class_component)
 
@@ -108,15 +108,15 @@ class QueryParameterValuesTest(unittest.TestCase):
         )
         value_component = TreeNode("my index")
         value_component.content.update({"T1": 2.3, "T2": 23.0})
-        scenario_component = TreeNode("alternative")
+        scenario_component = TreeNode("scenario")
         scenario_component.content[
             "my_scenario__Fake_Data_Store@2022-09-06T15:00:00"
         ] = value_component
-        entity_component = TreeNode("my_class")
+        entity_component = TreeNode("entity_0")
         entity_component.content["my_object"] = scenario_component
         parameter_component = TreeNode("parameter")
         parameter_component.content["my_parameter"] = entity_component
-        class_component = TreeNode("class")
+        class_component = TreeNode("entity_class")
         class_component.content["my_relationship_class"] = parameter_component
         self.assertEqual(value_tree, class_component)
 
@@ -172,13 +172,41 @@ class CategoryTicksTest(unittest.TestCase):
 class TileHorizontallyTest(unittest.TestCase):
     def test_two_pieces_of_xy_data(self):
         data_list = [
-            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
-            XYData(["a", "b"], [3.3, 4.4], "x", "y", ["idx2"], ["name 1"]),
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 1),
+                "y",
+                ["idx1"],
+                [IndexName("name 1", 0)],
+            ),
+            XYData(
+                ["a", "b"],
+                [3.3, 4.4],
+                IndexName("x", 1),
+                "y",
+                ["idx2"],
+                [IndexName("name 1", 0)],
+            ),
         ]
         tiled, categories = plot_results.tile_horizontally(data_list, 1)
         expected = [
-            XYData([0, 1], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
-            XYData([2, 3], [3.3, 4.4], "x", "y", ["idx2"], ["name 1"]),
+            XYData(
+                [0, 1],
+                [1.1, 2.2],
+                IndexName("x", 1),
+                "y",
+                ["idx1"],
+                [IndexName("name 1", 0)],
+            ),
+            XYData(
+                [2, 3],
+                [3.3, 4.4],
+                IndexName("x", 1),
+                "y",
+                ["idx2"],
+                [IndexName("name 1", 0)],
+            ),
         ]
         self.assertEqual(tiled, expected)
         expected_categories = {("idx1",): ["a", "b"], ("idx2",): ["a", "b"]}
@@ -186,13 +214,41 @@ class TileHorizontallyTest(unittest.TestCase):
 
     def test_same_last_data_index_gets_grouped_to_same_category(self):
         data_list = [
-            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
-            XYData(["a", "b"], [3.3, 4.4], "x", "y", ["idx1"], ["name 1"]),
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 1),
+                "y",
+                ["idx1"],
+                [IndexName("name 1", 0)],
+            ),
+            XYData(
+                ["a", "b"],
+                [3.3, 4.4],
+                IndexName("x", 1),
+                "y",
+                ["idx1"],
+                [IndexName("name 1", 0)],
+            ),
         ]
         tiled, categories = plot_results.tile_horizontally(data_list, 1)
         expected = [
-            XYData([0, 1], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
-            XYData([0, 1], [3.3, 4.4], "x", "y", ["idx1"], ["name 1"]),
+            XYData(
+                [0, 1],
+                [1.1, 2.2],
+                IndexName("x", 1),
+                "y",
+                ["idx1"],
+                [IndexName("name 1", 0)],
+            ),
+            XYData(
+                [0, 1],
+                [3.3, 4.4],
+                IndexName("x", 1),
+                "y",
+                ["idx1"],
+                [IndexName("name 1", 0)],
+            ),
         ]
         self.assertEqual(tiled, expected)
         expected_categories = {("idx1",): ["a", "b"]}
@@ -200,13 +256,31 @@ class TileHorizontallyTest(unittest.TestCase):
 
     def test_incompatible_x_lengths_longer_first(self):
         data_list = [
-            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
-            XYData(["a"], [3.3], "x", "y", ["idx1"], ["name 1"]),
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 1),
+                "y",
+                ["idx1"],
+                [IndexName("name 1", 0)],
+            ),
+            XYData(
+                ["a"], [3.3], IndexName("x", 1), "y", ["idx1"], [IndexName("name 1", 0)]
+            ),
         ]
         tiled, categories = plot_results.tile_horizontally(data_list, 1)
         expected = [
-            XYData([0, 1], [1.1, 2.2], "x", "y", ["idx1"], ["name 1"]),
-            XYData([0], [3.3], "x", "y", ["idx1"], ["name 1"]),
+            XYData(
+                [0, 1],
+                [1.1, 2.2],
+                IndexName("x", 1),
+                "y",
+                ["idx1"],
+                [IndexName("name 1", 0)],
+            ),
+            XYData(
+                [0], [3.3], IndexName("x", 1), "y", ["idx1"], [IndexName("name 1", 0)]
+            ),
         ]
         self.assertEqual(tiled, expected)
         expected_categories = {("idx1",): ["a", "b"]}
@@ -214,13 +288,31 @@ class TileHorizontallyTest(unittest.TestCase):
 
     def test_incompatible_x_lengths_shorter_first(self):
         data_list = [
-            XYData(["a"], [1.1], "x", "y", ["idx1"], ["name 1"]),
-            XYData(["a", "b"], [2.2, 3.3], "x", "y", ["idx1"], ["name 1"]),
+            XYData(
+                ["a"], [1.1], IndexName("x", 1), "y", ["idx1"], [IndexName("name 1", 0)]
+            ),
+            XYData(
+                ["a", "b"],
+                [2.2, 3.3],
+                IndexName("x", 1),
+                "y",
+                ["idx1"],
+                [IndexName("name 1", 0)],
+            ),
         ]
         tiled, categories = plot_results.tile_horizontally(data_list, 1)
         expected = [
-            XYData([0], [1.1], "x", "y", ["idx1"], ["name 1"]),
-            XYData([0, 1], [2.2, 3.3], "x", "y", ["idx1"], ["name 1"]),
+            XYData(
+                [0], [1.1], IndexName("x", 1), "y", ["idx1"], [IndexName("name 1", 0)]
+            ),
+            XYData(
+                [0, 1],
+                [2.2, 3.3],
+                IndexName("x", 1),
+                "y",
+                ["idx1"],
+                [IndexName("name 1", 0)],
+            ),
         ]
         self.assertEqual(tiled, expected)
         expected_categories = {("idx1",): ["a", "b"]}
@@ -228,13 +320,21 @@ class TileHorizontallyTest(unittest.TestCase):
 
     def test_same_tiling_data_index(self):
         data_list = [
-            XYData(["a"], [1.1], "x", "y", ["idx1"], ["name 1"]),
-            XYData(["b"], [2.2], "x", "y", ["idx1"], ["name 1"]),
+            XYData(
+                ["a"], [1.1], IndexName("x", 1), "y", ["idx1"], [IndexName("name 1", 0)]
+            ),
+            XYData(
+                ["b"], [2.2], IndexName("x", 1), "y", ["idx1"], [IndexName("name 1", 0)]
+            ),
         ]
         tiled, categories = plot_results.tile_horizontally(data_list, 1)
         expected = [
-            XYData([0], [1.1], "x", "y", ["idx1"], ["name 1"]),
-            XYData([1], [2.2], "x", "y", ["idx1"], ["name 1"]),
+            XYData(
+                [0], [1.1], IndexName("x", 1), "y", ["idx1"], [IndexName("name 1", 0)]
+            ),
+            XYData(
+                [1], [2.2], IndexName("x", 1), "y", ["idx1"], [IndexName("name 1", 0)]
+            ),
         ]
         self.assertEqual(tiled, expected)
         expected_categories = {("idx1",): ["a", "b"]}
@@ -243,16 +343,40 @@ class TileHorizontallyTest(unittest.TestCase):
     def test_extra_tiling_dimension(self):
         data_list = [
             XYData(
-                ["a", "b"], [1.1, 2.2], "x", "y", ["idx", "A"], ["name 1", "name 2"]
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 2),
+                "y",
+                ["idx", "A"],
+                [IndexName("name 1", 0), IndexName("name 2", 1)],
             ),
             XYData(
-                ["a", "b"], [3.3, 4.4], "x", "y", ["idx", "B"], ["name 1", "name 2"]
+                ["a", "b"],
+                [3.3, 4.4],
+                IndexName("x", 2),
+                "y",
+                ["idx", "B"],
+                [IndexName("name 1", 0), IndexName("name 2", 1)],
             ),
         ]
         tiled, categories = plot_results.tile_horizontally(data_list)
         expected = [
-            XYData([0, 1], [1.1, 2.2], "x", "y", ["idx", "A"], ["name 1", "name 2"]),
-            XYData([2, 3], [3.3, 4.4], "x", "y", ["idx", "B"], ["name 1", "name 2"]),
+            XYData(
+                [0, 1],
+                [1.1, 2.2],
+                IndexName("x", 2),
+                "y",
+                ["idx", "A"],
+                [IndexName("name 1", 0), IndexName("name 2", 1)],
+            ),
+            XYData(
+                [2, 3],
+                [3.3, 4.4],
+                IndexName("x", 2),
+                "y",
+                ["idx", "B"],
+                [IndexName("name 1", 0), IndexName("name 2", 1)],
+            ),
         ]
         self.assertEqual(tiled, expected)
         expected_categories = {("idx", "A"): ["a", "b"], ("idx", "B"): ["a", "b"]}
@@ -262,7 +386,14 @@ class TileHorizontallyTest(unittest.TestCase):
 class CategorizeFurtherTest(unittest.TestCase):
     def test_single_subcategory(self):
         data_list = [
-            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B"], ["index 1", "index 2"])
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 2),
+                "y",
+                ["A", "B"],
+                [IndexName("index 1", 0), IndexName("index 2", 1)],
+            )
         ]
         categories = plot_results.categorize_further(
             {("A", "B"): ["a", "b"]}, data_list
@@ -272,8 +403,22 @@ class CategorizeFurtherTest(unittest.TestCase):
 
     def test_two_subcategories_within_single_category(self):
         data_list = [
-            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B1"], ["name 1", "name 2"]),
-            XYData(["a", "b"], [3.3, 4.4], "x", "y", ["A", "B2"], ["name 1", "name 2"]),
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 2),
+                "y",
+                ["A", "B1"],
+                [IndexName("name 1", 0), IndexName("name 2", 1)],
+            ),
+            XYData(
+                ["a", "b"],
+                [3.3, 4.4],
+                IndexName("x", 2),
+                "y",
+                ["A", "B2"],
+                [IndexName("name 1", 0), IndexName("name 2", 1)],
+            ),
         ]
         categories = plot_results.categorize_further(
             {("A", "B1"): ["a", "b"], ("A", "B2"): ["a", "b"]}, data_list
@@ -285,56 +430,139 @@ class CategorizeFurtherTest(unittest.TestCase):
 class ShuffleDimensionsTest(unittest.TestCase):
     def test_shuffle_data_indices(self):
         data_list = [
-            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B"], ["index 1", "index 2"])
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 2),
+                "y",
+                ["A", "B"],
+                [IndexName("index 1", 0), IndexName("index 2", 1)],
+            )
         ]
         inserted_list = plot_results.shuffle_dimensions({"index 1": 1}, data_list)
         expected = [
-            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["B", "A"], ["index 2", "index 1"])
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 2),
+                "y",
+                ["B", "A"],
+                [IndexName("index 2", 1), IndexName("index 1", 0)],
+            )
         ]
         self.assertEqual(inserted_list, expected)
 
     def test_negative_target_moves_to_end(self):
         data_list = [
-            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B"], ["index 1", "index 2"])
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 2),
+                "y",
+                ["A", "B"],
+                [IndexName("index 1", 0), IndexName("index 2", 1)],
+            )
         ]
         inserted_list = plot_results.shuffle_dimensions({"index 1": -1}, data_list)
         expected = [
-            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["B", "A"], ["index 2", "index 1"])
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 2),
+                "y",
+                ["B", "A"],
+                [IndexName("index 2", 1), IndexName("index 1", 0)],
+            )
         ]
         self.assertEqual(inserted_list, expected)
 
     def test_x_target_moves_to_x_axis(self):
         data_list = [
-            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B"], ["index 1", "index 2"])
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 2),
+                "y",
+                ["A", "B"],
+                [IndexName("index 1", 0), IndexName("index 2", 1)],
+            )
         ]
         inserted_list = plot_results.shuffle_dimensions({"index 1": "x"}, data_list)
         expected = [
-            XYData(["A"], [1.1], "index 1", "", ["B", "a"], ["index 2", "x"]),
-            XYData(["A"], [2.2], "index 1", "", ["B", "b"], ["index 2", "x"]),
+            XYData(
+                ["A"],
+                [1.1],
+                IndexName("index 1", 0),
+                "",
+                ["B", "a"],
+                [IndexName("index 2", 1), IndexName("x", 2)],
+            ),
+            XYData(
+                ["A"],
+                [2.2],
+                IndexName("index 1", 0),
+                "",
+                ["B", "b"],
+                [IndexName("index 2", 1), IndexName("x", 2)],
+            ),
         ]
         self.assertEqual(inserted_list, expected)
 
     def test_move_twice_works_as_expected(self):
         data_list = [
-            XYData(["a", "b"], [1.1, 2.2], "x", "y", ["A", "B"], ["index 1", "index 2"])
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 2),
+                "y",
+                ["A", "B"],
+                [IndexName("index 1", 0), IndexName("index 2", 1)],
+            )
         ]
         inserted_list = plot_results.shuffle_dimensions(
             {"index 2": "x", "index 1": -1}, data_list
         )
         expected = [
-            XYData(["B"], [1.1], "index 2", "", ["a", "A"], ["x", "index 1"]),
-            XYData(["B"], [2.2], "index 2", "", ["b", "A"], ["x", "index 1"]),
+            XYData(
+                ["B"],
+                [1.1],
+                IndexName("index 2", 1),
+                "",
+                ["a", "A"],
+                [IndexName("x", 2), IndexName("index 1", 0)],
+            ),
+            XYData(
+                ["B"],
+                [2.2],
+                IndexName("index 2", 1),
+                "",
+                ["b", "A"],
+                [IndexName("x", 2), IndexName("index 1", 0)],
+            ),
         ]
         self.assertEqual(inserted_list, expected)
 
 
 class InsertAsXTest(unittest.TestCase):
     def test_switch_two_indexes(self):
-        data_list = [XYData(["a", "b"], [1.1, 2.2], "x", "y", ["idx"], ["my_index"])]
+        data_list = [
+            XYData(
+                ["a", "b"],
+                [1.1, 2.2],
+                IndexName("x", 1),
+                "y",
+                ["idx"],
+                [IndexName("my_index", 0)],
+            )
+        ]
         inserted_list = plot_results.insert_as_x("my_index", data_list)
         expected = [
-            XYData(["idx"], [1.1], "my_index", "", ["a"], ["x"]),
-            XYData(["idx"], [2.2], "my_index", "", ["b"], ["x"]),
+            XYData(
+                ["idx"], [1.1], IndexName("my_index", 0), "", ["a"], [IndexName("x", 1)]
+            ),
+            XYData(
+                ["idx"], [2.2], IndexName("my_index", 0), "", ["b"], [IndexName("x", 1)]
+            ),
         ]
         self.assertEqual(inserted_list, expected)
 
@@ -343,18 +571,18 @@ class InsertAsXTest(unittest.TestCase):
             XYData(
                 ["a", "b"],
                 [1.1, 2.2],
-                "x",
+                IndexName("x", 2),
                 "y",
                 ["idx1", "cat 1"],
-                ["my index", "animate"],
+                [IndexName("my index", 0), IndexName("animate", 1)],
             ),
             XYData(
                 ["a", "b"],
                 [3.3, 4.4],
-                "x",
+                IndexName("x", 2),
                 "y",
                 ["idx2", "cat 1"],
-                ["my index", "animate"],
+                [IndexName("my index", 0), IndexName("animate", 1)],
             ),
         ]
         inserted_list = plot_results.insert_as_x("my index", data_list)
@@ -362,18 +590,18 @@ class InsertAsXTest(unittest.TestCase):
             XYData(
                 ["idx1", "idx2"],
                 [1.1, 3.3],
-                "my index",
+                IndexName("my index", 0),
                 "",
                 ["cat 1", "a"],
-                ["animate", "x"],
+                [IndexName("animate", 1), IndexName("x", 2)],
             ),
             XYData(
                 ["idx1", "idx2"],
                 [2.2, 4.4],
-                "my index",
+                IndexName("my index", 0),
                 "",
                 ["cat 1", "b"],
-                ["animate", "x"],
+                [IndexName("animate", 1), IndexName("x", 2)],
             ),
         ]
         self.assertEqual(inserted_list, expected)
@@ -382,10 +610,10 @@ class InsertAsXTest(unittest.TestCase):
 class RelabelXAxisTest(unittest.TestCase):
     def test_tick_gap_smaller_than_unity(self):
         categories = {
-            "y2020_5week": ["p2020"],
-            "y2025_5week": ["p2025"],
-            "y2030_5week": ["p2030"],
-            "y2035_5week": ["p2035"],
+            ("y2020_5week",): ["p2020"],
+            ("y2025_5week",): ["p2025"],
+            ("y2030_5week",): ["p2030"],
+            ("y2035_5week",): ["p2035"],
         }
         x_ticks = np.array([-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0])
         tick_positions, labels = plot_results.relabel_x_axis(categories, x_ticks)
@@ -394,10 +622,10 @@ class RelabelXAxisTest(unittest.TestCase):
 
     def test_tick_gap_greater_than_unity(self):
         categories = {
-            "y2020_5week": [str(i) for i in range(10)],
-            "y2025_5week": [str(i) for i in range(10, 20)],
-            "y2030_5week": [str(i) for i in range(20, 40)],
-            "y2035_5week": [str(i) for i in range(30, 40)],
+            ("y2020_5week",): [str(i) for i in range(10)],
+            ("y2025_5week",): [str(i) for i in range(10, 20)],
+            ("y2030_5week",): [str(i) for i in range(20, 30)],
+            ("y2035_5week",): [str(i) for i in range(30, 40)],
         }
         x_ticks = np.array(
             [-10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0]
@@ -409,7 +637,7 @@ class RelabelXAxisTest(unittest.TestCase):
         self.assertEqual(labels, [str(i) for i in range(0, 40, 5)])
 
     def test_single_tick(self):
-        categories = {"y2020_2day_dispatch": ["p2020"]}
+        categories = {("y2020_2day_dispatch",): ["p2020"]}
         x_ticks = np.array([-0.1, 0.0, 0.1])
         tick_positions, labels = plot_results.relabel_x_axis(categories, x_ticks)
         self.assertEqual(list(tick_positions), [0.0])
@@ -435,6 +663,13 @@ class CheckEntityClassesTest(unittest.TestCase):
             my_out.getvalue(),
             "entity class 'my_non_existent_class' not in database; ignoring\n",
         )
+
+
+class TestTagValueIndexNames(unittest.TestCase):
+    def test_empty_data_list(self):
+        data_list = []
+        tagged = plot_results.tag_value_index_names(data_list)
+        self.assertEqual(tagged, [])
 
 
 if __name__ == "__main__":

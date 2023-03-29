@@ -260,7 +260,8 @@
             "y": -4.631817794157001,
             "specification": "FlexTool3",
             "execute_in_work": true,
-            "cmd_line_args": []
+            "cmd_line_args": [],
+            "kill_completed_processes": false
         },
         "Init": {
             "type": "Data Store",
@@ -364,7 +365,7 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "datapackage@FlexTool3",
+                    "output/*.csv",
                     true
                 ]
             ]
@@ -406,7 +407,7 @@
             "x": 343.1157713946388,
             "y": 203.10795158135494,
             "specification": "Plot",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": [
                 {
                     "type": "resource",
@@ -416,7 +417,8 @@
                     "type": "resource",
                     "arg": "<project>/default_result_plots.json"
                 }
-            ]
+            ],
+            "kill_completed_processes": false
         },
         "Plot_settings": {
             "type": "Data Connection",
