@@ -3107,6 +3107,76 @@
                         ]
                     }
                 }
+            ],
+            "group__process__node__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "group"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": -1
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "sum_flow_t"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -3150,7 +3220,8 @@
             "entity_annuity",
             "unit_cf__inputNode__period",
             "unit_cf__outputNode__period",
-            "connection_cf__period"
+            "connection_cf__period",
+            "group__process__node__period__t"
         ],
         "table_options": {
             "node__period": {},
@@ -3254,6 +3325,9 @@
                 "has_header": false
             },
             "connection_cf__period": {
+                "has_header": false
+            },
+            "group__process__node__period__t": {
                 "has_header": false
             }
         },
@@ -3558,6 +3632,13 @@
                 "0": "string",
                 "1": "string",
                 "2": "float",
+                "3": "float",
+                "4": "float"
+            },
+            "group__process__node__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
                 "3": "float",
                 "4": "float"
             }

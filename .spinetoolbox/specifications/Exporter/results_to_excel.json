@@ -284,7 +284,7 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
-        "Group_process_node_flow": {
+        "Group_process_node_flow_sd": {
             "type": "object_parameter_values",
             "mapping": [
                 {
@@ -300,7 +300,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^sum flow"
+                    "filter_re": "^sum_flow$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -317,7 +317,8 @@
                 },
                 {
                     "map_type": "ParameterValueType",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "2d_map"
                 },
                 {
                     "map_type": "IndexName",
@@ -334,6 +335,76 @@
                 {
                     "map_type": "ParameterValueIndex",
                     "position": 1
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 4
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "Group_process_node_flow_sdt": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "group_flow_node"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^group$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^sum_flow_t$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": -2
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": -1
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "3d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 0
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 1
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2
                 },
                 {
                     "map_type": "ExpandedValue",

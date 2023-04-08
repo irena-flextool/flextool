@@ -173,6 +173,10 @@ set groupInertia 'node groups with an inertia constraint' within group;
 set groupNonSync 'node groups with a non-synchronous constraint' within group;
 set groupCapacityMargin 'node groups with a capacity margin' within group;
 set groupOutput 'groups that will output aggregated results' within group;
+set groupOutput_process 'output groups with process members' :=
+    {g in groupOutput : sum{(g, p, n) in group_process_node} 1};
+set groupOutput_node 'output groups with node members' :=
+    {g in groupOutput : sum{(g, n) in group_node} 1 };
 set process_unit 'processes that are unit' within process;
 set process_connection 'processes that are connections' within process;
 set process__ct_method_read dimen 2 within {process, ct_method};
@@ -2742,7 +2746,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '"curtailed VRE share, [\% of annual inflow]","upward slack [\% of annual inflow]",' >> fn_groupNode__d;
 	printf '"downward slack [\% of annual inflow]"\n' >> fn_groupNode__d;
   }
-for {g in groupOutput, s in solve_current, d in period_realized : sum{(g, n) in group_node} 1 && sum{(g, n) in group_node} pdNodeInflow[n, d]}
+for {g in groupOutput_node, s in solve_current, d in period_realized : sum{(g, n) in group_node} pdNodeInflow[n, d]}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g\n', g, s, d 
        , sum{(g, n) in group_node} pdNodeInflow[n, d] / period_share_of_year[d]
@@ -2760,13 +2764,13 @@ for {g in groupOutput, s in solve_current, d in period_realized : sum{(g, n) in 
 	>> fn_groupNode__d;
   }
 
-printf 'Write group results for process_nodes...\n';
+printf 'Write results for groups for realized periods...\n';
 param fn_groupProcessNode__d symbolic := "output/group__process__node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf 'group,solve,period,"sum flow"\n' > fn_groupProcessNode__d;
+    printf 'group,solve,period,"sum_flow"\n' > fn_groupProcessNode__d;
   }
-for {g in groupOutput, s in solve_current, d in period_realized : sum{(g, p, n) in group_process_node} 1}
+for {g in groupOutput_process, s in solve_current, d in period_realized}
   {
     printf '%s,%s,%s,%.8g\n', g, s, d 
        , + sum{(p, source, n) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_sink} 
@@ -2774,6 +2778,30 @@ for {g in groupOutput, s in solve_current, d in period_realized : sum{(g, p, n) 
          + sum{(p, n, sink) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_source} 
 		         r_process_source_sink_flow_d[p, n, sink, d] / period_share_of_year[d]
 	>> fn_groupProcessNode__d;
+  }
+
+printf 'Write flow results for groups for realized time steps...\n';
+param fn_groupProcessNode__dt symbolic := "output/group__process__node__period__t.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { 
+    printf 'solve,period,time' > fn_groupProcessNode__dt;
+	for {g in groupOutput_process}
+	  {
+	    printf ',%s', g >> fn_groupProcessNode__dt;
+	  }
+  }
+for {s in solve_current, (d, t) in dt : d in period_realized}
+  {
+    printf '\n%s,%s,%s', s, d, t >> fn_groupProcessNode__dt;
+	for {g in groupOutput_process}
+	  {
+	    printf ',%.8g',
+         + sum{(p, source, n) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_sink} 
+	             r_process_source_sink_flow_dt[p, source, n, d, t] 
+         + sum{(p, n, sink) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_source} 
+		         r_process_source_sink_flow_dt[p, n, sink, d, t]
+	    >> fn_groupProcessNode__dt;
+	  }
   }
 
 printf 'Write discount rates for realized periods...\n';
