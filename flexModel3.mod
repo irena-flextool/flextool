@@ -282,6 +282,9 @@ param p_entity_divested {e in entity : e in entityInvest};
 param scale_the_objective;
 param scale_the_state;
 
+set param_costs dimen 1;
+param costs_discounted {param_costs} default 0;
+
 #########################
 # Read data
 #table data IN 'CSV' '.csv' :  <- [];
@@ -399,6 +402,8 @@ table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
 table data IN 'CSV' 'solve_data/p_entity_invested.csv' : [entity], p_entity_invested;
 table data IN 'CSV' 'solve_data/p_entity_divested.csv' : [entity], p_entity_divested;
 
+# Reading results from previous solves
+table data IN 'CSV' 'output/costs_discounted.csv' : [param_costs], costs_discounted;
 
 set process__fork_method_yes dimen 2 within {process, fork_method} := 
     {p in process, m in fork_method 
@@ -2837,8 +2842,8 @@ for {s in solve_current, d in period_invest : d in period_realized}
   }
 
 
-printf 'Write discounted total cost for each cost type...\n';
-param fn_costs_total_discounted symbolic := "output/costs_total_discounted.csv";
+printf 'Write discounted total cost for each cost type per solve...\n';
+param fn_costs_total_discounted symbolic := "output/costs_discounted__solve.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
     printf 'solve,"unit investment/retirement","connection investment/retirement",' > fn_costs_total_discounted;
@@ -2868,6 +2873,25 @@ for {s in solve_current}
 	  sum{d in period_realized} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000
 	>> fn_costs_total_discounted;
   } 
+
+printf 'Write discounted total cost for each cost type summed for all solves so far...\n';
+param fn_costs_discounted symbolic := "output/costs_discounted.csv";
+printf 'param_costs,costs_discounted\n' > fn_costs_discounted;
+printf '"unit investment/retirement",%.12g\n', costs_discounted["unit investment/retirement"] + sum{d in period_realized} (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / 1000000 >> fn_costs_discounted;
+printf '"connection investment/retirement",%.12g\n', costs_discounted["connection investment/retirement"] + sum{d in period_realized} (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / 1000000 >> fn_costs_discounted;
+printf '"storage investment/retirement",%.12g\n', costs_discounted["storage investment/retirement"] + sum{d in period_realized} (r_costInvestState_d[d] + r_costDivestState_d[d]) / 1000000 >> fn_costs_discounted;
+printf '"fixed cost of existing assets",%.12g\n', costs_discounted["fixed cost of existing assets"] + sum{d in period_realized} (r_costExistingFixed_d[d]) / 1000000 >> fn_costs_discounted;
+printf '"commodity",%.12g\n', costs_discounted["commodity"] + sum{d in period_realized} (r_cost_commodity_d[d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d]) / 1000000 >> fn_costs_discounted;
+printf '"CO2",%.12g\n', costs_discounted["CO2"] + sum{d in period_realized} (r_cost_co2_d[d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d]) / 1000000 >> fn_costs_discounted;
+printf '"variable cost",%.12g\n', costs_discounted["variable cost"] + sum{d in period_realized} (r_cost_variable_d[d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d]) / 1000000 >> fn_costs_discounted;
+printf '"starts",%.12g\n', costs_discounted["starts"] + sum{d in period_realized} (r_cost_startup_d[d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d]) / 1000000 >> fn_costs_discounted;
+printf '"upward penalty",%.12g\n', costs_discounted["upward penalty"] + sum{d in period_realized} (sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'up', d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000 >> fn_costs_discounted;
+printf '"downward penalty",%.12g\n', costs_discounted["downward penalty"] + sum{d in period_realized} (sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000 >> fn_costs_discounted;
+printf '"inertia penalty",%.12g\n', costs_discounted["inertia penalty"] + sum{d in period_realized} (sum{g in groupInertia} (r_costPenalty_inertia_d[g, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000 >> fn_costs_discounted;
+printf '"non-synchronous penalty",%.12g\n', costs_discounted["non-synchronous penalty"] + sum{d in period_realized} (sum{g in groupNonSync} (r_costPenalty_non_synchronous_d[g, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000 >> fn_costs_discounted;
+printf '"capacity margin penalty",%.12g\n', costs_discounted["capacity margin penalty"] + sum{d in period_realized : d in period_invest} (sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d])) / 1000000 >> fn_costs_discounted;
+printf '"upward reserve penalty",%.12g\n', costs_discounted["upward reserve penalty"] + sum{d in period_realized} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000 >> fn_costs_discounted;
+printf '"downward reserve penalty",%.12g\n', costs_discounted["downward reserve penalty"] + sum{d in period_realized} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d] * p_discount_with_perpetuity_operations[d])) / 1000000 >> fn_costs_discounted;
 
 printf 'Write annualized cost summary for realized periods...\n';
 param fn_summary_cost symbolic := "output/costs__period.csv";
