@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Model outputs - IRENA FlexTool</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.5.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Model outputs";
+        var mkdocs_page_input_path = "results.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <script src="../js/jquery-3.6.0.min.js" defer></script>
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.5.0/highlight.min.js"></script>
+      <script>hljs.initHighlightingOnLoad();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> IRENA FlexTool
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Getting started</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="./">Model outputs</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#costs">Costs</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#prices">Prices</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#energy-flows">Energy flows</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#energy-balance-in-nodes">Energy balance in nodes</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#unit-online-and-startup">Unit online and startup</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#group-results">Group results</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#capacity-and-investment-results">Capacity and investment results</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#co2-emissions">CO2 emissions</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#reserves">Reserves</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#inertia-and-non-synchronous-generation">Inertia and non-synchronous generation</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#ramps">Ramps</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#slack-and-penalty-values">Slack and penalty values</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../reference/">Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../spine_database/">Database</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Interfaces</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../spine_toolbox/">Toolbox interface</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../browser_interface/">Browser interface</a>
+                  </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">IRENA FlexTool</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" alt="Docs"></a> &raquo;</li>
+      <li>Model outputs</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/irena-flextool/flextool/edit/master/docs/results.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="results">Results</h1>
+<p>FlexTool outputs results typical to a planning model or a scheduling model, but it also tries to highlight potential flexibility issues in the system. The outputs from the latest run are initially CSV files and can befound in the folder 'output'. File 'summary_solve.csv' can give a quick overview of potential issues in the solve - it is a diagnostic file. The other files are all numerical results and will be imported to a Spine database by the FlexTool workflow.</p>
+<ul>
+<li><a href="#costs">Costs</a></li>
+<li><a href="#prices">Prices</a></li>
+<li><a href="#energy-flows">Energy flows</a></li>
+<li><a href="#energy-balance-in-nodes">Energy balance in nodes</a></li>
+<li><a href="#group-results">Group results</a></li>
+<li><a href="#capacity-and-investment-results">Capacity and investment results</a></li>
+<li><a href="#co2-emissions">CO2 emissions</a></li>
+<li><a href="#reserves">Reserves</a></li>
+<li><a href="#inertia-and-non-synchronous-generation">Inertia and non-synchronous generation</a></li>
+<li><a href="#ramps">Ramps</a></li>
+<li><a href="#slack-and-penalty-values">Slack and penalty values</a></li>
+</ul>
+<h2 id="costs">Costs</h2>
+<ul>
+<li><code>model</code> object <code>cost</code> parameter - [CUR] includes annualized total cost as well as annualized costs divided into </li>
+<li><em>unit investment/retirement</em> - [CUR] cost of investing in unit capacity or benefits from salvaging unit capacity</li>
+<li><em>connection investment/retirement</em> - [CUR] cost of investing in connection capacity or benefits from salvaging connection capacity</li>
+<li><em>storage investment/retirement</em> - [CUR] cost of investing in storage capacity or benefits from salvaging storage capacity</li>
+<li><em>commodity</em> - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value)</li>
+<li><em>CO2</em> - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content</li>
+<li><em>variable cost</em> - [CUR] other variable operation and maintenance costs</li>
+<li><em>starts</em> - [CUR] start up costs</li>
+<li><em>upward penalty</em> - [CUR] cost of involuntary demand reduction</li>
+<li><em>downward penalty</em> - [CUR] cost of involuntary demand increase</li>
+<li><em>inertia penalty</em> - [CUR] cost of not meeting the inertia constraint</li>
+<li><em>non-synchronous penalty</em> - [CUR] cost of not meeting the non-synchronous constraint</li>
+<li><em>capacity margin penalty</em> - [CUR] cost of not meeting the capacity margin constraint</li>
+<li><em>upward reserve penalty</em> - [CUR] cost of not meeting the upward reserve constraint</li>
+<li><em>downward reserve penalty</em> - [CUR] cost of not meeting the downward reserve constraint</li>
+<li><code>model</code> object <code>cost_t</code> parameter - [CUR] similar as above but costs given for each timestep (no investment/retirement costs)</li>
+</ul>
+<h2 id="prices">Prices</h2>
+<ul>
+<li><code>node</code> object <code>price_t</code> parameter - [CUR/MWh] each node that maintains an energy balance provides a price time series based on the marginal value of the balance constraint</li>
+</ul>
+<h2 id="energy-flows">Energy flows</h2>
+<ul>
+<li><code>unit__node</code> relationship <code>flow</code> parameter - [MWh] cumulative flow from the node (if node is input) or to the node (if node is output)</li>
+<li><code>unit__node</code> relationship <code>flow_t</code> parameter - [MWh] flow from the node (if node is input) or to the node (if node is output)</li>
+<li><code>connection__node__node</code> relationship <code>flow</code> parameter - [MWh] cumulative flow through the connection (left to right is positive)</li>
+<li><code>connection__node__node</code> relationship <code>flow_t</code> parameter - [MWh] flow through the connection (left to right is positive)</li>
+</ul>
+<h2 id="energy-balance-in-nodes">Energy balance in nodes</h2>
+<ul>
+<li><code>node</code> object <code>balance</code> parameter - [MWh] cumulative inputs (positive) and outputs (negative) to the node from all the possible sources (<em>from_units</em>, <em>from_connection</em>, <em>to_units</em>, <em>to_connections</em>, <em>state change</em> over the period, <em>self discharge</em> during the period, <em>upward slack</em> for involuntary demand reduction and <em>downward slack</em> for involuntary demand increase)</li>
+<li><code>node</code> object <code>balance_t</code> parameter - [MWh] same as above, but for each timestep</li>
+<li><code>node</code> object <code>state_t</code> parameter - [MWh] storage state of the node in each timestep</li>
+<li><code>node</code> object <code>state_t</code> parameter - storage state of the node in each timestep (typically MWh).</li>
+</ul>
+<h2 id="unit-online-and-startup">Unit online and startup</h2>
+<ul>
+<li><code>unit</code> object <code>online_average</code> parameter - [count] average online status of the unit (average number of units online during the period)</li>
+<li><code>unit</code> object <code>online_t</code> parameter - [count] online status of the unit (number of units online in each timestep)</li>
+<li><code>unit</code> object <code>startup_cumulative</code> parameter - [count] cumulative number of unit startups during the period</li>
+</ul>
+<h2 id="group-results">Group results</h2>
+<ul>
+<li><code>group</code> object <code>indicator</code> parameter - gives a set of results for all <code>node</code> members of the <code>group</code></li>
+<li><em>sum of annualized inflows</em> - [MWh] sum of <code>inflow</code> to the node which has been annualized (scaled to correspond to a year of timesteps)</li>
+<li><em>VRE share</em> - [0-1] how much the flows from VRE sources (inputs using  'upper limit' profile) are of the inflow</li>
+<li><em>curtailed VRE share</em> - [0-1] how much the unused flows from VRE sources would have been of the inflow</li>
+<li><em>upward slack share</em> - [0-1] upward slack in relation to the inflow</li>
+<li><em>downward slack share</em> - [0-1] downward slack in relation to the inflow</li>
+</ul>
+<h2 id="capacity-and-investment-results">Capacity and investment results</h2>
+<ul>
+<li><code>unit</code>, <code>connection</code> and <code>node</code> objects <code>capacity</code> parameter - [MW or MWh] include the following parameters</li>
+<li><em>existing</em> - [MW or MWh] capacity that was assumed to exist in the beginning of the solve</li>
+<li><em>invested</em> - [MW or MWh] capacity the model decided to invest for the given period</li>
+<li><em>retired</em> - [MW or MWh] capacity the model decided to retire in the beginning of the given period</li>
+<li><em>total</em> - [MW or MWh] sum of <em>existing</em>, <em>invested</em> and <em>retired</em> capacities</li>
+<li><code>unit</code>, <code>connection</code> and <code>node</code> objects <code>invest_marginal</code> parameter - [CUR/MW or MWh] marginal cost to invest in one more MW or MWh of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per MW or MWh; positive value means the cost is higher than the benefit by the stated amount per MW or MWh)</li>
+<li><code>group</code> parameter <code>slack_capacity_margin</code> - [MW or MWh] use of slack variable and the associated penalty cost to meet the capacity margin requirement in the period</li>
+<li><code>group</code> parameter <code>slack_capacity_margin</code> - use of slack variable and the associated penalty cost to meet the capacity margin requirement in the period</li>
+</ul>
+<h2 id="co2-emissions">CO2 emissions</h2>
+<ul>
+<li><code>unit</code> object <code>co2</code> parameter - [tCO2] how many tons of CO2 the unit has generated (by using commodity with CO2 content) or removed</li>
+</ul>
+<h2 id="reserves">Reserves</h2>
+<ul>
+<li><code>unit__reserve__upDown__node</code> relationship <code>reservation_t</code> parameter - [MW] how much upward or downward reserve particular unit was providing to a particular node in given timestep</li>
+<li><code>unit__reserve__upDown__node</code> relationship <code>reservation_average</code> parameter - [MW] how much upward or downward reserve particular unit was providing to a particular node in average during the period</li>
+<li><code>group__reserve__upDown</code> relationship <code>slack_reserve_t</code> parameter - [MW] use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement in each timestep</li>
+<li><code>group__reserve__upDown</code> relationship <code>slack_reserve</code> parameter - [MW] cumulative use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement during the period</li>
+</ul>
+<h2 id="inertia-and-non-synchronous-generation">Inertia and non-synchronous generation</h2>
+<ul>
+<li><code>group</code> object <code>inertia_t</code> parameter - [MWs] the amount of inertia (MWs) in the group of nodes in each timestep</li>
+<li><code>group</code> object <code>slack_inertia_t</code> parameter - [MWs] use of slack variable and the associated penalty cost to fulfill the inertia requirement in each timestep</li>
+<li><code>group</code> object <code>slack_nonsync_t</code> parameter - [MWh] use of slack variable and the associated penalty cost to fulfill the non-synchronous share maximum share constraint in each timestep </li>
+</ul>
+<h2 id="ramps">Ramps</h2>
+<ul>
+<li><code>node</code> object <code>ramp_t</code> parameter - includes seven parameters that form the ramp room envelope (how much there is additional room to ramp in a give node)</li>
+<li><em>ramp</em> - [MW] the actual ramp in the node from previous timestep to this timestep</li>
+<li><em>units_up</em> - [MW] additional room for upward ramps from non-VRE units connected to the node</li>
+<li><em>VRE_up</em> - [MW] adds upward ramp room from VRE units on top of the ramp room from non-VRE units</li>
+<li><em>connections_up</em> - [MW] adds upward ramp room from connections on top of the previous ramp rooms (does not consider whether the connected node has ramp room, but is simply the available capacity in the connection)</li>
+<li><em>units_down</em> - [MW] additional room for downward ramps from non-VRE units connected to the node </li>
+<li><em>VRE_down</em> - [MW] adds downward ramp room from VRE units on top of the ramp room from non-VRE units</li>
+<li><em>connections_down</em> - [MW] adds downward ramp room from connections on top of the previous ramp rooms (does not consider whether the connected node has ramp room, but is simply the available capacity in the connection)</li>
+<li><code>unit__node</code> relationship <code>ramp_t</code> parameter - [MW] shows ramping of particular input or output flow between a unit and a node for each time step</li>
+</ul>
+<h2 id="slack-and-penalty-values">Slack and penalty values</h2>
+<p>Slack and penalty values are listed in various places above (costs, energy balance, reserves, inertia and non-sychronous generation).</p>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href=".." class="btn btn-neutral float-left" title="Getting started"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../reference/" class="btn btn-neutral float-right" title="Reference">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+      <p>IRENA</p>
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/irena-flextool/flextool" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+      <span><a href=".." style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../reference/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script>var base_url = '..';</script>
+    <script src="../js/theme_extra.js" defer></script>
+    <script src="../js/theme.js" defer></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML" defer></script>
+      <script src="../assets/mathjaxhelper.js" defer></script>
+      <script src="../search/main.js" defer></script>
+    <script defer>
+        window.onload = function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        };
+    </script>
+
+</body>
+</html>

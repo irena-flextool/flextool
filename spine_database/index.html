@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Database - IRENA FlexTool</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.5.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Database";
+        var mkdocs_page_input_path = "spine_database.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <script src="../js/jquery-3.6.0.min.js" defer></script>
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.5.0/highlight.min.js"></script>
+      <script>hljs.initHighlightingOnLoad();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> IRENA FlexTool
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Getting started</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../results/">Model outputs</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../reference/">Reference</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="./">Database</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#database-editor-in-brief">Database editor in brief</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Interfaces</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../spine_toolbox/">Toolbox interface</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../browser_interface/">Browser interface</a>
+                  </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">IRENA FlexTool</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" alt="Docs"></a> &raquo;</li>
+      <li>Database</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/irena-flextool/flextool/edit/master/docs/spine_database.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="data-structure-in-spine-databases">Data structure in Spine databases</h1>
+<p>Spine databases use Entity-Attribute-Value with Classes and Relationships (EAV-CR). Entity classes define the categories of data. These can be one-dimensional object classes (e.g. <code>node</code> or <code>unit</code>) or multi-dimensional relationship classes formed from the object classes (e.g. <code>unit__node</code>). Spine Toolbox user can define these classes to suit their modelling needs. For FlexTool the entity classes have been pre-defined. Instead, FlexTool user needs to add the entity instances: objects and relationships that define the particular network structure to be modelled (e.g. <em>coal_plant</em> <code>unit</code> or <em>west</em> <code>node</code>). Furthermore, each entity class (object or relationship) can hold only parameters that have been defined for that particular class. Again, FlexTool user does not need to add the parameter types - the user should just add needed parameter values for the entities the user has created.</p>
+<p><img alt="EAV data structure" src="../EAV_CR.png" /></p>
+<h2 id="database-editor-in-brief">Database editor in brief</h2>
+<p>Spine Toolbox database editor can be used to modify data and to build scenarios. 
+The figure below shows an example where parameter data from two <code>alternatives</code> 
+have been selected for display (in the data table). The object tree on the left 
+selects two <code>nodes</code> ('coal_market' and 'west') as well as one <code>unit</code> ('coal_plant'). 
+Consequently, one can use both whole classes and individual entities (members of the classes) as data filters.
+The results of this filter are visualized in the graph on top. The mouse pointer is showing a relationship 
+entity that connects the 'coal_plant' and its output <code>node</code> 'west'. The relationship 
+entity is defined in a relationship tree, which is not visible here.</p>
+<p>The <code>scenario</code> tree (on the right, below the <code>alternative</code> tree) shows that 
+the 'coal' <code>scenario</code> is formed by taking all data from the 'init' <code>alternative</code> 
+and then all data from the 'coal' <code>alternative</code>. If there would be same parameter 
+defined for both <code>scenarios</code>, then the latter <code>alternative</code> would overwrite 
+the first <code>alternative</code>.</p>
+<p>Whenever data is modified, the data is staged in separate database tables (although not directly visible to user). The changes will be applied only once the user <code>commits</code> the changes and leaves a commit message to indicate what has been done. The <code>commit</code> can be done with ctrl-enter or from the database editor menu (triple bar at top-right).</p>
+<p>The database editor menu has options for how to display the data: table view, different pivot views and a graph view. It also contains a tool to delete data (<code>purge</code>) and decrease database size by removing unused allocations (<code>vacuum</code>). You can also bring back dock windows that have been closed by the user. <code>History</code> will show the history of data changes based on the commits made by the user.</p>
+<p><img alt="Database editor" src="../database_editor.png" /></p>
+<p>More on Spine Database editor in https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html.</p>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../reference/" class="btn btn-neutral float-left" title="Reference"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../spine_toolbox/" class="btn btn-neutral float-right" title="Toolbox interface">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+      <p>IRENA</p>
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/irena-flextool/flextool" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+      <span><a href="../reference/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../spine_toolbox/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script>var base_url = '..';</script>
+    <script src="../js/theme_extra.js" defer></script>
+    <script src="../js/theme.js" defer></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML" defer></script>
+      <script src="../assets/mathjaxhelper.js" defer></script>
+      <script src="../search/main.js" defer></script>
+    <script defer>
+        window.onload = function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        };
+    </script>
+
+</body>
+</html>

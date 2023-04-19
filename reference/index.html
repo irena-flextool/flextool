@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Reference - IRENA FlexTool</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.5.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Reference";
+        var mkdocs_page_input_path = "reference.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <script src="../js/jquery-3.6.0.min.js" defer></script>
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.5.0/highlight.min.js"></script>
+      <script>hljs.initHighlightingOnLoad();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> IRENA FlexTool
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Getting started</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../results/">Model outputs</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="./">Reference</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#how-to-define-the-temporal-properties-of-the-model">How to define the temporal properties of the model</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#timesteps-and-periods">Timesteps and periods</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#timeblocksets">Timeblocksets</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#definitions">Definitions</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#nodes">Nodes</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#defining-how-the-node-functions">Defining how the node functions</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#data-for-nodes">Data for nodes</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#using-nodes-as-storages">Using nodes as storages</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#units">Units</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#defining-how-the-unit-functions">Defining how the unit functions</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#main-data-items-for-units">Main data items for units</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#investment-parameters-for-capacity-expansion">Investment parameters (for capacity expansion)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#relationship-of-a-unit-to-a-node-and-determination-of-the-type-of-relationship">Relationship of a unit to a node and determination of the type of relationship</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#properties-of-unit-inputnode-and-unit-outputnode-relationships">Properties of unit--inputNode and unit--outputNode relationships</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#units-constrained-by-profiles">Units constrained by profiles</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#connections">Connections</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#commodities">Commodities</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#groups">Groups</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#capacity-limits-for-nodes-units-and-connections">Capacity limits for nodes, units and connections</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#cumulative-and-instant-flow-limits-for-unit__nodes-and-connection__nodes">Cumulative and instant flow limits for unit__nodes and connection__nodes</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#limits-for-nodes">Limits for nodes</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#controlling-outputs">Controlling outputs</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#reserves">Reserves</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#reserve-groups">Reserve groups</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#reserve-provision-by-units">Reserve provision by units</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#reserve-transfer-by-connections">Reserve transfer by connections</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#additional-objects-for-further-functionality">Additional objects for further functionality</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../spine_database/">Database</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Interfaces</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../spine_toolbox/">Toolbox interface</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../browser_interface/">Browser interface</a>
+                  </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">IRENA FlexTool</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" alt="Docs"></a> &raquo;</li>
+      <li>Reference</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/irena-flextool/flextool/edit/master/docs/reference.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="main-entities-to-define-a-powerenergy-system">Main entities to define a power/energy system</h1>
+<p>Elemental entities (one dimensional):
+- <a href="#nodes"><strong>node</strong></a>: maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
+- <a href="#units"><strong>unit</strong></a>: power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
+- <a href="#connections"><strong>connection</strong></a>: transmission lines or other transfer connections between nodes
+- <a href="#commodities"><strong>commodity</strong></a>: fuels or other commodities that are either purchased or sold at a price outside of the model scope
+- <a href="#profiles"><strong>profile</strong></a>: timeseries that can be used to constraint the behaviour of units, connections or storages
+- <a href="#reserves"><strong>reserve</strong></a>: reserve categories to withhold capacity to cope with issues outside of model scope</p>
+<p>Entities with two or more dimensions:
+- <strong>unit__inputNode</strong> and <strong>unit__outputNode</strong>: defines the inputs, outputs and their properties for the conversion units
+- <strong>connection__node__node</strong>: defines which nodes a connection will connect
+- <strong>unit__node__profile</strong> and <strong>connection__profile</strong>: defines a profile limit (upper, lower or fixed) for an energy flow
+- <strong>node__profile</strong>: defines a profile limit (upper, lower, or fixed) for the storage state of the node
+- <strong>commodity__node</strong>: defines if a node is a source or sink for a commodity
+- <strong>reserve__upDown__unit__node</strong> and <strong>reserve__upDown__connection__node</strong>: reserve capacity from a source to the target node</p>
+<p>See below for more detailed explanations.</p>
+<p><img alt="Simple example grid" src="../simple_grid.png" /></p>
+<h2 id="how-to-define-the-temporal-properties-of-the-model">How to define the temporal properties of the model</h2>
+<h3 id="timesteps-and-periods">Timesteps and periods</h3>
+<p>FlexTool has two different kinds of time varying parameters. The first one represents a regular timeline based on timesteps. The duration of each timestep can be defined by the user. There can be multiple timelines in the database - the user needs to define which timeline to use (and what parts of the timeline should be used, as will be explained later). The timestep names in the timeline are defined by the user - they can be abstract like 't0001' or follow a datetime format of choice. However, the timestep names between different timelines must remain unique (usually there should be only one timeline in a database and therefore no issues).</p>
+<p>The second time varying dimension is <code>period</code>, which is typically used to depict assumptions about the future. One model can include multiple <code>solves</code> that the model will solve in sequence (to allow multi-stage modelling). Each solve can include multiple <code>periods</code> (so that the user can change parameter values for different parts of the future).</p>
+<p>A parameter of particular type can be either constant/time-varying or constant/period-based. For example <code>inflow</code> is either a constant or time-varying, but it cannot be period-based.</p>
+<h3 id="timeblocksets">Timeblocksets</h3>
+<p>Timeblocks pick one or more sections from the <code>timeline</code> to form a <code>timeblockset</code>. Each timeblock defines a start and a duration. The aim of timeblocksets is to allow the modeller to create models with representative periods often used in the investment planning.</p>
+<h3 id="definitions">Definitions</h3>
+<ul>
+<li><strong>model</strong>: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)</li>
+<li><em>solves</em>: sequence of solves in the model represented with an array of solve names.</li>
+<li><em>discount_offset_investment</em>: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.</li>
+<li><em>discount_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs. </li>
+<li><strong>solve</strong>: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.</li>
+<li><em>period_timeblockset</em>: map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name.</li>
+<li><em>realized_periods</em>: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve</li>
+<li><em>invest_periods</em>: array of periods where investements are allowed in this solve (applies only to objects that can be invested in)</li>
+<li><em>discount_years</em>: how far in the future each period is from the start of this solve (in years). Index: period, value: years.</li>
+<li><em>solver</em>: choice of a solver (a list of possible values)</li>
+<li><em>highs_method</em>: HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.</li>
+<li><em>highs_parallel</em>: HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.</li>
+<li><em>highs_presolve</em>: HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large. </li>
+<li><em>solve_mode</em>: a single shot or a set of rolling optimisation windows solved in a sequence (not functional yet, always a single shot).</li>
+<li><strong>timeblockset</strong>: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)</li>
+<li><em>block_duration</em> a map with index <em>timestep_name</em> that starts the timeblock and value that defines the duration of the block (how many timesteps)</li>
+<li><strong>timeline</strong>: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.</li>
+<li><em>timestep_duration</em>: a map with <em>timestep_name</em> as an index and <em>duration</em> as a value.</li>
+<li><em>timeline_duration_in_years</em> Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.</li>
+<li><strong>timeblockset__timeline</strong>: defines which timeline object particular timeblockset is using.</li>
+</ul>
+<h2 id="nodes">Nodes</h2>
+<h3 id="defining-how-the-node-functions">Defining how the node functions</h3>
+<p>These parameters will define how the node will behave and use the data it is given (available choices are marked in <em>italics</em>):</p>
+<ul>
+<li><strong>'name'</strong> - unique name identifier (case sensitive)</li>
+<li><strong>'is_active'</strong> - is the model/node/unit active in a specific scenario: <em>yes</em> (if not defined, then not active)</li>
+<li><strong>'has_balance'</strong> - does the node maintain a balance for inputs and outputs: <em>yes</em> (if not defined, then balance is not maintained)</li>
+<li><strong>'has_storage'</strong> - does the node represent a storage and therefore have a state: <em>yes</em> (if not defined, then no storage)</li>
+<li><strong>'invest_method'</strong> - Choice of investment method: either <em>not_allowed</em> or then a combination of <ul>
+<li><em>invest</em> and/or <em>retire</em> </li>
+<li>investment limits for each <em>period</em> and/or for all periods (<em>total</em>) or <em>no_limit</em> </li>
+</ul>
+</li>
+<li><strong>'inflow_method'</strong> - choice how to treat inflow time series<ul>
+<li><em>use_original</em> - does not scale the original time series (no value defaults here)</li>
+<li><em>no_inflow</em> - ignores any inserted inflow time series</li>
+<li><em>scale_to_annual_flow</em> - will scale the time series to match the <code>annual_flow</code> so that the sum of inflow is multiplied by 8760/<code>hours_in_solve</code></li>
+<li><em>scale_in_proprotion</em> - calculates a scaling factor by dividing <code>annual_flow</code> with the sum of time series inflow (after it has been annualized using <code>timeline_duration_in_years</code>)</li>
+<li><em>scale_to_annual_and_peak_flow</em> - scales the time series to match the 'annual_flow' target while transforming the time series to match the highest load with the 'peak_inflow'</li>
+</ul>
+</li>
+</ul>
+<p><img alt="image.png" src="../nodes.png" /></p>
+<h3 id="data-for-nodes">Data for nodes</h3>
+<p>Input data is set with the following parameters:</p>
+<ul>
+<li><strong>'inflow'</strong> - [MWh] Inflow into the node (negative is outflow). Constant or time series.</li>
+<li><strong>'annual_flow'</strong> - [MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.</li>
+<li><strong>'existing'</strong> - [MWh] Existing storage capacity (requires <code>has_state</code>). Constant.</li>
+<li><strong>'invest_cost'</strong> - [CUR/kWh] Investment cost for new storage capacity. Constant or period.</li>
+<li><strong>'salvage_value'</strong> - [CUR/kWh] Salvage value of the storage. Constant or period.</li>
+<li><strong>'lifetime'</strong> - [years] Life time of the storage unit represented by the node. Constant or period.</li>
+<li><strong>'interest_rate'</strong> - [unitless, e.g. 0.05 means 5%] Interest rate for investments. Constant or period.</li>
+<li><strong>'invest_max_total'</strong> - [MWh] Maximum storage investment over all solves. Constant.</li>
+<li><strong>'invest_max_period'</strong> - [MWh] Maximum storage investment for each period. Period.</li>
+<li><strong>'invest_min_total'</strong> - [MWh] Minimum storage investment over all solves. Constant.</li>
+<li><strong>'invest_min_period'</strong> - [MWh] Minimum storage investment for each period. Period.</li>
+<li><strong>'invest_forced'</strong> - [MWh] Storage capacity that must be invested in a given period. Investment cost will be included in the cost results even though the model does not have an investment variable. Constant or period.</li>
+<li><strong>'fixed_cost'</strong> - [CUR/kW] Annual fixed cost for storage. Constant or period.</li>
+<li><strong>'penalty_up'</strong> - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time.</li>
+<li><strong>'penalty_down'</strong> - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time.</li>
+<li><strong>'virtual_unitsize'</strong> - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.</li>
+</ul>
+<h3 id="using-nodes-as-storages">Using nodes as storages</h3>
+<p>FlexTool manages storages through nodes. A regular node maintains an energy/material balance between all inputs and outputs (<code>has_balance</code> set to <em>yes</em>). A storage node includes an additional state variable, which means that the node can also use charging and discharging of the storage while maintaining the energy balance. A storage node is created by setting <code>has_storage</code> to <em>yes</em> and by adding storage capacity using the <code>existing</code> parameter and/or by letting the model invest in storage capacity (<code>invest_method</code>, <code>invest_cost</code>, <code>invest_max_period</code>, <code>invest_max_total</code> and <code>invest_forced</code> parameters).</p>
+<p>Since FlexTool allows different temporal structures (multi-periods, rolling optimization, etc.) there needs to be ways to define how the storages behave when the model timeline is not fully consequtive. By default, storages are forced to match start level to the end level within timeblocks. This is an acceptable setting for small storages that do not carry meaningful amounts of energy between longer time periods in the model.</p>
+<p>There are three methods associated with storage start and end values: <code>storage_binding_method</code>, <code>storage_start_end_method</code> and <code>storage_solve_horizon_method</code>. 
+- The most simple one of these is the <code>storage_start_end_method</code> and it overrides the other methods, since it forces the start and/or the end state of the storage to a predefined value based on the proportional parameters <code>storage_state_start</code> and <code>storage_state_end</code> (proportional means that the parameter needs to be set between 0-1 and will be scaled by the storage capacity in the model). These two parameters affect only the first and the last timesteps of the entire model (even when the model has more than one solve).
+- <code>storage_binding_method</code> states how the storage should behave over discontinuities in the model timeline. Model timeline can have jumps for three different reasons: timeblocks, periods, and solves. If <code>storage_binding_method</code> is <em>bind_within_timeblock</em>, then the storage has to match the state of the storage between the beginning and the end of each timeblock. In effect, <strong>storage_state_at_start_of_timeblock</strong> equals <strong>storage_state_at_end_of_timeblock</strong> plus <strong>charging</strong> minus <strong>discharging</strong> minus <strong>self_discharge_loss</strong> at the last timestep. Similarly, <em>bind_within_period</em> will force the start and end between periods, but it will treat the jumps between timeblocks as continuous from the storage perspective (the storage will continue from where it was at the end of the previous timeblock). <em>bind_within_solve</em> does effectively the same when there are multiple periods within one solve. <em>bind_within_model</em> (NOT IMPLEMENTED 19.3.2023) will extend the continuity to multiple solves and force the end state of the storage at the end of the last solve to match the beginning state of the storage at the start of the first solve. Finally, <em>bind_forward_only</em> will force continuity in the storage state over the whole model without forcing the end state to match the beginning state.
+- <code>storage_solve_horizon_method</code> is meant for models that roll forward between solves and have an overlapping temporal window between those solves (e.g. a model with 36 hour horizon rolls forward 24 hours at each solve - those 12 last hours will be overwritten by the next solve). In these cases, the end state of the storage will be replaced by the next solve, but it can be valuable to have some guidance for the end level of storage, since it will affect storage behaviour. There are three methods: <em>free</em> is the default and will simply let the model choose where the storage state ends (usually the storage will be emptied, since it would have no monetary value). <em>use_reference_value</em> will use the value set by <code>storage_state_reference_value</code> to force the end state in each solve to match the reference value. <em>use_reference_price</em> will give monetary value for the storage content at the end of the solve horizon set by the <code>storage_state_reference_price</code> parameter - the model is free to choose how much it stores at the end of horizon based on this monetary value.</p>
+<h2 id="units">Units</h2>
+<p>Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine), but the can also have multiple inputs and/or outputs (e.g. combined heat and power plant). The input nodes are defined with the relationship <code>unit--inputNode</code> while the output nodes are defined through the relationship <code>unit--outputNode</code>.</p>
+<h3 id="defining-how-the-unit-functions">Defining how the unit functions</h3>
+<ul>
+<li><code>is_active</code> to state the alternative where the unit becomes active</li>
+<li>'conversion_method' to define the way unit converts inputs to outputs </li>
+<li><code>startup_method</code> - Choice of startup method. 'Linear' startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. 'Binary' startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups.</li>
+<li><code>minimum_time_method</code> - Not functional yet. Choice between minimum up- and downtimes (<empty>, <em>min_downtime</em>, <em>min_uptime</em>, <em>both</em>).</li>
+</ul>
+<h3 id="main-data-items-for-units">Main data items for units</h3>
+<ul>
+<li>Capacity: <code>existing</code> (and the investment and retirement parameters below)</li>
+<li>Technical: <code>efficiency</code>, <code>min_load</code>, <code>efficiency_at_min_load</code>, <code>min_uptime</code>, <code>min_downtime</code><ul>
+<li><code>min_load</code> - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time.</li>
+</ul>
+</li>
+<li>Economic: <code>startup_cost</code>, <code>fixed_cost</code> (fuel cost comes through the use of fuel commodities and other variable costs are defined for flows between unit and node, see below)</li>
+</ul>
+<h3 id="investment-parameters-for-capacity-expansion">Investment parameters (for capacity expansion)</h3>
+<ul>
+<li>investment/retirement method</li>
+<li><code>invest_cost</code>, <code>interest_rate</code>, <code>lifetime</code>, <code>invest_max_total</code>, <code>invest_max_period</code>, <code>invest_min_total</code>, <code>invest_min_period</code>, <code>invest_forced</code></li>
+<li><code>salvage_value</code>, <code>retire_max_total</code>, <code>retire_max_period</code>, <code>retire_min_total</code>, <code>retire_min_period</code>, <code>retire_forced</code></li>
+</ul>
+<p><img alt="image" src="../generators.png" /></p>
+<h3 id="relationship-of-a-unit-to-a-node-and-determination-of-the-type-of-relationship">Relationship of a unit to a node and determination of the type of relationship</h3>
+<ul>
+<li>If the unit’s outputs are flowing into the node, the node acts as output for the unit.</li>
+<li>If the unit’s inputs are flowing out of the node (into the unit), the node acts as input for the unit.</li>
+<li>Not all units necessary have both an input and an output node. E.g. VRE generators have only output nodes and their generation is driven by profiles</li>
+</ul>
+<h3 id="properties-of-unit-inputnode-and-unit-outputnode-relationships">Properties of unit--inputNode and unit--outputNode relationships</h3>
+<ul>
+<li><code>is_non_synchronous</code> - Chooses whether the unit is synchronously connected to this node.</li>
+<li><code>coefficient</code> - [factor] Coefficient to scale the output from a unit to a particular node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints). Constant.</li>
+<li><code>other_operational_cost</code> - [CUR/MWh] Other operational variable costs for energy flows. Constant or time. </li>
+<li><code>inertia_constant</code> - [MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.</li>
+<li><code>ramp_method</code> - Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).</li>
+<li><code>ramp_cost</code> - [CUR/MW] Cost of ramping the unit. Constant.</li>
+<li><code>ramp_speed_up</code> - [per unit / minute] Maximum ramp up speed. Constant.</li>
+<li><code>ramp_speed_down</code> - [per unit / minute] Maximum ramp down speed. Constant.</li>
+</ul>
+<h3 id="units-constrained-by-profiles">Units constrained by profiles</h3>
+<p>Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a <code>profile</code> object with a <code>profile_method</code>, thats state whether the profile forces an <em>upper_limit</em>, <em>lower_limit</em> or <em>equal</em>ity. Finally <code>profile</code> object is given a <code>profile</code> time series (or it can also be a constant). One needs to use <code>node__profile</code>, <code>unit__node__profile</code> or <code>connection__profile</code> to apply the profile to specific energy flow (or storage state in the case of <code>node__profile</code>).</p>
+<h2 id="connections">Connections</h2>
+<p>Connections can have an <code>existing</code> transfer capacity as well as an opportunity to invest in new capacity and retire old capacity. The functional choices of connections include the <code>is_active</code>, <code>transfer_method</code>, <code>invest_method</code>, <code>startup_method</code> as well as a choice if the tranfer connection <code>is_DC</code>. Parameters for the connection are defined in the <code>connection</code> object, but the two <code>nodes</code> it connects are defined by establishing a relationship between <code>connection--leftNode--rightNode</code>.</p>
+<ul>
+<li><code>existing</code> - [MW] Existing capacity. Constant.</li>
+<li><code>efficiency</code> - [factor, typically between 0-1] Efficiency of a connection. Constant or time.</li>
+<li><code>constraint_capacity_coefficient</code> - A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.</li>
+<li><code>other_operational_cost</code> - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant or time.</li>
+<li><code>fixed_cost</code> - [CUR/kW] Annual fixed cost. Constant or period.</li>
+<li><code>invest_cost</code> - [CUR/kW] Investment cost for new 'virtual' capacity. Constant or period.</li>
+<li><code>interest_rate</code> - [e.g. 0.05 equals 5%] Interest rate for investments. Constant or period.</li>
+<li><code>lifetime</code> - [years] Used to calculate annuity together with interest rate. Constant or period.</li>
+<li>other investment parameters: <code>invest_max_total</code>, <code>invest_max_period</code>, <code>invest_min_total</code>, <code>invest_min_period</code>, <code>invest_forced</code>, <code>salvage_value</code></li>
+<li><code>is_DC</code> - A flag whether the connection is DC (the flow will not be counted as synchronous if there is a <em>non_synchronous_limit</em>). Default false.</li>
+<li><code>virtual_unitsize</code> - [MW] Size of single connection - used for integer (lumped) investments.</li>
+</ul>
+<h2 id="commodities">Commodities</h2>
+<p>Some <code>nodes</code> can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a <code>price</code> and be connected to those <code>nodes</code> that serve (or buy) that particular <code>commodity</code> at the given <code>price</code>. In other words, <code>commodity</code> is separate from <code>node</code> so that the user can use the same <code>commodity</code> properties for multiple nodes. Commodities can also have a <code>co2_content</code>. The <code>commodity</code> and its <code>nodes</code> are connected by establishin a new relationship between the <code>commodity</code> and each of its <code>nodes</code> (e.g. <em>coal--coal_market</em>).</p>
+<p><img alt="image-1.png" src="../commodities.PNG" /></p>
+<h2 id="groups">Groups</h2>
+<p>Groups are used to make constraints that apply to a group of nodes, units and/or connections. A group is defined by creating a group object and then creating a relationship between the group and its members. The membership relationship classes are <code>group__node</code>, <code>group__unit</code>, <code>group__connection</code>, <code>group__unit__node</code>, <code>group__connection__node</code> and <code>reserve__upDown__group</code>. The choice of group members depends on what the group is trying to achieve. For instance a group that limits investments could have a set of <code>units</code> included in the group.</p>
+<h3 id="capacity-limits-for-nodes-units-and-connections">Capacity limits for nodes, units and connections</h3>
+<ul>
+<li><code>invest_method</code> - the choice of method how to limit or force investments in capacity [MW or MWh] of the group members</li>
+<li><code>invest_max_total</code> - [MW or MWh] Maximum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves.</li>
+<li><code>invest_max_period</code> - [MW or MWh] Maximum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes.</li>
+<li><code>invest_min_total</code> - [MW or MWh] Minimum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves. </li>
+<li><code>invest_min_period</code> - [MW or MWh] Minimum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes.</li>
+</ul>
+<h3 id="cumulative-and-instant-flow-limits-for-unit__nodes-and-connection__nodes">Cumulative and instant flow limits for <code>unit__node</code>s and <code>connection__node</code>s</h3>
+<ul>
+<li><code>max_cumulative_flow</code> - [MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.</li>
+<li><code>min_cumulative_flow</code> - [MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.</li>
+<li><code>max_instant_flow</code> - [MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.</li>
+<li><code>min_instant_flow</code> - [MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.</li>
+</ul>
+<h3 id="limits-for-nodes">Limits for nodes</h3>
+<ul>
+<li><code>has_inertia</code> - A flag whether the group of nodes has an inertia constraint active.</li>
+<li><code>inertia_limit</code> - [MWs] Minimum for synchronous inertia in the group of nodes. Constant or period.</li>
+<li><code>penalty_inertia</code> - [CUR/MWs] Penalty for violating the inertia constraint. Constant or period.</li>
+<li><code>has_non_synchronous</code> - A flag whether the group of nodes has the non-synchronous share constraint active.</li>
+<li><code>non_synchronous_limit</code> - [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.</li>
+<li><code>penalty_non_synchronous</code> - [CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period.</li>
+<li><code>has_capacity_margin</code> - A flag whether the group of nodes has a capacity margin constraint in the investment mode.</li>
+<li><code>capacity_margin</code> - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode. Constant or period.</li>
+<li><code>penalty_capacity_margin</code> - [CUR/MWh] Penalty for violating the capacity margin constraint. Constant or period.</li>
+</ul>
+<h3 id="controlling-outputs">Controlling outputs</h3>
+<p>Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example all electricity nodes could be groupped for aggragated output.</p>
+<ul>
+<li><code>output_results</code> - A flag to output aggregated results for the group members.</li>
+</ul>
+<h2 id="reserves">Reserves</h2>
+<p>The user defines reserve categories through <code>reserve</code> object. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. 
+- Timeseries requires that the user provides a pre-defined time series for the amount of reserve to be procured in each time step. 
+- Large_failure requires that the user defines the energy flows that could be the largest failure in the system. The highest possible failure (flow multiplied by <code>large_failure_ratio</code>) in each timestep will then set the reserve requirement for that timestep. 
+- Dynamic means that there is a requirement based on user chosen energy flows - each participating flow is multipled by <code>increase_reserve_ratio</code> and then summed to form the reserve requirement. This can be useful for covering variability within timesteps. Also demand variability can be included through <code>increase_reserve_ratio</code> parameter in <code>reserve__upDown__group</code> relationship.</p>
+<p>When the same reserve category (e.g. primary upward) has more than one of these (timeseries, large_failure and dynamic) in use, then the largest requirement will apply for that timestep. If they are separated into different reserves, then they need to be fulfilled separately.</p>
+<p>Reserve requirement is defined for groups of nodes. This means that multiple nodes can have a common reserve requirement (but it is also possible to make a group with only one node). One node can be in multiple groups and therefore subject to multiple overlapping reserve requirements. Only units can generate reserve, but connections can move reserve from one node to another (therefore, there is no impact if the nodes are in the same reserve group, but it can be useful to import reserve from outside the group).</p>
+<h3 id="reserve-groups">Reserve groups</h3>
+<p>For <code>reserve__upDown__group</code> relationships:
+- <code>reserve_method</code> - Choice of reserve method (timeseries, large_failure, dynamic or their combination).
+- <code>reservation</code> - [MWh] Amount of reserve required. Constant or time.
+- <code>reserve_penalty</code> - [€/MWh] Penalty cost for not fulfilling the reserve requirement.
+- <code>increase_reserve_ratio</code> - [factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.</p>
+<h3 id="reserve-provision-by-units">Reserve provision by units</h3>
+<p>For <code>reserve__upDown__unit__node</code> relationships:
+- <code>is_active</code> - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.
+- <code>max_share</code> - [factor] Maximum ratio for the transfer of reserve from the unit to the node. Constant.
+- <code>reliability</code> - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
+- <code>increase_reserve_ratio</code> - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
+- <code>large_failure_ratio</code> - [factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.</p>
+<h3 id="reserve-transfer-by-connections">Reserve transfer by connections</h3>
+<p>For <code>reserve__upDown__connection__node</code> relationships:
+- <code>is_active</code> - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.
+- <code>max_share</code> - [factor] Maximum ratio for the transfer of reserve to this node. Constant.
+- <code>reliability</code> - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
+- <code>increase_reserve_ratio</code> - [factor] The reserve is increased by generation from this unit multiplied this ratio. Constant.
+- <code>large_failure_ratio</code> - [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the connection (multiplied by this ratio). Constant.</p>
+<h2 id="additional-objects-for-further-functionality">Additional objects for further functionality</h2>
+<ul>
+<li><strong>constraint</strong>: to create user defined constraints between flow, state, and capacity variables (for nodes, units and connections)</li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../results/" class="btn btn-neutral float-left" title="Model outputs"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../spine_database/" class="btn btn-neutral float-right" title="Database">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+      <p>IRENA</p>
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/irena-flextool/flextool" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+      <span><a href="../results/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../spine_database/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script>var base_url = '..';</script>
+    <script src="../js/theme_extra.js" defer></script>
+    <script src="../js/theme.js" defer></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML" defer></script>
+      <script src="../assets/mathjaxhelper.js" defer></script>
+      <script src="../search/main.js" defer></script>
+    <script defer>
+        window.onload = function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        };
+    </script>
+
+</body>
+</html>

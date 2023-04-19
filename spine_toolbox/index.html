@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Toolbox interface - IRENA FlexTool</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.5.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Toolbox interface";
+        var mkdocs_page_input_path = "spine_toolbox.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <script src="../js/jquery-3.6.0.min.js" defer></script>
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.5.0/highlight.min.js"></script>
+      <script>hljs.initHighlightingOnLoad();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> IRENA FlexTool
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Getting started</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../results/">Model outputs</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../reference/">Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../spine_database/">Database</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Interfaces</span></p>
+              <ul class="current">
+                  <li class="toctree-l1 current"><a class="reference internal current" href="./">Toolbox interface</a>
+    <ul class="current">
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../browser_interface/">Browser interface</a>
+                  </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">IRENA FlexTool</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" alt="Docs"></a> &raquo;</li>
+          <li>Interfaces &raquo;</li>
+      <li>Toolbox interface</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/irena-flextool/flextool/edit/master/docs/spine_toolbox.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="irena-flextool-workflow-shortly-explained">IRENA FlexTool workflow shortly explained</h1>
+<p>IRENA FlexTool workflow is a Spine Toolbox workflow that can be modified by the user. The workflow provided in the repository is a template Spine Toolbox project that can be <strong>either</strong> copied for local changes <strong>or</strong> the workflow data input data files can be switched to local files. It is also possible to work directly with the template, but then one needs to be careful when pulling a new version of IRENA FlexTool since that can overwrite local changes (the input data file contents need to be copied to safety before updating). </p>
+<p>If you are using the <strong>IRENA FlexTool browser-interface</strong>, then you will not directly see the Spine Toolbox workflow, but the FlexTool web-server will be executing parts of the workflow in the background as you develop and run the model.</p>
+<p><img alt="IRENA FlexTool workflow" src="../flextool_workflow.png" /></p>
+<p>The panel on the right shows the different <code>scenarios</code> that are available in the database. 
+The user can choose which scenarios will be processed by the workflow (until item <strong><em>Results</em></strong>, 
+which combines the results into one database). Spine Toolbox can execute scenarios in parallel 
+(as long as using 'work directories' is defined in <strong><em>FlexTool</em></strong> item).</p>
+<p><strong><em>Input data</em></strong> workflow item points to a sqlite file that needs to have IRENA FlexTool data format 
+(that uses Spine Toolbox database definition). The template file has the right format and contains
+empty object classes corresponding to FlexTool data structure as well as parameters available 
+in each object class. Double clicking the <strong><em>Input data</em></strong> workflow item will open the database editor. 
+Just selecting the <strong><em>Input data</em></strong> workflow item allows one to change the file (make a copy of the 
+existing Input_data.sqlite using the file system of your OS and point to the copy).</p>
+<p><strong><em>Init</em></strong> workflow item points to a sqlite file with predefined data that showcases IRENA FlexTool 
+functionality. Some of the scenarios from there are used in the user guide. <strong><em>Initialize</em></strong> 
+copies the contents of the <strong><em>Init</em></strong> database to the <strong><em>Input data</em></strong> database. The scenario filter in the arrow after the <strong><em>Init</em></strong> database can be used to choose what data will be copied.</p>
+<p><strong><em>Export_to_csv</em></strong> workflow item is a Spine Toolbox exporter that has been set to write csv files that IRENA FlexTool model code will read.</p>
+<p><strong><em>FlexTool</em></strong> workflow item contains a Python script that calls FlexTool model code for each solve 
+and passes data between these solves. FlexTool model is written in MathProg and it calls HiGHS 
+solver by default to solve the model. The outputs are csv files.</p>
+<p><strong><em>Import_results</em></strong> is a Spine Toolbox importer that takes the output csv files and writes them 
+in the Results database.</p>
+<p><strong><em>Excel_input_data</em></strong> and <strong><em>Import_from_Excel</em></strong> allow users to use Excel as an interface for the input data. 
+They are optional parts of the workflow.</p>
+<p><strong><em>To_Excel</em></strong> worfklow item will export most scenario results to a simple Excel file. One way to utilize 
+this is by creating another Excel file that draws figures from the result Excel file that is then updated by the workflow.</p>
+<p>The browser interface of FlexTool also runs part of this same workflow 
+(<strong><em>Export_to_csv</em></strong> --&gt; <strong><em>FlexTool</em></strong> --&gt; <strong><em>Import_results</em></strong>). The server takes a copy of the workflow (inside the user_projects) 
+folder and uses Spine Toolbox to execute the scenarios.</p>
+<p>More instructions for Spine Toolbox in https://spine-toolbox.readthedocs.io/en/latest/?badge=latest.</p>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../spine_database/" class="btn btn-neutral float-left" title="Database"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../browser_interface/" class="btn btn-neutral float-right" title="Browser interface">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+      <p>IRENA</p>
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/irena-flextool/flextool" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+      <span><a href="../spine_database/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../browser_interface/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script>var base_url = '..';</script>
+    <script src="../js/theme_extra.js" defer></script>
+    <script src="../js/theme.js" defer></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML" defer></script>
+      <script src="../assets/mathjaxhelper.js" defer></script>
+      <script src="../search/main.js" defer></script>
+    <script defer>
+        window.onload = function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        };
+    </script>
+
+</body>
+</html>
