@@ -154,20 +154,24 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="main-entities-to-define-a-powerenergy-system">Main entities to define a power/energy system</h1>
-<p>Elemental entities (one dimensional):
-- <a href="#nodes"><strong>node</strong></a>: maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
-- <a href="#units"><strong>unit</strong></a>: power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
-- <a href="#connections"><strong>connection</strong></a>: transmission lines or other transfer connections between nodes
-- <a href="#commodities"><strong>commodity</strong></a>: fuels or other commodities that are either purchased or sold at a price outside of the model scope
-- <a href="#profiles"><strong>profile</strong></a>: timeseries that can be used to constraint the behaviour of units, connections or storages
-- <a href="#reserves"><strong>reserve</strong></a>: reserve categories to withhold capacity to cope with issues outside of model scope</p>
-<p>Entities with two or more dimensions:
-- <strong>unit__inputNode</strong> and <strong>unit__outputNode</strong>: defines the inputs, outputs and their properties for the conversion units
-- <strong>connection__node__node</strong>: defines which nodes a connection will connect
-- <strong>unit__node__profile</strong> and <strong>connection__profile</strong>: defines a profile limit (upper, lower or fixed) for an energy flow
-- <strong>node__profile</strong>: defines a profile limit (upper, lower, or fixed) for the storage state of the node
-- <strong>commodity__node</strong>: defines if a node is a source or sink for a commodity
-- <strong>reserve__upDown__unit__node</strong> and <strong>reserve__upDown__connection__node</strong>: reserve capacity from a source to the target node</p>
+<p>Elemental entities (one dimensional):</p>
+<ul>
+<li><a href="#nodes"><strong>node</strong></a>: maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)</li>
+<li><a href="#units"><strong>unit</strong></a>: power plants or other conversion devices that take one or more inputs and turn them into one or more outputs</li>
+<li><a href="#connections"><strong>connection</strong></a>: transmission lines or other transfer connections between nodes</li>
+<li><a href="#commodities"><strong>commodity</strong></a>: fuels or other commodities that are either purchased or sold at a price outside of the model scope</li>
+<li><a href="#profiles"><strong>profile</strong></a>: timeseries that can be used to constraint the behaviour of units, connections or storages</li>
+<li><a href="#reserves"><strong>reserve</strong></a>: reserve categories to withhold capacity to cope with issues outside of model scope</li>
+</ul>
+<p>Entities with two or more dimensions:</p>
+<ul>
+<li><strong>unit__inputNode</strong> and <strong>unit__outputNode</strong>: defines the inputs, outputs and their properties for the conversion units</li>
+<li><strong>connection__node__node</strong>: defines which nodes a connection will connect</li>
+<li><strong>unit__node__profile</strong> and <strong>connection__profile</strong>: defines a profile limit (upper, lower or fixed) for an energy flow</li>
+<li><strong>node__profile</strong>: defines a profile limit (upper, lower, or fixed) for the storage state of the node</li>
+<li><strong>commodity__node</strong>: defines if a node is a source or sink for a commodity</li>
+<li><strong>reserve__upDown__unit__node</strong> and <strong>reserve__upDown__connection__node</strong>: reserve capacity from a source to the target node</li>
+</ul>
 <p>See below for more detailed explanations.</p>
 <p><img alt="Simple example grid" src="../simple_grid.png" /></p>
 <h2 id="how-to-define-the-temporal-properties-of-the-model">How to define the temporal properties of the model</h2>
