@@ -99,6 +99,8 @@
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#limits-for-nodes">Limits for nodes</a>
     </li>
+    <li class="toctree-l3"><a class="reference internal" href="#co2-costs-and-limits">CO2 costs and limits</a>
+    </li>
     <li class="toctree-l3"><a class="reference internal" href="#controlling-outputs">Controlling outputs</a>
     </li>
         </ul>
@@ -232,7 +234,7 @@
 <ul>
 <li><strong>'inflow'</strong> - [MWh] Inflow into the node (negative is outflow). Constant or time series.</li>
 <li><strong>'annual_flow'</strong> - [MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.</li>
-<li><strong>'existing'</strong> - [MWh] Existing storage capacity (requires <code>has_state</code>). Constant.</li>
+<li><strong>'existing'</strong> - [MWh] Existing storage capacity (requires <code>has_storage</code>). Constant.</li>
 <li><strong>'invest_cost'</strong> - [CUR/kWh] Investment cost for new storage capacity. Constant or period.</li>
 <li><strong>'salvage_value'</strong> - [CUR/kWh] Salvage value of the storage. Constant or period.</li>
 <li><strong>'lifetime'</strong> - [years] Life time of the storage unit represented by the node. Constant or period.</li>
@@ -303,7 +305,7 @@
 <ul>
 <li><code>existing</code> - [MW] Existing capacity. Constant.</li>
 <li><code>efficiency</code> - [factor, typically between 0-1] Efficiency of a connection. Constant or time.</li>
-<li><code>constraint_capacity_coefficient</code> - A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.</li>
+<li><code>constraint_capacity_coefficient</code> - A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be added to the left side of the constraint equation. Invest and divest variables are not multiplied by unitsize.</li>
 <li><code>other_operational_cost</code> - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant or time.</li>
 <li><code>fixed_cost</code> - [CUR/kW] Annual fixed cost. Constant or period.</li>
 <li><code>invest_cost</code> - [CUR/kW] Investment cost for new 'virtual' capacity. Constant or period.</li>
@@ -315,6 +317,10 @@
 </ul>
 <h2 id="commodities">Commodities</h2>
 <p>Some <code>nodes</code> can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a <code>price</code> and be connected to those <code>nodes</code> that serve (or buy) that particular <code>commodity</code> at the given <code>price</code>. In other words, <code>commodity</code> is separate from <code>node</code> so that the user can use the same <code>commodity</code> properties for multiple nodes. Commodities can also have a <code>co2_content</code>. The <code>commodity</code> and its <code>nodes</code> are connected by establishin a new relationship between the <code>commodity</code> and each of its <code>nodes</code> (e.g. <em>coal--coal_market</em>).</p>
+<ul>
+<li><code>price</code> - [CUR/MWh or other unit] Price of the commodity. Constant or period.</li>
+<li><code>co2_content</code> - [CO2 ton per MWh] Constant.</li>
+</ul>
 <p><img alt="image-1.png" src="../commodities.PNG" /></p>
 <h2 id="groups">Groups</h2>
 <p>Groups are used to make constraints that apply to a group of nodes, units and/or connections. A group is defined by creating a group object and then creating a relationship between the group and its members. The membership relationship classes are <code>group__node</code>, <code>group__unit</code>, <code>group__connection</code>, <code>group__unit__node</code>, <code>group__connection__node</code> and <code>reserve__upDown__group</code>. The choice of group members depends on what the group is trying to achieve. For instance a group that limits investments could have a set of <code>units</code> included in the group.</p>
@@ -328,8 +334,8 @@
 </ul>
 <h3 id="cumulative-and-instant-flow-limits-for-unit__nodes-and-connection__nodes">Cumulative and instant flow limits for <code>unit__node</code>s and <code>connection__node</code>s</h3>
 <ul>
-<li><code>max_cumulative_flow</code> - [MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.</li>
-<li><code>min_cumulative_flow</code> - [MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.</li>
+<li><code>max_cumulative_flow</code> - [MW] Limits the maximum cumulative flow for a group of connection_nodes and/or unit_nodes. It needs to be expressed as average flow, since the limit is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.</li>
+<li><code>min_cumulative_flow</code> - [MW] Limits the minimum cumulative flow for a group of connection_nodes and/or unit_nodes. It needs to be expressed as average flow, since the limit is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.</li>
 <li><code>max_instant_flow</code> - [MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.</li>
 <li><code>min_instant_flow</code> - [MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.</li>
 </ul>
@@ -344,6 +350,13 @@
 <li><code>has_capacity_margin</code> - A flag whether the group of nodes has a capacity margin constraint in the investment mode.</li>
 <li><code>capacity_margin</code> - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode. Constant or period.</li>
 <li><code>penalty_capacity_margin</code> - [CUR/MWh] Penalty for violating the capacity margin constraint. Constant or period.</li>
+</ul>
+<h3 id="co2-costs-and-limits">CO2 costs and limits</h3>
+<ul>
+<li><code>co2_method</code> - Choice of the CO2 method or a combination of methods: no_method, price, period, total, price_period, price_total, period_total, price_period_total.</li>
+<li><code>co2_price</code> [CUR/ton] CO2 price for a group of nodes. Constant or period.</li>
+<li><code>co2_max_period</code> [tCO2] Maximum limit for emitted CO2 in each period.</li>
+<li><code>co2_max_total</code> [tCO2] Maximum limit for emitted CO2 in the whole solve.</li>
 </ul>
 <h3 id="controlling-outputs">Controlling outputs</h3>
 <p>Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example all electricity nodes could be groupped for aggragated output.</p>
@@ -368,7 +381,7 @@
 - <code>is_active</code> - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.
 - <code>max_share</code> - [factor] Maximum ratio for the transfer of reserve from the unit to the node. Constant.
 - <code>reliability</code> - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
-- <code>increase_reserve_ratio</code> - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
+- <code>increase_reserve_ratio</code> - [factor] The reserve requirement is increased by the flow between the unit and the node multiplied by this ratio. Constant.
 - <code>large_failure_ratio</code> - [factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.</p>
 <h3 id="reserve-transfer-by-connections">Reserve transfer by connections</h3>
 <p>For <code>reserve__upDown__connection__node</code> relationships:
