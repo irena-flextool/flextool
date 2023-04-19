@@ -1,6 +1,8 @@
 site_name:        IRENA FlexTool
 repo_url:         https://github.com/irena-flextool/flextool
 site_description: IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.
+site_author: Juha Kiviluoma, VTT Technical Centre of Finland
+copyright: IRENA
 
 theme: readthedocs
 
@@ -12,15 +14,15 @@ markdown_extensions:
   - extra
   - tables
   - fenced_code
-  - mdx_math
 
 docs_dir: 'docs'
 
-pages:
-  - Home: index.md
-  - Results: results.md
+nav:
+  - 'Getting started': index.md
+  - 'Model outputs': results.md
   - Reference: reference.md
   - Database: spine_database.md
-  - 'Toolbox interface': spine_toolbox.md
-  - 'Browser interface': browser_interface.md
+  - Interfaces:
+      - 'Toolbox interface': spine_toolbox.md
+      - 'Browser interface': browser_interface.md
  

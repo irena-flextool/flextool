@@ -1,19 +1,7 @@
-[Install](https://github.com/irena-flextool/flextool/tree/master#irena-flextool) | [Tutorial](https://irena-flextool.github.io/flextool) | [Results](https://irena-flextool.github.io/flextool/results) | [Reference](https://irena-flextool.github.io/flextool/reference) | [Data structure](https://irena-flextool.github.io/flextool/spine_database) | [Spine Toolbox interface](https://irena-flextool.github.io/flextool/spine_toolbox) | [Browser-interface](https://irena-flextool.github.io/flextool/browser_interface)
-
-- [Main entities to define a power/energy system](#main-entities-to-define-a-powerenergy-system)
-- [How to define the temporal properties of the model](#how-to-define-temporal-properties-of-the-model)
-- [Nodes](#nodes)
-- [Units](#units)
-- [Connections](#connections)
-- [Commodities](#commodities)
-- [Profiles](#profiles)
-- [Groups](#groups)
-- [Reserves](#reserves)
-- [Additional objects for further functionality](#additional-objects-for-further-functionality)
-
 # Main entities to define a power/energy system
 
 Elemental entities (one dimensional):
+
 - [**node**](#nodes): maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)
 - [**unit**](#units): power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
 - [**connection**](#connections): transmission lines or other transfer connections between nodes
@@ -22,6 +10,7 @@ Elemental entities (one dimensional):
 - [**reserve**](#reserves): reserve categories to withhold capacity to cope with issues outside of model scope
 
 Entities with two or more dimensions:
+
 - **unit__inputNode** and **unit__outputNode**: defines the inputs, outputs and their properties for the conversion units
 - **connection__node__node**: defines which nodes a connection will connect
 - **unit__node__profile** and **connection__profile**: defines a profile limit (upper, lower or fixed) for an energy flow
@@ -34,9 +23,9 @@ See below for more detailed explanations.
 ![Simple example grid](./simple_grid.png)
 
 
-# How to define the temporal properties of the model
+## How to define the temporal properties of the model
 
-## Timesteps and periods
+### Timesteps and periods
 
 FlexTool has two different kinds of time varying parameters. The first one represents a regular timeline based on timesteps. The duration of each timestep can be defined by the user. There can be multiple timelines in the database - the user needs to define which timeline to use (and what parts of the timeline should be used, as will be explained later). The timestep names in the timeline are defined by the user - they can be abstract like 't0001' or follow a datetime format of choice. However, the timestep names between different timelines must remain unique (usually there should be only one timeline in a database and therefore no issues).
 
@@ -44,11 +33,11 @@ The second time varying dimension is `period`, which is typically used to depict
 
 A parameter of particular type can be either constant/time-varying or constant/period-based. For example `inflow` is either a constant or time-varying, but it cannot be period-based.
 
-## Timeblocksets
+### Timeblocksets
 
 Timeblocks pick one or more sections from the `timeline` to form a `timeblockset`. Each timeblock defines a start and a duration. The aim of timeblocksets is to allow the modeller to create models with representative periods often used in the investment planning.
 
-## Definitions
+### Definitions
 
 - **model**: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)
   - *solves*: sequence of solves in the model represented with an array of solve names.
@@ -72,9 +61,9 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
 - **timeblockset__timeline**: defines which timeline object particular timeblockset is using.
 
 
-# Nodes
+## Nodes
 
-## Defining how the node functions
+### Defining how the node functions
 
 These parameters will define how the node will behave and use the data it is given (available choices are marked in *italics*):
 
@@ -94,13 +83,13 @@ These parameters will define how the node will behave and use the data it is giv
 
 ![image.png](./nodes.png)
 
-## Data for nodes
+### Data for nodes
 
 Input data is set with the following parameters:
 
 - **'inflow'** - [MWh] Inflow into the node (negative is outflow). Constant or time series.
 - **'annual_flow'** - [MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.
-- **'existing'** - [MWh] Existing storage capacity (requires `has_state`). Constant.
+- **'existing'** - [MWh] Existing storage capacity (requires `has_storage`). Constant.
 - **'invest_cost'** - [CUR/kWh] Investment cost for new storage capacity. Constant or period.
 - **'salvage_value'** - [CUR/kWh] Salvage value of the storage. Constant or period.
 - **'lifetime'** - [years] Life time of the storage unit represented by the node. Constant or period.
@@ -115,7 +104,7 @@ Input data is set with the following parameters:
 - **'penalty_down'** - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time.
 - **'virtual_unitsize'** - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.
 
-## Using nodes as storages
+### Using nodes as storages
 
 FlexTool manages storages through nodes. A regular node maintains an energy/material balance between all inputs and outputs (`has_balance` set to *yes*). A storage node includes an additional state variable, which means that the node can also use charging and discharging of the storage while maintaining the energy balance. A storage node is created by setting `has_storage` to *yes* and by adding storage capacity using the `existing` parameter and/or by letting the model invest in storage capacity (`invest_method`, `invest_cost`, `invest_max_period`, `invest_max_total` and `invest_forced` parameters).
 
@@ -126,25 +115,25 @@ There are three methods associated with storage start and end values: `storage_b
 - `storage_binding_method` states how the storage should behave over discontinuities in the model timeline. Model timeline can have jumps for three different reasons: timeblocks, periods, and solves. If `storage_binding_method` is *bind_within_timeblock*, then the storage has to match the state of the storage between the beginning and the end of each timeblock. In effect, **storage_state_at_start_of_timeblock** equals **storage_state_at_end_of_timeblock** plus **charging** minus **discharging** minus **self_discharge_loss** at the last timestep. Similarly, *bind_within_period* will force the start and end between periods, but it will treat the jumps between timeblocks as continuous from the storage perspective (the storage will continue from where it was at the end of the previous timeblock). *bind_within_solve* does effectively the same when there are multiple periods within one solve. *bind_within_model* (NOT IMPLEMENTED 19.3.2023) will extend the continuity to multiple solves and force the end state of the storage at the end of the last solve to match the beginning state of the storage at the start of the first solve. Finally, *bind_forward_only* will force continuity in the storage state over the whole model without forcing the end state to match the beginning state.
 - `storage_solve_horizon_method` is meant for models that roll forward between solves and have an overlapping temporal window between those solves (e.g. a model with 36 hour horizon rolls forward 24 hours at each solve - those 12 last hours will be overwritten by the next solve). In these cases, the end state of the storage will be replaced by the next solve, but it can be valuable to have some guidance for the end level of storage, since it will affect storage behaviour. There are three methods: *free* is the default and will simply let the model choose where the storage state ends (usually the storage will be emptied, since it would have no monetary value). *use_reference_value* will use the value set by `storage_state_reference_value` to force the end state in each solve to match the reference value. *use_reference_price* will give monetary value for the storage content at the end of the solve horizon set by the `storage_state_reference_price` parameter - the model is free to choose how much it stores at the end of horizon based on this monetary value.
 
-# Units
+## Units
 
 Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine), but the can also have multiple inputs and/or outputs (e.g. combined heat and power plant). The input nodes are defined with the relationship `unit--inputNode` while the output nodes are defined through the relationship `unit--outputNode`.
 
-## Defining how the unit functions
+### Defining how the unit functions
 
 - `is_active` to state the alternative where the unit becomes active
 - 'conversion_method' to define the way unit converts inputs to outputs 
 - `startup_method` - Choice of startup method. 'Linear' startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. 'Binary' startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups.
 - `minimum_time_method` - Not functional yet. Choice between minimum up- and downtimes (<empty>, *min_downtime*, *min_uptime*, *both*).
 
-## Main data items for units
+### Main data items for units
 
 - Capacity: `existing` (and the investment and retirement parameters below)
 - Technical: `efficiency`, `min_load`, `efficiency_at_min_load`, `min_uptime`, `min_downtime`
 	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time.
 - Economic: `startup_cost`, `fixed_cost` (fuel cost comes through the use of fuel commodities and other variable costs are defined for flows between unit and node, see below)
 
-## Investment parameters (for capacity expansion)
+### Investment parameters (for capacity expansion)
 
 - investment/retirement method
 - `invest_cost`, `interest_rate`, `lifetime`, `invest_max_total`, `invest_max_period`, `invest_min_total`, `invest_min_period`, `invest_forced`
@@ -152,13 +141,13 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 ![image](./generators.png)
 
-## Relationship of a unit to a node and determination of the type of relationship
+### Relationship of a unit to a node and determination of the type of relationship
 
 - If the unit’s outputs are flowing into the node, the node acts as output for the unit.
 - If the unit’s inputs are flowing out of the node (into the unit), the node acts as input for the unit.
 - Not all units necessary have both an input and an output node. E.g. VRE generators have only output nodes and their generation is driven by profiles
 
-## Properties of unit--inputNode and unit--outputNode relationships
+### Properties of unit--inputNode and unit--outputNode relationships
 
 - `is_non_synchronous` - Chooses whether the unit is synchronously connected to this node.
 - `coefficient` - [factor] Coefficient to scale the output from a unit to a particular node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints). Constant.
@@ -169,17 +158,17 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 - `ramp_speed_up` - [per unit / minute] Maximum ramp up speed. Constant.
 - `ramp_speed_down` - [per unit / minute] Maximum ramp down speed. Constant.
 
-## Units constrained by profiles
+### Units constrained by profiles
 
 Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` object with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile` object is given a `profile` time series (or it can also be a constant). One needs to use `node__profile`, `unit__node__profile` or `connection__profile` to apply the profile to specific energy flow (or storage state in the case of `node__profile`).
 
-# Connections
+## Connections
 
 Connections can have an `existing` transfer capacity as well as an opportunity to invest in new capacity and retire old capacity. The functional choices of connections include the `is_active`, `transfer_method`, `invest_method`, `startup_method` as well as a choice if the tranfer connection `is_DC`. Parameters for the connection are defined in the `connection` object, but the two `nodes` it connects are defined by establishing a relationship between `connection--leftNode--rightNode`.
 
 - `existing` - [MW] Existing capacity. Constant.
 - `efficiency` - [factor, typically between 0-1] Efficiency of a connection. Constant or time.
-- `constraint_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.
+- `constraint_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be added to the left side of the constraint equation. Invest and divest variables are not multiplied by unitsize.
 - `other_operational_cost` - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant or time.
 - `fixed_cost` - [CUR/kW] Annual fixed cost. Constant or period.
 - `invest_cost` - [CUR/kW] Investment cost for new 'virtual' capacity. Constant or period.
@@ -189,17 +178,20 @@ Connections can have an `existing` transfer capacity as well as an opportunity t
 - `is_DC` - A flag whether the connection is DC (the flow will not be counted as synchronous if there is a *non_synchronous_limit*). Default false.
 - `virtual_unitsize` - [MW] Size of single connection - used for integer (lumped) investments.
 
-# Commodities
+## Commodities
 
 Some `nodes` can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a `price` and be connected to those `nodes` that serve (or buy) that particular `commodity` at the given `price`. In other words, `commodity` is separate from `node` so that the user can use the same `commodity` properties for multiple nodes. Commodities can also have a `co2_content`. The `commodity` and its `nodes` are connected by establishin a new relationship between the `commodity` and each of its `nodes` (e.g. *coal--coal_market*).
 
+- `price` - [CUR/MWh or other unit] Price of the commodity. Constant or period.
+- `co2_content` - [CO2 ton per MWh] Constant.
+
 ![image-1.png](./commodities.PNG)
 
-# Groups
+## Groups
 
 Groups are used to make constraints that apply to a group of nodes, units and/or connections. A group is defined by creating a group object and then creating a relationship between the group and its members. The membership relationship classes are `group__node`, `group__unit`, `group__connection`, `group__unit__node`, `group__connection__node` and `reserve__upDown__group`. The choice of group members depends on what the group is trying to achieve. For instance a group that limits investments could have a set of `units` included in the group.
 
-## Capacity limits for nodes, units and connections
+### Capacity limits for nodes, units and connections
 
 - `invest_method` - the choice of method how to limit or force investments in capacity [MW or MWh] of the group members
 - `invest_max_total` - [MW or MWh] Maximum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves.
@@ -207,14 +199,14 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 - `invest_min_total` - [MW or MWh] Minimum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves. 
 - `invest_min_period` - [MW or MWh] Minimum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes.
 
-## Cumulative and instant flow limits for `unit__node`s and `connection__node`s
+### Cumulative and instant flow limits for `unit__node`s and `connection__node`s
 
-- `max_cumulative_flow` - [MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
-- `min_cumulative_flow` - [MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
+- `max_cumulative_flow` - [MW] Limits the maximum cumulative flow for a group of connection_nodes and/or unit_nodes. It needs to be expressed as average flow, since the limit is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
+- `min_cumulative_flow` - [MW] Limits the minimum cumulative flow for a group of connection_nodes and/or unit_nodes. It needs to be expressed as average flow, since the limit is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
 - `max_instant_flow` - [MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.
 - `min_instant_flow` - [MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.
 
-## Limits for nodes
+### Limits for nodes
 
 - `has_inertia` - A flag whether the group of nodes has an inertia constraint active.
 - `inertia_limit` - [MWs] Minimum for synchronous inertia in the group of nodes. Constant or period.
@@ -226,13 +218,20 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 - `capacity_margin` - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode. Constant or period.
 - `penalty_capacity_margin` - [CUR/MWh] Penalty for violating the capacity margin constraint. Constant or period.
 
-## Controlling outputs
+### CO2 costs and limits
+
+- `co2_method` - Choice of the CO2 method or a combination of methods: no_method, price, period, total, price_period, price_total, period_total, price_period_total.
+- `co2_price` [CUR/ton] CO2 price for a group of nodes. Constant or period.
+- `co2_max_period` [tCO2] Maximum limit for emitted CO2 in each period.
+- `co2_max_total` [tCO2] Maximum limit for emitted CO2 in the whole solve.
+
+### Controlling outputs
 
 Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example all electricity nodes could be groupped for aggragated output.
 
 - `output_results` - A flag to output aggregated results for the group members.
 
-# Reserves
+## Reserves
 
 The user defines reserve categories through `reserve` object. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. 
 - Timeseries requires that the user provides a pre-defined time series for the amount of reserve to be procured in each time step. 
@@ -243,7 +242,7 @@ When the same reserve category (e.g. primary upward) has more than one of these 
 
 Reserve requirement is defined for groups of nodes. This means that multiple nodes can have a common reserve requirement (but it is also possible to make a group with only one node). One node can be in multiple groups and therefore subject to multiple overlapping reserve requirements. Only units can generate reserve, but connections can move reserve from one node to another (therefore, there is no impact if the nodes are in the same reserve group, but it can be useful to import reserve from outside the group).
 
-## Reserve groups
+### Reserve groups
 
 For `reserve__upDown__group` relationships:
 - `reserve_method` - Choice of reserve method (timeseries, large_failure, dynamic or their combination).
@@ -251,16 +250,16 @@ For `reserve__upDown__group` relationships:
 - `reserve_penalty` - [€/MWh] Penalty cost for not fulfilling the reserve requirement.
 - `increase_reserve_ratio` - [factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.
 
-## Reserve provision by units
+### Reserve provision by units
 
 For `reserve__upDown__unit__node` relationships:
 - `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.
 - `max_share` - [factor] Maximum ratio for the transfer of reserve from the unit to the node. Constant.
 - `reliability` - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
-- `increase_reserve_ratio` - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
+- `increase_reserve_ratio` - [factor] The reserve requirement is increased by the flow between the unit and the node multiplied by this ratio. Constant.
 - `large_failure_ratio` - [factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.
 
-## Reserve transfer by connections
+### Reserve transfer by connections
 
 For `reserve__upDown__connection__node` relationships:
 - `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.
@@ -269,7 +268,7 @@ For `reserve__upDown__connection__node` relationships:
 - `increase_reserve_ratio` - [factor] The reserve is increased by generation from this unit multiplied this ratio. Constant.
 - `large_failure_ratio` - [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the connection (multiplied by this ratio). Constant.
 
-# Additional objects for further functionality
+## Additional objects for further functionality
 
 - **constraint**: to create user defined constraints between flow, state, and capacity variables (for nodes, units and connections)
 
