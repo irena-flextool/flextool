@@ -181,6 +181,11 @@ set storage_start_end_method := fix_start fix_end fix_start_end fix_nothing;
 set storage_solve_horizon_method := free use_reference_value use_reference_price;
 set reserve_method := no_reserve timeseries_only dynamic_only both;
 
+set param_costs := "unit investment/retirement","connection investment/retirement","storage investment/retirement",
+                   "fixed cost of existing assets",commodity,CO2,"variable cost",starts,"upward penalty","downward penalty",
+				   "inertia penalty","non-synchronous penalty","capacity margin penalty","upward reserve penalty",
+				   "downward reserve penalty";
+
 set test_t := t0001;
 set test_dt := (p2020, t0015) (p2020, t0016) (p2020, t0017);
 #set test_dt := (p2020, t0001) (p2020, t0004) (p2020, t0040);

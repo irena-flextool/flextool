@@ -533,15 +533,18 @@ class FlexToolRunner:
     def write_empty_investment_file(self):
         """
         make a file p_entity_invested.csv that will contain capacities of invested and divested processes. For the first solve it will be empty.
-
-        :param first_state: boolean if the current run is the first
-
         """
         with open("solve_data/p_entity_invested.csv", 'w') as firstfile:
             firstfile.write("entity,p_entity_invested\n")
         with open("solve_data/p_entity_divested.csv", 'w') as firstfile:
             firstfile.write("entity,p_entity_divested\n")
 
+    def write_headers_for_empty_output_files(self, filename, header):
+        """
+        make an empty output file with headers
+        """
+        with open(filename, 'w') as firstfile:
+            firstfile.write(header+"\n")
 
 def main():
     """
@@ -587,6 +590,7 @@ def main():
         if i == 0:
             first = False
             runner.write_empty_investment_file()
+            runner.write_headers_for_empty_output_files('output/costs_discounted.csv', 'param_costs,costs_discounted')
 
         exit_status = runner.model_run(solve)
         if exit_status == 0:

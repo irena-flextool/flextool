@@ -1,6 +1,4 @@
-[Install](https://github.com/irena-flextool/flextool/tree/master#irena-flextool) | [Tutorial](https://irena-flextool.github.io/flextool) | [Results](https://irena-flextool.github.io/flextool/results) | [Reference](https://irena-flextool.github.io/flextool/reference) | [Data structure](https://irena-flextool.github.io/flextool/spine_database) | [Spine Toolbox interface](https://irena-flextool.github.io/flextool/spine_toolbox) | [Browser-interface](https://irena-flextool.github.io/flextool/browser_interface)
-
-## Browser interface in brief
+# Browser interface in brief
 
 The browser interface connects to an instance of [FlexTool web interface](https://github.com/irena-flextool/flextool-web-interface). 
 It can show and edit the same data as the Spine Toolbox. The workflow is not directly visible, 

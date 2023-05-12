@@ -13,11 +13,6 @@
                     "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Importer/flextool3_excel_input.json"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": ".spinetoolbox/specifications/Importer/flextool2_input_importer.json"
                 }
             ],
             "Exporter": [
@@ -42,13 +37,6 @@
                     "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Tool/plot.json"
-                }
-            ],
-            "Data Transformer": [
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": ".spinetoolbox/specifications/Data Transformer/rename_to_flextool3.json"
                 }
             ]
         },
@@ -115,9 +103,6 @@
                     "Initialize",
                     "left"
                 ],
-                "options": {
-                    "require_scenario_filter": false
-                },
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Init": {
@@ -172,10 +157,6 @@
                     "Export_to_CSV",
                     "left"
                 ],
-                "options": {
-                    "require_scenario_filter": false,
-                    "require_tool_filter": true
-                },
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input_data": {
@@ -228,11 +209,8 @@
                     "known_filters": {
                         "db_url@Results": {
                             "scenario_filter": {
-                                "Base": false,
-                                "Binary": false,
-                                "CSU-only": true
-                            },
-                            "tool_filter": {}
+                                "Base": false
+                            }
                         }
                     },
                     "auto_online": false
@@ -261,47 +239,14 @@
                 ]
             },
             {
-                "name": "from FlexTool2_input_Excel to Import_FlexTool2",
+                "name": "from Plot_settings to Plot_results",
                 "from": [
-                    "FlexTool2_input_Excel",
-                    "right"
-                ],
-                "to": [
-                    "Import_FlexTool2",
+                    "Plot_settings",
                     "left"
-                ]
-            },
-            {
-                "name": "from Rename_to_FlexTool3 to Input_data",
-                "from": [
-                    "Rename_to_FlexTool3",
-                    "right"
                 ],
                 "to": [
-                    "Input_data",
+                    "Plot_results",
                     "bottom"
-                ]
-            },
-            {
-                "name": "from Import_FlexTool2 to FlexTool2_raw_data",
-                "from": [
-                    "Import_FlexTool2",
-                    "right"
-                ],
-                "to": [
-                    "FlexTool2_raw_data",
-                    "left"
-                ]
-            },
-            {
-                "name": "from FlexTool2_raw_data to Rename_to_FlexTool3",
-                "from": [
-                    "FlexTool2_raw_data",
-                    "right"
-                ],
-                "to": [
-                    "Rename_to_FlexTool3",
-                    "left"
                 ]
             }
         ],
@@ -311,8 +256,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 68.39093946001248,
-            "y": -1.998273429602957,
+            "x": 69.07227089196864,
+            "y": -4.631817794157001,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": [],
@@ -321,8 +266,8 @@
         "Init": {
             "type": "Data Store",
             "description": "",
-            "x": -409.48616701662985,
-            "y": 51.22093922860281,
+            "x": -407.7942123409004,
+            "y": 65.60255397230353,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -337,8 +282,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -162.90160144045677,
-            "y": -10.246955870041798,
+            "x": -162.9016014404568,
+            "y": -8.390355288403725,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -353,7 +298,7 @@
         "Initialize": {
             "type": "Merger",
             "description": "",
-            "x": -284.24188856319097,
+            "x": -287.2765001829209,
             "y": 51.23859533562457,
             "cancel_on_error": true
         },
@@ -367,6 +312,11 @@
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool_import_template.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "FlexTool3_Case1.xlsx"
                 }
             ],
             "db_references": []
@@ -381,16 +331,20 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "<project>/FlexTool_import_template.xlsx",
+                    "<project>/FlexTool3_Case1.xlsx",
                     true
+                ],
+                [
+                    "<project>/FlexTool_import_template.xlsx",
+                    false
                 ]
             ]
         },
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -40.66859731126767,
-            "y": -9.90477384697948,
+            "x": -44.37941588988866,
+            "y": -9.902391262324334,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -404,14 +358,14 @@
         "Import_results": {
             "type": "Importer",
             "description": "",
-            "x": 180.92818589791273,
-            "y": 20.995911046433978,
+            "x": 182.62014057364226,
+            "y": 21.841888384298723,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "datapackage@FlexTool3",
+                    "output/*.csv",
                     true
                 ]
             ]
@@ -453,66 +407,32 @@
             "x": 343.1157713946388,
             "y": 203.10795158135494,
             "specification": "Plot",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": [
                 {
                     "type": "resource",
                     "arg": "db_url@Results"
+                },
+                {
+                    "type": "resource",
+                    "arg": "<project>/default_result_plots.json"
                 }
             ],
             "kill_completed_processes": false
         },
-        "Import_FlexTool2": {
-            "type": "Importer",
-            "description": "",
-            "x": -370.5380739847597,
-            "y": 172.57937692440862,
-            "specification": "FlexTool2_input_importer",
-            "cancel_on_error": false,
-            "on_conflict": "merge",
-            "file_selection": [
-                [
-                    "C:\\data\\Toolbox_projects\\FlexTool2\\template.xlsm",
-                    true
-                ]
-            ]
-        },
-        "FlexTool2_input_Excel": {
+        "Plot_settings": {
             "type": "Data Connection",
             "description": "",
-            "x": -496.588697326607,
-            "y": 176.8092636137323,
+            "x": 465.1046693538269,
+            "y": 256.3648831078828,
             "file_references": [
                 {
                     "type": "path",
-                    "relative": false,
-                    "path": "C:/data/Toolbox_projects/FlexTool2/template.xlsm"
+                    "relative": true,
+                    "path": "default_result_plots.json"
                 }
             ],
             "db_references": []
-        },
-        "Rename_to_FlexTool3": {
-            "type": "Data Transformer",
-            "description": "",
-            "x": -137.0483287340892,
-            "y": 162.42764887003156,
-            "specification": "Rename_to_FlexTool3"
-        },
-        "FlexTool2_raw_data": {
-            "type": "Data Store",
-            "description": "",
-            "x": -249.33116408777863,
-            "y": 172.1465245436598,
-            "url": {
-                "dialect": "sqlite",
-                "host": "",
-                "port": "",
-                "database": {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool2_raw"
-                }
-            }
         }
     }
 }

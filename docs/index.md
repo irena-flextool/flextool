@@ -1,5 +1,3 @@
-[Install](https://github.com/irena-flextool/flextool/tree/master#irena-flextool) | [Tutorial](https://irena-flextool.github.io/flextool) | [Results](https://irena-flextool.github.io/flextool/results) | [Reference](https://irena-flextool.github.io/flextool/reference) | [Data structure](https://irena-flextool.github.io/flextool/spine_database) | [Spine Toolbox interface](https://irena-flextool.github.io/flextool/spine_toolbox) | [Browser-interface](https://irena-flextool.github.io/flextool/browser_interface)
-
 ![irenalogo](./irena_flextool_logo.png)
 
 # IRENA FlexTool tutorial
@@ -29,7 +27,7 @@ The small system to be built is also directly available in the FlexTool reposito
   - [Multi-year model](#multi-year-model)
   - [Discount calculations](#discount-calculations)
 
-# Building a small test system
+## Building a small test system
 
 This tutorial can be used in couple of different ways - the best way depends on your familiarity with energy system modelling. 
 
