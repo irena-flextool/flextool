@@ -65,7 +65,7 @@ Next step is to add an object for the first `node` that will be called *west*.
 Then, add parameter data to the newly minted *west* `node`:
 *west* node represents the demand in a part of the system.
 
-- First add an `inflow` parameter with negative values to indicate negative inflow, i.e. demand. The `inflow` timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. For this tutorial, create 48 timesteps. This is tedious to do by hand, so you can also copy-paste this from the init database or from the excel file `FlexToolTutorialValues.xlsx` where some of the larger mappings of this tutorial are gathered. These values should also create descriptive results, but be free to edit and explore!
+- First add an `inflow` parameter with negative values to indicate negative inflow, i.e. demand. The `inflow` timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. This is tedious to do by hand, so you can also copy-paste this from the init database.
 - There are no electricity generating units and the demand cannot be met by ordinary means. The model will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. This represents the cost of not fulfilling the demand. Also downward `penalty_down` is defined although the model is not using it at this stage. Here values of 9000 and 8000 are used respectively.
 - Penalties and slack variables are tools of linear optimization. They ensure that the problem is feasable at all timesteps even when the in-out-balance of the nodes is violated. If no real penalty values are known, one should just use large enough numbers, so that the system won't prefer penalty to energy production. In the results, you can see at which timesteps the penalties are used.
 - The parameter `has_balance` is related to this and should be set to *yes*. It forces the node to have a balance on inflow and outflow. If the demand is not fulfilled, balance is forced by the slack variable that will "create" the energy with the penalty associated with it. 
@@ -81,7 +81,7 @@ First, make a new `alternative` called *init* to keep all the model structure re
 Then, to get the model to run, you need to create the following objects and relationships:
 
 - `timeline` object called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains, in the first column, the name of each timestep (e.g. *t0001* or *2022-01-01-01*) and, in the second column, the length of the timestep in hours (e.g. *1.0*). The timestep names in the previously given `inflow` time series must match these timestep names - and any other timestep names in later time series.
-- `timeblockset` object called *2day* with a map-type parameter `block_duration` to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps (e.g. *t0001* and *48.0*).
+- `timeblockset` object called *2day* with a map-type parameter `block_duration` to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps (e.g. *t0001* and *48.0*). The timeline is larger than the 48, but this way the solver uses only the first 48h.
 - `timeblockset` *2day* and `timeline` *y2020* need to have `timeblockset__timeline` relationship *2day*, *y2020*. From the `relationship tree` right-click on the `timeblockset__timeline` relationship class to 'Add relationships...'.
 - `solve` object called *y2020_2day_dispatch*
 
@@ -91,7 +91,7 @@ Then, to get the model to run, you need to create the following objects and rela
 
 - Finally, the `model` object needs to be created. It must contain the sequence of solves. In this case *flexTool* `model` object contains just one solve *y2020_2day_dispatch* inside the array-type parameter.
 
-Be careful when choosing datatypes! Maps need to be maps not arrays.
+Be careful when choosing datatypes! Maps need to be maps not arrays. (In the future, an update is coming to toolbox to make this easier.) 
 
 The new objects, relationships and parameters have now been staged. Even though it looks like they are in the database, they really are not - they need to be **committed** first. This can be done from the menu of the Database Editor (there is a *commit* command) or by pressing *ctrl-enter*. One should write an informative commit message about the changes that have been made. All commits, and the data they have affected, can be seen later from the *history* menu item.
 
@@ -177,7 +177,7 @@ Next, a wind power plant is added.
   - `existing` capacity can be set to 1000 MW
   - `is_active` set to *yes* to include the *wind_plant* in the model
 
-- *wind_profile* needs the the parameter `profile` with a map of values where each time step gets the maximum available capacity factor for that time step (see figure). 
+- *wind_profile* needs the the parameter `profile` with a map of values where each time step gets the maximum available capacity factor for that time step (see figure). Again, you can copy this from the init database.
 - *wind_plant, west, wind_profile* relationship needs a parameter `profile_method` with the choice *upper_limit* selected. This means that the *wind_plant* must generate at or below its capacity factor.
 
 You can now create a new scenario *wind*,  that has the `alternatives` *init*, *west*, *coal* and *wind*.
