@@ -47,7 +47,7 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
   - *period_timeblockset*: map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name.
   - *realized_periods*: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve
   - *invest_periods*: array of periods where investements are allowed in this solve (applies only to objects that can be invested in)
-  - *discount_years*: how far in the future each period is from the start of this solve (in years). Index: period, value: years.
+  - *years_represented*: Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years.
   - *solver*: choice of a solver (a list of possible values)
   - *highs_method*: HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.
   - *highs_parallel*: HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.
