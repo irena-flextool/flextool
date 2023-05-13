@@ -3468,13 +3468,13 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
-        "solve__period__discount_years": {
+        "solve__period__years_represented": {
             "type": "object_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "solve__period__discount_years"
+                    "value": "solve__period__years_represented"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -3484,7 +3484,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "discount_years"
+                    "filter_re": "years_represented"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -3517,7 +3517,7 @@
                 {
                     "map_type": "ExpandedValue",
                     "position": 2,
-                    "header": "discount_years"
+                    "header": "years_represented"
                 }
             ],
             "enabled": true,

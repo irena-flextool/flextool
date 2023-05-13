@@ -7,8 +7,11 @@ IRENA FlexTool is an energy systems optimisation model developed for power and e
 The instructions for installing IRENA FlexTool are [here](https://github.com/irena-flextool/flextool/tree/master#irena-flextool).
 
 This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the IRENA FlexTool web-interface, the instructions still apply, but the example figures in this tutorial will not be as helpful. IRENA FlexTool concepts are explained in more depth at this [page](https://irena-flextool.github.io/flextool/reference). 
+Video tutorial for Building a small test system can be watched [here](https://youtu.be/O94zHxYcS94).
 
 The small system to be built is also directly available in the FlexTool repository (***Init*** SQLite database) and can be opened with the Spine Toolbox database editor. The default workflow for IRENA FlexTool executes the scenarios from the ***Input data*** database (and not from the ***Init*** SQLite database). The ***Input data*** database is empty by default. Therefore, if you want to use directly the contents of the ***Init*** database (instead of building the small system step-by-step), you need to copy them to the ***Input data*** database before running the scenarios in this tutorial. To copy the data, you need to execute the ***Initialize*** workflow item: select the item, press ***Execute selection*** from the toolbar. It is not advised to run the whole workflow, (***Execute project***) since it will copy data from two sources: the Excel based input data file and the ***Init*** database and this will create two sets of data in the ***Input data*** database. More information on how to set-up and use the Spine Toolbox front-end in [here](https://irena-flextool.github.io/flextool/irena-flextool-workflow-shortly-explained). Remark: in case you had already populated the ***Input data*** database, you need to delete the data before importing from ***Init*** SQLite database. This can be done with the 'purge' tool from the Database Editor menu: in `purge`, click on both *Select entity and value items*, and *Select scenario items* and then purge.
+
+
 
 - [Building a small test system](#building-a-small-test-system)
   - [1st step - a node with no units](#1st-step---a-node-with-no-units)

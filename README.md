@@ -9,6 +9,8 @@ User guide and documentation are under development, but the current version can 
 
 # Getting started
 
+Follow video tutorial for installation here: https://youtu.be/N3qB0rzxPYw.
+
 ## Main alternatives to use IRENA FlexTool
 
 - [Use a browser](#connecting-to-irena-flextool-server): IRENA FlexTool can be accessed with a web browser if you have an account for an IRENA FlexTool server. However, no public servers available at the moment. The browser interface is shown [below](#browser-interface-in-brief).
