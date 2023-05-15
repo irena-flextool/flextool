@@ -7,6 +7,10 @@ import os
 from collections import OrderedDict
 from collections import defaultdict
 
+#return_codes
+#0 : Success
+#-1: Failure (Defined in the Toolbox)
+#1: Infeasible or unbounded problem (not implemented in the toolbox, functionally same as -1. For a possiblity of a graphical depiction)
 
 class FlexToolRunner:
     """
@@ -334,11 +338,19 @@ class FlexToolRunner:
             logging.warning(f"No solver defined for {current_solve}. Defaulting to highs.")
             solver = "highs"
         if solver == "glpsol":
-            only_glpsol = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg'] + sys.argv[1:]
+            only_glpsol = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg','-w', 'glpsol_solution.txt'] + sys.argv[1:]
             completed = subprocess.run(only_glpsol)
             if completed.returncode != 0:
                 logging.error(f'glpsol failed: {completed.returncode}')
                 exit(completed.returncode)
+            
+            #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
+            with open('glpsol_solution.txt','r') as inf_file:
+                inf_content = inf_file.read() 
+                if 'INFEASIBLE' in inf_content:
+                    logging.error(f"The model is infeasible. Check the constraints.")
+                    exit(1)
+
         elif solver == "highs":
             highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat',
                            '--wfreemps', 'flexModel3.mps'] + sys.argv[1:]
@@ -356,6 +368,14 @@ class FlexToolRunner:
                 logging.error(f'Highs solver failed: {completed.returncode}')
                 exit(completed.returncode)
             print("HiGHS solved the problem\n")
+            
+            #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
+            with open('flexModel3.sol','r') as inf_file:
+                inf_content = inf_file.read() 
+                if 'INFEASIBLE' in inf_content:
+                    logging.error(f"The model is infeasible. Check the constraints.")
+                    exit(1)
+            
             highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r',
                            'flexModel3.sol'] + sys.argv[1:]
             completed = subprocess.run(highs_step3)
@@ -363,7 +383,7 @@ class FlexToolRunner:
                 print("GLPSOL wrote the results into csv files\n")
         else:
             logging.error(f"Unknown solver '{solver}'. Currently supported options: highs, glpsol.")
-            exit(1)
+            exit(-1)
         return completed.returncode
 
     def get_active_time(self, current_solve, timeblocks_used_by_solves, timeblocks, timelines, timeblocks__timelines):
@@ -561,11 +581,11 @@ def main():
 
     if not runner.model_solve:
         logging.error("No model. Make sure the 'model' class defines solves.")
-        sys.exit(1)
+        sys.exit(-1)
     solves = next(iter(runner.model_solve.values()))
     if not solves:
         logging.error("No solves in model.")
-        sys.exit(1)
+        sys.exit(-1)
     for solve in solves:
         active_time_list = runner.get_active_time(solve, runner.timeblocks_used_by_solves, runner.timeblocks,
                                               runner.timelines, runner.timeblocks__timeline)
@@ -600,7 +620,7 @@ def main():
     if len(runner.model_solve) > 1:
         logging.error(
             f'Trying to run more than one model - not supported. The results of the first model are retained.')
-        sys.exit(1)
+        sys.exit(-1)
 
 
 if __name__ == '__main__':
