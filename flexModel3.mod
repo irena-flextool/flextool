@@ -1115,15 +1115,16 @@ param p_entity_all_existing {e in entity} :=
 
 param p_entity_max_capacity {e in entity, d in period} :=
   + p_entity_all_existing[e]
-  + if e in entityInvest 
-    then max(ed_invest_max_period[e, d], e_invest_max_total[e])
+  + if (e, d) in ed_invest_period && e not in e_invest_total then ed_invest_max_period[e, d] else 0
+  + if e in e_invest_total && (e, d) not in ed_invest_period then e_invest_max_total[e] else 0
+  + if (e, d) in ed_invest_period && e in e_invest_total then max(ed_invest_max_period[e, d], e_invest_max_total[e]) else 0
+  + if (e, 'invest_no_limit') in entity__invest_method then 10000000000 else 0
 ;
 
 param p_entity_max_units {e in entity, d in period} :=
-  round(
-    + p_entity_max_capacity[e, d]
-      / p_entity_unitsize[e]
-  );
+  + p_entity_max_capacity[e, d]
+    / p_entity_unitsize[e]
+;
 
 set process_VRE := {p in process_unit : not (sum{(p, source) in process_source} 1)
                                         && (sum{(p, n, prof, m) in process__node__profile__profile_method : m = 'upper_limit'} 1)};
@@ -3768,7 +3769,7 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 #display {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in test_dt}: ptProcess_sink[p, sink, param, t];
-display v_invest, v_divest;
+display v_invest, v_divest, p_discount_factor_investment_yearly;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
 #display v_startup_integer;
 end;
