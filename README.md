@@ -8,6 +8,4 @@ The previous version of IRENA FlexTool can be found in https://www.irena.org/ene
 ## Introduction and installation
 
 Installation, user guide and documentation can be found at: https://irena-flextool.github.io/flextool/.
-User guide and documentation are under development
-
-
+User guide and documentation are under development.
