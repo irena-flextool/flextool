@@ -2291,16 +2291,28 @@ s.t. co2_max_period{(g, c, n, d) in group_commodity_node_period_co2_period} :
 
 
 s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
-  + sum {(p, source, sink) in process_source_sink : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
+  + sum {(p, source, sink) in process_source_sink_noEff : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
     ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] )
+  + sum {(p, source, sink) in process_source_sink_eff : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
+    ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
+	    * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	    * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, source] else 1)
+	  + ( if (p, 'min_load_efficiency') in process__ct_method then 
+	      + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
+	          + (if p in process_online_integer then v_online_integer[p, d, t])
+	        )
+		    * ptProcess_section[p, t]
+		    * p_entity_unitsize[p]
+	    )	  
+	)	
   - vq_non_synchronous[g, d, t] * pgdNodeInflow_for_scaling[g, d]
   <=
   ( + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node} 
         + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
-    + sum {(g, n) in group_node} pdtNodeInflow[n, d, t]
+    + sum {(g, n) in group_node} -pdtNodeInflow[n, d, t]
   ) * pdGroup[g, 'non_synchronous_limit', d]
 ;
-
+display process_source_sink, process_source, groupNonSync, group_node, process__sink_nonSync;
 s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : d in period_invest} :
   # profile limited units producing to a node in the group (based on available capacity)
   + sum {(p, source, sink, f, m) in process__source__sink__profile__profile_method 
@@ -3346,7 +3358,7 @@ for {s in solve_current, (d, t, t_previous, t_previous_within_block, d_previous,
     printf '\n%s,%s,%s', s, d, t >> fn_nodal_prices__dt;
     for {n in nodeBalance}
 	  {
-	    printf ',%8g', -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * period_share_of_year[d] >> fn_nodal_prices__dt;
+	    printf ',%8g', -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * period_share_of_year[d] / scale_the_objective >> fn_nodal_prices__dt;
       }
   }
 
@@ -3769,7 +3781,7 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 #display {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in test_dt}: ptProcess_sink[p, sink, param, t];
-display v_invest, v_divest, p_discount_factor_investment_yearly;
+display v_invest, v_divest;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
 #display v_startup_integer;
 end;

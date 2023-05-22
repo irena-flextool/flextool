@@ -256,8 +256,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 69.07227089196864,
-            "y": -4.631817794157001,
+            "x": 67.9533372023181,
+            "y": -6.8696851734580875,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": [],
@@ -267,7 +267,7 @@
             "type": "Data Store",
             "description": "",
             "x": -407.7942123409004,
-            "y": 65.60255397230353,
+            "y": 64.59242552921424,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -283,7 +283,7 @@
             "type": "Data Store",
             "description": "",
             "x": -162.9016014404568,
-            "y": -8.390355288403725,
+            "y": -9.509288978054268,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -312,11 +312,6 @@
                     "type": "path",
                     "relative": true,
                     "path": "FlexTool_import_template.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool3_Case1.xlsx"
                 }
             ],
             "db_references": []
@@ -331,10 +326,6 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "<project>/FlexTool3_Case1.xlsx",
-                    true
-                ],
-                [
                     "<project>/FlexTool_import_template.xlsx",
                     false
                 ]
@@ -344,7 +335,7 @@
             "type": "Exporter",
             "description": "",
             "x": -44.37941588988866,
-            "y": -9.902391262324334,
+            "y": -11.02132495197488,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -365,7 +356,7 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
-                    "output/*.csv",
+                    "datapackage@FlexTool3",
                     true
                 ]
             ]
