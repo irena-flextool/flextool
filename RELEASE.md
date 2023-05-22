@@ -1,3 +1,14 @@
+** Release 3.1.1
+
+Bug fixes
+- Node prices were million times smaller than they should have been (bug introduced when scaling the model in 3.1.0)
+- Non-synchronous limit was not working.
+- The calculation of the p_entity_max_capacity did not consider which investment method was actually active. It also limited capacity in situations where investment method was supposed to be 'invest_no_limit'.
+
+New features
+- Documentation structure was improved
+- Model assumes precedence between storage_start_end_method, storage_binding_method, and storage_solve_horizon_method (in that order)
+
 ** Release 3.1.0
 
 Bug fixes
