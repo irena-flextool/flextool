@@ -1,6 +1,6 @@
 ### Installing Spine Toolbox and IRENA FlexTool on a local computer
 
-Follow video tutorial for installation here: https://youtu.be/N3qB0rzxPYw.
+Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/N3qB0rzxPYw).
 
 - Install [Miniconda](https://docs.conda.io/en/latest/miniconda.html) (or Anaconda)  [Can be ignored if already installed]
 - Start Anaconda prompt
