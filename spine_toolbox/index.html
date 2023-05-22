@@ -41,20 +41,26 @@
 
       <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <ul>
-                <li class="toctree-l1"><a class="reference internal" href="..">Getting started</a>
+                <li class="toctree-l1"><a class="reference internal" href="../introduction/">Introduction</a>
                 </li>
               </ul>
+              <p class="caption"><span class="caption-text">Getting started</span></p>
               <ul>
-                <li class="toctree-l1"><a class="reference internal" href="../results/">Model outputs</a>
-                </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../interface_overview/">Overview of the interfaces to Flextool</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../install_toolbox/">Installing IRENA FlexTool - SpineToolbox</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../install_web_interface/">Installing IRENA FlexTool - Web interface</a>
+                  </li>
               </ul>
+              <p class="caption"><span class="caption-text">Documentation</span></p>
               <ul>
-                <li class="toctree-l1"><a class="reference internal" href="../reference/">Reference</a>
-                </li>
-              </ul>
-              <ul>
-                <li class="toctree-l1"><a class="reference internal" href="../spine_database/">Database</a>
-                </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../tutorial/">Tutorial</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../reference/">Model parameters</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../results/">Model outputs</a>
+                  </li>
               </ul>
               <p class="caption"><span class="caption-text">Interfaces</span></p>
               <ul class="current">
@@ -121,11 +127,32 @@ this is by creating another Excel file that draws figures from the result Excel 
 (<strong><em>Export_to_csv</em></strong> --&gt; <strong><em>FlexTool</em></strong> --&gt; <strong><em>Import_results</em></strong>). The server takes a copy of the workflow (inside the user_projects) 
 folder and uses Spine Toolbox to execute the scenarios.</p>
 <p>More instructions for Spine Toolbox in https://spine-toolbox.readthedocs.io/en/latest/?badge=latest.</p>
+<h1 id="data-structure-in-spine-databases">Data structure in Spine databases</h1>
+<p>Spine databases use Entity-Attribute-Value with Classes and Relationships (EAV-CR). Entity classes define the categories of data. These can be one-dimensional object classes (e.g. <code>node</code> or <code>unit</code>) or multi-dimensional relationship classes formed from the object classes (e.g. <code>unit__node</code>). Spine Toolbox user can define these classes to suit their modelling needs. For FlexTool the entity classes have been pre-defined. Instead, FlexTool user needs to add the entity instances: objects and relationships that define the particular network structure to be modelled (e.g. <em>coal_plant</em> <code>unit</code> or <em>west</em> <code>node</code>). Furthermore, each entity class (object or relationship) can hold only parameters that have been defined for that particular class. Again, FlexTool user does not need to add the parameter types - the user should just add needed parameter values for the entities the user has created.</p>
+<p><img alt="EAV data structure" src="../EAV_CR.png" /></p>
+<h2 id="database-editor-in-brief">Database editor in brief</h2>
+<p>Spine Toolbox database editor can be used to modify data and to build scenarios. 
+The figure below shows an example where parameter data from two <code>alternatives</code> 
+have been selected for display (in the data table). The object tree on the left 
+selects two <code>nodes</code> ('coal_market' and 'west') as well as one <code>unit</code> ('coal_plant'). 
+Consequently, one can use both whole classes and individual entities (members of the classes) as data filters.
+The results of this filter are visualized in the graph on top. The mouse pointer is showing a relationship 
+entity that connects the 'coal_plant' and its output <code>node</code> 'west'. The relationship 
+entity is defined in a relationship tree, which is not visible here.</p>
+<p>The <code>scenario</code> tree (on the right, below the <code>alternative</code> tree) shows that 
+the 'coal' <code>scenario</code> is formed by taking all data from the 'init' <code>alternative</code> 
+and then all data from the 'coal' <code>alternative</code>. If there would be same parameter 
+defined for both <code>scenarios</code>, then the latter <code>alternative</code> would overwrite 
+the first <code>alternative</code>.</p>
+<p>Whenever data is modified, the data is staged in separate database tables (although not directly visible to user). The changes will be applied only once the user <code>commits</code> the changes and leaves a commit message to indicate what has been done. The <code>commit</code> can be done with ctrl-enter or from the database editor menu (triple bar at top-right).</p>
+<p>The database editor menu has options for how to display the data: table view, different pivot views and a graph view. It also contains a tool to delete data (<code>purge</code>) and decrease database size by removing unused allocations (<code>vacuum</code>). You can also bring back dock windows that have been closed by the user. <code>History</code> will show the history of data changes based on the commits made by the user.</p>
+<p><img alt="Database editor" src="../database_editor.png" /></p>
+<p>More on Spine Database editor in https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html.</p>
               
             </div>
           </div><footer>
     <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
-        <a href="../spine_database/" class="btn btn-neutral float-left" title="Database"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../results/" class="btn btn-neutral float-left" title="Model outputs"><span class="icon icon-circle-arrow-left"></span> Previous</a>
         <a href="../browser_interface/" class="btn btn-neutral float-right" title="Browser interface">Next <span class="icon icon-circle-arrow-right"></span></a>
     </div>
 
@@ -154,7 +181,7 @@ folder and uses Spine Toolbox to execute the scenarios.</p>
         </span>
     
     
-      <span><a href="../spine_database/" style="color: #fcfcfc">&laquo; Previous</a></span>
+      <span><a href="../results/" style="color: #fcfcfc">&laquo; Previous</a></span>
     
     
       <span><a href="../browser_interface/" style="color: #fcfcfc">Next &raquo;</a></span>

@@ -5,15 +5,15 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland" />
       <link rel="shortcut icon" href="../img/favicon.ico" />
-    <title>Data structure in Spine databases - IRENA FlexTool</title>
+    <title>Installing IRENA FlexTool - SpineToolbox - IRENA FlexTool</title>
     <link rel="stylesheet" href="../css/theme.css" />
     <link rel="stylesheet" href="../css/theme_extra.css" />
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.5.0/styles/github.min.css" />
     
       <script>
         // Current page data
-        var mkdocs_page_name = "Data structure in Spine databases";
-        var mkdocs_page_input_path = "spine_database.md";
+        var mkdocs_page_name = "Installing IRENA FlexTool - SpineToolbox";
+        var mkdocs_page_input_path = "install_toolbox.md";
         var mkdocs_page_url = null;
       </script>
     
@@ -45,10 +45,12 @@
                 </li>
               </ul>
               <p class="caption"><span class="caption-text">Getting started</span></p>
-              <ul>
+              <ul class="current">
                   <li class="toctree-l1"><a class="reference internal" href="../interface_overview/">Overview of the interfaces to Flextool</a>
                   </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../install_toolbox/">Installing IRENA FlexTool - SpineToolbox</a>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="./">Installing IRENA FlexTool - SpineToolbox</a>
+    <ul class="current">
+    </ul>
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../install_web_interface/">Installing IRENA FlexTool - Web interface</a>
                   </li>
@@ -83,9 +85,10 @@
         <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
   <ul class="wy-breadcrumbs">
     <li><a href=".." class="icon icon-home" alt="Docs"></a> &raquo;</li>
-      <li>Data structure in Spine databases</li>
+          <li>Getting started &raquo;</li>
+      <li>Installing IRENA FlexTool - SpineToolbox</li>
     <li class="wy-breadcrumbs-aside">
-          <a href="https://github.com/irena-flextool/flextool/edit/master/docs/spine_database.md" class="icon icon-github"> Edit on GitHub</a>
+          <a href="https://github.com/irena-flextool/flextool/edit/master/docs/install_toolbox.md" class="icon icon-github"> Edit on GitHub</a>
     </li>
   </ul>
   <hr/>
@@ -93,30 +96,73 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
             <div class="section" itemprop="articleBody">
               
-                <h1 id="data-structure-in-spine-databases">Data structure in Spine databases</h1>
-<p>Spine databases use Entity-Attribute-Value with Classes and Relationships (EAV-CR). Entity classes define the categories of data. These can be one-dimensional object classes (e.g. <code>node</code> or <code>unit</code>) or multi-dimensional relationship classes formed from the object classes (e.g. <code>unit__node</code>). Spine Toolbox user can define these classes to suit their modelling needs. For FlexTool the entity classes have been pre-defined. Instead, FlexTool user needs to add the entity instances: objects and relationships that define the particular network structure to be modelled (e.g. <em>coal_plant</em> <code>unit</code> or <em>west</em> <code>node</code>). Furthermore, each entity class (object or relationship) can hold only parameters that have been defined for that particular class. Again, FlexTool user does not need to add the parameter types - the user should just add needed parameter values for the entities the user has created.</p>
-<p><img alt="EAV data structure" src="../EAV_CR.png" /></p>
-<h2 id="database-editor-in-brief">Database editor in brief</h2>
-<p>Spine Toolbox database editor can be used to modify data and to build scenarios. 
-The figure below shows an example where parameter data from two <code>alternatives</code> 
-have been selected for display (in the data table). The object tree on the left 
-selects two <code>nodes</code> ('coal_market' and 'west') as well as one <code>unit</code> ('coal_plant'). 
-Consequently, one can use both whole classes and individual entities (members of the classes) as data filters.
-The results of this filter are visualized in the graph on top. The mouse pointer is showing a relationship 
-entity that connects the 'coal_plant' and its output <code>node</code> 'west'. The relationship 
-entity is defined in a relationship tree, which is not visible here.</p>
-<p>The <code>scenario</code> tree (on the right, below the <code>alternative</code> tree) shows that 
-the 'coal' <code>scenario</code> is formed by taking all data from the 'init' <code>alternative</code> 
-and then all data from the 'coal' <code>alternative</code>. If there would be same parameter 
-defined for both <code>scenarios</code>, then the latter <code>alternative</code> would overwrite 
-the first <code>alternative</code>.</p>
-<p>Whenever data is modified, the data is staged in separate database tables (although not directly visible to user). The changes will be applied only once the user <code>commits</code> the changes and leaves a commit message to indicate what has been done. The <code>commit</code> can be done with ctrl-enter or from the database editor menu (triple bar at top-right).</p>
-<p>The database editor menu has options for how to display the data: table view, different pivot views and a graph view. It also contains a tool to delete data (<code>purge</code>) and decrease database size by removing unused allocations (<code>vacuum</code>). You can also bring back dock windows that have been closed by the user. <code>History</code> will show the history of data changes based on the commits made by the user.</p>
-<p><img alt="Database editor" src="../database_editor.png" /></p>
-<p>More on Spine Database editor in https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html.</p>
+                <h3 id="installing-spine-toolbox-and-irena-flextool-on-a-local-computer">Installing Spine Toolbox and IRENA FlexTool on a local computer</h3>
+<p>Follow video tutorial for installation here: https://youtu.be/N3qB0rzxPYw.</p>
+<ul>
+<li>Install <a href="https://docs.conda.io/en/latest/miniconda.html">Miniconda</a> (or Anaconda)  [Can be ignored if already installed]</li>
+<li>Start Anaconda prompt</li>
+<li>Create new Python environment [Also possible to use existing, up-to-date, Spine Toolbox environment]
+  <code>shell
+  conda create -n flextool python=3.8</code></li>
+<li>Activate the environment
+  <code>shell
+  conda activate flextool</code></li>
+<li>Install Git to the environment [Also possible to use existing Git installation]
+  <code>shell
+  conda install git</code></li>
+<li><code>cd</code> to a directory into which both FlexTool and Spine Toolbox will make their own folders</li>
+<li>Clone the FlexTool Git repository
+  <code>shell
+  git clone https://github.com/irena-flextool/flextool</code></li>
+<li>Install Spine Toolbox [Can be skipped if using existing Toolbox environment]</li>
+<li>Clone the Toolbox repository
+    <code>shell
+    git clone https://github.com/Spine-project/Spine-Toolbox.git</code></li>
+<li>cd to the freshly created folder
+    <code>shell
+    cd Spine-Toolbox</code></li>
+<li>Make sure Pip is up-to-date
+    <code>shell
+    python -m pip install --upgrade pip</code></li>
+<li>Install packages required by Toolbox
+    <code>shell
+    python -m pip install -r requirements.txt</code></li>
+<li>Launch Spine Toolbox
+  <code>shell
+  python -m spinetoolbox</code></li>
+<li>Open FlexTool3 project in Spine Toolbox (Choose the flextool <em>folder</em> from File &gt; Open project dialog)</li>
+</ul>
+<p>In case of problems when installing Spine Toolbox, more instructions are available at: https://github.com/Spine-project/Spine-Toolbox#installation</p>
+<h3 id="run">Run</h3>
+<ol>
+<li>Open a conda prompt.</li>
+<li>Activate the environment
+  <code>shell
+  conda activate flextool</code></li>
+<li>Launch Spine Toolbox
+  <code>shell
+  python -m spinetoolbox</code></li>
+<li>
+<p>Open FlexTool3 project in Spine Toolbox (Choose the flextool <em>folder</em> from File &gt; Open project dialog)</p>
+</li>
+<li>
+<p>In the flextool folder, make a copy the Results_template.sqlite and rename it Results.sqlite (Results.sqlite is not part of the repository to avoid accidental overwrites of your results in the future) </p>
+</li>
+</ol>
+<h2 id="updating-irena-flextool">Updating IRENA FlexTool</h2>
+<p>Update of IRENA FlexTool to the latest version is done as follows
+- Start anaconda prompt
+- <code>conda activate flextool</code> (or whatever is your conda environment name for IRENA FlexTool)
+- cd to the FlexTool directory
+- <code>git restore .</code> (THIS WILL DELETE YOUR LOCAL CHANGES TO THE FILES IN THE WORKFLOW. This will be improved in the future. Currently you can work around this by making your own input files (Excel or SQLite) and pointing the workflow items (Excel_input_data or Input_Data) to your own files instead of the input_data.sqlite or FlexTool_import_template.xlsx.) 
+- <code>git pull</code></p>
               
             </div>
           </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../interface_overview/" class="btn btn-neutral float-left" title="Overview of the interfaces to Flextool"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../install_web_interface/" class="btn btn-neutral float-right" title="Installing IRENA FlexTool - Web interface">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
 
   <hr/>
 
@@ -143,6 +189,10 @@ the first <code>alternative</code>.</p>
         </span>
     
     
+      <span><a href="../interface_overview/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../install_web_interface/" style="color: #fcfcfc">Next &raquo;</a></span>
     
   </span>
 </div>
