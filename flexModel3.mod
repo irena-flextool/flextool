@@ -281,7 +281,7 @@ param p_discount_offset_investment{model} default 0;    # Calculate investment a
 param p_discount_offset_operations{model} default 0.5;  # Calculate operational costs assuming they are on average taking place at the middle of the year (unless other value is given)
 
 param p_entity_invested {e in entity : e in entityInvest};
-param p_entity_divested {e in entity : e in entityInvest};
+param p_entity_divested {e in entity : e in entityDivest};
 
 param scale_the_objective;
 param scale_the_state;
@@ -2317,7 +2317,7 @@ s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
     + sum {(g, n) in group_node} -pdtNodeInflow[n, d, t]
   ) * pdGroup[g, 'non_synchronous_limit', d]
 ;
-display process_source_sink, process_source, groupNonSync, group_node, process__sink_nonSync;
+
 s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : d in period_invest} :
   # profile limited units producing to a node in the group (based on available capacity)
   + sum {(p, source, sink, f, m) in process__source__sink__profile__profile_method 
