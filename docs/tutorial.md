@@ -233,9 +233,9 @@ Create the scenario, **commit**, execute and explore how the reserve requirement
 
 ## More functionality
 
-Now you have learned how to create a small model. If you want to save it, make a copy the database and name it something else for example Tutorial.sqlite. Remember that you can change which database is used as the *Input_data* by clicking it. In the same way, the *Results* database can be saved and changed.  
+Now you have learned how to create a small model. If you want to save it, make a copy of the *Input_data* database and name it something else for example Tutorial.sqlite. Remember that you can change which database is used as the *Input_data* by clicking it. In the same way, the *Results* database can be saved and changed.
 
-For the rest of the tutorial, you can look and play with the ready scenarios from the init database. Purge *Input_data* and *Initialize* it to copy the init database to it.   
+For the rest of the tutorial, you can look and play with the ready scenarios from the init database. Purge *Input_data* and *Initialize* it to copy the init database to it. This can be done with the 'purge' tool from the Database Editor menu: in `purge`, click on both *Select entity and value items*, and *Select scenario items* and then purge.   
 
 ### Adding a storage unit (battery) 
 
