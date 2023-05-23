@@ -18,7 +18,8 @@ markdown_extensions:
 docs_dir: 'docs'
 
 nav:
-  - Introduction: introduction.md
+  - Introduction: 
+    - 'Introduction': index.md
   - Getting started: 
     - 'Overview of the interfaces to Flextool': interface_overview.md
     - 'Installing IRENA FlexTool - SpineToolbox': install_toolbox.md

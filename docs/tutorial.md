@@ -1,13 +1,13 @@
 # IRENA FlexTool tutorial
 
-The instructions for installing IRENA FlexTool are [here](https://github.com/irena-flextool/flextool/tree/master#irena-flextool).
+The instructions for installing IRENA FlexTool are at [Interface overview](https://irena-flextool.github.io/flextool/interface_overview).
 
-This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the IRENA FlexTool web-interface, the instructions still apply, but the example figures in this tutorial will not be as helpful. IRENA FlexTool concepts are explained in more depth at this [page](https://irena-flextool.github.io/flextool/reference). 
+This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the IRENA FlexTool web-interface, the instructions still apply, but the example figures in this tutorial will not be as helpful. IRENA FlexTool concepts are explained in more depth at [Model Parameters](https://irena-flextool.github.io/flextool/reference). 
 Video tutorial for Building a small test system can be watched [here](https://youtu.be/O94zHxYcS94).
 
 The small system to be built is also directly available in the FlexTool repository (***Init*** SQLite database) and can be opened with the Spine Toolbox database editor. The default workflow for IRENA FlexTool executes the scenarios from the ***Input data*** database (and not from the ***Init*** SQLite database). The ***Input data*** database is empty by default. Therefore, if you want to use directly the contents of the ***Init*** database (instead of building the small system step-by-step), you need to copy them to the ***Input data*** database before running the scenarios in this tutorial. To copy the data, you need to execute the ***Initialize*** workflow item: select the item, press ***Execute selection*** from the toolbar. It is not advised to run the whole workflow, (***Execute project***) since it will copy data from two sources: the Excel based input data file and the ***Init*** database and this will create two sets of data in the ***Input data*** database. 
 
-More information on how to set-up and use the Spine Toolbox front-end in [here](https://irena-flextool.github.io/flextool/spine_toolbox). 
+More information on how to set-up and use the Spine Toolbox front-end in [Toolbox interface](https://irena-flextool.github.io/flextool/spine_toolbox). 
 
 If not done already, in the flextool folder make a copy of the Results_template.sqlite and rename it Results.sqlite.
 
@@ -46,7 +46,7 @@ If you have already run the whole workflow, then the ***Input_data*** database w
 
 Finally, **if you are a really experienced modeller**, it can be enough to check the reference section starting from [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference). 
 
-## 1st step - a node with no units
+### 1st step - a node with no units
 
 You should have the FlexTool project open in the Spine Toolbox. Then, open the ***Input data*** database by double-clicking it in the Spine Toolbox workflow.
 
@@ -102,7 +102,7 @@ The new objects, relationships and parameters have now been staged. Even though 
 
 ![Time_parameters](./first_model.png)
 
-## Interlude - creating a scenario and running the model
+### Interlude - creating a scenario and running the model
 
 Even though the model is very simple and will not do anything interesting, it can be executed. It is first necessary to create the scenario to be executed. Scenarios are created from `alternatives` in the Scenario tree widget of the Database Editor. In the figure below, a `scenario` called *base* is created that should contain `alternatives` *west* and *init* in order to have both a node and a model structure included in the model. The new `scenario` must also be **committed**, before it can be used. A new scenario should be added after each step in the tutorial process. 
 
@@ -121,7 +121,7 @@ If the ***Results*** database has an error: database not found. Go to the Flexto
 
 It is now possible to explore model results for the *base* `scenario` using either the ***Results*** database or the Excel file that can be exported by executing the ***To_Excel*** exporter tool. When doing that, no scenarios should be selected so that the tool will create one Excel file with data from all the alternatives that are in the results database (which will make more sense once there are more scenario results). The generated Excel file can be found by selecting the ***To_Excel*** tool and clicking on the folder icon on top-right of the ***Link properties*** widget window.
 
-## 2nd step - add a coal unit
+### 2nd step - add a coal unit
 
 In the second step, a coal unit is added. 
 
@@ -152,7 +152,7 @@ In the second step, a coal unit is added.
 
 To see how the results change due to the coal power plant, make a new scenario *coal* that has the `alternatives` *init*, *west* and *coal*. Run the ***Export_to_CSV***, ***FlexTool3*** and ***Import_results*** to get the results to the ***Results*** database. If you start to get too many result `alternatives` in the ***Results*** database (e.g. if you happen to run the same scenario multiple times), you can delete old ones by removing the unwanted `alternatives` (right-click on the `alternative`) and then **committing** the database.
 
-## Interlude - visualizing the system in a graph
+### Interlude - visualizing the system in a graph
 In Spine Toolbox, it is possible to visualize your system in a graph, which will show all objects, and the relationships between them.
 To open this visualization mode, open the ***Input data*** database. In the top right corner, click on the menu. Select ***Graph*** in the *View* section.
 You may visualize all objects by selecting *root* in the *Object tree*, or choose specifically the objects you want to display by selecting them in the *Object tree* (maintain ctrl to select multiple objects).
@@ -160,7 +160,7 @@ You may visualize all objects by selecting *root* in the *Object tree*, or choos
 ![Graph_view](./graph_view.png)
 ![Graph_view_example](./graph_view_example.png)
 
-## 3rd step - add a wind power plant
+### 3rd step - add a wind power plant
 
 Next, a wind power plant is added.
 
@@ -190,7 +190,7 @@ Remember to **commit**, execute and have a look at the results (there should be 
 
 ![Add another unit](./add_unit2.png)
 
-## 4th step - add a network
+### 4th step - add a network
 
  A *network* `alternative` introduces 
 
@@ -216,7 +216,7 @@ The *north* `node` has the lowest upward penalty, so the model will prefer to us
 
  ![Add network](./add_network.png)
 
-## 5th step - add a reserve
+### 5th step - add a reserve
 
 Create a new `alternative` reserve.
 
@@ -231,15 +231,22 @@ Create the scenario, **commit**, execute and explore how the reserve requirement
 
  ![Add a reserve](./reserves.png)
 
-# More functionality
+## More functionality
 
-## Adding a storage unit (battery)
+Now you have learned how to create a small model. If you want to save it, make a copy the database and name it something else for example Tutorial.sqlite. Remember that you can change which database is used as the *Input_data* by clicking it. In the same way, the *Results* database can be saved and changed.  
 
+For the rest of the tutorial, you can look and play with the ready scenarios from the init database. Purge *Input_data* and *Initialize* it to copy the init database to it.   
+
+### Adding a storage unit (battery) 
+
+**(scenario: wind_battery)**
 ***init - west - wind - battery***
 
 In the ***Init*** SQLite database, there is a `scenario` *wind_battery* - the *wind_plant* alone is not able to meet the load in all conditions, but the *battery* will help it to improve the situation.
 
 In FlexTool, only `nodes` can have storage. This means that `existing` capacity and all investment parameters for `nodes` refer to the amount of storage the `node` can have. In this example, a *battery* `node` is established to describe the storage properties of the *battery* (e.g. `existing` capacity and `self_discharge_loss` in each hour). 
+
+You can see that the battery has three storage methods defined. Having multiple storage methods can create infeasible problems. This is why some of the combinations shouldn't (and couldn't) be used at the same time. If multiple methods are used, some of them might be ignored by the method hierarcy. More information can be found from [Model Parameters: Using nodes as storages](https://irena-flextool.github.io/flextool/reference). For now, you can change the `storage_start_end_method` to *fix_start_end*. This overrides the other methods and sets the start and end capacities of the storage.
 
 Battery also needs charging and discharging capabilities. These could be presented either with a `connection` or by having a charging `unit` and a discharging `unit`. In here, we are using a `connection` called *batter_inverter*, since its easier to prevent simultaneous charging and discharging that way (although, in a linear model, this cannot be fully prevented since that requires an integer variable). Please note that the `efficiency` parameter of the `connection` applies to both directions, so the round-trip `efficiency` will be `efficiency` squared.
 
@@ -247,8 +254,9 @@ The `transfer_method` can be used by all types of connections, but in this case 
 
 ![Add a battery](./battery.png)
 
-##  Adding battery investment capabilities 
+###  Adding battery investment capabilities 
 
+**(scenario: wind_battery_invest)**
 ***init - west - wind - battery - battery_invest***
 
 To make the *wind_battery* `scenario` more interesting, an option to invest in *battery* and *battery_inverter* is added. It also demonstrates how FlexTool can have more complicated constraints that the user defines through data. 
@@ -291,8 +299,9 @@ Finally, FlexTool can actually mix three different types of constraint coefficie
 
 ![Add battery investments](./battery_invest.png)
 
-## Combined heat and power (CHP) example
+### Combined heat and power (CHP) example 
 
+**(scenario: coal_chp)**
 ***init - west - coal_chp - heat***
 
 This CHP plant is an another example where the user defined `constraint` (see the last equation in the previous example) is used to achieve desired behaviour. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plant the relation is more complicated - there is an allowed operating area between heat and power. Both can be depicted in FlexTool, but here a backpressure example is given. An extraction plant would require two or more *greater_than* and/or *lesser_than* `constraints` to define an operating area.
@@ -305,7 +314,7 @@ This is done by adding a new `constraint` *coal_chp_fix* where the heat and powe
 
 ![Add CHP](./coal_chp.png)
 
-## Minimum load example
+### Minimum load example
 
 ***init - west - coal - coal_min_load***
 
@@ -328,7 +337,7 @@ By default, `input_coefficient` and `output_coefficient` are 1, but if there is 
 
 ![Add min_load](./coal_min_load.png)
 
-## Adding CO2 emissions and costs
+### Adding CO2 emissions and costs
 
 ***init - west - coal - co2***
 
@@ -336,7 +345,7 @@ Carbon dioxide emissions are added to FlexTool by associating relevant `commodit
 
 ![Add CO2](./coal_co2.png)
 
-## Full year model
+### Full year model
 
 ***init - west - fullYear***
 
@@ -344,7 +353,7 @@ So far the model has been using only two days to keep it fast to run. This examp
 
 ![fullYear](./fullYear.png)
 
-## A system with coal, wind, network, battery and CO2 over a full year
+### A system with coal, wind, network, battery and CO2 over a full year
 
 ***init - west - coal - wind - network - battery - co2 - fullYear***
 
@@ -352,7 +361,7 @@ This example shows a system where many of the previous examples have been put in
 
 ![Entity graph](./coal_wind_chp_battery_graph.png)
 
-## Representative periods
+### Representative periods
 
 ***init - west - wind - battery - battery_invest - 5weeks***
 
@@ -360,7 +369,7 @@ When using the model for investment decisions, the model can often become too la
 
 ![Representative periods](./representative_periods.png)
 
-## Multi-year model
+### Multi-year model
 
 ***init - west - wind - coal - coal_invest - 5weeks - multi-year***
 
@@ -381,7 +390,7 @@ Next figure shows the values needed to define one solve (out of the four solves 
 
 ![Solve data](./data_for_one_solve.png)
 
-## Discount calculations
+### Discount calculations
 
 Each asset that can be invested in should have `invest_cost`, `lifetime` and `interest_rate` parameters set and could have an optional `fixed_cost`. These are used to calculate the annuity of the investment. Annuity is used to annualize the investment cost, since FlexTool scales all costs (operational, investment and fixed) to annual level in order to make them comparable. Annuity is calculated as follows:
 
