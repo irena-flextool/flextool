@@ -381,6 +381,38 @@ class FlexToolRunner:
             completed = subprocess.run(highs_step3)
             if completed.returncode == 0:
                 print("GLPSOL wrote the results into csv files\n")
+            
+        elif solver == "cplex" or solver == "gurobi":
+            highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat',
+                           '--wfreemps', 'flexModel3.mps'] + sys.argv[1:]
+            completed = subprocess.run(highs_step1)
+            if completed.returncode != 0:
+                logging.error(f'glpsol mps writing failed: {completed.returncode}')
+                exit(completed.returncode)
+            print("GLPSOL wrote the problem as MPS file\n")
+
+            if solver == "cplex":
+                #completed = cplex_solve("flexModel3.mps")
+                cplex_params = []  #get_cplex_params()
+                wrapper = get_wrapper()
+                cplex_step = [wrapper, 'cplex', '-c', '"read flexModel.mps"','"opt"', '"write flexModel3.sol"']  + sys.argv[1:]
+
+                completed = subprocess.run(cplex_step)
+            else:
+                logging.error(f"Gurobi not yet implemented. Currently supported options: highs, glpsol, cplex.")
+
+            highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r',
+                           'flexModel3.sol'] + sys.argv[1:]
+            completed = subprocess.run(highs_step3)
+            if completed.returncode == 0:
+                print("GLPSOL wrote the results into csv files\n")
+
+            #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
+            with open('flexModel3.sol','r') as inf_file:
+                inf_content = inf_file.read() 
+                if 'INFEASIBLE' in inf_content:
+                    logging.error(f"The model is infeasible. Check the constraints.")
+                    exit(1)
         else:
             logging.error(f"Unknown solver '{solver}'. Currently supported options: highs, glpsol.")
             exit(-1)
