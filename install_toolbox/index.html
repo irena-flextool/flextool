@@ -34,15 +34,16 @@
           <a href=".." class="icon icon-home"> IRENA FlexTool
         </a><div role="search">
   <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
-      <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
   </form>
 </div>
       </div>
 
       <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption"><span class="caption-text">Introduction</span></p>
               <ul>
-                <li class="toctree-l1"><a class="reference internal" href="..">Introduction</a>
-                </li>
+                  <li class="toctree-l1"><a class="reference internal" href="..">Introduction</a>
+                  </li>
               </ul>
               <p class="caption"><span class="caption-text">Getting started</span></p>
               <ul class="current">
@@ -84,7 +85,7 @@
       <div class="wy-nav-content">
         <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
   <ul class="wy-breadcrumbs">
-    <li><a href=".." class="icon icon-home" alt="Docs"></a> &raquo;</li>
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a> &raquo;</li>
           <li>Getting started &raquo;</li>
       <li>Installing IRENA FlexTool - SpineToolbox</li>
     <li class="wy-breadcrumbs-aside">
@@ -101,47 +102,69 @@
 <ul>
 <li>Install <a href="https://docs.conda.io/en/latest/miniconda.html">Miniconda</a> (or Anaconda)  [Can be ignored if already installed]</li>
 <li>Start Anaconda prompt</li>
-<li>Create new Python environment [Also possible to use existing, up-to-date, Spine Toolbox environment]
-  <code>shell
-  conda create -n flextool python=3.8</code></li>
-<li>Activate the environment
-  <code>shell
-  conda activate flextool</code></li>
-<li>Install Git to the environment [Also possible to use existing Git installation]
-  <code>shell
-  conda install git</code></li>
+<li>Create new Python environment [Also possible to use existing, up-to-date, Spine Toolbox environment]</li>
+</ul>
+<pre><code class="language-shell">conda create -n flextool python=3.8
+</code></pre>
+<ul>
+<li>Activate the environment</li>
+</ul>
+<pre><code class="language-shell">conda activate flextool
+</code></pre>
+<ul>
+<li>Install Git to the environment [Also possible to use existing Git installation]</li>
+</ul>
+<pre><code class="language-shell">conda install git
+</code></pre>
+<ul>
 <li><code>cd</code> to a directory into which both FlexTool and Spine Toolbox will make their own folders</li>
-<li>Clone the FlexTool Git repository
-  <code>shell
-  git clone https://github.com/irena-flextool/flextool</code></li>
-<li>Install Spine Toolbox [Can be skipped if using existing Toolbox environment]</li>
-<li>Clone the Toolbox repository
-    <code>shell
-    git clone https://github.com/Spine-project/Spine-Toolbox.git</code></li>
-<li>cd to the freshly created folder
-    <code>shell
-    cd Spine-Toolbox</code></li>
-<li>Make sure Pip is up-to-date
-    <code>shell
-    python -m pip install --upgrade pip</code></li>
-<li>Install packages required by Toolbox
-    <code>shell
-    python -m pip install -r requirements.txt</code></li>
-<li>Launch Spine Toolbox
-  <code>shell
-  python -m spinetoolbox</code></li>
+<li>Clone the FlexTool Git repository</li>
+</ul>
+<pre><code class="language-shell">git clone https://github.com/irena-flextool/flextool
+</code></pre>
+<p>Install Spine Toolbox [Can be skipped if using existing Toolbox environment]</p>
+<ul>
+<li>Clone the Toolbox repository</li>
+</ul>
+<pre><code class="language-shell">git clone https://github.com/Spine-project/Spine-Toolbox.git
+</code></pre>
+<ul>
+<li>cd to the freshly created folder</li>
+</ul>
+<pre><code class="language-shell">cd Spine-Toolbox
+</code></pre>
+<ul>
+<li>Make sure Pip is up-to-date</li>
+</ul>
+<pre><code class="language-shell">python -m pip install --upgrade pip
+</code></pre>
+<ul>
+<li>Install packages required by Toolbox</li>
+</ul>
+<pre><code class="language-shell">python -m pip install -r requirements.txt
+</code></pre>
+<ul>
+<li>Launch Spine Toolbox</li>
+</ul>
+<pre><code class="language-shell">python -m spinetoolbox
+</code></pre>
+<ul>
 <li>Open FlexTool3 project in Spine Toolbox (Choose the flextool <em>folder</em> from File &gt; Open project dialog)</li>
 </ul>
 <p>In case of problems when installing Spine Toolbox, more instructions are available at: https://github.com/Spine-project/Spine-Toolbox#installation</p>
 <h3 id="run">Run</h3>
 <ol>
 <li>Open a conda prompt.</li>
-<li>Activate the environment
-  <code>shell
-  conda activate flextool</code></li>
-<li>Launch Spine Toolbox
-  <code>shell
-  python -m spinetoolbox</code></li>
+<li>Activate the environment</li>
+</ol>
+<pre><code class="language-shell">conda activate flextool
+</code></pre>
+<ol>
+<li>Launch Spine Toolbox</li>
+</ol>
+<pre><code class="language-shell">python -m spinetoolbox
+</code></pre>
+<ol>
 <li>
 <p>Open FlexTool3 project in Spine Toolbox (Choose the flextool <em>folder</em> from File &gt; Open project dialog)</p>
 </li>
@@ -150,12 +173,14 @@
 </li>
 </ol>
 <h2 id="updating-irena-flextool">Updating IRENA FlexTool</h2>
-<p>Update of IRENA FlexTool to the latest version is done as follows
-- Start anaconda prompt
-- <code>conda activate flextool</code> (or whatever is your conda environment name for IRENA FlexTool)
-- cd to the FlexTool directory
-- <code>git restore .</code> (THIS WILL DELETE YOUR LOCAL CHANGES TO THE FILES IN THE WORKFLOW. This will be improved in the future. Currently you can work around this by making your own input files (Excel or SQLite) and pointing the workflow items (Excel_input_data or Input_Data) to your own files instead of the input_data.sqlite or FlexTool_import_template.xlsx.) 
-- <code>git pull</code></p>
+<p>Update of IRENA FlexTool to the latest version is done as follows:</p>
+<ul>
+<li>Start anaconda prompt</li>
+<li><code>conda activate flextool</code> (or whatever is your conda environment name for IRENA FlexTool)</li>
+<li>cd to the FlexTool directory</li>
+<li><code>git restore .</code> (THIS WILL DELETE YOUR LOCAL CHANGES TO THE FILES IN THE WORKFLOW. This will be improved in the future. Currently you can work around this by making your own input files (Excel or SQLite) and pointing the workflow items (Excel_input_data or Input_Data) to your own files instead of the input_data.sqlite or FlexTool_import_template.xlsx.) </li>
+<li><code>git pull</code></li>
+</ul>
               
             </div>
           </div><footer>

@@ -34,15 +34,16 @@
           <a href=".." class="icon icon-home"> IRENA FlexTool
         </a><div role="search">
   <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
-      <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
   </form>
 </div>
       </div>
 
       <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption"><span class="caption-text">Introduction</span></p>
               <ul>
-                <li class="toctree-l1"><a class="reference internal" href="..">Introduction</a>
-                </li>
+                  <li class="toctree-l1"><a class="reference internal" href="..">Introduction</a>
+                  </li>
               </ul>
               <p class="caption"><span class="caption-text">Getting started</span></p>
               <ul>
@@ -58,20 +59,46 @@
                   <li class="toctree-l1 current"><a class="reference internal current" href="./">Tutorial</a>
     <ul class="current">
     <li class="toctree-l2"><a class="reference internal" href="#building-a-small-test-system">Building a small test system</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#1st-step-a-node-with-no-units">1st step - a node with no units</a>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#1st-step-a-node-with-no-units">1st step - a node with no units</a>
+    <li class="toctree-l3"><a class="reference internal" href="#interlude-creating-a-scenario-and-running-the-model">Interlude - creating a scenario and running the model</a>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#interlude-creating-a-scenario-and-running-the-model">Interlude - creating a scenario and running the model</a>
+    <li class="toctree-l3"><a class="reference internal" href="#2nd-step-add-a-coal-unit">2nd step - add a coal unit</a>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#2nd-step-add-a-coal-unit">2nd step - add a coal unit</a>
+    <li class="toctree-l3"><a class="reference internal" href="#interlude-visualizing-the-system-in-a-graph">Interlude - visualizing the system in a graph</a>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#interlude-visualizing-the-system-in-a-graph">Interlude - visualizing the system in a graph</a>
+    <li class="toctree-l3"><a class="reference internal" href="#3rd-step-add-a-wind-power-plant">3rd step - add a wind power plant</a>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#3rd-step-add-a-wind-power-plant">3rd step - add a wind power plant</a>
+    <li class="toctree-l3"><a class="reference internal" href="#4th-step-add-a-network">4th step - add a network</a>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#4th-step-add-a-network">4th step - add a network</a>
+    <li class="toctree-l3"><a class="reference internal" href="#5th-step-add-a-reserve">5th step - add a reserve</a>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#5th-step-add-a-reserve">5th step - add a reserve</a>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#more-functionality">More functionality</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#adding-a-storage-unit-battery">Adding a storage unit (battery)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#adding-battery-investment-capabilities">Adding battery investment capabilities</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#combined-heat-and-power-chp-example">Combined heat and power (CHP) example</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#minimum-load-example">Minimum load example</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#adding-co2-emissions-and-costs">Adding CO2 emissions and costs</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#full-year-model">Full year model</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#a-system-with-coal-wind-network-battery-and-co2-over-a-full-year">A system with coal, wind, network, battery and CO2 over a full year</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#representative-periods">Representative periods</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#multi-year-model">Multi-year model</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#discount-calculations">Discount calculations</a>
+    </li>
+        </ul>
     </li>
     </ul>
                   </li>
@@ -100,7 +127,7 @@
       <div class="wy-nav-content">
         <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
   <ul class="wy-breadcrumbs">
-    <li><a href=".." class="icon icon-home" alt="Docs"></a> &raquo;</li>
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a> &raquo;</li>
           <li>Documentation &raquo;</li>
       <li>Tutorial</li>
     <li class="wy-breadcrumbs-aside">
@@ -113,11 +140,11 @@
             <div class="section" itemprop="articleBody">
               
                 <h1 id="irena-flextool-tutorial">IRENA FlexTool tutorial</h1>
-<p>The instructions for installing IRENA FlexTool are <a href="https://github.com/irena-flextool/flextool/tree/master#irena-flextool">here</a>.</p>
-<p>This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the IRENA FlexTool web-interface, the instructions still apply, but the example figures in this tutorial will not be as helpful. IRENA FlexTool concepts are explained in more depth at this <a href="https://irena-flextool.github.io/flextool/reference">page</a>. 
+<p>The instructions for installing IRENA FlexTool are at <a href="https://irena-flextool.github.io/flextool/interface_overview">Interface overview</a>.</p>
+<p>This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the IRENA FlexTool web-interface, the instructions still apply, but the example figures in this tutorial will not be as helpful. IRENA FlexTool concepts are explained in more depth at <a href="https://irena-flextool.github.io/flextool/reference">Model Parameters</a>. 
 Video tutorial for Building a small test system can be watched <a href="https://youtu.be/O94zHxYcS94">here</a>.</p>
 <p>The small system to be built is also directly available in the FlexTool repository (<strong><em>Init</em></strong> SQLite database) and can be opened with the Spine Toolbox database editor. The default workflow for IRENA FlexTool executes the scenarios from the <strong><em>Input data</em></strong> database (and not from the <strong><em>Init</em></strong> SQLite database). The <strong><em>Input data</em></strong> database is empty by default. Therefore, if you want to use directly the contents of the <strong><em>Init</em></strong> database (instead of building the small system step-by-step), you need to copy them to the <strong><em>Input data</em></strong> database before running the scenarios in this tutorial. To copy the data, you need to execute the <strong><em>Initialize</em></strong> workflow item: select the item, press <strong><em>Execute selection</em></strong> from the toolbar. It is not advised to run the whole workflow, (<strong><em>Execute project</em></strong>) since it will copy data from two sources: the Excel based input data file and the <strong><em>Init</em></strong> database and this will create two sets of data in the <strong><em>Input data</em></strong> database. </p>
-<p>More information on how to set-up and use the Spine Toolbox front-end in <a href="https://irena-flextool.github.io/flextool/spine_toolbox">here</a>. </p>
+<p>More information on how to set-up and use the Spine Toolbox front-end in <a href="https://irena-flextool.github.io/flextool/spine_toolbox">Toolbox interface</a>. </p>
 <p>If not done already, in the flextool folder make a copy of the Results_template.sqlite and rename it Results.sqlite.</p>
 <p>Remark: in case you had already populated the <strong><em>Input data</em></strong> database, you need to delete the data before importing from <strong><em>Init</em></strong> SQLite database. This can be done with the 'purge' tool from the Database Editor menu: in <code>purge</code>, click on both <em>Select entity and value items</em>, and <em>Select scenario items</em> and then purge.</p>
 <ul>
@@ -145,7 +172,7 @@ Video tutorial for Building a small test system can be watched <a href="https://
 <p>If you have already run the whole workflow, then the <strong><em>Input_data</em></strong> database will be populated and you will need to delete the data before starting to build from scratch. This can be done with the 'purge' tool from the Database Editor menu: in <code>purge</code>, click on both <em>Select entity and value items</em>, and <em>Select scenario items</em> and then purge.</p>
 <p><strong>If you have experience in using other types of energy system models</strong> - or perhaps older versions of FlexTool - it can be sufficient to follow the tutorial while also browsing the <strong><em>Init</em></strong> database using the database editor. Finding the entity classes, entities, and parameter values in the actual database will assist in the learning process. The concept <a href="https://irena-flextool.github.io/flextool/reference">reference</a> page can also be useful.</p>
 <p>Finally, <strong>if you are a really experienced modeller</strong>, it can be enough to check the reference section starting from <a href="https://irena-flextool.github.io/flextool/reference">Essential objects for defining a power/energy system</a>. </p>
-<h2 id="1st-step-a-node-with-no-units">1st step - a node with no units</h2>
+<h3 id="1st-step-a-node-with-no-units">1st step - a node with no units</h3>
 <p>You should have the FlexTool project open in the Spine Toolbox. Then, open the <strong><em>Input data</em></strong> database by double-clicking it in the Spine Toolbox workflow.</p>
 <p>The test system is built using <code>alternatives</code>. Alternative is a subset of the system than one can include to a <code>scenario</code> that is optimized by Flextool. For example when adding a wind plant, all the objects and relationships related to only the wind plant should be under their own alternative, so that the wind plant can be included or excluded form the <code>scenario</code> seamlessly.</p>
 <ul>
@@ -197,7 +224,7 @@ Video tutorial for Building a small test system can be watched <a href="https://
 <p>Be careful when choosing datatypes! Maps need to be maps not arrays. (In the future, an update is coming to toolbox to make this easier.) </p>
 <p>The new objects, relationships and parameters have now been staged. Even though it looks like they are in the database, they really are not - they need to be <strong>committed</strong> first. This can be done from the menu of the Database Editor (there is a <em>commit</em> command) or by pressing <em>ctrl-enter</em>. One should write an informative commit message about the changes that have been made. All commits, and the data they have affected, can be seen later from the <em>history</em> menu item.</p>
 <p><img alt="Time_parameters" src="../first_model.png" /></p>
-<h2 id="interlude-creating-a-scenario-and-running-the-model">Interlude - creating a scenario and running the model</h2>
+<h3 id="interlude-creating-a-scenario-and-running-the-model">Interlude - creating a scenario and running the model</h3>
 <p>Even though the model is very simple and will not do anything interesting, it can be executed. It is first necessary to create the scenario to be executed. Scenarios are created from <code>alternatives</code> in the Scenario tree widget of the Database Editor. In the figure below, a <code>scenario</code> called <em>base</em> is created that should contain <code>alternatives</code> <em>west</em> and <em>init</em> in order to have both a node and a model structure included in the model. The new <code>scenario</code> must also be <strong>committed</strong>, before it can be used. A new scenario should be added after each step in the tutorial process. </p>
 <p><img alt="Add scenario" src="../add_scenario.png" /></p>
 <p>Once the scenario has been committed to the database, it becomes available in the Spine Toolbox workflow. One can select scenarios to be executed from the arrow that leaves the <strong><em>Input data</em></strong> database. At this point, there will be only the <em>base</em> <code>scenario</code> available and should be selected. There is also a tool filter with <em>FlexTool3</em> pre-selected. This selection needs to be present when running scenarios (it is used to filter the <code>is_active</code> entities into the scenario).</p>
@@ -207,7 +234,7 @@ Video tutorial for Building a small test system can be watched <a href="https://
 <img alt="Executed selected items" src="../execute_selected.png" /></p>
 <p>If the <strong><em>Results</em></strong> database has an error: database not found. Go to the Flextool folder, make a copy of the <em>Results_template.sqlite</em> to the same folder and name it <em>Results.sqlite</em>. After this run the <strong><em>Import_results</em></strong> tool again.</p>
 <p>It is now possible to explore model results for the <em>base</em> <code>scenario</code> using either the <strong><em>Results</em></strong> database or the Excel file that can be exported by executing the <strong><em>To_Excel</em></strong> exporter tool. When doing that, no scenarios should be selected so that the tool will create one Excel file with data from all the alternatives that are in the results database (which will make more sense once there are more scenario results). The generated Excel file can be found by selecting the <strong><em>To_Excel</em></strong> tool and clicking on the folder icon on top-right of the <strong><em>Link properties</em></strong> widget window.</p>
-<h2 id="2nd-step-add-a-coal-unit">2nd step - add a coal unit</h2>
+<h3 id="2nd-step-add-a-coal-unit">2nd step - add a coal unit</h3>
 <p>In the second step, a coal unit is added. </p>
 <ul>
 <li>The first thing is to add a new <code>alternative</code> <em>coal</em> so that all new data added in this step will become part of the <em>coal</em> <code>alternative</code>.</li>
@@ -249,13 +276,13 @@ Video tutorial for Building a small test system can be watched <a href="https://
 </ul>
 <p><img alt="Add unit" src="../add_unit.png" /></p>
 <p>To see how the results change due to the coal power plant, make a new scenario <em>coal</em> that has the <code>alternatives</code> <em>init</em>, <em>west</em> and <em>coal</em>. Run the <strong><em>Export_to_CSV</em></strong>, <strong><em>FlexTool3</em></strong> and <strong><em>Import_results</em></strong> to get the results to the <strong><em>Results</em></strong> database. If you start to get too many result <code>alternatives</code> in the <strong><em>Results</em></strong> database (e.g. if you happen to run the same scenario multiple times), you can delete old ones by removing the unwanted <code>alternatives</code> (right-click on the <code>alternative</code>) and then <strong>committing</strong> the database.</p>
-<h2 id="interlude-visualizing-the-system-in-a-graph">Interlude - visualizing the system in a graph</h2>
+<h3 id="interlude-visualizing-the-system-in-a-graph">Interlude - visualizing the system in a graph</h3>
 <p>In Spine Toolbox, it is possible to visualize your system in a graph, which will show all objects, and the relationships between them.
 To open this visualization mode, open the <strong><em>Input data</em></strong> database. In the top right corner, click on the menu. Select <strong><em>Graph</em></strong> in the <em>View</em> section.
 You may visualize all objects by selecting <em>root</em> in the <em>Object tree</em>, or choose specifically the objects you want to display by selecting them in the <em>Object tree</em> (maintain ctrl to select multiple objects).</p>
 <p><img alt="Graph_view" src="../graph_view.png" />
 <img alt="Graph_view_example" src="../graph_view_example.png" /></p>
-<h2 id="3rd-step-add-a-wind-power-plant">3rd step - add a wind power plant</h2>
+<h3 id="3rd-step-add-a-wind-power-plant">3rd step - add a wind power plant</h3>
 <p>Next, a wind power plant is added.</p>
 <ul>
 <li>Add a new <code>alternative</code> <em>wind</em></li>
@@ -296,7 +323,7 @@ You may visualize all objects by selecting <em>root</em> in the <em>Object tree<
 <p>You can now create a new scenario <em>wind</em>,  that has the <code>alternatives</code> <em>init</em>, <em>west</em>, <em>coal</em> and <em>wind</em>.
 Remember to <strong>commit</strong>, execute and have a look at the results (there should be no more penalty values used, since the coal and wind plant can together meet the demand in all hours).</p>
 <p><img alt="Add another unit" src="../add_unit2.png" /></p>
-<h2 id="4th-step-add-a-network">4th step - add a network</h2>
+<h3 id="4th-step-add-a-network">4th step - add a network</h3>
 <p>A <em>network</em> <code>alternative</code> introduces </p>
 <ul>
 <li>two new <code>nodes</code> (<em>east</em> and <em>north</em>) </li>
@@ -318,7 +345,7 @@ Remember to <strong>commit</strong>, execute and have a look at the results (the
 <p>It is also necessary to create the relationships <code>connection__node__node</code> for <em>east_north | east | north</em>, <em>west_north | west | north</em> and <em>west_east | west | east</em>.</p>
 <p>The <em>north</em> <code>node</code> has the lowest upward penalty, so the model will prefer to use that whenever the <em>coal</em> and <em>wind</em> units cannot meet all the demand. Sometimes the <code>existing</code> capacity of the new <code>connections</code> will not be sufficient to carry all the needed power, since both generators are producing to the <em>west</em> <code>node</code>. <strong>Commit</strong>, execute and explore.</p>
 <p><img alt="Add network" src="../add_network.png" /></p>
-<h2 id="5th-step-add-a-reserve">5th step - add a reserve</h2>
+<h3 id="5th-step-add-a-reserve">5th step - add a reserve</h3>
 <p>Create a new <code>alternative</code> reserve.</p>
 <p>Reserve requirement is defined for a group of nodes as the reserve can be set to be dependent on the loads of the nodes (this tutorial uses a constant reserve). Therefore, the first step is to add a new <code>group</code> called <em>electricity</em> with <em>west</em>, <em>east</em> and <em>north</em> as its members using the <code>group__node</code> relationship class. Then, a new reserve category called <em>primary</em> is added to the <code>reserve</code> object class. 
 Finally, if it does not exist yet, add a new object `UpDown', called <em>up</em> to define the reserve mode.</p>
@@ -326,16 +353,21 @@ Finally, if it does not exist yet, add a new object `UpDown', called <em>up</em>
 <p>Parameters from the <code>reserve__upDown__unit__node</code> class should be used to define how different units can contribute to different reserves. Parameter <code>max_share</code> says how large share of the total capacity of the timestep (existing * efficiency<em> (profile)) of the unit can contribute to this reserve category (e.g. </em>coal_plant<em>, in this example, has ramping restrictions and can only provide 1% of it's capacity to this upward primary reserve.) Meanwhile, parameter <code>reliability</code> affects what portion of the reserved capacity actually contributes to the reserve (e.g. in this contrived example, </em>wind_plant* must have extra capacity of 20 MW to provide 10 MW of reserve).</p>
 <p>Create the scenario, <strong>commit</strong>, execute and explore how the reserve requirements affect the model results.</p>
 <p><img alt="Add a reserve" src="../reserves.png" /></p>
-<h1 id="more-functionality">More functionality</h1>
-<h2 id="adding-a-storage-unit-battery">Adding a storage unit (battery)</h2>
-<p><strong><em>init - west - wind - battery</em></strong></p>
+<h2 id="more-functionality">More functionality</h2>
+<p>Now you have learned how to create a small model. If you want to save it, make a copy of the <em>Input_data</em> database and name it something else for example Tutorial.sqlite. Remember that you can change which database is used as the <em>Input_data</em> by clicking it. In the same way, the <em>Results</em> database can be saved and changed.</p>
+<p>For the rest of the tutorial, you can look and play with the ready scenarios from the init database. Purge <em>Input_data</em> and <em>Initialize</em> it to copy the init database to it. This can be done with the 'purge' tool from the Database Editor menu: in <code>purge</code>, click on both <em>Select entity and value items</em>, and <em>Select scenario items</em> and then purge.   </p>
+<h3 id="adding-a-storage-unit-battery">Adding a storage unit (battery)</h3>
+<p><strong>(scenario: wind_battery)</strong>
+<strong><em>init - west - wind - battery</em></strong></p>
 <p>In the <strong><em>Init</em></strong> SQLite database, there is a <code>scenario</code> <em>wind_battery</em> - the <em>wind_plant</em> alone is not able to meet the load in all conditions, but the <em>battery</em> will help it to improve the situation.</p>
 <p>In FlexTool, only <code>nodes</code> can have storage. This means that <code>existing</code> capacity and all investment parameters for <code>nodes</code> refer to the amount of storage the <code>node</code> can have. In this example, a <em>battery</em> <code>node</code> is established to describe the storage properties of the <em>battery</em> (e.g. <code>existing</code> capacity and <code>self_discharge_loss</code> in each hour). </p>
+<p>You can see that the battery has three storage methods defined. Having multiple storage methods can create infeasible problems. This is why some of the combinations shouldn't (and couldn't) be used at the same time. If multiple methods are used, some of them might be ignored by the method hierarcy. More information can be found from <a href="https://irena-flextool.github.io/flextool/reference">Model Parameters: Using nodes as storages</a>. For now, you can change the <code>storage_start_end_method</code> to <em>fix_start_end</em>. This overrides the other methods and sets the start and end capacities of the storage.</p>
 <p>Battery also needs charging and discharging capabilities. These could be presented either with a <code>connection</code> or by having a charging <code>unit</code> and a discharging <code>unit</code>. In here, we are using a <code>connection</code> called <em>batter_inverter</em>, since its easier to prevent simultaneous charging and discharging that way (although, in a linear model, this cannot be fully prevented since that requires an integer variable). Please note that the <code>efficiency</code> parameter of the <code>connection</code> applies to both directions, so the round-trip <code>efficiency</code> will be <code>efficiency</code> squared.</p>
 <p>The <code>transfer_method</code> can be used by all types of connections, but in this case it is best to choose <em>regular</em>, which tries to avoid simultaneous charging and discharing, but can still do it when the model needs to dissipate energy. <em>exact</em> method would prevent that, but it would require integer variables and make the storage computationally much more expensive. Model leakage will be reported in the results (forthcoming).</p>
 <p><img alt="Add a battery" src="../battery.png" /></p>
-<h2 id="adding-battery-investment-capabilities">Adding battery investment capabilities</h2>
-<p><strong><em>init - west - wind - battery - battery_invest</em></strong></p>
+<h3 id="adding-battery-investment-capabilities">Adding battery investment capabilities</h3>
+<p><strong>(scenario: wind_battery_invest)</strong>
+<strong><em>init - west - wind - battery - battery_invest</em></strong></p>
 <p>To make the <em>wind_battery</em> <code>scenario</code> more interesting, an option to invest in <em>battery</em> and <em>battery_inverter</em> is added. It also demonstrates how FlexTool can have more complicated constraints that the user defines through data. </p>
 <p>First, the investment parameters need to be included both for the <em>battery_inverter</em> and <em>battery</em> objects:</p>
 <ul>
@@ -364,14 +396,15 @@ Finally, if it does not exist yet, add a new object `UpDown', called <em>up</em>
   constant
 </code></pre>
 <p><img alt="Add battery investments" src="../battery_invest.png" /></p>
-<h2 id="combined-heat-and-power-chp-example">Combined heat and power (CHP) example</h2>
-<p><strong><em>init - west - coal_chp - heat</em></strong></p>
+<h3 id="combined-heat-and-power-chp-example">Combined heat and power (CHP) example</h3>
+<p><strong>(scenario: coal_chp)</strong>
+<strong><em>init - west - coal_chp - heat</em></strong></p>
 <p>This CHP plant is an another example where the user defined <code>constraint</code> (see the last equation in the previous example) is used to achieve desired behaviour. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plant the relation is more complicated - there is an allowed operating area between heat and power. Both can be depicted in FlexTool, but here a backpressure example is given. An extraction plant would require two or more <em>greater_than</em> and/or <em>lesser_than</em> <code>constraints</code> to define an operating area.</p>
 <p>First, a new <em>heat</em> <code>node</code> is added and it is given the necessary parameters. Then the <em>coal_chp</em> <code>unit</code> is made with a high <code>efficiency</code> parameter, since CHP units convert fuel energy to power and heat at high overall rates. In FlexTool, <code>efficiency</code> is a property of the unit - it demarcates at what rate the sum of inputs is converted to the sum of outputs. However, without any additional constraints, the <code>unit</code> is free to choose in what proportion to use inputs and in which proportion to use outputs. In units with only one input and output, this freedom does not exist, but in here, the <em>coal_chp</em> needs to be constrained as otherwise the unit could produce electricity at 90% efficiency, which is not feasible. </p>
 <p>This is done by adding a new <code>constraint</code> <em>coal_chp_fix</em> where the heat and power co-efficients are fixed. You need to create the two relationships <code>unit__outputNode</code>, for <em>coal_chp--heat</em> and <em>coal_chp--west</em>. As can be seen in the bottom part of the figure below, the <code>constraint_flow_coefficient</code> parameter for the <em>coal_chp--heat</em> and <em>coal_chp--west</em> is set as a map value where the <code>constraint</code> name matches with the <em>coal_chp_fix</em> <code>constraint</code> object name. The values are set so that the constraint equation forces the heat output to be twice as large as the electricity output. Again, the negative value moves the other variable to the right side of the equality, creating this:</p>
 <p><code>1 x *electricity* = 0.5 x *heat*, which is true only if *heat* is 2 x *electricity*</code></p>
 <p><img alt="Add CHP" src="../coal_chp.png" /></p>
-<h2 id="minimum-load-example">Minimum load example</h2>
+<h3 id="minimum-load-example">Minimum load example</h3>
 <p><strong><em>init - west - coal - coal_min_load</em></strong></p>
 <p>The next example is simpler. It adds a minimum load behavior to the <em>coal_plant</em> <code>unit</code>. Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a <code>startup_method</code> needs to be defined and an optional <code>startup_cost</code> can be given. The options are <em>no_startup</em>, <em>linear</em> and <em>binary</em>. <em>binary</em> would require an integer variable so <em>linear</em> is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (<em>flow</em> &gt;= <em>min_load</em> x <em>capacity_online</em>).</p>
 <p>The online variable also allows to change the efficiency of the plant between the minimum and full loads. An unit with a part-load efficiency will obey the following equation:</p>
@@ -386,23 +419,23 @@ where   slope = 1 / efficiency - section
 </code></pre>
 <p>By default, <code>input_coefficient</code> and <code>output_coefficient</code> are 1, but if there is a need to tweak their relative contributions, these coefficients allow to do so (e.g. a coal plant might have lower efficieny when using lignite than when using brown coal).</p>
 <p><img alt="Add min_load" src="../coal_min_load.png" /></p>
-<h2 id="adding-co2-emissions-and-costs">Adding CO2 emissions and costs</h2>
+<h3 id="adding-co2-emissions-and-costs">Adding CO2 emissions and costs</h3>
 <p><strong><em>init - west - coal - co2</em></strong></p>
 <p>Carbon dioxide emissions are added to FlexTool by associating relevant <code>commodities</code> (e.g. <em>coal</em>) with a <code>co2_content</code> parameter (CO2 content per MWh of energy contained in the fuel). To set a price for the CO2, the nodes that use those commodities will need to be linked to a <code>group</code> of <code>nodes</code> that set the <code>co2_price</code> (currency / CO2 ton). Therefore, in addition to what is visible in the figure below, a relationship <em>co2_price--coal_market</em> must be established so that the model knows to point the <code>CO2_price</code> to the <code>commodity</code> used from the <em>coal_market</em> <code>node</code> based on the <code>co2_content</code> of the <em>coal</em> <code>commodity</code>.</p>
 <p><img alt="Add CO2" src="../coal_co2.png" /></p>
-<h2 id="full-year-model">Full year model</h2>
+<h3 id="full-year-model">Full year model</h3>
 <p><strong><em>init - west - fullYear</em></strong></p>
 <p>So far the model has been using only two days to keep it fast to run. This example extends the model horizon to a full year. To do so, a new <code>solve</code> object <em>y2020_fullYear_dispatch</em> is added. Each <code>solve</code> object needs to know what <code>periods</code> it will contain and what <code>periods</code> it will realize (print out results). <code>solve_mode</code> does not do anything at present, but will be used when FlexTool can be set to do automatic rolling window optimization (at present, it needs to be set manually using multiple solves). The key difference here is that the <code>period_timeblockSet</code> parameter points the <em>p2020</em> period to a timeblockSet definition that covers the full year instead of the two days used before.</p>
 <p><img alt="fullYear" src="../fullYear.png" /></p>
-<h2 id="a-system-with-coal-wind-network-battery-and-co2-over-a-full-year">A system with coal, wind, network, battery and CO2 over a full year</h2>
+<h3 id="a-system-with-coal-wind-network-battery-and-co2-over-a-full-year">A system with coal, wind, network, battery and CO2 over a full year</h3>
 <p><strong><em>init - west - coal - wind - network - battery - co2 - fullYear</em></strong></p>
 <p>This example shows a system where many of the previous examples have been put into one model and run for one year. The graph below shows the physical objects in the example.</p>
 <p><img alt="Entity graph" src="../coal_wind_chp_battery_graph.png" /></p>
-<h2 id="representative-periods">Representative periods</h2>
+<h3 id="representative-periods">Representative periods</h3>
 <p><strong><em>init - west - wind - battery - battery_invest - 5weeks</em></strong></p>
 <p>When using the model for investment decisions, the model can often become too large to solve. Representative periods can be used to take a sample of a full year that tries to depict the dynamics in a reasonable manner. In FlexTool, this is done with the <code>block_duration</code> parameter. It needs to contain the starting timestep and the duration of each period as shown in figure below.</p>
 <p><img alt="Representative periods" src="../representative_periods.png" /></p>
-<h2 id="multi-year-model">Multi-year model</h2>
+<h3 id="multi-year-model">Multi-year model</h3>
 <p><strong><em>init - west - wind - coal - coal_invest - 5weeks - multi-year</em></strong></p>
 <p>A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the <em>west</em> <code>node</code>. The <code>inflow</code> time series are scaled to match the value in <code>annual_flow</code>. The model is using the <code>inflow_method</code> <em>scale_to_annual</em> in order to achieve this (default is <em>use_original</em> that would not perform scaling). There should also be a <code>discount_rate</code> parameter set for the <code>model</code> object <em>flexTool</em> if something else than the model default of 5% (0.05 value) is to be used.</p>
 <p><img alt="Multi-year model data" src="../multi_year_solves.png" /></p>
@@ -416,7 +449,7 @@ where   slope = 1 / efficiency - section
 <li><code>period_timeblockset</code> defines the set of representative 'periods' (timeblocks in FlexTool) to be used in each FlexTool <code>period</code>.</li>
 </ul>
 <p><img alt="Solve data" src="../data_for_one_solve.png" /></p>
-<h2 id="discount-calculations">Discount calculations</h2>
+<h3 id="discount-calculations">Discount calculations</h3>
 <p>Each asset that can be invested in should have <code>invest_cost</code>, <code>lifetime</code> and <code>interest_rate</code> parameters set and could have an optional <code>fixed_cost</code>. These are used to calculate the annuity of the investment. Annuity is used to annualize the investment cost, since FlexTool scales all costs (operational, investment and fixed) to annual level in order to make them comparable. Annuity is calculated as follows:</p>
 <p><code>invest_cost</code> * <code>interest_rate</code> / { 1 - [ 1 / ( 1 + <code>interest_rate</code> ) ] ^ <code>lifetime</code> } + <code>fixed_cost</code></p>
 <p>The next step is to consider discounting - future is valued less than the present. There is a model-wide assumption for the <code>discount_rate</code>. By default it is 0.05 (i.e. 5%), but it can be changed through the <code>discount_rate</code> parameter set for the <em>flexTool</em> <code>model</code> object. Discount factor for every period in the model is calculated from the <code>discount_rate</code> using the <code>years_represented</code> parameter of each <code>solve</code>, which how many years the period represents. Values for <code>years_represented</code> are used to calculate how many <code>years_from_solve_start</code> each year is. The formula is:</p>
