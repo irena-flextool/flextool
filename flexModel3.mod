@@ -2660,7 +2660,7 @@ for {e in entityInvest}
   {
     printf '%s,%.8g\n', e, 
 	  + (if not p_model['solveFirst'] then p_entity_invested[e] else 0)
-	  + sum {(e, d_invest) in ed_invest} v_invest[e, d_invest].val * p_entity_unitsize[e]
+	  + sum {(e, d_invest) in ed_invest : d_invest in period_realized} v_invest[e, d_invest].val * p_entity_unitsize[e]
 	>> fn_entity_invested;
   }
 
