@@ -280,7 +280,7 @@ param p_discount_rate{model} default 0.05;
 param p_discount_offset_investment{model} default 0;    # Calculate investment annuity assuming they are on average taking place at the middle of the year (unless other value is given)
 param p_discount_offset_operations{model} default 0.5;  # Calculate operational costs assuming they are on average taking place at the middle of the year (unless other value is given)
 
-param p_entity_invested {e in entity : e in entityInvest};
+param p_entity_invested {e in entity, d in periodAll : e in entityInvest};
 param p_entity_divested {e in entity : e in entityDivest};
 
 param scale_the_objective;
@@ -407,7 +407,7 @@ table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_in
 table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
 
 # After rolling forward the investment model
-table data IN 'CSV' 'solve_data/p_entity_invested.csv' : [entity], p_entity_invested;
+table data IN 'CSV' 'solve_data/p_entity_invested.csv' : [entity, periodAll], p_entity_invested;
 table data IN 'CSV' 'solve_data/p_entity_divested.csv' : [entity], p_entity_divested;
 
 # Reading results from previous solves
@@ -1112,15 +1112,15 @@ set process__sink_nonSync :=
 			|| ( (p, sink) in process_sink && p in process_nonSync_connection )
 			|| ( (p, sink) in process_source && p in process_nonSync_connection )  
 	    };
-param p_entity_all_existing {e in entity} :=
+param p_entity_all_existing {e in entity, d in period} :=
         + (if e in process then p_process[e, 'existing'])
         + (if e in node then p_node[e, 'existing'])
-		+ (if not p_model['solveFirst'] && e in entityInvest then p_entity_invested[e])
+		+ (if not p_model['solveFirst'] && e in entityInvest then p_entity_invested[e, d])
 		- (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
 ;
 
 param p_entity_max_capacity {e in entity, d in period} :=
-  + p_entity_all_existing[e]
+  + p_entity_all_existing[e, d]
   + if (e, d) in ed_invest_period && e not in e_invest_total then ed_invest_max_period[e, d] else 0
   + if e in e_invest_total && (e, d) not in ed_invest_period then e_invest_max_total[e] else 0
   + if (e, d) in ed_invest_period && e in e_invest_total then max(ed_invest_max_period[e, d], e_invest_max_total[e]) else 0
@@ -1298,7 +1298,7 @@ minimize total_cost:
         * v_state[n, d, t] * p_entity_unitsize[n]
 		* step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
   + sum {e in entity, d in period}  # This is constant term and will be dropped by the solver. Here for completeness.
-    + p_entity_all_existing[e]
+    + p_entity_all_existing[e, d]
       * ( + (if e in node then pdNode[e, 'fixed_cost', d] * 1000)
 	      + (if e in process then pdProcess[e, 'fixed_cost', d] * 1000)
 		)
@@ -1520,7 +1520,7 @@ s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__s
       )
   <=
   + pt_profile[f, t]
-    * ( + p_entity_all_existing[p]
+    * ( + p_entity_all_existing[p, d]
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
@@ -1536,7 +1536,7 @@ s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__s
 	  )
   >=
   + pt_profile[f, t]
-    * ( + p_entity_all_existing[p]
+    * ( + p_entity_all_existing[p, d]
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
@@ -1551,7 +1551,7 @@ s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink_
 	)
   =
   + pt_profile[f, t]
-    * ( + p_entity_all_existing[p]
+    * ( + p_entity_all_existing[p, d]
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
@@ -1561,7 +1561,7 @@ s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_
   + v_state[n, d, t] * p_entity_unitsize[n]
   <=
   + pt_profile[f, t]
-    * ( + p_entity_all_existing[n]
+    * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )
@@ -1571,7 +1571,7 @@ s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_
   + v_state[n, d, t] * p_entity_unitsize[n]
   >=
   + pt_profile[f, t]
-    * ( + p_entity_all_existing[n]
+    * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )
@@ -1581,7 +1581,7 @@ s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, 
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
   + pt_profile[f, t]
-    * ( + p_entity_all_existing[n]
+    * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )
@@ -1594,7 +1594,7 @@ s.t. storage_state_start {n in nodeState, (d, t) in period__time_first
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
   + p_node[n,'storage_state_start']
-    * ( + p_entity_all_existing[n]
+    * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )
@@ -1607,7 +1607,7 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
   + p_node[n,'storage_state_end']
-    * ( + p_entity_all_existing[n]
+    * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )
@@ -1624,7 +1624,7 @@ s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in peri
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
   + p_node[n,'storage_state_reference_value']
-    * ( + p_entity_all_existing[n]
+    * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )
@@ -1723,7 +1723,7 @@ s.t. process_constraint_equal {(c, 'equal') in constraint__sense, (d, t) in dt} 
 s.t. maxState {n in nodeState, (d, t) in dt} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   <=
-  + p_entity_all_existing[n]
+  + p_entity_all_existing[n, d]
   + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[n]
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[n]
 ;
@@ -1734,7 +1734,7 @@ s.t. maxToSink {(p, source, sink) in process__source__sink_isNodeSink, (d, t) in
   <=
   + ( if p not in process_online then
       + p_process_sink_coefficient[p, sink]
-        * ( + p_entity_all_existing[p]
+        * ( + p_entity_all_existing[p, d]
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	      )	
@@ -1764,7 +1764,7 @@ s.t. minToSink_1var {(p, source, sink) in process__source__sink_isNodeSink_yes2w
   >=
   - ( if p not in process_online then
       + p_process_sink_coefficient[p, sink] 
-        * ( + p_entity_all_existing[p]
+        * ( + p_entity_all_existing[p, d]
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	      )	
@@ -1788,7 +1788,7 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt} :
   <=
   + ( if p not in process_online then
       + p_process_source_coefficient[p, source] 
-        * ( + p_entity_all_existing[p]
+        * ( + p_entity_all_existing[p, d]
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	      )	
@@ -1816,7 +1816,7 @@ s.t. maxOnline {p in process_online, (d, t) in dt} :
   + (if p in process_online_linear then v_online_linear[p, d, t])
   + (if p in process_online_integer then v_online_integer[p, d, t])
   <=
-  + p_entity_all_existing[p] / p_entity_unitsize[p]
+  + p_entity_all_existing[p, d] / p_entity_unitsize[p]
   + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest]
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 ;
@@ -1839,7 +1839,7 @@ s.t. maxStartup {p in process_online, (d, t) in dt} :
   + (if p in process_online_linear then v_startup_linear[p, d, t])
   + (if p in process_online_integer then v_startup_integer[p, d, t])
   <=
-  + p_entity_all_existing[p] / p_entity_unitsize[p]
+  + p_entity_all_existing[p, d] / p_entity_unitsize[p]
   + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest]
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 ;
@@ -1862,7 +1862,7 @@ s.t. maxShutdown {p in process_online, (d, t) in dt} :
   + (if p in process_online_linear then v_shutdown_linear[p, d, t])
   + (if p in process_online_integer then v_shutdown_integer[p, d, t])
   <=
-  + p_entity_all_existing[p] / p_entity_unitsize[p]
+  + p_entity_all_existing[p, d] / p_entity_unitsize[p]
   + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest]
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 ;
@@ -1870,7 +1870,7 @@ s.t. maxShutdown {p in process_online, (d, t) in dt} :
 #s.t. minimum_downtime {p in process_online, t : p_process[u,'min_downtime'] >= step_duration[t]} :
 #  + v_online_linear[p, d, t]
 #  <=
-#  + p_entity_all_existing[p] / p_entity_unitsize[p]
+#  + p_entity_all_existing[p, d] / p_entity_unitsize[p]
 #  + sum {(p, d_invest, d) in edd_invest} [p, d_invest]
 #   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 #  - sum{(d, t_) in dt : t_ > t && t_ <= t + p_process[u,'min_downtime'] / time_period_duration} (
@@ -1902,7 +1902,7 @@ s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_w
   + p_process_source[p, source, 'ramp_speed_up']
     * 60 * step_duration[d, t]
 	* p_process_source_coefficient[p, source]
-    * ( + p_entity_all_existing[p]
+    * ( + p_entity_all_existing[p, d]
 	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
@@ -1918,7 +1918,7 @@ s.t. ramp_sink_up_constraint {(p, source, sink, d, t, t_previous, t_previous_wit
   + p_process_sink[p, sink, 'ramp_speed_up']
     * 60 * step_duration[d, t]
 	* p_process_sink_coefficient[p, sink]
-    * ( + p_entity_all_existing[p]
+    * ( + p_entity_all_existing[p, d]
 	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
@@ -1934,7 +1934,7 @@ s.t. ramp_source_down_constraint {(p, source, sink, d, t, t_previous, t_previous
   - p_process_sink[p, source, 'ramp_speed_down']
     * 60 * step_duration[d, t]
 	* p_process_source_coefficient[p, source]
-    * ( + p_entity_all_existing[p]
+    * ( + p_entity_all_existing[p, d]
 	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
@@ -1950,7 +1950,7 @@ s.t. ramp_sink_down_constraint {(p, source, sink, d, t, t_previous, t_previous_w
   - p_process_sink[p, sink, 'ramp_speed_down']
     * 60 * step_duration[d, t]
 	* p_process_sink_coefficient[p, sink]
-    * ( + p_entity_all_existing[p]
+    * ( + p_entity_all_existing[p, d]
 	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
@@ -1970,7 +1970,7 @@ s.t. reserve_process_upward{(p, r, 'up', n, d, t) in prundt} :
     else
       + p_process_reserve_upDown_node[p, r, 'up', n, 'max_share'] 
         * (
-            + p_entity_all_existing[p]
+            + p_entity_all_existing[p, d]
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
           )
@@ -1986,7 +1986,7 @@ s.t. reserve_process_downward{(p, r, 'down', n, d, t) in prundt} :
   <=
   + p_process_reserve_upDown_node[p, r, 'down', n, 'max_share']
     * ( + sum{(p, source, n) in process_source_sink} v_flow[p, source, n, d, t] * p_entity_unitsize[p]
-        - ( + p_entity_all_existing[p]
+        - ( + p_entity_all_existing[p, d]
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
           ) * ( if (sum{(p, prof, 'lower_limit') in process__profile__profile_method} 1) then
@@ -2019,9 +2019,9 @@ s.t. minDivestGroup_entity_period {(g, d) in gd_divest_period} :
   + pdGroup[g, 'retire_min_period', d]
 ;
 
-s.t. maxInvestGroup_entity_total {g in g_invest_total} :
-  + sum{(g, e) in group_entity, d in period : e in entityInvest} v_invest[e, d] * p_entity_unitsize[e]
-  + sum{(g, e) in group_entity : e in entityInvest} (if not p_model['solveFirst'] then p_entity_invested[e])
+s.t. maxInvestGroup_entity_total {g in g_invest_total, d in period} :
+  + sum{(g, e) in group_entity, d_invest in period : (e, d_invest, d) in edd_invest} v_invest[e, d] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity} (if not p_model['solveFirst'] then p_entity_invested[e, d] else 0)
   <=
   + p_group[g, 'invest_max_total']
 ;
@@ -2033,9 +2033,9 @@ s.t. maxDivestGroup_entity_total {g in g_divest_total} :
   + p_group[g, 'retire_max_total']
 ;
 
-s.t. minInvestGroup_entity_total {g in g_invest_total} :
-  + sum{(g, e) in group_entity, d in period : e in entityInvest} v_invest[e, d] * p_entity_unitsize[e]
-  + sum{(g, e) in group_entity : e in entityInvest} (if not p_model['solveFirst'] then p_entity_invested[e])
+s.t. minInvestGroup_entity_total {g in g_invest_total, d in period} :
+  + sum{(g, e) in group_entity, d_invest in period : (e, d_invest, d) in edd_invest} v_invest[e, d] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity} (if not p_model['solveFirst'] then p_entity_invested[e, d] else 0)
   >=
   + p_group[g, 'invest_min_total']
 ;
@@ -2071,9 +2071,9 @@ s.t. minDivest_entity_period {(e, d)  in ed_divest_period} :  # Covers both proc
   + ed_divest_min_period[e, d]
 ;
 
-s.t. maxInvest_entity_total {e in e_invest_total} :  # Covers both processes and nodes
-  + sum{(e, d) in ed_invest} v_invest[e, d] * p_entity_unitsize[e] 
-  + (if not p_model['solveFirst'] then p_entity_invested[e])
+s.t. maxInvest_entity_total {e in e_invest_total, d in period} :  # Covers both processes and nodes
+  + sum{(e, d_invest, d) in edd_invest} v_invest[e, d] * p_entity_unitsize[e] 
+  + (if not p_model['solveFirst'] then p_entity_invested[e, d])
   <= 
   + e_invest_max_total[e]
 ;
@@ -2085,9 +2085,9 @@ s.t. maxDivest_entity_total {e in e_divest_total} :  # Covers both processes and
   + e_divest_max_total[e]
 ;
 
-s.t. minInvest_entity_total {e in e_invest_total} :  # Covers both processes and nodes
-  + sum{(e, d) in ed_invest} v_invest[e, d] * p_entity_unitsize[e] 
-  + (if not p_model['solveFirst'] then p_entity_invested[e])
+s.t. minInvest_entity_total {e in e_invest_total, d in period} :  # Covers both processes and nodes
+  + sum{(e, d_invest, d) in edd_invest} v_invest[e, d] * p_entity_unitsize[e] 
+  + (if not p_model['solveFirst'] then p_entity_invested[e, d])
   >= 
   + e_invest_min_total[e]
 ;
@@ -2335,7 +2335,7 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
 		   && p in process_unit
 		} 
     ( + pt_profile[f, t]
-        * ( + p_entity_all_existing[p]
+        * ( + p_entity_all_existing[p, d]
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	      )
@@ -2349,7 +2349,7 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
 		   && p in process_unit
 		} 
 	(
-      + ( + p_entity_all_existing[p]
+      + ( + p_entity_all_existing[p, d]
           + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
           - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
         )
@@ -2396,7 +2396,7 @@ param w_solve := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total
 display w_solve;
 
 param entity_all_capacity{e in entity, d in period_realized} :=
-  + p_entity_all_existing[e]
+  + p_entity_all_existing[e, d]
   + sum {(e, d2) in ed_invest : d2 <= d} v_invest[e, d2].val * p_entity_unitsize[e]
   - sum {(e, d2) in ed_divest : d2 <= d} v_divest[e, d2].val * p_entity_unitsize[e]
 ;
@@ -2599,7 +2599,7 @@ param r_cost_entity_divest_d{(e, d) in ed_divest} :=
 ;
 
 param r_cost_entity_existing_fixed{e in entity, d in period : (e, d) not in ed_invest} :=
-  + p_entity_all_existing[e]
+  + p_entity_all_existing[e, d]
       * ( + if e in process then pdProcess[e, 'fixed_cost', d] else 0 
 	      + if e in node then pdNode[e, 'fixed_cost', d] else 0 
 		)
@@ -2663,12 +2663,12 @@ param potentialVREgen{(p, n) in process_sink, d in period_realized : p in proces
 
 printf 'Transfer investments to the next solve...\n';
 param fn_entity_invested symbolic := "solve_data/p_entity_invested.csv";
-printf 'entity,p_entity_invested\n' > fn_entity_invested;
-for {e in entityInvest} 
+printf 'entity,periodAll,p_entity_invested\n' > fn_entity_invested;
+for {e in entityInvest, d in periodAll} 
   {
-    printf '%s,%.8g\n', e, 
-	  + (if not p_model['solveFirst'] then p_entity_invested[e] else 0)
-	  + sum {(e, d_invest) in ed_invest : d_invest in period_realized} v_invest[e, d_invest].val * p_entity_unitsize[e]
+    printf '%s,%s,%.8g\n', e, d, 
+	  + (if not p_model['solveFirst'] then p_entity_invested[e, d] else 0)
+	  + sum{(e, d_invest, d) in edd_invest : d_invest in period_realized} ( v_invest[e, d_invest].val ) * p_entity_unitsize[e]
 	>> fn_entity_invested;
   }
 
@@ -2690,7 +2690,7 @@ for {i in 1..1 : p_model['solveFirst']}
 for {s in solve_current, p in process_unit, d in period_realized}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
-	        p_entity_all_existing[p], 
+	        p_entity_all_existing[p, d], 
 			(if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0), 
 			(if (p, d) in pd_divest then v_divest[p, d].val * p_entity_unitsize[p] else 0), 
 			entity_all_capacity[p, d]
@@ -2706,7 +2706,7 @@ for {i in 1..1 : p_model['solveFirst']}
 for {s in solve_current, p in process_connection, d in period_realized}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
-	        p_entity_all_existing[p],
+	        p_entity_all_existing[p, d],
 			(if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0),
 			(if (p, d) in pd_divest then v_divest[p, d].val * p_entity_unitsize[p] else 0),
 			+ entity_all_capacity[p, d] 
@@ -2720,7 +2720,7 @@ for {i in 1..1 : p_model['solveFirst']}
 for {s in solve_current, e in nodeState, d in period_realized}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', e, s, d, 
-	        p_entity_all_existing[e],
+	        p_entity_all_existing[e, d],
 			(if (e, d) in ed_invest then v_invest[e, d].val * p_entity_unitsize[e] else 0),
 			(if (e, d) in ed_divest then v_divest[e, d].val * p_entity_unitsize[e] else 0),
 			+ entity_all_capacity[e, d]
@@ -3797,5 +3797,5 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 display v_invest, v_divest;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
 #display v_startup_integer;
-display p_years_from_solve, p_years_d, edd_invest;
+display p_entity_invested, v_invest, edd_invest;
 end;
