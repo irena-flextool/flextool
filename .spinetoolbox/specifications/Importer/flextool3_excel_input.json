@@ -2998,6 +2998,58 @@
                         ]
                     }
                 }
+            ],
+            "solver_commands": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "solve",
+                                "read_start_row": 1
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "solver_commands"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "array"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": -3
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -3042,7 +3094,8 @@
             "connection_node_constraint_c",
             "node_constraint_c",
             "unit_constraint_c",
-            "connection_constraint_c"
+            "connection_constraint_c",
+            "solver_commands"
         ],
         "table_options": {
             "solve_sequence": {
@@ -3670,6 +3723,26 @@
                 "1": "string",
                 "2": "string",
                 "3": "float"
+            },
+            "solver_commands": {
+                "2": "float",
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float",
+                "19": "float"
             }
         },
         "table_default_column_type": {
@@ -3822,6 +3895,9 @@
                 "1": "string"
             },
             "connection_constraint_c": {
+                "1": "string"
+            },
+            "solver_commands": {
                 "1": "string"
             }
         },

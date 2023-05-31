@@ -40,24 +40,36 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
 ### Definitions
 
 - **model**: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)
+
   - *solves*: sequence of solves in the model represented with an array of solve names.
   - *discount_offset_investment*: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.
   - *discount_offset_operations*: [years] Offset from the period (often year) start to the payment of operational costs. 
+  
 - **solve**: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.
+
   - *period_timeblockset*: map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name.
   - *realized_periods*: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve
   - *invest_periods*: array of periods where investements are allowed in this solve (applies only to objects that can be invested in)
   - *years_represented*: Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years.
-  - *solver*: choice of a solver (a list of possible values)
+  - *solver*: choice of a solver ('highs'(default), 'glpsol', 'cplex' (requires a licence))
   - *highs_method*: HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.
   - *highs_parallel*: HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.
   - *highs_presolve*: HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large. 
   - *solve_mode*: a single shot or a set of rolling optimisation windows solved in a sequence (not functional yet, always a single shot).
+  - For commercial solvers:
+
+    - *solver_wrapper* the commandline text in front of the call for the commercial (CPLEX) solver. For a possibility of reserving a floating licence for the duration of the solve
+    - *solver_commands* Array of additional commands passed to the commercial solver. Made for setting optimization parameters.
+
 - **timeblockset**: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)
+
   - *block_duration* a map with index *timestep_name* that starts the timeblock and value that defines the duration of the block (how many timesteps)
+
 - **timeline**: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.
+
   - *timestep_duration*: a map with *timestep_name* as an index and *duration* as a value.
   - *timeline_duration_in_years* Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.
+
 - **timeblockset__timeline**: defines which timeline object particular timeblockset is using.
 
 
@@ -122,7 +134,7 @@ There are three methods associated with storage start and end values: `storage_b
   2. `storage_binding_method`
   3. `storage_solve_horizon_method`
 
-- Meaning:
+-Meaning:
 
   - The `storage_binding_method` is ignored (exeption *bind_forward_only*), if `storage_start_end_method` has the value *fix_start_end*,
   - The `storage_solve_horizon_method` *use_reference_value* is ignored, if other storage state methods are used. Only exeptions are *fix_start* or *bind_forward_only*
