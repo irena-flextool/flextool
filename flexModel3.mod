@@ -2397,8 +2397,8 @@ display w_solve;
 
 param entity_all_capacity{e in entity, d in period_realized} :=
   + p_entity_all_existing[e, d]
-  + sum {(e, d2) in ed_invest : d2 <= d} v_invest[e, d2].val * p_entity_unitsize[e]
-  - sum {(e, d2) in ed_divest : d2 <= d} v_divest[e, d2].val * p_entity_unitsize[e]
+  + sum {(e, d_invest, d) in edd_invest} v_invest[e, d_invest].val * p_entity_unitsize[e]
+  - sum {(e, d_divest) in ed_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[e, d_divest].val * p_entity_unitsize[e]
 ;
 
 param r_process_online_dt{p in process_online, (d, t) in dt} :=
@@ -2669,6 +2669,7 @@ for {e in entityInvest, d in periodAll}
     printf '%s,%s,%.8g\n', e, d, 
 	  + (if not p_model['solveFirst'] then p_entity_invested[e, d] else 0)
 	  + sum{(e, d_invest, d) in edd_invest : d_invest in period_realized} ( v_invest[e, d_invest].val ) * p_entity_unitsize[e]
+#	  + sum{(e, d_invest, d) in edd_invest : d_invest in period_realized && not p_model['solveLast']} ( v_invest[e, d_invest].val ) * p_entity_unitsize[e]
 	>> fn_entity_invested;
   }
 
@@ -3795,7 +3796,6 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 #display {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in test_dt}: ptProcess_sink[p, sink, param, t];
 display v_invest, v_divest;
-#display {(e, d) in ed_invest} : v_invest[e, d].dual;
 #display v_startup_integer;
-display p_entity_invested, v_invest, edd_invest;
+display p_entity_invested, v_invest, ed_entity_annual_discounted;
 end;
