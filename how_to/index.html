@@ -5,14 +5,14 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland" />
       <link rel="shortcut icon" href="../img/favicon.ico" />
-    <title>How to - IRENA FlexTool</title>
+    <title>Examples on how to - IRENA FlexTool</title>
     <link rel="stylesheet" href="../css/theme.css" />
     <link rel="stylesheet" href="../css/theme_extra.css" />
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.5.0/styles/github.min.css" />
     
       <script>
         // Current page data
-        var mkdocs_page_name = "How to";
+        var mkdocs_page_name = "Examples on how to";
         var mkdocs_page_input_path = "how_to.md";
         var mkdocs_page_url = null;
       </script>
@@ -34,7 +34,7 @@
           <a href=".." class="icon icon-home"> IRENA FlexTool
         </a><div role="search">
   <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
-      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+      <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
   </form>
 </div>
       </div>
@@ -83,8 +83,8 @@
       <div class="wy-nav-content">
         <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
   <ul class="wy-breadcrumbs">
-    <li><a href=".." class="icon icon-home" aria-label="Docs"></a> &raquo;</li>
-      <li>How to</li>
+    <li><a href=".." class="icon icon-home" alt="Docs"></a> &raquo;</li>
+      <li>Examples on how to</li>
     <li class="wy-breadcrumbs-aside">
           <a href="https://github.com/irena-flextool/flextool/edit/master/docs/how_to.md" class="icon icon-github"> Edit on GitHub</a>
     </li>
@@ -94,7 +94,22 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
             <div class="section" itemprop="articleBody">
               
-                <p>Examples of creating parts of the system are added here in the future</p>
+                <h1 id="examples-on-how-to">Examples on how to</h1>
+<h2 id="how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</h2>
+<p>Using CPLEX requires that you have installed the software, have a licence for it and have added it to PATH or to the environment where you are using the FlexTool, so that the tool can find the solver.</p>
+<p>CPLEX is used when the <strong>solve</strong> parameter <em>solver</em> is set to 'cplex'. The tool passes the built optimization model to the CPLEX solver and converts the solutionfile to the filetype it requires. The solver will produce two additional files to the work directory: 'cplex.log' and 'flexModel3_cplex.sol'. The former is the logfile of the solver and the latter contains the solution in the CPLEX format.</p>
+<p>The tool uses <a href="https://www.ibm.com/docs/en/icos/12.8.0.0?topic=cplex-interactive-optimizer">Interactive Optimizer</a> to pass the problem to the solver. The default command used:</p>
+<pre><code class="language-shell">cplex -c 'read inputfile' 'opt' 'write outputfile' 'quit'
+</code></pre>
+<p>Additional parameters:</p>
+<ul>
+<li><em>solver_wrapper</em> creates a text in front of the cplex call. This is useful when dealing with floating licences and if the licence system you are using allows to reserve the licence for the duration of the cplex program with a command line argument.</li>
+<li><em>solver_command</em> is an array containing additional CPLEX solver commands</li>
+</ul>
+<p>With these parameters, the command line call is:</p>
+<pre><code class="language-shell">solver_wrapper cplex -c 'read inputfile' 'solver_command1' 'solver_command2' ... 'solver_command_last' 'opt' 'write outputfile' 'quit'
+</code></pre>
+<p><img alt="Cplex parameters" src="./CPLEX.png" /></p>
               
             </div>
           </div><footer>

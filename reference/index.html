@@ -34,7 +34,7 @@
           <a href=".." class="icon icon-home"> IRENA FlexTool
         </a><div role="search">
   <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
-      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+      <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
   </form>
 </div>
       </div>
@@ -151,7 +151,7 @@
       <div class="wy-nav-content">
         <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
   <ul class="wy-breadcrumbs">
-    <li><a href=".." class="icon icon-home" aria-label="Docs"></a> &raquo;</li>
+    <li><a href=".." class="icon icon-home" alt="Docs"></a> &raquo;</li>
           <li>Documentation &raquo;</li>
       <li>Model parameters</li>
     <li class="wy-breadcrumbs-aside">
@@ -193,26 +193,55 @@
 <p>Timeblocks pick one or more sections from the <code>timeline</code> to form a <code>timeblockset</code>. Each timeblock defines a start and a duration. The aim of timeblocksets is to allow the modeller to create models with representative periods often used in the investment planning.</p>
 <h3 id="definitions">Definitions</h3>
 <ul>
-<li><strong>model</strong>: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)</li>
-<li><em>solves</em>: sequence of solves in the model represented with an array of solve names.</li>
+<li>
+<p><strong>model</strong>: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)</p>
+</li>
+<li>
+<p><em>solves</em>: sequence of solves in the model represented with an array of solve names.</p>
+</li>
 <li><em>discount_offset_investment</em>: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.</li>
-<li><em>discount_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs. </li>
-<li><strong>solve</strong>: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.</li>
-<li><em>period_timeblockset</em>: map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name.</li>
+<li>
+<p><em>discount_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs. </p>
+</li>
+<li>
+<p><strong>solve</strong>: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.</p>
+</li>
+<li>
+<p><em>period_timeblockset</em>: map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name.</p>
+</li>
 <li><em>realized_periods</em>: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve</li>
 <li><em>invest_periods</em>: array of periods where investements are allowed in this solve (applies only to objects that can be invested in)</li>
 <li><em>years_represented</em>: Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years.</li>
-<li><em>solver</em>: choice of a solver (a list of possible values)</li>
+<li><em>solver</em>: choice of a solver ('highs'(default), 'glpsol', 'cplex' (requires a licence))</li>
 <li><em>highs_method</em>: HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.</li>
 <li><em>highs_parallel</em>: HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.</li>
 <li><em>highs_presolve</em>: HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large. </li>
 <li><em>solve_mode</em>: a single shot or a set of rolling optimisation windows solved in a sequence (not functional yet, always a single shot).</li>
-<li><strong>timeblockset</strong>: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)</li>
-<li><em>block_duration</em> a map with index <em>timestep_name</em> that starts the timeblock and value that defines the duration of the block (how many timesteps)</li>
-<li><strong>timeline</strong>: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.</li>
-<li><em>timestep_duration</em>: a map with <em>timestep_name</em> as an index and <em>duration</em> as a value.</li>
-<li><em>timeline_duration_in_years</em> Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.</li>
-<li><strong>timeblockset__timeline</strong>: defines which timeline object particular timeblockset is using.</li>
+<li>
+<p>For commercial solvers:</p>
+<ul>
+<li><em>solver_wrapper</em> the commandline text in front of the call for the commercial (CPLEX) solver. For a possibility of reserving a floating licence for the duration of the solve</li>
+<li><em>solver_commands</em> Array of additional commands passed to the commercial solver. Made for setting optimization parameters.</li>
+</ul>
+</li>
+<li>
+<p><strong>timeblockset</strong>: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)</p>
+</li>
+<li>
+<p><em>block_duration</em> a map with index <em>timestep_name</em> that starts the timeblock and value that defines the duration of the block (how many timesteps)</p>
+</li>
+<li>
+<p><strong>timeline</strong>: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.</p>
+</li>
+<li>
+<p><em>timestep_duration</em>: a map with <em>timestep_name</em> as an index and <em>duration</em> as a value.</p>
+</li>
+<li>
+<p><em>timeline_duration_in_years</em> Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.</p>
+</li>
+<li>
+<p><strong>timeblockset__timeline</strong>: defines which timeline object particular timeblockset is using.</p>
+</li>
 </ul>
 <h2 id="nodes">Nodes</h2>
 <h3 id="defining-how-the-node-functions">Defining how the node functions</h3>
@@ -270,17 +299,13 @@
 <ol>
 <li><code>storage_start_end_method</code></li>
 <li><code>storage_binding_method</code></li>
-<li>
-<p><code>storage_solve_horizon_method</code></p>
-</li>
-<li>
-<p>Meaning:</p>
-</li>
-<li>
-<p>The <code>storage_binding_method</code> is ignored (exeption <em>bind_forward_only</em>), if <code>storage_start_end_method</code> has the value <em>fix_start_end</em>,</p>
-</li>
-<li>The <code>storage_solve_horizon_method</code> <em>use_reference_value</em> is ignored, if other storage state methods are used. Only exeptions are <em>fix_start</em> or <em>bind_forward_only</em></li>
+<li><code>storage_solve_horizon_method</code></li>
 </ol>
+<p>-Meaning:</p>
+<ul>
+<li>The <code>storage_binding_method</code> is ignored (exeption <em>bind_forward_only</em>), if <code>storage_start_end_method</code> has the value <em>fix_start_end</em>,</li>
+<li>The <code>storage_solve_horizon_method</code> <em>use_reference_value</em> is ignored, if other storage state methods are used. Only exeptions are <em>fix_start</em> or <em>bind_forward_only</em></li>
+</ul>
 <h2 id="units">Units</h2>
 <p>Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine), but the can also have multiple inputs and/or outputs (e.g. combined heat and power plant). The input nodes are defined with the relationship <code>unit--inputNode</code> while the output nodes are defined through the relationship <code>unit--outputNode</code>.</p>
 <h3 id="defining-how-the-unit-functions">Defining how the unit functions</h3>
