@@ -4325,13 +4325,13 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
-        "solver_wrapper": {
+        "solver_precommand": {
             "type": "object_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "solver_wrapper"
+                    "value": "solver_precommand"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -4341,7 +4341,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "solver_wrapper"
+                    "filter_re": "solver_precommand"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -4364,7 +4364,7 @@
                 {
                     "map_type": "ParameterValue",
                     "position": 1,
-                    "header": "solver_wrapper"
+                    "header": "solver_precommand"
                 }
             ],
             "enabled": true,
@@ -4372,13 +4372,13 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
-        "solver_commands": {
+        "solver_arguments": {
             "type": "object_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "solver_commands"
+                    "value": "solver_arguments"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -4388,7 +4388,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "solver_commands"
+                    "filter_re": "solver_arguments"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -4419,7 +4419,8 @@
                 },
                 {
                     "map_type": "ExpandedValue",
-                    "position": 1
+                    "position": 1,
+                    "header": "arguments"
                 }
             ],
             "enabled": true,

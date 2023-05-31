@@ -5,12 +5,23 @@
         "table_mappings": {
             "solve_sequence": [
                 {
-                    "Mapping 1": {
+                    "Solve settings": {
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
                                 "position": "hidden",
-                                "value": "solve"
+                                "value": "solve",
+                                "skip_columns": [
+                                    8,
+                                    9,
+                                    10,
+                                    11,
+                                    12,
+                                    13,
+                                    14,
+                                    15,
+                                    16
+                                ]
                             },
                             {
                                 "map_type": "Object",
@@ -40,7 +51,7 @@
                     }
                 },
                 {
-                    "Mapping 2": {
+                    "Solve sequence": {
                         "mapping": [
                             {
                                 "map_type": "ObjectClass",
@@ -90,6 +101,64 @@
                             {
                                 "map_type": "ExpandedValue",
                                 "position": 1
+                            }
+                        ]
+                    }
+                },
+                {
+                    "Solver arguments": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "solve",
+                                "skip_columns": [
+                                    2,
+                                    3,
+                                    4,
+                                    5,
+                                    6,
+                                    7
+                                ]
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "solver_arguments"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "array"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "argument"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
                             }
                         ]
                     }
@@ -2998,58 +3067,6 @@
                         ]
                     }
                 }
-            ],
-            "solver_commands": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden",
-                                "value": "solve",
-                                "read_start_row": 1
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": 1
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterDefinition",
-                                "position": "hidden",
-                                "value": "solver_commands"
-                            },
-                            {
-                                "map_type": "Alternative",
-                                "position": 0
-                            },
-                            {
-                                "map_type": "ParameterValueMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValueType",
-                                "position": "hidden",
-                                "value": "array"
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": -2
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ExpandedValue",
-                                "position": -3
-                            }
-                        ]
-                    }
-                }
             ]
         },
         "selected_tables": [
@@ -3094,8 +3111,7 @@
             "connection_node_constraint_c",
             "node_constraint_c",
             "unit_constraint_c",
-            "connection_constraint_c",
-            "solver_commands"
+            "connection_constraint_c"
         ],
         "table_options": {
             "solve_sequence": {
@@ -3174,7 +3190,18 @@
                 "2": "string",
                 "3": "string",
                 "4": "string",
-                "5": "string"
+                "5": "string",
+                "6": "string",
+                "7": "string",
+                "8": "string",
+                "9": "string",
+                "10": "string",
+                "11": "string",
+                "12": "string",
+                "13": "string",
+                "14": "string",
+                "15": "string",
+                "16": "string"
             },
             "timeblockSet": {
                 "0": "string",
@@ -3723,26 +3750,6 @@
                 "1": "string",
                 "2": "string",
                 "3": "float"
-            },
-            "solver_commands": {
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float"
             }
         },
         "table_default_column_type": {
@@ -3777,7 +3784,8 @@
             "connection_node_constraint_c": "float",
             "node_constraint_c": "float",
             "unit_constraint_c": "float",
-            "connection_constraint_c": "float"
+            "connection_constraint_c": "float",
+            "solve_sequence": "string"
         },
         "table_row_types": {
             "solve_sequence": {
@@ -3895,9 +3903,6 @@
                 "1": "string"
             },
             "connection_constraint_c": {
-                "1": "string"
-            },
-            "solver_commands": {
                 "1": "string"
             }
         },

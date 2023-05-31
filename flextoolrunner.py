@@ -43,8 +43,8 @@ class FlexToolRunner:
         self.timeblocks_used_by_solves = self.get_timeblocks_used_by_solves()
         self.invest_periods = self.get_list_of_tuples('input/solve__invest_period.csv')
         self.realized_periods = self.get_list_of_tuples('input/solve__realized_period.csv')
-        self.solver_wrapper = self.get_solver_wrapper()
-        self.solver_commands = self.get_solver_commands()
+        self.solver_precommand = self.get_solver_precommand()
+        self.solver_arguments = self.get_solver_arguments()
         #self.write_full_timelines(self.timelines, 'steps.csv')
 
     def get_solves(self):
@@ -126,41 +126,41 @@ class FlexToolRunner:
         #        solver_dict[solve__period[0]] = solve__period[1]
         return solver_dict
 
-    def get_solver_wrapper(self):
+    def get_solver_precommand(self):
         """
         read in
-        the solver_wrapper for each solve. return it as a list of strings
+        the solver_precommand for each solve. return it as a list of strings
         :return:
         """
-        with open('input/solver_wrapper.csv', 'r') as blk:
+        with open('input/solver_precommand.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
-            solver_wrapper_dict = defaultdict()
+            solver_precommand_dict = defaultdict()
             while True:
                 try:
                     datain = next(filereader)
-                    solver_wrapper_dict[datain[0]] = datain[1]
+                    solver_precommand_dict[datain[0]] = datain[1]
                 except StopIteration:
                     break
-        return solver_wrapper_dict
+        return solver_precommand_dict
         
-    def get_solver_commands(self):
+    def get_solver_arguments(self):
         """
         read in
         the solver commands for each solve. return it as a list of strings
         :return:
         """
-        with open('input/solver_commands.csv', 'r') as blk:
+        with open('input/solver_arguments.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
-            solver_commands_dict = defaultdict(list)
+            solver_arguments_dict = defaultdict(list)
             while True:
                 try:
                     datain = next(filereader)
-                    solver_commands_dict[datain[0]].append((datain[1]))
+                    solver_arguments_dict[datain[0]].append((datain[1]))
                 except StopIteration:
                     break
-        return solver_commands_dict
+        return solver_arguments_dict
 
 
     def get_timeblocks_used_by_solves(self):
@@ -423,10 +423,10 @@ class FlexToolRunner:
                 print("GLPSOL wrote the results into csv files\n")
             
         elif solver == "cplex" or solver == "gurobi":
-            if current_solve not in self.solver_wrapper.keys():
+            if current_solve not in self.solver_precommand.keys():
                 s_wrapper = ''
             else:
-                s_wrapper = self.solver_wrapper[current_solve]
+                s_wrapper = self.solver_precommand[current_solve]
 
             highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat',
                            '--wfreemps', 'flexModel3.mps'] + sys.argv[1:]
@@ -437,11 +437,11 @@ class FlexToolRunner:
             print("GLPSOL wrote the problem as MPS file\n")
 
             if solver == "cplex":
-                if current_solve not in self.solver_commands.keys():
+                if current_solve not in self.solver_arguments.keys():
                     cplex_step = [s_wrapper, 'cplex', '-c', 'read flexModel3.mps','opt', 'write flexModel3_cplex.sol', 'quit']  + sys.argv[1:]
                 else:
                     cplex_step = [s_wrapper, 'cplex', '-c', 'read flexModel3.mps']
-                    cplex_step += self.solver_commands[current_solve]
+                    cplex_step += self.solver_arguments[current_solve]
                     cplex_step += ['opt', 'write flexModel3_cplex.sol', 'quit']
                     cplex_step += sys.argv[1:]
 

@@ -160,7 +160,20 @@
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input_data": {
-                            "scenario_filter": {},
+                            "scenario_filter": {
+                                "4solves": false,
+                                "Base": false,
+                                "Battery": true,
+                                "Gas_export": false,
+                                "Inertia": false,
+                                "Inv_bat": false,
+                                "Invest": true,
+                                "Limit_fossil": false,
+                                "Reserve": false,
+                                "Reserve_transfer": false,
+                                "Reserve_wind": false,
+                                "Solver": false
+                            },
                             "tool_filter": {
                                 "FlexTool3": true
                             }
@@ -256,8 +269,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 67.9533372023181,
-            "y": -6.8696851734580875,
+            "x": 69.99508151793503,
+            "y": -7.890557331266564,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": [],
@@ -283,7 +296,7 @@
             "type": "Data Store",
             "description": "",
             "x": -162.9016014404568,
-            "y": -9.509288978054268,
+            "y": -10.530161135862745,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -320,22 +333,22 @@
             "type": "Importer",
             "description": "",
             "x": -310.39469337686535,
-            "y": -47.563999426845825,
+            "y": -48.584871584654294,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "on_conflict": "replace",
             "file_selection": [
                 [
                     "<project>/FlexTool_import_template.xlsx",
-                    false
+                    true
                 ]
             ]
         },
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -44.37941588988866,
-            "y": -11.02132495197488,
+            "x": -42.33767157427171,
+            "y": -11.021324951974876,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
