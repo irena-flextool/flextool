@@ -4,6 +4,7 @@ import subprocess
 import logging
 import sys
 import os
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from collections import defaultdict
 
@@ -42,6 +43,8 @@ class FlexToolRunner:
         self.timeblocks_used_by_solves = self.get_timeblocks_used_by_solves()
         self.invest_periods = self.get_list_of_tuples('input/solve__invest_period.csv')
         self.realized_periods = self.get_list_of_tuples('input/solve__realized_period.csv')
+        self.solver_wrapper = self.get_solver_wrapper()
+        self.solver_commands = self.get_solver_commands()
         #self.write_full_timelines(self.timelines, 'steps.csv')
 
     def get_solves(self):
@@ -122,6 +125,43 @@ class FlexToolRunner:
         #        solve__period = solver.split(",")
         #        solver_dict[solve__period[0]] = solve__period[1]
         return solver_dict
+
+    def get_solver_wrapper(self):
+        """
+        read in
+        the solver_wrapper for each solve. return it as a list of strings
+        :return:
+        """
+        with open('input/solver_wrapper.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            solver_wrapper_dict = defaultdict()
+            while True:
+                try:
+                    datain = next(filereader)
+                    solver_wrapper_dict[datain[0]] = datain[1]
+                except StopIteration:
+                    break
+        return solver_wrapper_dict
+        
+    def get_solver_commands(self):
+        """
+        read in
+        the solver commands for each solve. return it as a list of strings
+        :return:
+        """
+        with open('input/solver_commands.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            solver_commands_dict = defaultdict(list)
+            while True:
+                try:
+                    datain = next(filereader)
+                    solver_commands_dict[datain[0]].append((datain[1]))
+                except StopIteration:
+                    break
+        return solver_commands_dict
+
 
     def get_timeblocks_used_by_solves(self):
         """
@@ -383,6 +423,11 @@ class FlexToolRunner:
                 print("GLPSOL wrote the results into csv files\n")
             
         elif solver == "cplex" or solver == "gurobi":
+            if current_solve not in self.solver_wrapper.keys():
+                s_wrapper = ''
+            else:
+                s_wrapper = self.solver_wrapper[current_solve]
+
             highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat',
                            '--wfreemps', 'flexModel3.mps'] + sys.argv[1:]
             completed = subprocess.run(highs_step1)
@@ -392,31 +437,132 @@ class FlexToolRunner:
             print("GLPSOL wrote the problem as MPS file\n")
 
             if solver == "cplex":
-                #completed = cplex_solve("flexModel3.mps")
-                cplex_params = []  #get_cplex_params()
-                wrapper = get_wrapper()
-                cplex_step = [wrapper, 'cplex', '-c', '"read flexModel.mps"','"opt"', '"write flexModel3.sol"']  + sys.argv[1:]
+                if current_solve not in self.solver_commands.keys():
+                    cplex_step = [s_wrapper, 'cplex', '-c', 'read flexModel3.mps','opt', 'write flexModel3_cplex.sol', 'quit']  + sys.argv[1:]
+                else:
+                    cplex_step = [s_wrapper, 'cplex', '-c', 'read flexModel3.mps']
+                    cplex_step += self.solver_commands[current_solve]
+                    cplex_step += ['opt', 'write flexModel3_cplex.sol', 'quit']
+                    cplex_step += sys.argv[1:]
 
                 completed = subprocess.run(cplex_step)
+                if completed.returncode != 0:
+                    logging.error(f'Cplex solver failed: {completed.returncode}')
+                    exit(completed.returncode) 
+                
+                completed = self.cplex_to_glpsol("flexModel3_cplex.sol","flexModel3.sol")
+
             else:
                 logging.error(f"Gurobi not yet implemented. Currently supported options: highs, glpsol, cplex.")
+                exit(-1)
 
             highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r',
                            'flexModel3.sol'] + sys.argv[1:]
             completed = subprocess.run(highs_step3)
             if completed.returncode == 0:
                 print("GLPSOL wrote the results into csv files\n")
-
-            #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
-            with open('flexModel3.sol','r') as inf_file:
-                inf_content = inf_file.read() 
-                if 'INFEASIBLE' in inf_content:
-                    logging.error(f"The model is infeasible. Check the constraints.")
-                    exit(1)
         else:
             logging.error(f"Unknown solver '{solver}'. Currently supported options: highs, glpsol.")
             exit(-1)
         return completed.returncode
+
+    def cplex_to_glpsol(self,cplexfile,solutionfile): 
+        
+        try:
+            tree = ET.parse(cplexfile)
+        except (OSError):
+            logging.error('The CPLEX solver does not produce a solution file if the problem is infeasible. Check the constraints, more info at cplex.log')
+            exit(-1)
+        root = tree.getroot()
+
+        if root.find('header').get('solutionStatusString') == "optimal":
+            with open(solutionfile,'w') as glpsol_file:
+                
+                obj = root.find('header').get('objectiveValue')
+
+                for constraint in root.iter('constraint'):
+                    rows = constraint.get('index')
+                rows = int(rows) + 2
+
+                for variable in root.iter('variable'):
+                    col = variable.get('index')
+                col = int(col) + 1
+                
+                glpsol_file.write("s bas "+str(rows)+" "+str(col)+" f f "+obj+"\n")
+                
+                #For some reason the glpsol constraint the first variable row to be the objective function value.
+                #This is not stated anywhere in the glpk documentation
+                glpsol_file.write("i 1 b "+obj+" 0\n")
+            
+                for constraint in root.iter("constraint"):
+                    slack = constraint.get('slack')
+                    index = int(constraint.get('index')) + 2
+                    status = constraint.get('status')
+                    dual = constraint.get('dual')
+                    
+                    if status == "BS":
+                        status = 'b'
+                    elif status == "LL":
+                        status = 'l'
+                    elif status == "UL":
+                        status = 'u'
+                    
+                    glpsol_file.write("i"+" "+str(index)+" "+status+" "+slack+" "+dual+"\n")
+
+                for variable in root.iter('variable'):
+                    val = variable.get('value')
+                    index = int(variable.get('index')) +1
+                    status = variable.get('status')
+                    reduced = variable.get('reducedCost')
+                    
+                    if status == "BS":
+                        status = 'b'
+                    elif status == "LL":
+                        status = 'l'
+                    elif status == "UL":
+                        status = 'u'
+
+                    glpsol_file.write("j"+" "+str(index)+" "+status+" "+val+" "+reduced+"\n")
+                
+                glpsol_file.write("e o f")
+        elif root.find('header').get('solutionStatusString') == "integer optimal solution":
+            with open(solutionfile,'w') as glpsol_file:
+                
+                obj = root.find('header').get('objectiveValue')
+
+                for constraint in root.iter('constraint'):
+                    rows = constraint.get('index')
+                rows = int(rows) + 2
+
+                for variable in root.iter('variable'):
+                    col = variable.get('index')
+                col = int(col) + 1
+                
+                glpsol_file.write("s mip "+str(rows)+" "+str(col)+" o "+obj+"\n")
+                
+                #For some reason the glpsol requires the first constraint row to be the objective function value.
+                #This is not stated anywhere in the glpk documentation
+                glpsol_file.write("i 1 "+obj+"\n")
+            
+                for constraint in root.iter("constraint"):
+                    slack = constraint.get('slack')
+                    index = int(constraint.get('index')) + 2
+                    
+                    glpsol_file.write("i"+" "+str(index)+" "+slack+"\n")
+
+                for variable in root.iter('variable'):
+                    val = variable.get('value')
+                    index = int(variable.get('index')) +1
+
+                    glpsol_file.write("j"+" "+str(index)+" "+val+"\n")
+                
+                glpsol_file.write("e o f")
+        else:
+            logging.error(f"Optimality could not be reached. Check the flexModel3_cplex.sol file for more")
+            exit(1)
+        
+        return 0
+
 
     def get_active_time(self, current_solve, timeblocks_used_by_solves, timeblocks, timelines, timeblocks__timelines):
         """
