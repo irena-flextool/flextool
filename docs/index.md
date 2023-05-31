@@ -4,16 +4,12 @@ IRENA FlexTool is an energy systems optimisation model developed for power and e
 
 # Documentation structure
 
-You can find the installation instructions for the interfaces [Interface Overview](https://irena-flextool.github.io/flextool/interface_overview)
+- You can find the installation instructions for the interfaces [Interface Overview](https://irena-flextool.github.io/flextool/interface_overview)
+- Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/N3qB0rzxPYw)
 
-Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/N3qB0rzxPYw)
+- If using FlexTool with Spine Toolbox, learn how the Spine Toolbox workflow functions: [Spine Toolbox workflow](https://irena-flextool.github.io/flextool/spine_toolbox).
+- If using FlexTool with a web-browser, read how it works: [Browser interface](https://irena-flextool.github.io/flextool/browser_interface)
 
-If using FlexTool with Spine Toolbox, learn how the Spine Toolbox workflow functions: [Spine Toolbox workflow](https://irena-flextool.github.io/flextool/spine_toolbox).
-
-If using FlexTool with a web-browser, read how it works: [Browser interface](https://irena-flextool.github.io/flextool/browser_interface)
-
-The tutorial is recommended for the new users of FlexTool: [Tutorial](https://irena-flextool.github.io/flextool/tutorial)
-
-More advanced users can find the model parameter descprtions useful: [Model parameters](https://irena-flextool.github.io/flextool/reference)
-
-Finally, result parameters are documented here: [Model results](https://irena-flextool.github.io/flextool/results)
+- The tutorial is recommended for the new users of FlexTool: [Tutorial](https://irena-flextool.github.io/flextool/tutorial)
+- More advanced users can find the model parameter descprtions useful: [Model parameters](https://irena-flextool.github.io/flextool/reference)
+- Finally, result parameters are documented here: [Model results](https://irena-flextool.github.io/flextool/results)
