@@ -281,7 +281,7 @@ param p_discount_offset_investment{model} default 0;    # Calculate investment a
 param p_discount_offset_operations{model} default 0.5;  # Calculate operational costs assuming they are on average taking place at the middle of the year (unless other value is given)
 
 param p_entity_invested {e in entity : e in entityInvest};
-param p_entity_divested {e in entity : e in entityInvest};
+param p_entity_divested {e in entity : e in entityDivest};
 
 param scale_the_objective;
 param scale_the_state;
@@ -1317,9 +1317,9 @@ display w_total_cost;
 # Energy balance in each node  
 s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
   + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] )
-  + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] )
-  + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n] )
-  + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n] )
+  + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] )
+  + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n] )
+  + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n] )
   =
   # n is sink
   + sum {(p, source, n) in process_source_sink} (
@@ -1609,7 +1609,12 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
 
 s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in period__time_last
      : d in period_last
-	 && (n, 'use_reference_value') in node__storage_solve_horizon_method} :
+	 && ((n, 'use_reference_value') in node__storage_solve_horizon_method 
+   && (n, 'fix_end') not in node__storage_start_end_method 
+   && (n, 'fix_start_end') not in node__storage_start_end_method
+   && (n, 'bind_within_solve') not in node__storage_binding_method
+   && (n, 'bind_within_period') not in node__storage_binding_method
+   && (n, 'bind_within_timeblock') not in node__storage_binding_method)} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
   + p_node[n,'storage_state_reference_value']
@@ -2291,13 +2296,25 @@ s.t. co2_max_period{(g, c, n, d) in group_commodity_node_period_co2_period} :
 
 
 s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
-  + sum {(p, source, sink) in process_source_sink : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
+  + sum {(p, source, sink) in process_source_sink_noEff : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
     ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] )
+  + sum {(p, source, sink) in process_source_sink_eff : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
+    ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
+	    * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	    * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, source] else 1)
+	  + ( if (p, 'min_load_efficiency') in process__ct_method then 
+	      + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
+	          + (if p in process_online_integer then v_online_integer[p, d, t])
+	        )
+		    * ptProcess_section[p, t]
+		    * p_entity_unitsize[p]
+	    )	  
+	)	
   - vq_non_synchronous[g, d, t] * pgdNodeInflow_for_scaling[g, d]
   <=
   ( + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node} 
         + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
-    + sum {(g, n) in group_node} pdtNodeInflow[n, d, t]
+    + sum {(g, n) in group_node} -pdtNodeInflow[n, d, t]
   ) * pdGroup[g, 'non_synchronous_limit', d]
 ;
 
@@ -2356,9 +2373,9 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
   + sum {(g, n) in group_node} 
     ( - (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
       + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && ((d, t) not in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
-      + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
-      + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
-      + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n])
+      + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
+      + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
+      + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n])
 	)
   + pdGroup[g, 'capacity_margin', d]
 ;
@@ -2444,9 +2461,9 @@ param r_connection_d{c in process_connection, d in period_realized} :=
 
 param r_nodeState_change_dt{n in nodeState, (d, t_previous) in dt} := sum {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} (
       + (if (n, 'bind_forward_only') in node__storage_binding_method && ((d, t) not in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
-      + (if (n, 'bind_within_solve') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
-      + (if (n, 'bind_within_period') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
-      + (if (n, 'bind_within_timeblock') in node__storage_binding_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n])
+      + (if (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
+      + (if (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
+      + (if (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n])
 );
 param r_nodeState_change_d{n in nodeState, d in period} := sum {(d, t) in dt} r_nodeState_change_dt[n, d, t];
 param r_selfDischargeLoss_dt{n in nodeSelfDischarge, (d, t) in dt} := v_state[n, d, t] * ptNode[n, 'self_discharge_loss', t] * step_duration[d, t] * p_entity_unitsize[n];
@@ -2643,7 +2660,7 @@ for {e in entityInvest}
   {
     printf '%s,%.8g\n', e, 
 	  + (if not p_model['solveFirst'] then p_entity_invested[e] else 0)
-	  + sum {(e, d_invest) in ed_invest} v_invest[e, d_invest].val * p_entity_unitsize[e]
+	  + sum {(e, d_invest) in ed_invest : d_invest in period_realized} v_invest[e, d_invest].val * p_entity_unitsize[e]
 	>> fn_entity_invested;
   }
 
@@ -3346,7 +3363,7 @@ for {s in solve_current, (d, t, t_previous, t_previous_within_block, d_previous,
     printf '\n%s,%s,%s', s, d, t >> fn_nodal_prices__dt;
     for {n in nodeBalance}
 	  {
-	    printf ',%8g', -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * period_share_of_year[d] >> fn_nodal_prices__dt;
+	    printf ',%8g', -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * period_share_of_year[d] / scale_the_objective >> fn_nodal_prices__dt;
       }
   }
 
@@ -3769,7 +3786,7 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 #display {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in test_dt}: ptProcess_sink[p, sink, param, t];
-display v_invest, v_divest, p_discount_factor_investment_yearly;
+display v_invest, v_divest;
 #display {(e, d) in ed_invest} : v_invest[e, d].dual;
 #display v_startup_integer;
 end;

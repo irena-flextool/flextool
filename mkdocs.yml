@@ -18,11 +18,18 @@ markdown_extensions:
 docs_dir: 'docs'
 
 nav:
-  - 'Getting started': index.md
-  - 'Model outputs': results.md
-  - Reference: reference.md
-  - Database: spine_database.md
+  - Introduction: 
+    - 'Introduction': index.md
+  - Getting started: 
+    - 'Overview of the interfaces to Flextool': interface_overview.md
+    - 'Installing IRENA FlexTool - SpineToolbox': install_toolbox.md
+    - 'Installing IRENA FlexTool - Web interface': install_web_interface.md
+  - Documentation:
+    - 'Tutorial': tutorial.md
+    - 'Model parameters': reference.md
+    - 'Model outputs': results.md
+  # - 'How to create ...': how_to.md
   - Interfaces:
-      - 'Toolbox interface': spine_toolbox.md
-      - 'Browser interface': browser_interface.md
+    - 'Toolbox interface': spine_toolbox.md
+    - 'Browser interface': browser_interface.md
  

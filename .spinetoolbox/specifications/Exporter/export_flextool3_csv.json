@@ -2989,7 +2989,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^has_inertia$"
+                    "filter_re": "^has_non_synchronous$"
                 },
                 {
                     "map_type": "ParameterValueList",

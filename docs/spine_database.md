@@ -28,3 +28,4 @@ The database editor menu has options for how to display the data: table view, di
 ![Database editor](./database_editor.png)
 
 More on Spine Database editor in https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html.
+
