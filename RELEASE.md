@@ -1,3 +1,15 @@
+** Release 3.1.3
+Bug fixes
+- Use of capacity margin caused an infeasibility
+- Certain inflow time series settings crashed the model (complained about ptNode[n, 'inflow', t])
+- Investments did not consider lifetime correctly - units stayed in the system even after lifetime ended
+- Lifetime is now calculated using years_represented
+- Fixed how retirements work over multiple solves
+
+New features
+- Added support for commercial solvers (CPLEX explicitly at this point)
+
+
 ** Release 3.1.2
 Bug fixes
 - Node prices were million times smaller than they should have been (bug introduced when scaling the model in 3.1.0)
@@ -7,10 +19,12 @@ New features
 - Documentation structure was improved
 - Model assumes precedence between storage_start_end_method, storage_binding_method, and storage_solve_horizon_method (in that order)
 
+
 ** Release 3.1.1
 
 Bug fixes
 - The calculation of the p_entity_max_capacity did not consider which investment method was actually active. It also limited capacity in situations where investment method was supposed to be 'invest_no_limit'.
+
 
 ** Release 3.1.0
 
