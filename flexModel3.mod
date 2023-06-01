@@ -676,6 +676,10 @@ param ptNode {n in node, param in nodeTimeParam, t in time_in_use} :=
         + if (n, param, t) in node__param__time
 		  then pt_node[n, param, t]
 		  else p_node[n, param];
+param ptNode_inflow {n in node, t in time} :=
+        + if (n, 'inflow', t) in node__param__time
+		  then pt_node[n, 'inflow', t]
+		  else p_node[n, 'inflow'];
 set nodeSelfDischarge :=  {n in nodeState : sum{(d, t) in dt : ptNode[n, 'self_discharge_loss', t]} 1};
 		  
 param pdProcess {p in process, param in processPeriodParam, d in period} :=
@@ -770,7 +774,7 @@ param period_flow_annual_multiplier {n in node, d in period : ((n, 'scale_to_ann
 param orig_flow_sum {n in node, d in period : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
         && pdNode[n, 'annual_flow', d]}  := sum{t in time_in_use} ptNode[n, 'inflow', t];
 param period_flow_proportional_multiplier {n in node, d in period : (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d]} :=
-        pdNode[n, 'annual_flow', d] / (abs(sum{t in time} (ptNode[n, 'inflow', t])) / sum{(d, tl) in period__timeline} p_timeline_duration_in_years[tl]);
+        pdNode[n, 'annual_flow', d] / (abs(sum{t in time} (ptNode_inflow[n, t])) / sum{(d, tl) in period__timeline} p_timeline_duration_in_years[tl]);
 param new_peak_sign{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
         (if pdNode[n, 'peak_inflow', d] >= 0 then 1 else -1);
 param old_peak_max{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
@@ -1161,7 +1165,7 @@ var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0, <= 1;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0, <= 1;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0, <= 1;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
-var vq_capacity_margin {g in groupCapacityMargin, d in period_invest} >= 0, <= 1;
+var vq_capacity_margin {g in groupCapacityMargin, d in period_invest} >= 0, <= ceil((pdGroup[g, 'capacity_margin', d] + pgdNodeInflow_for_scaling[g, d]) / pgdNodeInflow_for_scaling[g, d]);
 
 
 #########################
@@ -3795,7 +3799,6 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 #display {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in test_dt}: ptProcess_sink[p, sink, param, t];
-display v_invest, v_divest;
+display v_invest, v_divest, solve_current;
 #display v_startup_integer;
-display p_entity_invested, v_invest, ed_entity_annual_discounted;
 end;
