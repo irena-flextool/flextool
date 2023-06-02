@@ -55,11 +55,11 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
   - *highs_method*: HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.
   - *highs_parallel*: HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.
   - *highs_presolve*: HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large. 
-  - *solve_mode*: a single shot or a set of rolling optimisation windows solved in a sequence (not functional yet, always a single shot).
+  - *solve_mode*: a single solve or a set of rolling optimisation windows solved in a sequence (not functional yet, always a single solve).
   - For commercial solvers:
 
-    - *solver_wrapper* the commandline text in front of the call for the commercial (CPLEX) solver. For a possibility of reserving a floating licence for the duration of the solve
-    - *solver_commands* Array of additional commands passed to the commercial solver. Made for setting optimization parameters.
+    - *solver_precommand* the commandline text in front of the call for the commercial (CPLEX) solver. For a possibility of reserving a floating licence for the duration of the solve
+    - *solver_arguments* Array of additional commands passed to the commercial solver. Made for setting optimization parameters.
 
 - **timeblockset**: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)
 

@@ -55,13 +55,13 @@ cplex -c 'read flexModel3.mps' 'opt' 'write flexModel3_cplex.sol' 'quit'
 
 Additional parameters:
 
-- *solver_wrapper* creates a text in front of the cplex call. This is useful when dealing with floating licences and if the licence system you are using allows to reserve the licence for the duration of the cplex program with a command line argument.
-- *solver_command* is an array containing additional CPLEX solver commands
+- *solver_precommand* creates a text in front of the cplex call. This is useful when dealing with floating licences and if the licence system you are using allows to reserve the licence for the duration of the cplex program with a command line argument.
+- *solver_arguments* is an array containing additional CPLEX solver commands
 
 With these parameters, the command line call is:
 
 ```shell
-'solver_wrapper' cplex -c 'read flexModel3.mps' 'solver_command1' 'solver_command2' ... 'solver_command_last' 'opt' 'write flexModel3_cplex.sol' 'quit'
+'solver_precommand' cplex -c 'read flexModel3.mps' 'solver_command1' 'solver_command2' ... 'solver_command_last' 'opt' 'write flexModel3_cplex.sol' 'quit'
 ```
 
 ![Cplex parameters](./CPLEX.png)
