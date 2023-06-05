@@ -154,6 +154,8 @@ set reserveTimeParam := reservation;
 set invest_method := not_allowed, invest_no_limit, invest_period, invest_total, invest_period_total, 
                   retire_no_limit, retire_period, retire_total, retire_period_total, 
 				  invest_retire_no_limit, invest_retire_period, invest_retire_total, invest_retire_period_total;
+set lifetime_method := reinvest_automatic, reinvest_choice;
+set lifetime_method_default := reinvest_automatic;
 set co2_method := no_method, price, period, total, price_period, price_total, period_total, price_period_total;
 set co2_price_method := price, price_period, price_total, price_period_total;
 set co2_max_period_method := period, price_period, period_total, price_period_total;

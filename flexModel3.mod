@@ -134,6 +134,8 @@ set method_1var_per_way within method;
 set invest_method 'methods available for investments';
 set invest_method_not_allowed 'method for denying investments' within invest_method;
 set divest_method_not_allowed 'method for denying divestments' within invest_method;
+set lifetime_method 'methods available for end of lifetime behavior';
+set lifetime_method_default within lifetime_method;
 set co2_method 'methods available for co2 price and limits';
 set co2_price_method within co2_method;
 set co2_max_period_method within co2_method;
@@ -141,6 +143,9 @@ set co2_max_total_method within co2_method;
 set entity__invest_method 'the investment method applied to an entity' dimen 2 within {entity, invest_method};
 set entityDivest := setof {(e, m) in entity__invest_method : m not in divest_method_not_allowed} (e);
 set entityInvest := setof {(e, m) in entity__invest_method : m not in invest_method_not_allowed} (e);
+set entity__lifetime_method_read dimen 2 within {entity, lifetime_method};
+set entity__lifetime_method 'the lifetime method applied to an entity' := 
+    {e in entity, m in lifetime_method : (e, m) in entity__lifetime_method_read || (sum{(e, m2) in entity__lifetime_method_read} 1 = 0 && m in lifetime_method_default) && e in entityInvest};
 param investableEntities := sum{e in entityInvest} 1;
 set group__invest_method 'the investment method applied to a group' dimen 2 within {group, invest_method};
 set group_invest := setof {(g, m) in group__invest_method : m not in invest_method_not_allowed} (g);
@@ -318,6 +323,7 @@ table data IN 'CSV' 'input/process_unit.csv': process_unit <- [process_unit];
 table data IN 'CSV' 'input/commodity__node.csv' : commodity_node <- [commodity,node];
 table data IN 'CSV' 'input/entity__invest_method.csv' : entity__invest_method <- [entity,invest_method];
 table data IN 'CSV' 'input/group__invest_method.csv' : group__invest_method <- [group,invest_method];
+table data IN 'CSV' 'input/entity__lifetime_method.csv' : entity__lifetime_method_read <- [entity,lifetime_method];
 table data IN 'CSV' 'input/group__co2_method.csv' : group__co2_method <- [group,co2_method];
 table data IN 'CSV' 'input/node__inflow_method.csv' : node__inflow_method_read <- [node,inflow_method];
 table data IN 'CSV' 'input/node__storage_binding_method.csv' : node__storage_binding_method_read <- [node,storage_binding_method];
@@ -840,7 +846,6 @@ param p_discount_factor_operations_yearly{d in period} :=
 		else 1;
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
-
           ( + ( pdNode[e, 'invest_cost', d] * 1000 
 		        * ( pdNode[e, 'interest_rate', d] 
 			        / (1 - (1 / (1 + pdNode[e, 'interest_rate', d])^pdNode[e, 'lifetime', d] ) ) 
@@ -856,20 +861,19 @@ param ed_entity_annual{e in entityInvest, d in period_invest} :=
 		  )
 ;
 param ed_entity_annual_discounted{e in entityInvest, d in period_invest} :=
-        if (e in node) then 
+        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_choice'}
           ( + ed_entity_annual[e, d] 
 			    * sum{d_all in period 
 				    :    p_discount_years[d_all] >= p_discount_years[d] 
-					  && p_discount_years[d_all] < p_discount_years[d] + pdNode[e, 'lifetime', d]
+					  && p_discount_years[d_all] < p_discount_years[d] + pdEntity_lifetime[e, d]
 				  }
 				    ( p_discount_factor_investment_yearly[d_all] )
 		  )
-		else if (e in process) then
+        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_automatic'}
 		  (
             + ed_entity_annual[e, d] 
 			    * sum{d_all in period 
 				    :    p_discount_years[d_all] >= p_discount_years[d] 
-				      && p_discount_years[d_all] < p_discount_years[d] + pdProcess[e, 'lifetime', d]
 				  }
 				    ( p_discount_factor_investment_yearly[d_all] )
 		  )
@@ -951,7 +955,9 @@ set ed_invest_period := {(e, d) in ed_invest : (e, 'invest_period') in entity__i
                                                || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
 set e_invest_total := {e in entityInvest : (e, 'invest_total') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method 
                                                || (e, 'invest_retire_total') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
-set edd_invest := {(e, d_invest) in ed_invest, d in period : p_years_d[d] >= p_years_d[d_invest] && p_years_d[d] < p_years_d[d_invest] + pdEntity_lifetime[e, d_invest]};
+set edd_invest_choice := {(e, d_invest) in ed_invest, d in period : sum{(e, m) in entity__lifetime_method : m='reinvest_choice'} 1 && p_years_d[d] >= p_years_d[d_invest] && p_years_d[d] < p_years_d[d_invest] + pdEntity_lifetime[e, d_invest]};
+set edd_invest_automatic := {(e, d_invest) in ed_invest, d in period : sum{(e, m) in entity__lifetime_method : m='reinvest_automatic'} 1 && p_years_d[d] >= p_years_d[d_invest]};
+set edd_invest := edd_invest_choice union edd_invest_automatic;
 set pd_invest := {(p, d) in ed_invest : p in process};
 set nd_invest := {(n, d) in ed_invest : n in node};
 set ed_divest := {e in entityDivest, d in period_invest : ed_entity_annual_divest[e, d] || sum{(e, c) in process_capacity_constraint} 1 || sum{(e, c) in node_capacity_constraint} 1 };

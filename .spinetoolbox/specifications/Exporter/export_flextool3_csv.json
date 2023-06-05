@@ -260,7 +260,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^(?!has_|inflow_method|invest_method|is_active|storage_binding_method|storage_start_end_method|storage_solve_horizon_method)",
+                    "filter_re": "^(?!has_|inflow_method|invest_method|is_active|storage_binding_method|storage_start_end_method|storage_solve_horizon_method|lifetime_method)",
                     "header": "nodeParam"
                 },
                 {
@@ -1594,7 +1594,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^(?!conversion_method|invest_method|transfer_method|startup_method|ramp_method|minimum_time_method|is_DC|is_active)",
+                    "filter_re": "^(?!conversion_method|invest_method|transfer_method|startup_method|ramp_method|minimum_time_method|is_DC|is_active|lifetime_method)",
                     "header": "processParam"
                 },
                 {
@@ -4421,6 +4421,53 @@
                     "map_type": "ExpandedValue",
                     "position": 1,
                     "header": "arguments"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "entity__lifetimeMethod": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "entity__lifetime_method"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^node$|^unit$|^connection$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "lifetime_method"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "entity"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 1,
+                    "header": "lifetime_method"
                 }
             ],
             "enabled": true,

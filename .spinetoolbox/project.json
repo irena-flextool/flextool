@@ -148,41 +148,6 @@
                 }
             },
             {
-                "name": "from Input_data to Export_to_CSV",
-                "from": [
-                    "Input_data",
-                    "right"
-                ],
-                "to": [
-                    "Export_to_CSV",
-                    "left"
-                ],
-                "filter_settings": {
-                    "known_filters": {
-                        "db_url@Input_data": {
-                            "scenario_filter": {
-                                "4solves": false,
-                                "Base": false,
-                                "Battery": true,
-                                "Gas_export": false,
-                                "Inertia": false,
-                                "Inv_bat": false,
-                                "Invest": true,
-                                "Limit_fossil": false,
-                                "Reserve": false,
-                                "Reserve_transfer": false,
-                                "Reserve_wind": false,
-                                "Solver": false
-                            },
-                            "tool_filter": {
-                                "FlexTool3": true
-                            }
-                        }
-                    },
-                    "auto_online": true
-                }
-            },
-            {
                 "name": "from Results to To_Excel",
                 "from": [
                     "Results",
@@ -209,27 +174,6 @@
                 }
             },
             {
-                "name": "from Results to Plot_results",
-                "from": [
-                    "Results",
-                    "right"
-                ],
-                "to": [
-                    "Plot_results",
-                    "right"
-                ],
-                "filter_settings": {
-                    "known_filters": {
-                        "db_url@Results": {
-                            "scenario_filter": {
-                                "Base": false
-                            }
-                        }
-                    },
-                    "auto_online": false
-                }
-            },
-            {
                 "name": "from Initialize to Input_data",
                 "from": [
                     "Initialize",
@@ -238,7 +182,31 @@
                 "to": [
                     "Input_data",
                     "left"
-                ]
+                ],
+                "options": {
+                    "purge_before_writing": true,
+                    "purge_settings": {
+                        "object_class": false,
+                        "relationship_class": false,
+                        "parameter_value_list": false,
+                        "list_value": false,
+                        "parameter_definition": false,
+                        "object": true,
+                        "relationship": true,
+                        "entity_group": true,
+                        "parameter_value": true,
+                        "alternative": true,
+                        "scenario": true,
+                        "scenario_alternative": true,
+                        "feature": false,
+                        "tool": false,
+                        "tool_feature": false,
+                        "tool_feature_method": false,
+                        "metadata": false,
+                        "entity_metadata": true,
+                        "parameter_value_metadata": true
+                    }
+                }
             },
             {
                 "name": "from Import_from_Excel to Input_data",
@@ -252,10 +220,54 @@
                 ]
             },
             {
+                "name": "from Input_data to Export_to_CSV",
+                "from": [
+                    "Input_data",
+                    "right"
+                ],
+                "to": [
+                    "Export_to_CSV",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {
+                        "db_url@Input_data": {
+                            "scenario_filter": {},
+                            "tool_filter": {
+                                "FlexTool3": true
+                            }
+                        }
+                    },
+                    "auto_online": true
+                }
+            },
+            {
+                "name": "from Results to Plot_results",
+                "from": [
+                    "Results",
+                    "right"
+                ],
+                "to": [
+                    "Plot_results",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {
+                        "db_url@Results": {
+                            "scenario_filter": {
+                                "wind_battery_invest_lifetime_choice": false,
+                                "wind_battery_invest_lifetime_renew": false
+                            }
+                        }
+                    },
+                    "auto_online": false
+                }
+            },
+            {
                 "name": "from Plot_settings to Plot_results",
                 "from": [
                     "Plot_settings",
-                    "left"
+                    "right"
                 ],
                 "to": [
                     "Plot_results",
@@ -269,8 +281,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 69.99508151793503,
-            "y": -7.890557331266564,
+            "x": 71.01140335411533,
+            "y": -8.906879167446874,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": [],
@@ -279,8 +291,8 @@
         "Init": {
             "type": "Data Store",
             "description": "",
-            "x": -407.7942123409004,
-            "y": 64.59242552921424,
+            "x": -407.79421234090034,
+            "y": 63.57610369303393,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -295,8 +307,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -162.9016014404568,
-            "y": -10.530161135862745,
+            "x": -164.93424511281745,
+            "y": -10.530161135862748,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -347,8 +359,8 @@
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -42.33767157427171,
-            "y": -11.021324951974876,
+            "x": -41.3213497380914,
+            "y": -12.037646788155186,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -362,8 +374,8 @@
         "Import_results": {
             "type": "Importer",
             "description": "",
-            "x": 182.62014057364226,
-            "y": 21.841888384298723,
+            "x": 192.72938894272858,
+            "y": -31.742524971130265,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "on_conflict": "replace",
@@ -377,8 +389,8 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 308.9859837151953,
-            "y": 28.450149081769155,
+            "x": 319.0952320842816,
+            "y": -24.117942437479527,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -393,8 +405,8 @@
         "To_Excel": {
             "type": "Exporter",
             "description": "",
-            "x": 209.40488466578518,
-            "y": 140.44922239338862,
+            "x": 174.7959722429377,
+            "y": 79.75055618469746,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -408,8 +420,8 @@
         "Plot_results": {
             "type": "Tool",
             "description": "",
-            "x": 343.1157713946388,
-            "y": 203.10795158135494,
+            "x": 444.75874901121364,
+            "y": -25.28381759708784,
             "specification": "Plot",
             "execute_in_work": false,
             "cmd_line_args": [
@@ -427,8 +439,8 @@
         "Plot_settings": {
             "type": "Data Connection",
             "description": "",
-            "x": 465.1046693538269,
-            "y": 256.3648831078828,
+            "x": 358.33690656217726,
+            "y": 85.90345859171784,
             "file_references": [
                 {
                     "type": "path",
