@@ -6,6 +6,7 @@ The structure of the JSON file is as follows:
 {
   "plots": [
     {
+      "name": <plot name>,
       "plot_type": <plot type>,
       "selection": {
         "entity_class": <entity class list>,
@@ -25,6 +26,9 @@ The structure of the JSON file is as follows:
     }
   ]
 }
+
+<plot name>: plot name as string; if empty, null or missing, an automatic name will be
+generated. Currently supported in the Web interface only.
 
 <plot type>: one of: "line", "stacked line", "bar", "stacked bar", "heatmap"
 
