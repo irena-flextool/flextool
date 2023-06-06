@@ -34,7 +34,7 @@
           <a href=".." class="icon icon-home"> IRENA FlexTool
         </a><div role="search">
   <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
-      <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
   </form>
 </div>
       </div>
@@ -106,6 +106,8 @@
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../results/">Model outputs</a>
                   </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../how_to/">How to</a>
+                  </li>
               </ul>
               <p class="caption"><span class="caption-text">Interfaces</span></p>
               <ul>
@@ -127,7 +129,7 @@
       <div class="wy-nav-content">
         <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
   <ul class="wy-breadcrumbs">
-    <li><a href=".." class="icon icon-home" alt="Docs"></a> &raquo;</li>
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a> &raquo;</li>
           <li>Documentation &raquo;</li>
       <li>Tutorial</li>
     <li class="wy-breadcrumbs-aside">
@@ -215,7 +217,7 @@ Video tutorial for Building a small test system can be watched <a href="https://
 </li>
 <li>with an array-type parameter <code>realized_periods</code> to define the periods that are realised from the <code>solve</code> named by the object (in this example: first column of the array is the index number <em>1</em> and the second column contains the period to be realized in the results: <em>p2020</em>)</li>
 <li>
-<p>with a parameter <code>solve_mode</code>, to be set to <em>single_shot</em>.</p>
+<p>with a parameter <code>solve_mode</code>, to be set to <em>single_solve</em>.</p>
 </li>
 <li>
 <p>Finally, the <code>model</code> object needs to be created. It must contain the sequence of solves. In this case <em>flexTool</em> <code>model</code> object contains just one solve <em>y2020_2day_dispatch</em> inside the array-type parameter.</p>
@@ -405,8 +407,9 @@ Finally, if it does not exist yet, add a new object `UpDown', called <em>up</em>
 <p><code>1 x *electricity* = 0.5 x *heat*, which is true only if *heat* is 2 x *electricity*</code></p>
 <p><img alt="Add CHP" src="../coal_chp.png" /></p>
 <h3 id="minimum-load-example">Minimum load example</h3>
-<p><strong><em>init - west - coal - coal_min_load</em></strong></p>
-<p>The next example is simpler. It adds a minimum load behavior to the <em>coal_plant</em> <code>unit</code>. Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a <code>startup_method</code> needs to be defined and an optional <code>startup_cost</code> can be given. The options are <em>no_startup</em>, <em>linear</em> and <em>binary</em>. <em>binary</em> would require an integer variable so <em>linear</em> is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (<em>flow</em> &gt;= <em>min_load</em> x <em>capacity_online</em>).</p>
+<p><strong>(scenario: coal_min_load)</strong>
+<strong><em>init - west - coal - coal_min_load</em></strong></p>
+<p>The next example adds a minimum load behavior to the <em>coal_plant</em> <code>unit</code>. Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a <code>startup_method</code> needs to be defined and an optional <code>startup_cost</code> can be given. The options are <em>no_startup</em>, <em>linear</em> and <em>binary</em>. <em>binary</em> would require an integer variable so <em>linear</em> is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (<em>flow</em> &gt;= <em>min_load</em> x <em>capacity</em> x <em>online</em>), where 0 &lt;= <em>online</em> &lt;=1 .</p>
 <p>The online variable also allows to change the efficiency of the plant between the minimum and full loads. An unit with a part-load efficiency will obey the following equation:</p>
 <pre><code>  + sum_i[ input(i) * input_coefficient(i) ]
   =
@@ -415,29 +418,35 @@ Finally, if it does not exist yet, add a new object `UpDown', called <em>up</em>
 
 where   slope = 1 / efficiency - section
   and section = 1 / efficiency 
-                - ( 1 / efficiency - 1 / efficiency_at_min_load) / ( 1 - efficiency_at_min_load )
+                - ( 1 / efficiency - min_load / efficiency_at_min_load) / ( 1 - min_load )
 </code></pre>
 <p>By default, <code>input_coefficient</code> and <code>output_coefficient</code> are 1, but if there is a need to tweak their relative contributions, these coefficients allow to do so (e.g. a coal plant might have lower efficieny when using lignite than when using brown coal).</p>
+<p>The input is required at different ouput levels is shown in the figure below, when Capacity = 100, Efficiency = 0.8, Minimum load = 0.6 and Efficiency at minimum load = 0.5.</p>
+<p><img alt="Min load figure" src="../Minimum_load.png" /></p>
 <p><img alt="Add min_load" src="../coal_min_load.png" /></p>
 <h3 id="adding-co2-emissions-and-costs">Adding CO2 emissions and costs</h3>
-<p><strong><em>init - west - coal - co2</em></strong></p>
-<p>Carbon dioxide emissions are added to FlexTool by associating relevant <code>commodities</code> (e.g. <em>coal</em>) with a <code>co2_content</code> parameter (CO2 content per MWh of energy contained in the fuel). To set a price for the CO2, the nodes that use those commodities will need to be linked to a <code>group</code> of <code>nodes</code> that set the <code>co2_price</code> (currency / CO2 ton). Therefore, in addition to what is visible in the figure below, a relationship <em>co2_price--coal_market</em> must be established so that the model knows to point the <code>CO2_price</code> to the <code>commodity</code> used from the <em>coal_market</em> <code>node</code> based on the <code>co2_content</code> of the <em>coal</em> <code>commodity</code>.</p>
+<p><strong>(scenario: coal_co2)</strong>
+<strong><em>init - west - coal - co2</em></strong></p>
+<p>Carbon dioxide emissions are added to FlexTool by associating relevant <code>commodities</code> (e.g. <em>coal</em>) with a <code>co2_content</code> parameter (CO2 content per MWh of energy contained in the fuel). To set a price for the CO2, the nodes that use those commodities will need to be linked to a <code>group</code> of <code>nodes</code> that set the <code>co2_price</code> (currency / CO2 ton). Therefore, in addition to what is visible in the figure below, a relationship <em>co2_price--coal_market</em> must be established so that the model knows to point the <code>CO2_price</code> to the <em>coal_market</em> <code>node</code> based on the <code>co2_content</code> of the <em>coal</em> <code>commodity</code> used.</p>
 <p><img alt="Add CO2" src="../coal_co2.png" /></p>
 <h3 id="full-year-model">Full year model</h3>
 <p><strong><em>init - west - fullYear</em></strong></p>
 <p>So far the model has been using only two days to keep it fast to run. This example extends the model horizon to a full year. To do so, a new <code>solve</code> object <em>y2020_fullYear_dispatch</em> is added. Each <code>solve</code> object needs to know what <code>periods</code> it will contain and what <code>periods</code> it will realize (print out results). <code>solve_mode</code> does not do anything at present, but will be used when FlexTool can be set to do automatic rolling window optimization (at present, it needs to be set manually using multiple solves). The key difference here is that the <code>period_timeblockSet</code> parameter points the <em>p2020</em> period to a timeblockSet definition that covers the full year instead of the two days used before.</p>
 <p><img alt="fullYear" src="../fullYear.png" /></p>
 <h3 id="a-system-with-coal-wind-network-battery-and-co2-over-a-full-year">A system with coal, wind, network, battery and CO2 over a full year</h3>
-<p><strong><em>init - west - coal - wind - network - battery - co2 - fullYear</em></strong></p>
+<p><strong>(scenario: network_coal_wind_battery_co2_fullYear)</strong>
+<strong><em>init - west - coal - wind - network - battery - co2 - fullYear</em></strong></p>
 <p>This example shows a system where many of the previous examples have been put into one model and run for one year. The graph below shows the physical objects in the example.</p>
 <p><img alt="Entity graph" src="../coal_wind_chp_battery_graph.png" /></p>
 <h3 id="representative-periods">Representative periods</h3>
-<p><strong><em>init - west - wind - battery - battery_invest - 5weeks</em></strong></p>
+<p><strong>(scenario: wind_battery_invest)</strong>
+<strong><em>init - west - wind - battery - battery_invest - 5weeks</em></strong></p>
 <p>When using the model for investment decisions, the model can often become too large to solve. Representative periods can be used to take a sample of a full year that tries to depict the dynamics in a reasonable manner. In FlexTool, this is done with the <code>block_duration</code> parameter. It needs to contain the starting timestep and the duration of each period as shown in figure below.</p>
 <p><img alt="Representative periods" src="../representative_periods.png" /></p>
 <h3 id="multi-year-model">Multi-year model</h3>
-<p><strong><em>init - west - wind - coal - coal_invest - 5weeks - multi-year</em></strong></p>
-<p>A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the <em>west</em> <code>node</code>. The <code>inflow</code> time series are scaled to match the value in <code>annual_flow</code>. The model is using the <code>inflow_method</code> <em>scale_to_annual</em> in order to achieve this (default is <em>use_original</em> that would not perform scaling). There should also be a <code>discount_rate</code> parameter set for the <code>model</code> object <em>flexTool</em> if something else than the model default of 5% (0.05 value) is to be used.</p>
+<p><strong>(scenario: multi_year)</strong>
+<strong><em>init - west - wind - coal - coal_invest - 5weeks - multi-year</em></strong></p>
+<p>A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the <em>west</em> <code>node</code>. This means that all periods can use the same timeblockset <em>5weeks</em> from the same timeline <em>y2020</em>, but one can also make separate timelines for each year, if the data is available for this. The <code>inflow</code> time series are scaled to match the value in <code>annual_flow</code> that is mapped for each period. The model is using the <code>inflow_method</code> <em>scale_to_annual</em> in order to achieve this (default is <em>use_original</em> that would not perform scaling). There should also be a <code>discount_rate</code> parameter set for the <code>model</code> object <em>flexTool</em> if something else than the model default of 5% (0.05 value) is to be used.</p>
 <p><img alt="Multi-year model data" src="../multi_year_solves.png" /></p>
 <p>A multi-year model could be solved at one go or by rolling through several solves where each solve has a foresight horizon and a realisation horizon as can be seen from the figure below. In this example, the model rolls through several solves and therefore, in the figure above, the <code>model</code> object <em>flexTool</em> has four values in the <code>solves</code> array. Each value respresents one solve and it's position in the sequence of solves.</p>
 <p><img alt="One vs multi solve" src="../one_multi_solve.png" /></p>

@@ -5,14 +5,14 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland" />
       <link rel="shortcut icon" href="../img/favicon.ico" />
-    <title>Examples on how to - IRENA FlexTool</title>
+    <title>How to - IRENA FlexTool</title>
     <link rel="stylesheet" href="../css/theme.css" />
     <link rel="stylesheet" href="../css/theme_extra.css" />
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.5.0/styles/github.min.css" />
     
       <script>
         // Current page data
-        var mkdocs_page_name = "Examples on how to";
+        var mkdocs_page_name = "How to";
         var mkdocs_page_input_path = "how_to.md";
         var mkdocs_page_url = null;
       </script>
@@ -34,7 +34,7 @@
           <a href=".." class="icon icon-home"> IRENA FlexTool
         </a><div role="search">
   <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
-      <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
   </form>
 </div>
       </div>
@@ -55,12 +55,20 @@
                   </li>
               </ul>
               <p class="caption"><span class="caption-text">Documentation</span></p>
-              <ul>
+              <ul class="current">
                   <li class="toctree-l1"><a class="reference internal" href="../tutorial/">Tutorial</a>
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../reference/">Model parameters</a>
                   </li>
                   <li class="toctree-l1"><a class="reference internal" href="../results/">Model outputs</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="./">How to</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#how-to-create-a-hydro-reservoir">How to create a hydro reservoir</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</a>
+    </li>
+    </ul>
                   </li>
               </ul>
               <p class="caption"><span class="caption-text">Interfaces</span></p>
@@ -83,8 +91,9 @@
       <div class="wy-nav-content">
         <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
   <ul class="wy-breadcrumbs">
-    <li><a href=".." class="icon icon-home" alt="Docs"></a> &raquo;</li>
-      <li>Examples on how to</li>
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a> &raquo;</li>
+          <li>Documentation &raquo;</li>
+      <li>How to</li>
     <li class="wy-breadcrumbs-aside">
           <a href="https://github.com/irena-flextool/flextool/edit/master/docs/how_to.md" class="icon icon-github"> Edit on GitHub</a>
     </li>
@@ -94,25 +103,66 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
             <div class="section" itemprop="articleBody">
               
-                <h1 id="examples-on-how-to">Examples on how to</h1>
+                <h1 id="how-to">How to</h1>
+<p>How to section contains examples on how to build common energy system components. The examples assume a working understanding of FlexTool.
+Each example will include an example database file that are located in the 'how to examples databases' folder. You can change the filepath to database used as the input data by clicking the input_data tool.</p>
+<h2 id="how-to-create-a-hydro-reservoir">How to create a hydro reservoir</h2>
+<p><strong>hydro_reservoir.sq</strong></p>
+<pre><code>Note! This example concerns a single reservoir hydro power plant. 
+If the river system has multiple plants in a series and their operations are tied, 
+then multiple nodes and units are needed to represent the system.
+</code></pre>
+<p>The objective is to create a hydro power plant with a reservoir and connect it to a demand node.</p>
+<p>Hydro reservoir power plant requires three components:</p>
+<ul>
+<li>Reservoir <code>node</code></li>
+<li>Hydro <code>unit</code></li>
+<li>Output <code>node</code></li>
+</ul>
+<p>It can be useful to create a new alternative for these components to be able to include and exclude them from the scenarios.</p>
+<p>The reservoir is made with a node as only nodes can have storage in FlexTool. The incoming water can be represented by the inflow parameter. It can be a constant or a time variant. The unit of the inflow should be the power that can be created from the quantity of the incoming water at maximum efficiency [MW]. In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
+In this implementation of reservoir hydro power, there is an option to spill water (energy) from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled energy can be seen from the results as the 'downward slack' of the node.</p>
+<p>The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):</p>
+<ul>
+<li><code>is_active</code>: yes</li>
+<li><code>has_balance</code>: yes</li>
+<li><code>has_storage</code>: yes</li>
+<li><code>inflow</code>: Mapping of the incoming water as the potential power [MW]</li>
+<li><code>existing</code>: The maximum size of the reservoir as the potential energy [MWh]</li>
+<li><code>penalty_up</code>: a large number to avoid creating energy from nowhere</li>
+<li><code>penalty_down</code>: 0 or a large number (spilling or not)</li>
+<li>a <code>storage_method</code> to set the behaviour on how the storage levels should be managed - for short duration storages <em>bind_within_timeblock</em> may be best and for seasonal storages it could be best to use <em>bind_within_solve</em>. If historical storage level time series are available, it can be beneficial to use <em>fix_start</em> in the <code>storage_start_end_method</code> together with <code>storage_solve_horizon_method</code> <em>use_reference_value</em>.</li>
+</ul>
+<p>The <code>unit</code> is connected to the <em>reservoir</em> <code>node</code> and the output <code>node</code> <em>nodeA</em> (unit_c and unit_node_c in excel):</p>
+<ul>
+<li>The <code>efficiency</code> of the unit can be set to 1 as the inflow time series are directly expressed in MWh (using piecewise linear efficiency is naturally possible).</li>
+<li>Set <code>existing</code> capacity [MW]</li>
+<li><code>is_active</code>: yes </li>
+<li>Create relations unit__inputNode: hydro_plant|reservoir and unit__outputNode: hydro_plant|nodeA.</li>
+</ul>
+<p><img alt="Cplex parameters" src="./hydro_reservoir.png" /></p>
 <h2 id="how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</h2>
 <p>Using CPLEX requires that you have installed the software, have a licence for it and have added it to PATH or to the environment where you are using the FlexTool, so that the tool can find the solver.</p>
-<p>CPLEX is used when the <strong>solve</strong> parameter <em>solver</em> is set to 'cplex'. The tool passes the built optimization model to the CPLEX solver and converts the solutionfile to the filetype it requires. The solver will produce two additional files to the work directory: 'cplex.log' and 'flexModel3_cplex.sol'. The former is the logfile of the solver and the latter contains the solution in the CPLEX format.</p>
+<p>CPLEX is used when the <strong>solve</strong> parameter <em>solver</em> is set to 'cplex'. The tool passes the built optimization model to the CPLEX solver and converts the solution file to the filetype the tool requires. The solver will produce two additional files to the work directory: 'cplex.log' and 'flexModel3_cplex.sol'. The former is the logfile of the solver and the latter contains the solution in the CPLEX format.</p>
 <p>The tool uses <a href="https://www.ibm.com/docs/en/icos/12.8.0.0?topic=cplex-interactive-optimizer">Interactive Optimizer</a> to pass the problem to the solver. The default command used:</p>
-<pre><code class="language-shell">cplex -c 'read inputfile' 'opt' 'write outputfile' 'quit'
+<pre><code class="language-shell">cplex -c 'read flexModel3.mps' 'opt' 'write flexModel3_cplex.sol' 'quit'
 </code></pre>
 <p>Additional parameters:</p>
 <ul>
-<li><em>solver_wrapper</em> creates a text in front of the cplex call. This is useful when dealing with floating licences and if the licence system you are using allows to reserve the licence for the duration of the cplex program with a command line argument.</li>
-<li><em>solver_command</em> is an array containing additional CPLEX solver commands</li>
+<li><em>solver_precommand</em> creates a text in front of the cplex call. This is useful when dealing with floating licences and if the licence system you are using allows to reserve the licence for the duration of the cplex program with a command line argument.</li>
+<li><em>solver_arguments</em> is an array containing additional CPLEX solver commands</li>
 </ul>
 <p>With these parameters, the command line call is:</p>
-<pre><code class="language-shell">solver_wrapper cplex -c 'read inputfile' 'solver_command1' 'solver_command2' ... 'solver_command_last' 'opt' 'write outputfile' 'quit'
+<pre><code class="language-shell">'solver_precommand' cplex -c 'read flexModel3.mps' 'solver_command1' 'solver_command2' ... 'solver_command_last' 'opt' 'write flexModel3_cplex.sol' 'quit'
 </code></pre>
 <p><img alt="Cplex parameters" src="./CPLEX.png" /></p>
               
             </div>
           </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../results/" class="btn btn-neutral float-left" title="Model outputs"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../spine_toolbox/" class="btn btn-neutral float-right" title="Toolbox interface">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
 
   <hr/>
 
@@ -139,6 +189,10 @@
         </span>
     
     
+      <span><a href="../results/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../spine_toolbox/" style="color: #fcfcfc">Next &raquo;</a></span>
     
   </span>
 </div>
