@@ -92,7 +92,7 @@ Then, to get the model to run, you need to create the following objects and rela
 
   - with a map-type parameter `period_timeblockSet` to define the timeblockset to be used by each period (in this example: `period` *p2020* in the first column of the map links to the `timeblockset` object *2day* in the second column of the map)
   - with an array-type parameter `realized_periods` to define the periods that are realised from the `solve` named by the object (in this example: first column of the array is the index number *1* and the second column contains the period to be realized in the results: *p2020*)
-  - with a parameter `solve_mode`, to be set to *single_shot*.
+  - with a parameter `solve_mode`, to be set to *single_solve*.
 
 - Finally, the `model` object needs to be created. It must contain the sequence of solves. In this case *flexTool* `model` object contains just one solve *y2020_2day_dispatch* inside the array-type parameter.
 
@@ -316,9 +316,10 @@ This is done by adding a new `constraint` *coal_chp_fix* where the heat and powe
 
 ### Minimum load example
 
+**(scenario: coal_min_load)**
 ***init - west - coal - coal_min_load***
 
-The next example is simpler. It adds a minimum load behavior to the *coal_plant* `unit`. Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a `startup_method` needs to be defined and an optional `startup_cost` can be given. The options are *no_startup*, *linear* and *binary*. *binary* would require an integer variable so *linear* is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (*flow* >= *min_load* x *capacity_online*).
+The next example adds a minimum load behavior to the *coal_plant* `unit`. Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a `startup_method` needs to be defined and an optional `startup_cost` can be given. The options are *no_startup*, *linear* and *binary*. *binary* would require an integer variable so *linear* is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (*flow* >= *min_load* x *capacity* x *online*), where 0 <= *online* <=1 .
 
 The online variable also allows to change the efficiency of the plant between the minimum and full loads. An unit with a part-load efficiency will obey the following equation:
 
@@ -330,18 +331,23 @@ The online variable also allows to change the efficiency of the plant between th
 
 where   slope = 1 / efficiency - section
   and section = 1 / efficiency 
-                - ( 1 / efficiency - 1 / efficiency_at_min_load) / ( 1 - efficiency_at_min_load )
+                - ( 1 / efficiency - min_load / efficiency_at_min_load) / ( 1 - min_load )
 ```
 
 By default, `input_coefficient` and `output_coefficient` are 1, but if there is a need to tweak their relative contributions, these coefficients allow to do so (e.g. a coal plant might have lower efficieny when using lignite than when using brown coal).
+
+The input is required at different ouput levels is shown in the figure below, when Capacity = 100, Efficiency = 0.8, Minimum load = 0.6 and Efficiency at minimum load = 0.5.
+
+![Min load figure](./Minimum_load.png)
 
 ![Add min_load](./coal_min_load.png)
 
 ### Adding CO2 emissions and costs
 
+**(scenario: coal_co2)**
 ***init - west - coal - co2***
 
-Carbon dioxide emissions are added to FlexTool by associating relevant `commodities` (e.g. *coal*) with a `co2_content` parameter (CO2 content per MWh of energy contained in the fuel). To set a price for the CO2, the nodes that use those commodities will need to be linked to a `group` of `nodes` that set the `co2_price` (currency / CO2 ton). Therefore, in addition to what is visible in the figure below, a relationship *co2_price--coal_market* must be established so that the model knows to point the `CO2_price` to the `commodity` used from the *coal_market* `node` based on the `co2_content` of the *coal* `commodity`.
+Carbon dioxide emissions are added to FlexTool by associating relevant `commodities` (e.g. *coal*) with a `co2_content` parameter (CO2 content per MWh of energy contained in the fuel). To set a price for the CO2, the nodes that use those commodities will need to be linked to a `group` of `nodes` that set the `co2_price` (currency / CO2 ton). Therefore, in addition to what is visible in the figure below, a relationship *co2_price--coal_market* must be established so that the model knows to point the `CO2_price` to the *coal_market* `node` based on the `co2_content` of the *coal* `commodity` used.
 
 ![Add CO2](./coal_co2.png)
 
@@ -355,6 +361,7 @@ So far the model has been using only two days to keep it fast to run. This examp
 
 ### A system with coal, wind, network, battery and CO2 over a full year
 
+**(scenario: network_coal_wind_battery_co2_fullYear)**
 ***init - west - coal - wind - network - battery - co2 - fullYear***
 
 This example shows a system where many of the previous examples have been put into one model and run for one year. The graph below shows the physical objects in the example.
@@ -363,6 +370,7 @@ This example shows a system where many of the previous examples have been put in
 
 ### Representative periods
 
+**(scenario: wind_battery_invest)**
 ***init - west - wind - battery - battery_invest - 5weeks***
 
 When using the model for investment decisions, the model can often become too large to solve. Representative periods can be used to take a sample of a full year that tries to depict the dynamics in a reasonable manner. In FlexTool, this is done with the `block_duration` parameter. It needs to contain the starting timestep and the duration of each period as shown in figure below.
@@ -371,9 +379,10 @@ When using the model for investment decisions, the model can often become too la
 
 ### Multi-year model
 
+**(scenario: multi_year)**
 ***init - west - wind - coal - coal_invest - 5weeks - multi-year***
 
-A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. The `inflow` time series are scaled to match the value in `annual_flow`. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be a `discount_rate` parameter set for the `model` object *flexTool* if something else than the model default of 5% (0.05 value) is to be used.
+A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. This means that all periods can use the same timeblockset *5weeks* from the same timeline *y2020*, but one can also make separate timelines for each year, if the data is available for this. The `inflow` time series are scaled to match the value in `annual_flow` that is mapped for each period. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be a `discount_rate` parameter set for the `model` object *flexTool* if something else than the model default of 5% (0.05 value) is to be used.
 
 ![Multi-year model data](./multi_year_solves.png)
 
