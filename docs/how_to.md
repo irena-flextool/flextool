@@ -1,43 +1,47 @@
 # How to
 
-Here are some examples on how to build parts of the system.
+How to section contains examples on how to build common energy system components. The examples assume a working understanding of FlexTool.
 Each example will include an example database file that are located in the 'how to examples databases' folder. You can change the filepath to database used as the input data by clicking the input_data tool.
 
 ## How to create a hydro reservoir
 **hydro_reservoir.sq**
 
-Note: This applies to single reservoir rivers. If multiple plants in a series on the same river and their storages are dependent on the usages of others, things get more complicated.
+~~~
+Note! This example concerns a single reservoir hydro power plant. 
+If the river system has multiple plants in a series and their operations are tied, 
+then multiple nodes and units are needed to represent the system.
+~~~
 
 The objective is to create a hydro power plant with a reservoir and connect it to a demand node.
 
 Hydro reservoir power plant requires three components:
 
-- Reservoir (node)
-- Unit 
-- Output node
+- Reservoir `node`
+- Hydro `unit`
+- Output `node`
 
-Good common practice is to create a new alternative for this plant to be able to include and exclude it from the scenarios.
+It can be useful to create a new alternative for these components to be able to include and exclude them from the scenarios.
 
-The reservoir is made with a node as it can have storage capacity. The incoming water can be represented by the inflow parameter. It can be a constant or a time mapping. The unit of the inflow should be the power that can be created from the quantity of the incoming water at maximum efficiency [MW]. In the same way, the existing capacity should be the energy that can be created from the storage [MWh].
-The speciality of this storage is the option of decreasing the storage by spilling ie. without running it through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled energy can be seen from the results as the 'downward slack' of the node.
+The reservoir is made with a node as only nodes can have storage in FlexTool. The incoming water can be represented by the inflow parameter. It can be a constant or a time variant. The unit of the inflow should be the power that can be created from the quantity of the incoming water at maximum efficiency [MW]. In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
+In this implementation of reservoir hydro power, there is an option to spill water (energy) from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled energy can be seen from the results as the 'downward slack' of the node.
 
-The required parameters of the reservoir are (node_c and node_t in excel):
+The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
 
-- Is_active: yes
-- has_balance: yes
-- has_storage: yes
-- inflow: Mapping of the incoming water as the potential power [MW]
-- existing: The maximum size of the reservoir as the potential energy [MWh]
-- penalty_up: a large number
-- penalty_down: 0 or a large number (spilling or not)
-- a storage_method to set the behaviour on how the storage levels should be managed
+- `is_active`: yes
+- `has_balance`: yes
+- `has_storage`: yes
+- `inflow`: Mapping of the incoming water as the potential power [MW]
+- `existing`: The maximum size of the reservoir as the potential energy [MWh]
+- `penalty_up`: a large number to avoid creating energy from nowhere
+- `penalty_down`: 0 or a large number (spilling or not)
+- a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeblock* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*.
 
-The unit is connected to the reservoir and the output nodeA (unit_c and unit_node_c in excel):
+The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* (unit_c and unit_node_c in excel):
 
-- The efficiency of the unit can be set to 1 as that information is in the reservoir.
-- Set existing capacity [MW]
-- is_active: yes 
-- Create relations unit_inputNode: hydro_plant|reservoir and unit_outputNode: hydro_plant|nodeA.
+- The `efficiency` of the unit can be set to 1 as the inflow time series are directly expressed in MWh (using piecewise linear efficiency is naturally possible).
+- Set `existing` capacity [MW]
+- `is_active`: yes 
+- Create relations unit__inputNode: hydro_plant|reservoir and unit__outputNode: hydro_plant|nodeA.
 
 ![Cplex parameters](./hydro_reservoir.png)
 
