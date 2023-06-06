@@ -899,15 +899,9 @@ def start_plotting(
     with open(args.settings, encoding="utf-8") as settings_file:
         settings = json.load(settings_file)
     selected_scenarios = select_scenario_dialog.get_selected()
-    select_scenario_dialog.close()
     did_plot = plot(db_map, selected_scenarios, settings)
     if not did_plot:
         print("Nothing to plot.")
-        if args.notification_file is not None:
-            notify_via_file(args.notification_file)
-        return
-    if args.notification_file is not None:
-        QTimer.singleShot(0, lambda: notify_via_file(args.notification_file))
 
 
 def main() -> None:
@@ -917,6 +911,8 @@ def main() -> None:
     if args.use_subprocess:
         start_subprocess(args)
         return
+    if args.notification_file is not None:
+        notify_via_file(args.notification_file)
     # The QApplication instance may already exist when running on Toolbox console
     app = QApplication.instance()
     if app is None:
