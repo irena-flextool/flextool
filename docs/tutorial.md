@@ -331,7 +331,7 @@ The online variable also allows to change the efficiency of the plant between th
 
 where   slope = 1 / efficiency - section
   and section = 1 / efficiency 
-                - ( 1 / efficiency - min_load / efficiency_at_min_load) / ( 1 - mid_load )
+                - ( 1 / efficiency - min_load / efficiency_at_min_load) / ( 1 - min_load )
 ```
 
 By default, `input_coefficient` and `output_coefficient` are 1, but if there is a need to tweak their relative contributions, these coefficients allow to do so (e.g. a coal plant might have lower efficieny when using lignite than when using brown coal).
