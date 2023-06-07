@@ -38,8 +38,8 @@ def add_version(db):
     # this function adds the version information to the databases if there is none
 
     #get template JSON, reserve the option to use older templates if more than one conflicting version jump required
-    with open ('./version/flextool_template_master.json') as json_file:
-        template = json.load(json_file) 
+    #with open ('./version/flextool_template_master.json') as json_file:
+    #    template = json.load(json_file) 
 
     version_up = [["model", "version", 1, None, "Contains database version information."]]
     (num,log) = import_data(db, object_parameters = version_up)
