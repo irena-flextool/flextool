@@ -84,6 +84,23 @@ python -m spinetoolbox
 
 ## Updating IRENA FlexTool
 
+### New update version (release 3.1.4 or later):
+Update of IRENA FlexTool to the latest version is done as follows:
+- Start anaconda prompt
+- `conda activate flextool` (or whatever is your conda environment name for IRENA FlexTool)
+- cd to the FlexTool directory
+- `python update_flextool.py`
+- This will pull the new version of the tool as well as migrating the input databases to the new version without destroying the data. Making a backup copy of the input data is still a good practice.
+    - The updated databases are: 
+        - The database chosen as the input data !!!
+        - init.sqlite
+        - input_data_template.sqlite
+        - how to example databases
+
+- One can also migrate other input databases to the new version by calling:
+    - `python migrate_database.py *path_to_database*`
+
+### Old version (release 3.1.3 or earlier):
 Update of IRENA FlexTool to the latest version is done as follows:
 
 - Start anaconda prompt
