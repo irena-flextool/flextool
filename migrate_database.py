@@ -9,7 +9,7 @@ def migrate_database(database_path):
 
     update_functions=[add_version]
 
-    db = DatabaseMapping('sqlite://' + database_path)
+    db = DatabaseMapping('sqlite:///' + database_path)
     objects = export_object_parameters(db)
     settings = next((x for x in objects if x[0]=="model" and x[1]=="version"), None)
     if settings == None:
