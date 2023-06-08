@@ -2,7 +2,7 @@ import json
 import argparse
 import os
 import sys
-from spinedb_api import import_data, DatabaseMapping, export_object_parameters
+from spinedb_api import import_data, DatabaseMapping, from_database
 
 
 
@@ -15,14 +15,14 @@ def migrate_database(database_path):
         exit(-1)
 
     db = DatabaseMapping('sqlite:///' + database_path, create = False)
-    objects = export_object_parameters(db)
-    settings = next((x for x in objects if x[0]=="model" and x[1]=="version"), None)
-    if settings is None:
+    sq= db.object_parameter_definition_sq
+    settings_parameter = db.query(sq).filter(sq.c.object_class_name == "model").filter(sq.c.parameter_name == "version").one_or_none()
+    if settings_parameter is None:
         #if no version assume version 0
         print("No version found. Assuming version 0, if older, migration might not work")
         version = 0
     else:
-        version = settings[2]
+        version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
     for index, func in enumerate(update_functions):
         if index >= version:
