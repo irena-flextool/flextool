@@ -51,5 +51,5 @@ def add_version(db):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('filepath', help= "Filepath, absolute or relative to flextool folder")
-    parser.parse_args()
-    migrate_database(sys.argv[1])
+    args = parser.parse_args()
+    migrate_database(args.filepath)
