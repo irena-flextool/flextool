@@ -1,5 +1,6 @@
 import json
 import sys
+import argparse
 from spinedb_api import import_data, DatabaseMapping
 
 def initialize_database(database_name="new_database.sqlite"):
@@ -23,4 +24,7 @@ def initialize_database(database_name="new_database.sqlite"):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('filename',help= "The name of the new database")
+    parser.parse_args()
     initialize_database(sys.argv[1])

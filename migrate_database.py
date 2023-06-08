@@ -1,4 +1,5 @@
 import json
+import argparse
 import os
 import sys
 from spinedb_api import import_data, DatabaseMapping, export_object_parameters
@@ -9,7 +10,7 @@ def migrate_database(database_path):
 
     update_functions=[add_version]
 
-    if not os.path.exists or not database_path.endswith(".sqlite"):
+    if not os.path.exists(database_path) or not database_path.endswith(".sqlite"):
         print("No sqlite file at " + database_path)
         exit(-1)
 
@@ -48,4 +49,7 @@ def add_version(db):
     return 0
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('filepath', help= "Filepath, absolute or relative to flextool folder")
+    parser.parse_args()
     migrate_database(sys.argv[1])
