@@ -8,7 +8,8 @@ from spinedb_api import import_data, DatabaseMapping, from_database
 
 def migrate_database(database_path):
 
-    update_functions=[add_version]
+    update_functions=[add_version,
+                      add_lifetime_method]
 
     if not os.path.exists(database_path) or not database_path.endswith(".sqlite"):
         print("No sqlite file at " + database_path)
@@ -45,6 +46,23 @@ def add_version(db):
     (num,log) = import_data(db, object_parameters = version_up)
     print(str(num)+" imports made")
     db.commit_session("Added version parameter")
+
+    return 0
+
+def add_lifetime_method(db):
+    
+    #get template JSON. This can be the master or old template if conflicting migrations in between
+    with open ('./version/flextool_template_master.json') as json_file:
+        template = json.load(json_file)
+
+    #With objective parameters, no duplicates are created. These will replace the old ones or create new
+    (num,log) = import_data(db, object_parameters = template["object_parameters"])
+    print(str(num)+" imports made")
+
+    #Add parameter_value_lists. Note that object_parameter import and value_list import work differently. Former replaces, latter adds.
+    (num,log) = import_data(db, parameter_value_lists = template["parameter_value_lists"])
+    print(str(num)+" imports made")
+    db.commit_session("Added lifetime_method object parameters and parameter value lists")
 
     return 0
 

@@ -416,6 +416,14 @@
             "yes"
         ],
         [
+            "lifetime_methods",
+            "reinvest_automatic"
+        ],
+        [
+            "lifetime_methods",
+            "reinvest_choice"
+        ],
+        [
             "minimum_time_methods",
             "min_uptime"
         ],
@@ -738,6 +746,13 @@
         ],
         [
             "connection",
+            "lifetime_method",
+            "reinvest_automatic",
+            null,
+            "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built."
+        ],
+        [
+            "connection",
             "other_operational_cost",
             null,
             null,
@@ -1038,6 +1053,13 @@
             "Sequence of solves in the model. Array."
         ],
         [
+            "model",
+            "version",
+            2,
+            null,
+            "Contains database version information."
+        ],
+        [
             "node",
             "annual_flow",
             null,
@@ -1169,6 +1191,13 @@
             null,
             null,
             "[years] Used to calculate annuity together with interest rate. Constant or period."
+        ],
+        [
+            "node",
+            "lifetime_method",
+            "reinvest_automatic",
+            null,
+            "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built."
         ],
         [
             "node",
@@ -1355,16 +1384,16 @@
         [
             "solve",
             "solve_mode",
-            null,
+            "single_solve",
             "solve_mode",
             "A single_solve or rolling_window for a set of rolling optimisation windows solved in a sequence (not functional yet)."
         ],
         [
             "solve",
             "solver",
-            null,
+            "highs",
             "solver",
-            "Choice of solver. HIGHs used as default. GLPSOL is another open source option. Out of commercial solvers CPLEX has been tested.\r\n"
+            "Choice of solver. HIGHs used as default. GLPSOL is another open source option. Out of commercial solvers CPLEX has been tested."
         ],
         [
             "solve",
@@ -1519,6 +1548,13 @@
             null,
             null,
             "[years] Used to calculate annuity together with interest rate. Constant or period."
+        ],
+        [
+            "unit",
+            "lifetime_method",
+            "reinvest_automatic",
+            null,
+            "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built."
         ],
         [
             "unit",
