@@ -145,7 +145,7 @@ set entityDivest := setof {(e, m) in entity__invest_method : m not in divest_met
 set entityInvest := setof {(e, m) in entity__invest_method : m not in invest_method_not_allowed} (e);
 set entity__lifetime_method_read dimen 2 within {entity, lifetime_method};
 set entity__lifetime_method 'the lifetime method applied to an entity' := 
-    {e in entity, m in lifetime_method : (e, m) in entity__lifetime_method_read || (sum{(e, m2) in entity__lifetime_method_read} 1 = 0 && m in lifetime_method_default) && e in entityInvest};
+    {e in entity, m in lifetime_method : (e, m) in entity__lifetime_method_read || (sum{(e, m2) in entity__lifetime_method_read} 1 = 0 && m in lifetime_method_default)};
 param investableEntities := sum{e in entityInvest} 1;
 set group__invest_method 'the investment method applied to a group' dimen 2 within {group, invest_method};
 set group_invest := setof {(g, m) in group__invest_method : m not in invest_method_not_allowed} (g);
@@ -217,6 +217,8 @@ param dt_jump {(d, t) in dt};
 set dtttdt dimen 6;
 set period_invest dimen 1 within period;
 set period_realized dimen 1 within period;
+set period_with_history dimen 1 within periodAll;
+param p_period_from_solve{period_with_history};
 set time_in_use := setof {(d, t) in dt} (t);
 
 set startTime dimen 1 within time;
@@ -285,8 +287,10 @@ param p_discount_rate{model} default 0.05;
 param p_discount_offset_investment{model} default 0;    # Calculate investment annuity assuming they are on average taking place at the middle of the year (unless other value is given)
 param p_discount_offset_operations{model} default 0.5;  # Calculate operational costs assuming they are on average taking place at the middle of the year (unless other value is given)
 
-param p_entity_invested {e in entity, d in periodAll : e in entityInvest};
 param p_entity_divested {e in entity : e in entityDivest};
+set ed_history_realized_read dimen 2 within {e in entity, d in period_with_history};
+param p_entity_period_existing_capacity {e in entity, d in period_with_history};
+param p_entity_period_invested_capacity {e in entity, d in period_with_history};
 
 param scale_the_objective;
 param scale_the_state;
@@ -394,7 +398,7 @@ table data IN 'CSV' 'input/pt_profile.csv' : [profile, time], pt_profile;
 table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
 table data IN 'CSV' 'input/pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
 table data IN 'CSV' 'input/timeline_duration_in_years.csv' : [timeline], p_timeline_duration_in_years;
-table data IN 'CSV' 'solve_data/p_discount_years.csv' : [period], p_discount_years;
+table data IN 'CSV' 'solve_data/p_discount_years.csv' : [period], p_discount_years~param;
 table data IN 'CSV' 'solve_data/p_years_represented.csv' : period__year <- [period,years_from_solve];
 table data IN 'CSV' 'solve_data/p_years_represented.csv' : [period, years_from_solve], p_years_represented~p_years_represented;
 table data IN 'CSV' 'solve_data/p_years_represented.csv' : [period, years_from_solve], p_years_from_solve~p_years_from_solve;
@@ -408,16 +412,23 @@ table data IN 'CSV' 'solve_data/first_timesteps.csv' : period__time_first <- [pe
 table data IN 'CSV' 'solve_data/last_timesteps.csv' : period__time_last <- [period,step];
 table data IN 'CSV' 'solve_data/step_previous.csv' : dtttdt <- [period, time, previous, previous_within_block, previous_period, previous_within_solve];
 table data IN 'CSV' 'solve_data/step_previous.csv' : [period, time], dt_jump~jump;
+table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <- [period];
+table data IN 'CSV' 'solve_data/period_with_history.csv' : [period], p_period_from_solve~param;
 table data IN 'CSV' 'solve_data/realized_periods_of_current_solve.csv' : period_realized <- [period];
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
 table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
 
 # After rolling forward the investment model
-table data IN 'CSV' 'solve_data/p_entity_invested.csv' : [entity, periodAll], p_entity_invested;
 table data IN 'CSV' 'solve_data/p_entity_divested.csv' : [entity], p_entity_divested;
+table data IN 'CSV' 'solve_data/p_entity_period_existing_capacity.csv' : ed_history_realized_read <- [entity, period];
+table data IN 'CSV' 'solve_data/p_entity_period_existing_capacity.csv' : [entity, period], p_entity_period_existing_capacity;
+table data IN 'CSV' 'solve_data/p_entity_period_existing_capacity.csv' : [entity, period], p_entity_period_invested_capacity;
 
 # Reading results from previous solves
 table data IN 'CSV' 'output/costs_discounted.csv' : [param_costs], costs_discounted;
+
+set ed_history_realized_first := {e in entity, d in period_realized : p_model["solveFirst"]};
+set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
 set process__fork_method_yes dimen 2 within {process, fork_method} := 
     {p in process, m in fork_method 
@@ -674,7 +685,7 @@ set process__source__sink__ramp_method :=
 		|| (p, sink, m) in process_node_ramp_method
 	};
 
-param pdNode {n in node, param in nodePeriodParam, d in period} :=
+param pdNode {n in node, param in nodePeriodParam, d in period_with_history} :=
         + if (n, param, d) in node__param__period
 		  then pd_node[n, param, d]
 		  else p_node[n, param];
@@ -688,7 +699,7 @@ param ptNode_inflow {n in node, t in time} :=
 		  else p_node[n, 'inflow'];
 set nodeSelfDischarge :=  {n in nodeState : sum{(d, t) in dt : ptNode[n, 'self_discharge_loss', t]} 1};
 		  
-param pdProcess {p in process, param in processPeriodParam, d in period} :=
+param pdProcess {p in process, param in processPeriodParam, d in period_with_history} :=
         + if (p, param, d) in process__param__period
 		  then pd_process[p, param, d]
 		  else if (p, param) in process__param
@@ -717,7 +728,7 @@ param p_entity_unitsize {e in entity} :=
 					  else 1000
 			   );
 
-param pdEntity_lifetime {e in entity, d in period} :=
+param pdEntity_lifetime {e in entity, d in period_with_history} :=
         + if e in process then pdProcess[e, 'lifetime', d]
 		  else if e in node then pdNode[e, 'lifetime', d];
 
@@ -771,7 +782,8 @@ param hours_in_period{d in period} := sum {(d, t) in dt} (step_duration[d, t]);
 param hours_in_solve := sum {(d, t) in dt} (step_duration[d, t]);
 param period_share_of_year{d in period} := hours_in_period[d] / 8760;
 param solve_share_of_year := hours_in_solve / 8760;
-param p_years_d{d in period} := sum {y in year : (d, y) in period__year} p_years_from_solve[d, y];
+param p_years_d{d in period_with_history} := p_period_from_solve[d];
+#param p_years_d{d in periodAll} := sum {y in year : (d, y) in period__year} p_years_represented[d, y];
 
 param period_share_of_annual_flow {n in node, d in period : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
         && pdNode[n, 'annual_flow', d]} := abs(sum{(d, t) in dt} (ptNode[n, 'inflow', t])) / pdNode[n, 'annual_flow', d];
@@ -955,9 +967,11 @@ set ed_invest_period := {(e, d) in ed_invest : (e, 'invest_period') in entity__i
                                                || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
 set e_invest_total := {e in entityInvest : (e, 'invest_total') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method 
                                                || (e, 'invest_retire_total') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
-set edd_invest_choice := {(e, d_invest) in ed_invest, d in period : sum{(e, m) in entity__lifetime_method : m='reinvest_choice'} 1 && p_years_d[d] >= p_years_d[d_invest] && p_years_d[d] < p_years_d[d_invest] + pdEntity_lifetime[e, d_invest]};
-set edd_invest_automatic := {(e, d_invest) in ed_invest, d in period : sum{(e, m) in entity__lifetime_method : m='reinvest_automatic'} 1 && p_years_d[d] >= p_years_d[d_invest]};
-set edd_invest := edd_invest_choice union edd_invest_automatic;
+set edd_history_choice := {e in entity, d_history in period_with_history, d in period : (e, 'reinvest_choice') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history] && p_years_d[d] < p_years_d[d_history] + pdEntity_lifetime[e, d_history]};
+set edd_history_automatic := {e in entity, d_history in period_with_history, d in period : (e, 'reinvest_automatic') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history]};
+set edd_history := edd_history_choice union edd_history_automatic;
+set edd_history_invest := {(e, d_invest, d) in edd_history : e in entityInvest};
+set edd_invest := {(e, d_invest, d) in edd_history_invest : d_invest in period_invest};
 set pd_invest := {(p, d) in ed_invest : p in process};
 set nd_invest := {(n, d) in ed_invest : n in node};
 set ed_divest := {e in entityDivest, d in period_invest : ed_entity_annual_divest[e, d] || sum{(e, c) in process_capacity_constraint} 1 || sum{(e, c) in node_capacity_constraint} 1 };
@@ -1122,12 +1136,23 @@ set process__sink_nonSync :=
 			|| ( (p, sink) in process_sink && p in process_nonSync_connection )
 			|| ( (p, sink) in process_source && p in process_nonSync_connection )  
 	    };
-param p_entity_all_existing {e in entity, d in period} :=
-        + (if e in process then p_process[e, 'existing'])
-        + (if e in node then p_node[e, 'existing'])
-		+ (if not p_model['solveFirst'] && e in entityInvest then p_entity_invested[e, d])
-		- (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
+
+param p_entity_existing_first_solve {e in entity, d in period} :=
+  + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in process then p_process[e, 'existing'])
+  + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in node then p_node[e, 'existing'])
+  + (if (e, 'reinvest_choice') in entity__lifetime_method && p_model['solveFirst'] && e in process && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + pdEntity_lifetime[e, d_first]) then p_process[e, 'existing'])
+  + (if (e, 'reinvest_choice') in entity__lifetime_method && p_model['solveFirst'] && e in node && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + pdEntity_lifetime[e, d_first]) then p_node[e, 'existing'])
 ;
+param p_entity_existing_later_solves {e in entity, d in period} :=
+  + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_existing_capacity[e, d_history]);
+  
+param p_entity_all_existing {e in entity, d in period} :=
+  + (if p_model['solveFirst'] then p_entity_existing_first_solve[e, d])
+  + (if not p_model['solveFirst'] then p_entity_existing_later_solves[e, d])
+  - (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
+;
+param p_entity_previously_invested_capacity {e in entity, d in period} :=
+  + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_invested_capacity[e, d_history]);
 
 param p_entity_max_capacity {e in entity, d in period} :=
   + p_entity_all_existing[e, d]
@@ -1173,7 +1198,7 @@ var vq_inertia {g in groupInertia, (d, t) in dt} >= 0, <= 1;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
 var vq_capacity_margin {g in groupCapacityMargin, d in period_invest} >= 0, <= ceil((pdGroup[g, 'capacity_margin', d] + pgdNodeInflow_for_scaling[g, d]) / pgdNodeInflow_for_scaling[g, d]);
 
-
+display solve_period;
 #########################
 ## Data checks 
 printf 'Checking: Eff. data for 1 variable conversions directly from source to sink (and possibly back)\n';
@@ -2031,7 +2056,7 @@ s.t. minDivestGroup_entity_period {(g, d) in gd_divest_period} :
 
 s.t. maxInvestGroup_entity_total {g in g_invest_total, d in period} :
   + sum{(g, e) in group_entity, d_invest in period : (e, d_invest, d) in edd_invest} v_invest[e, d] * p_entity_unitsize[e]
-  + sum{(g, e) in group_entity} (if not p_model['solveFirst'] then p_entity_invested[e, d] else 0)
+  + sum{(g, e) in group_entity} p_entity_previously_invested_capacity[e, d]
   <=
   + p_group[g, 'invest_max_total']
 ;
@@ -2045,7 +2070,7 @@ s.t. maxDivestGroup_entity_total {g in g_divest_total} :
 
 s.t. minInvestGroup_entity_total {g in g_invest_total, d in period} :
   + sum{(g, e) in group_entity, d_invest in period : (e, d_invest, d) in edd_invest} v_invest[e, d] * p_entity_unitsize[e]
-  + sum{(g, e) in group_entity} (if not p_model['solveFirst'] then p_entity_invested[e, d] else 0)
+  + sum{(g, e) in group_entity} p_entity_previously_invested_capacity[e, d]
   >=
   + p_group[g, 'invest_min_total']
 ;
@@ -2082,8 +2107,8 @@ s.t. minDivest_entity_period {(e, d)  in ed_divest_period} :  # Covers both proc
 ;
 
 s.t. maxInvest_entity_total {e in e_invest_total, d in period} :  # Covers both processes and nodes
-  + sum{(e, d_invest, d) in edd_invest} v_invest[e, d] * p_entity_unitsize[e] 
-  + (if not p_model['solveFirst'] then p_entity_invested[e, d])
+  + sum{(e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e] 
+  + p_entity_previously_invested_capacity[e, d]
   <= 
   + e_invest_max_total[e]
 ;
@@ -2097,7 +2122,7 @@ s.t. maxDivest_entity_total {e in e_divest_total} :  # Covers both processes and
 
 s.t. minInvest_entity_total {e in e_invest_total, d in period} :  # Covers both processes and nodes
   + sum{(e, d_invest, d) in edd_invest} v_invest[e, d] * p_entity_unitsize[e] 
-  + (if not p_model['solveFirst'] then p_entity_invested[e, d])
+  + p_entity_previously_invested_capacity[e, d]
   >= 
   + e_invest_min_total[e]
 ;
@@ -2671,18 +2696,20 @@ param potentialVREgen{(p, n) in process_sink, d in period_realized : p in proces
   + sum{(p, source, n, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : m = 'upper_limit'} 
       + pt_profile[f, t] * entity_all_capacity[p, d];
 
-printf 'Transfer investments to the next solve...\n';
-param fn_entity_invested symbolic := "solve_data/p_entity_invested.csv";
-printf 'entity,periodAll,p_entity_invested\n' > fn_entity_invested;
-for {e in entityInvest, d in periodAll} 
+param fn_entity_period_existing_capacity symbolic := "solve_data/p_entity_period_existing_capacity.csv";
+printf 'entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n' > fn_entity_period_existing_capacity;
+for {(e, d) in ed_history_realized union {e in entity, d in period_realized}}
   {
-    printf '%s,%s,%.8g\n', e, d, 
-	  + (if not p_model['solveFirst'] then p_entity_invested[e, d] else 0)
-	  + sum{(e, d_invest, d) in edd_invest : d_invest in period_realized} ( v_invest[e, d_invest].val ) * p_entity_unitsize[e]
-#	  + sum{(e, d_invest, d) in edd_invest : d_invest in period_realized && not p_model['solveLast']} ( v_invest[e, d_invest].val ) * p_entity_unitsize[e]
-	>> fn_entity_invested;
+    printf '%s,%s,%.8g,%.8g\n', e, d,
+	  + (if p_model['solveFirst'] && e in process && d in period_first then p_process[e, 'existing'])
+	  + (if p_model['solveFirst'] && e in node    && d in period_first then    p_node[e, 'existing'])
+	  + (if not p_model['solveFirst'] && (e, d) in ed_history_realized then p_entity_period_existing_capacity[e, d])
+	  + (if (e, d) in ed_invest && d in period_realized then ( v_invest[e, d].val ) * p_entity_unitsize[e]),
+	  + (if not p_model['solveFirst'] && (e, d) in ed_history_realized  then p_entity_period_invested_capacity[e, d])
+	  + (if (e, d) in ed_invest && d in period_realized then ( v_invest[e, d].val ) * p_entity_unitsize[e])
+	>> fn_entity_period_existing_capacity;
   }
-
+  
 printf 'Transfer divestments to the next solve...\n';
 param fn_entity_divested symbolic := "solve_data/p_entity_divested.csv";
 printf 'entity,p_entity_divested\n' > fn_entity_divested;
