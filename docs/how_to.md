@@ -43,7 +43,7 @@ The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* 
 - `is_active`: yes 
 - Create relations unit__inputNode: hydro_plant|reservoir and unit__outputNode: hydro_plant|nodeA.
 
-![Cplex parameters](./hydro_reservoir.png)
+![Hydro reservoir](./hydro_reservoir.PNG)
 
 ## How to use CPLEX as the solver
 
@@ -68,4 +68,4 @@ With these parameters, the command line call is:
 'solver_precommand' cplex -c 'read flexModel3.mps' 'solver_command1' 'solver_command2' ... 'solver_command_last' 'opt' 'write flexModel3_cplex.sol' 'quit'
 ```
 
-![Cplex parameters](./CPLEX.png)
+![Cplex parameters](./CPLEX.PNG)
