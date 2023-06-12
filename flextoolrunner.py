@@ -391,43 +391,7 @@ class FlexToolRunner:
                     logging.error(f"The model is infeasible. Check the constraints.")
                     exit(1)
 
-        elif solver == "highs":
-            highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat',
-                           '--wfreemps', 'flexModel3.mps'] + sys.argv[1:]
-            completed = subprocess.run(highs_step1)
-            if completed.returncode != 0:
-                logging.error(f'glpsol mps writing failed: {completed.returncode}')
-                exit(completed.returncode)
-            print("GLPSOL wrote the problem as MPS file\n")
-            highs_step2 = "highs flexModel3.mps --options_file=highs.opt --presolve=" \
-                + self.highs_presolve.get(current_solve, "on") + " --solver=" \
-                + self.highs_method.get(current_solve, "choose") + " --parallel=" \
-                + self.highs_parallel.get(current_solve, "off")
-            completed = subprocess.run(highs_step2)
-            if completed.returncode != 0:
-                logging.error(f'Highs solver failed: {completed.returncode}')
-                exit(completed.returncode)
-            print("HiGHS solved the problem\n")
-            
-            #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
-            with open('flexModel3.sol','r') as inf_file:
-                inf_content = inf_file.read() 
-                if 'INFEASIBLE' in inf_content:
-                    logging.error(f"The model is infeasible. Check the constraints.")
-                    exit(1)
-            
-            highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r',
-                           'flexModel3.sol'] + sys.argv[1:]
-            completed = subprocess.run(highs_step3)
-            if completed.returncode == 0:
-                print("GLPSOL wrote the results into csv files\n")
-            
-        elif solver == "cplex" or solver == "gurobi":
-            if current_solve not in self.solver_precommand.keys():
-                s_wrapper = ''
-            else:
-                s_wrapper = self.solver_precommand[current_solve]
-
+        elif solver == "highs" or solver == "cplex":
             highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat',
                            '--wfreemps', 'flexModel3.mps'] + sys.argv[1:]
             completed = subprocess.run(highs_step1)
@@ -436,33 +400,62 @@ class FlexToolRunner:
                 exit(completed.returncode)
             print("GLPSOL wrote the problem as MPS file\n")
 
-            if solver == "cplex":
-                if current_solve not in self.solver_arguments.keys():
-                    cplex_step = [s_wrapper, 'cplex', '-c', 'read flexModel3.mps','opt', 'write flexModel3_cplex.sol', 'quit']  + sys.argv[1:]
-                else:
-                    cplex_step = [s_wrapper, 'cplex', '-c', 'read flexModel3.mps']
-                    cplex_step += self.solver_arguments[current_solve]
-                    cplex_step += ['opt', 'write flexModel3_cplex.sol', 'quit']
-                    cplex_step += sys.argv[1:]
+            #check if the problem has columns(nodes)
+            with open('flexModel3.mps','r') as mps_file:
+                mps_content = mps_file.read() 
+                if 'Columns:    0' in mps_content:
+                    logging.error(f"The problem has no columns. Check that the model has nodes.")
+                    exit(-1)
 
-                completed = subprocess.run(cplex_step)
+
+            if solver == "highs":
+                highs_step2 = "highs flexModel3.mps --options_file=highs.opt --presolve=" \
+                    + self.highs_presolve.get(current_solve, "on") + " --solver=" \
+                    + self.highs_method.get(current_solve, "choose") + " --parallel=" \
+                    + self.highs_parallel.get(current_solve, "off")
+                completed = subprocess.run(highs_step2)
                 if completed.returncode != 0:
-                    logging.error(f'Cplex solver failed: {completed.returncode}')
-                    exit(completed.returncode) 
+                    logging.error(f'Highs solver failed: {completed.returncode}')
+                    exit(completed.returncode)
+                print("HiGHS solved the problem\n")
                 
-                completed = self.cplex_to_glpsol("flexModel3_cplex.sol","flexModel3.sol")
+                #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
+                with open('flexModel3.sol','r') as inf_file:
+                    inf_content = inf_file.read() 
+                    if 'INFEASIBLE' in inf_content:
+                        logging.error(f"The model is infeasible. Check the constraints.")
+                        exit(1)
+            
+            elif solver == "cplex": #or gurobi
+                if current_solve not in self.solver_precommand.keys():
+                    s_wrapper = ''
+                else:
+                    s_wrapper = self.solver_precommand[current_solve]
 
-            else:
-                logging.error(f"Gurobi not yet implemented. Currently supported options: highs, glpsol, cplex.")
-                exit(-1)
+                if solver == "cplex":
+                    if current_solve not in self.solver_arguments.keys():
+                        cplex_step = [s_wrapper, 'cplex', '-c', 'read flexModel3.mps','opt', 'write flexModel3_cplex.sol', 'quit']  + sys.argv[1:]
+                    else:
+                        cplex_step = [s_wrapper, 'cplex', '-c', 'read flexModel3.mps']
+                        cplex_step += self.solver_arguments[current_solve]
+                        cplex_step += ['opt', 'write flexModel3_cplex.sol', 'quit']
+                        cplex_step += sys.argv[1:]
+
+                    completed = subprocess.run(cplex_step)
+                    if completed.returncode != 0:
+                        logging.error(f'Cplex solver failed: {completed.returncode}')
+                        exit(completed.returncode) 
+                    
+                    completed = self.cplex_to_glpsol("flexModel3_cplex.sol","flexModel3.sol")
+
 
             highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r',
-                           'flexModel3.sol'] + sys.argv[1:]
+                        'flexModel3.sol'] + sys.argv[1:]
             completed = subprocess.run(highs_step3)
             if completed.returncode == 0:
                 print("GLPSOL wrote the results into csv files\n")
         else:
-            logging.error(f"Unknown solver '{solver}'. Currently supported options: highs, glpsol.")
+            logging.error(f"Unknown solver '{solver}'. Currently supported options: highs, glpsol, cplex.")
             exit(-1)
         return completed.returncode
 
@@ -588,6 +581,9 @@ class FlexToolRunner:
                                                                         index + block_step,
                                                                         timelines[timeline][index + block_step][1]))
                                                 break
+        if len(active_time.keys()) == 0:
+            logging.error(current_solve + " could not connect to timeline. Check that object solve has period_timeblockSet [Map], objects timeblockSet [Map] and timeline [Map] are defined and that relation timeblockSet_timeline exists")
+            exit(-1)
         return active_time
 
     def make_step_jump(self, active_time_list):
@@ -758,7 +754,7 @@ def main():
         print("solve_data folder existed")
 
     if not runner.model_solve:
-        logging.error("No model. Make sure the 'model' class defines solves.")
+        logging.error("No model. Make sure the 'model' class defines solves [Array].")
         sys.exit(-1)
     solves = next(iter(runner.model_solve.values()))
     if not solves:
