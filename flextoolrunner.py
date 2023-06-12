@@ -773,7 +773,6 @@ def main():
         active_time_lists[solve] = active_time_list
         jumps = runner.make_step_jump(active_time_list)
         jump_lists[solve] = jumps
-        single_solve_period_history = ()
 
         for solve_2 in solves:
             if solve_2 == solve:
@@ -786,6 +785,9 @@ def main():
                             solve_period_history[solve].append((period[0], period[1]))
         for period__year in runner.solve_period_years_represented[solve]:
             solve_period_history[solve].append((period__year[0], period__year[1]))
+        if not runner.solve_period_years_represented[solve]:
+            for period__year in runner.realized_periods:
+                solve_period_history[solve].append((period__year[1], 1))
 
     first = True
     for i, solve in enumerate(solves):
