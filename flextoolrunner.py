@@ -339,7 +339,7 @@ class FlexToolRunner:
                                   + str(years_to_cover_within_year) + '\n')
                     year_count = year_count + years_to_cover_within_year
 
-    def write_discount_years(self, years_represented, filename):
+    def write_period_years(self, years_represented, filename):
         """
         write to file a list of timesteps as defined by the active timeline of the current solve
         :param filename: filename to write to
@@ -348,7 +348,7 @@ class FlexToolRunner:
         """
         with open(filename, 'w') as outfile:
             # prepend with a header
-            outfile.write('period,p_discount_years\n')
+            outfile.write('period,param\n')
             year_count = 0
             for period__year in years_represented:
                 outfile.write(period__year[0] + ',' + str(year_count) + '\n')
@@ -736,6 +736,8 @@ class FlexToolRunner:
             firstfile.write("entity,p_entity_invested\n")
         with open("solve_data/p_entity_divested.csv", 'w') as firstfile:
             firstfile.write("entity,p_entity_divested\n")
+        with open("solve_data/p_entity_period_existing_capacity.csv", 'w') as firstfile:
+            firstfile.write("entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n")
 
     def write_headers_for_empty_output_files(self, filename, header):
         """
@@ -752,6 +754,7 @@ def main():
     runner = FlexToolRunner()
     active_time_lists = OrderedDict()
     jump_lists = OrderedDict()
+    solve_period_history = defaultdict(list)
     try:
         os.mkdir('solve_data')
     except FileExistsError:
@@ -770,16 +773,30 @@ def main():
         active_time_lists[solve] = active_time_list
         jumps = runner.make_step_jump(active_time_list)
         jump_lists[solve] = jumps
+        single_solve_period_history = ()
+
+        for solve_2 in solves:
+            if solve_2 == solve:
+                break
+            for solve__period in runner.realized_periods:
+                if solve__period[0] == solve_2:
+                    this_solve = runner.solve_period_years_represented[solve_2]
+                    for period in this_solve:
+                        if period[0] == solve__period[1]:
+                            solve_period_history[solve].append((period[0], period[1]))
+        for period__year in runner.solve_period_years_represented[solve]:
+            solve_period_history[solve].append((period__year[0], period__year[1]))
 
     first = True
     for i, solve in enumerate(solves):
         runner.write_full_timelines(runner.timeblocks_used_by_solves[solve], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
         runner.write_step_jump(jump_lists[solve])
+        runner.write_period_years(solve_period_history[solve], 'solve_data/period_with_history.csv')
         runner.write_periods(solve, runner.realized_periods, 'solve_data/realized_periods_of_current_solve.csv')
         runner.write_periods(solve, runner.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
         runner.write_years_represented(runner.solve_period_years_represented[solve], 'solve_data/p_years_represented.csv')
-        runner.write_discount_years(runner.solve_period_years_represented[solve], 'solve_data/p_discount_years.csv')
+        runner.write_period_years(runner.solve_period_years_represented[solve], 'solve_data/p_discount_years.csv')
         runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
         runner.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
         runner.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
