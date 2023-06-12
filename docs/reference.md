@@ -55,11 +55,11 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
   - *highs_method*: HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.
   - *highs_parallel*: HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.
   - *highs_presolve*: HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large. 
-  - *solve_mode*: a single shot or a set of rolling optimisation windows solved in a sequence (not functional yet, always a single shot).
+  - *solve_mode*: a single solve or a set of rolling optimisation windows solved in a sequence (not functional yet, always a single solve).
   - For commercial solvers:
 
-    - *solver_wrapper* the commandline text in front of the call for the commercial (CPLEX) solver. For a possibility of reserving a floating licence for the duration of the solve
-    - *solver_commands* Array of additional commands passed to the commercial solver. Made for setting optimization parameters.
+    - *solver_precommand* the commandline text in front of the call for the commercial (CPLEX) solver. For a possibility of reserving a floating licence for the duration of the solve
+    - *solver_arguments* Array of additional commands passed to the commercial solver. Made for setting optimization parameters.
 
 - **timeblockset**: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)
 
@@ -111,7 +111,7 @@ Input data is set with the following parameters:
 - **'invest_min_total'** - [MWh] Minimum storage investment over all solves. Constant.
 - **'invest_min_period'** - [MWh] Minimum storage investment for each period. Period.
 - **'invest_forced'** - [MWh] Storage capacity that must be invested in a given period. Investment cost will be included in the cost results even though the model does not have an investment variable. Constant or period.
-- **'fixed_cost'** - [CUR/kW] Annual fixed cost for storage. Constant or period.
+- **'fixed_cost'** - [CUR/kWh] Annual fixed cost for storage. Constant or period.
 - **'penalty_up'** - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time.
 - **'penalty_down'** - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time.
 - **'virtual_unitsize'** - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.
@@ -159,9 +159,28 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 ### Investment parameters (for capacity expansion)
 
-- investment/retirement method
-- `invest_cost`, `interest_rate`, `lifetime`, `invest_max_total`, `invest_max_period`, `invest_min_total`, `invest_min_period`, `invest_forced`
-- `salvage_value`, `retire_max_total`, `retire_max_period`, `retire_min_total`, `retire_min_period`, `retire_forced`
+- **'invest_method'** - Choice of investment method: either *not_allowed* or then a combination of 
+    - *invest* and/or *retire* 
+    - investment limits for each *period* and/or for all periods (*total*) or *no_limit* 
+
+- **'invest_cost'** - [CUR/kW] Investment cost for new capacity. Constant or period.
+- **'salvage_value'** - [CUR/kW] Salvage value of the unit capacity. Constant or period.
+- **'lifetime'** - [years] Lifetime of the unit. Constant or period.
+- **'interest_rate'** - [unitless, e.g. 0.05 means 5%] Interest rate for investments. Constant or period.
+- **'invest_max_total'** - [MW] Maximum capacity investment over all solves. Constant.
+- **'invest_max_period'** - [MW] Maximum capacity investment for each period. Period.
+- **'invest_min_total'** - [MW] Maximum capacity investment over all solves. Constant.
+- **'invest_min_period'** - [MW] Maximum capacity investment for each period. Period.
+- **'invest_forced'** - [MWh] Capacity that must be invested in a given period. Investment cost will be included in the cost results even though the model does not have an investment variable. Constant or period.
+- **'retire_cost'** - [CUR/kW] Retirement cost for new capacity. Constant or period.
+- **'retire_max_total'** - [MW] Maximum capacity retirement over all solves. Constant.
+- **'retire_max_period'** - [MW] Maximum capacity retirement for each period. Period.
+- **'retire_min_total'** - [MW] Minimum capacity retirement over all solves. Constant.
+- **'retire_min_period'** - [MW] Minimum capacity retirement for each period. Period.
+- **'retire_forced'** - [MW] Capacity that must be invested in a given period. Retirement cost will be included in the cost results even though the model does not have an retirement variable. Constant or period.
+- **'fixed_cost'** - [CUR/kW] Annual fixed cost for capacity. Constant or period. 
+- **'virtual_unitsize'** - [MWh] Size of a single unit - used for integer investments (lumped investments). If not given, assumed from the existing capacity.
+
 
 ![image](./generators.png)
 
