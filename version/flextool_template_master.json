@@ -748,7 +748,7 @@
             "connection",
             "lifetime_method",
             "reinvest_automatic",
-            null,
+            "lifetime_methods",
             "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built."
         ],
         [
@@ -1053,13 +1053,6 @@
             "Sequence of solves in the model. Array."
         ],
         [
-            "model",
-            "version",
-            2,
-            null,
-            "Contains database version information."
-        ],
-        [
             "node",
             "annual_flow",
             null,
@@ -1196,7 +1189,7 @@
             "node",
             "lifetime_method",
             "reinvest_automatic",
-            null,
+            "lifetime_methods",
             "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built."
         ],
         [
@@ -1553,7 +1546,7 @@
             "unit",
             "lifetime_method",
             "reinvest_automatic",
-            null,
+            "lifetime_methods",
             "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built."
         ],
         [
