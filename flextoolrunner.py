@@ -786,8 +786,9 @@ def main():
         for period__year in runner.solve_period_years_represented[solve]:
             solve_period_history[solve].append((period__year[0], period__year[1]))
         if not runner.solve_period_years_represented[solve]:
-            for period__year in runner.realized_periods:
-                solve_period_history[solve].append((period__year[1], 1))
+            for solve__period in runner.realized_periods:
+                if solve__period[0] == solve:
+                    solve_period_history[solve].append((solve__period[1], 1))
 
     first = True
     for i, solve in enumerate(solves):
