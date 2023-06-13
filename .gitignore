@@ -1,6 +1,7 @@
 *.csv
 FlexTool2D_data.sqlite
 Results.sqlite
+input_data.sqlite
 paramNotWritten.dat
 .spinetoolbox/local/
 .spinetoolbox/items/flextool/output/
