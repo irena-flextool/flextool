@@ -140,7 +140,7 @@ In this implementation of reservoir hydro power, there is an option to spill wat
 <li><code>is_active</code>: yes </li>
 <li>Create relations unit__inputNode: hydro_plant|reservoir and unit__outputNode: hydro_plant|nodeA.</li>
 </ul>
-<p><img alt="Cplex parameters" src="./hydro_reservoir.png" /></p>
+<p><img alt="Hydro reservoir" src="../hydro_reservoir.PNG" /></p>
 <h2 id="how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</h2>
 <p>Using CPLEX requires that you have installed the software, have a licence for it and have added it to PATH or to the environment where you are using the FlexTool, so that the tool can find the solver.</p>
 <p>CPLEX is used when the <strong>solve</strong> parameter <em>solver</em> is set to 'cplex'. The tool passes the built optimization model to the CPLEX solver and converts the solution file to the filetype the tool requires. The solver will produce two additional files to the work directory: 'cplex.log' and 'flexModel3_cplex.sol'. The former is the logfile of the solver and the latter contains the solution in the CPLEX format.</p>
@@ -155,7 +155,7 @@ In this implementation of reservoir hydro power, there is an option to spill wat
 <p>With these parameters, the command line call is:</p>
 <pre><code class="language-shell">'solver_precommand' cplex -c 'read flexModel3.mps' 'solver_command1' 'solver_command2' ... 'solver_command_last' 'opt' 'write flexModel3_cplex.sol' 'quit'
 </code></pre>
-<p><img alt="Cplex parameters" src="./CPLEX.png" /></p>
+<p><img alt="Cplex parameters" src="../CPLEX.PNG" /></p>
               
             </div>
           </div><footer>
