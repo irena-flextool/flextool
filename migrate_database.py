@@ -55,11 +55,11 @@ def add_lifetime_method(db):
     with open ('./version/flextool_template_master.json') as json_file:
         template = json.load(json_file)
 
-    #With objective parameters, no duplicates are created. These will replace the old ones or create new
+    #With objective parameters, no duplicates are created. These will replace the old ones or create new. There will always be imports.
     (num,log) = import_data(db, object_parameters = template["object_parameters"])
     print(str(num)+" imports made")
 
-    #Add parameter_value_lists. Note that object_parameter import and value_list import work differently. Former replaces, latter adds.
+    #Add parameter_value_lists. Note that object_parameter import and value_list import work differently. Former replaces all, latter adds what is missing.
     (num,log) = import_data(db, parameter_value_lists = template["parameter_value_lists"])
     print(str(num)+" imports made")
     db.commit_session("Added lifetime_method object parameters and parameter value lists")
