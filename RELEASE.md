@@ -1,4 +1,13 @@
-** Release 3.1.3
+** Release 3.1.4 (14.6.2023)
+Bug fixes 
+- Cancelling of plot_results will not freeze Toolbox
+
+New features 
+- Lifetime_method (reinvest_automatic and reinvest_choice) so that user can choose whether assets will be automically renewed at the end of lifetime or the model has to make that choice
+- Commercial solver support (CPLEX)
+- Database migration. init.sqlite and input_data.sqlite will be updated to the latest version when update_flextool.py is run. It is also possible to update any database using migrate_database.py. After `git pull`, run `python -m update_flextool.py`. In future, just `python -m update_flextool.py` is sufficient. Best to update Spine Toolbox before doing this.
+
+** Release 3.1.3 (1.6.2023)
 Bug fixes
 - Use of capacity margin caused an infeasibility
 - Certain inflow time series settings crashed the model (complained about ptNode[n, 'inflow', t])
@@ -10,7 +19,7 @@ New features
 - Added support for commercial solvers (CPLEX explicitly at this point)
 
 
-** Release 3.1.2
+** Release 3.1.2 (23.5.2023)
 Bug fixes
 - Node prices were million times smaller than they should have been (bug introduced when scaling the model in 3.1.0)
 - Non-synchronous limit was not working.
@@ -20,13 +29,13 @@ New features
 - Model assumes precedence between storage_start_end_method, storage_binding_method, and storage_solve_horizon_method (in that order)
 
 
-** Release 3.1.1
+** Release 3.1.1 (13.5.2023)
 
 Bug fixes
 - The calculation of the p_entity_max_capacity did not consider which investment method was actually active. It also limited capacity in situations where investment method was supposed to be 'invest_no_limit'.
 
 
-** Release 3.1.0
+** Release 3.1.0 (13.5.2023)
 
 Bug fixes
 - Division by zero capacity for units with cf
@@ -51,9 +60,7 @@ New features
 - More result plots
 
 
-
-
-** Release 3.0.1
+** Release 3.0.1 (17.3.2023)
 
 Bug fixes
 - CO2_method for groups was not imported correctly from Excel inputs
@@ -63,7 +70,7 @@ New features
 - Output fixed costs for existing units
 - Added outputs to show average capacity factors for periods
 
-** Release 3.0.0
+** Release 3.0.0 (11.1.2023)
 
 All planned features implemented
 
