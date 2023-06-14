@@ -34,7 +34,7 @@
           <a href=".." class="icon icon-home"> IRENA FlexTool
         </a><div role="search">
   <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
-      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+      <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
   </form>
 </div>
       </div>
@@ -86,7 +86,7 @@
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#main-data-items-for-units">Main data items for units</a>
     </li>
-    <li class="toctree-l3"><a class="reference internal" href="#investment-parameters-for-capacity-expansion">Investment parameters (for capacity expansion)</a>
+    <li class="toctree-l3"><a class="reference internal" href="#investment-parameters-for-capacity-expansion">Investment parameters for capacity expansion</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#relationship-of-a-unit-to-a-node-and-determination-of-the-type-of-relationship">Relationship of a unit to a node and determination of the type of relationship</a>
     </li>
@@ -97,6 +97,14 @@
         </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#connections">Connections</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#defining-how-the-connection-functions">Defining how the connection functions</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#main-data-items-for-connections">Main data items for connections</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#investment-parameters-for-connections">Investment parameters for connections</a>
+    </li>
+        </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#commodities">Commodities</a>
     </li>
@@ -153,7 +161,7 @@
       <div class="wy-nav-content">
         <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
   <ul class="wy-breadcrumbs">
-    <li><a href=".." class="icon icon-home" aria-label="Docs"></a> &raquo;</li>
+    <li><a href=".." class="icon icon-home" alt="Docs"></a> &raquo;</li>
           <li>Documentation &raquo;</li>
       <li>Model parameters</li>
     <li class="wy-breadcrumbs-aside">
@@ -168,21 +176,21 @@
                 <h1 id="main-entities-to-define-a-powerenergy-system">Main entities to define a power/energy system</h1>
 <p>Elemental entities (one dimensional):</p>
 <ul>
-<li><a href="#nodes"><strong>node</strong></a>: maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)</li>
-<li><a href="#units"><strong>unit</strong></a>: power plants or other conversion devices that take one or more inputs and turn them into one or more outputs</li>
-<li><a href="#connections"><strong>connection</strong></a>: transmission lines or other transfer connections between nodes</li>
-<li><a href="#commodities"><strong>commodity</strong></a>: fuels or other commodities that are either purchased or sold at a price outside of the model scope</li>
-<li><a href="#profiles"><strong>profile</strong></a>: timeseries that can be used to constraint the behaviour of units, connections or storages</li>
-<li><a href="#reserves"><strong>reserve</strong></a>: reserve categories to withhold capacity to cope with issues outside of model scope</li>
+<li><a href="#nodes"><code>node</code></a>: maintain a balance between generation, consumption, transfers and storage state changes (nodes can also represent storages)</li>
+<li><a href="#units"><code>unit</code></a>: power plants or other conversion devices that take one or more inputs and turn them into one or more outputs</li>
+<li><a href="#connections"><code>connection</code></a>: transmission lines or other transfer connections between nodes</li>
+<li><a href="#commodities"><code>commodity</code></a>: fuels or other commodities that are either purchased or sold at a price outside of the model scope</li>
+<li><a href="#profiles"><code>profile</code></a>: timeseries that can be used to constraint the behaviour of units, connections or storages</li>
+<li><a href="#reserves"><code>reserve</code></a>: reserve categories to withhold capacity to cope with issues outside of model scope</li>
 </ul>
 <p>Entities with two or more dimensions:</p>
 <ul>
-<li><strong>unit__inputNode</strong> and <strong>unit__outputNode</strong>: defines the inputs, outputs and their properties for the conversion units</li>
-<li><strong>connection__node__node</strong>: defines which nodes a connection will connect</li>
-<li><strong>unit__node__profile</strong> and <strong>connection__profile</strong>: defines a profile limit (upper, lower or fixed) for an energy flow</li>
-<li><strong>node__profile</strong>: defines a profile limit (upper, lower, or fixed) for the storage state of the node</li>
-<li><strong>commodity__node</strong>: defines if a node is a source or sink for a commodity</li>
-<li><strong>reserve__upDown__unit__node</strong> and <strong>reserve__upDown__connection__node</strong>: reserve capacity from a source to the target node</li>
+<li><code>unit__inputNode</code> and <code>unit__outputNode</code>: defines the inputs, outputs and their properties for the conversion units</li>
+<li><code>connection__node__node</code>: defines which nodes a connection will connect</li>
+<li><code>unit__node__profile</code> and <code>connection__profile</code>: defines a profile limit (upper, lower or fixed) for an energy flow</li>
+<li><code>node__profile</code>: defines a profile limit (upper, lower, or fixed) for the storage state of the node</li>
+<li><code>commodity__node</code>: defines if a node is a source or sink for a commodity</li>
+<li><code>reserve__upDown__unit__node</code> and <code>reserve__upDown__connection__node</code>: reserve capacity from a source to the target node</li>
 </ul>
 <p>See below for more detailed explanations.</p>
 <p><img alt="Simple example grid" src="../simple_grid.png" /></p>
@@ -196,7 +204,7 @@
 <h3 id="definitions">Definitions</h3>
 <ul>
 <li>
-<p><strong>model</strong>: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)</p>
+<p><code>model</code>: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)</p>
 </li>
 <li>
 <p><em>solves</em>: sequence of solves in the model represented with an array of solve names.</p>
@@ -206,7 +214,7 @@
 <p><em>discount_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs. </p>
 </li>
 <li>
-<p><strong>solve</strong>: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.</p>
+<p><code>solve</code>: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.</p>
 </li>
 <li>
 <p><em>period_timeblockset</em>: map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name.</p>
@@ -227,13 +235,13 @@
 </ul>
 </li>
 <li>
-<p><strong>timeblockset</strong>: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)</p>
+<p><code>timeblockset</code>: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)</p>
 </li>
 <li>
 <p><em>block_duration</em> a map with index <em>timestep_name</em> that starts the timeblock and value that defines the duration of the block (how many timesteps)</p>
 </li>
 <li>
-<p><strong>timeline</strong>: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.</p>
+<p><code>timeline</code>: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.</p>
 </li>
 <li>
 <p><em>timestep_duration</em>: a map with <em>timestep_name</em> as an index and <em>duration</em> as a value.</p>
@@ -242,23 +250,23 @@
 <p><em>timeline_duration_in_years</em> Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.</p>
 </li>
 <li>
-<p><strong>timeblockset__timeline</strong>: defines which timeline object particular timeblockset is using.</p>
+<p><code>timeblockset__timeline</code>: defines which timeline object particular timeblockset is using.</p>
 </li>
 </ul>
 <h2 id="nodes">Nodes</h2>
 <h3 id="defining-how-the-node-functions">Defining how the node functions</h3>
 <p>These parameters will define how the node will behave and use the data it is given (available choices are marked in <em>italics</em>):</p>
 <ul>
-<li><strong>'name'</strong> - unique name identifier (case sensitive)</li>
-<li><strong>'is_active'</strong> - is the model/node/unit active in a specific scenario: <em>yes</em> (if not defined, then not active)</li>
-<li><strong>'has_balance'</strong> - does the node maintain a balance for inputs and outputs: <em>yes</em> (if not defined, then balance is not maintained)</li>
-<li><strong>'has_storage'</strong> - does the node represent a storage and therefore have a state: <em>yes</em> (if not defined, then no storage)</li>
-<li><strong>'invest_method'</strong> - Choice of investment method: either <em>not_allowed</em> or then a combination of <ul>
+<li><code>name</code> - unique name identifier (case sensitive)</li>
+<li><code>is_active</code> - is the model/node/unit active in a specific scenario: <em>yes</em> (if not defined, then not active)</li>
+<li><code>has_balance</code> - does the node maintain a balance for inputs and outputs: <em>yes</em> (if not defined, then balance is not maintained)</li>
+<li><code>has_storage</code> - does the node represent a storage and therefore have a state: <em>yes</em> (if not defined, then no storage)</li>
+<li><code>invest_method</code> - Choice of investment method: either <em>not_allowed</em> or then a combination of <ul>
 <li><em>invest</em> and/or <em>retire</em> </li>
 <li>investment limits for each <em>period</em> and/or for all periods (<em>total</em>) or <em>no_limit</em> </li>
 </ul>
 </li>
-<li><strong>'inflow_method'</strong> - choice how to treat inflow time series<ul>
+<li><code>inflow_method</code> - choice how to treat inflow time series<ul>
 <li><em>use_original</em> - does not scale the original time series (no value defaults here)</li>
 <li><em>no_inflow</em> - ignores any inserted inflow time series</li>
 <li><em>scale_to_annual_flow</em> - will scale the time series to match the <code>annual_flow</code> so that the sum of inflow is multiplied by 8760/<code>hours_in_solve</code></li>
@@ -271,22 +279,22 @@
 <h3 id="data-for-nodes">Data for nodes</h3>
 <p>Input data is set with the following parameters:</p>
 <ul>
-<li><strong>'inflow'</strong> - [MWh] Inflow into the node (negative is outflow). Constant or time series.</li>
-<li><strong>'annual_flow'</strong> - [MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.</li>
-<li><strong>'existing'</strong> - [MWh] Existing storage capacity (requires <code>has_storage</code>). Constant.</li>
-<li><strong>'invest_cost'</strong> - [CUR/kWh] Investment cost for new storage capacity. Constant or period.</li>
-<li><strong>'salvage_value'</strong> - [CUR/kWh] Salvage value of the storage. Constant or period.</li>
-<li><strong>'lifetime'</strong> - [years] Life time of the storage unit represented by the node. Constant or period.</li>
-<li><strong>'interest_rate'</strong> - [unitless, e.g. 0.05 means 5%] Interest rate for investments. Constant or period.</li>
-<li><strong>'invest_max_total'</strong> - [MWh] Maximum storage investment over all solves. Constant.</li>
-<li><strong>'invest_max_period'</strong> - [MWh] Maximum storage investment for each period. Period.</li>
-<li><strong>'invest_min_total'</strong> - [MWh] Minimum storage investment over all solves. Constant.</li>
-<li><strong>'invest_min_period'</strong> - [MWh] Minimum storage investment for each period. Period.</li>
-<li><strong>'invest_forced'</strong> - [MWh] Storage capacity that must be invested in a given period. Investment cost will be included in the cost results even though the model does not have an investment variable. Constant or period.</li>
-<li><strong>'fixed_cost'</strong> - [CUR/kWh] Annual fixed cost for storage. Constant or period.</li>
-<li><strong>'penalty_up'</strong> - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time.</li>
-<li><strong>'penalty_down'</strong> - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time.</li>
-<li><strong>'virtual_unitsize'</strong> - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.</li>
+<li><code>inflow</code> - [MWh] Inflow into the node (negative is outflow). Constant or time series.</li>
+<li><code>annual_flow</code> - [MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.</li>
+<li><code>existing</code> - [MWh] Existing storage capacity (requires <code>has_storage</code>). Constant.</li>
+<li><code>invest_cost</code> - [CUR/kWh] Investment cost for new storage capacity. Constant or period.</li>
+<li><code>salvage_value</code> - [CUR/kWh] Salvage value of the storage. Constant or period.</li>
+<li><code>lifetime</code> - [years] Life time of the storage unit represented by the node. Constant or period.</li>
+<li><code>interest_rate</code> - [unitless, e.g. 0.05 means 5%] Interest rate for investments. Constant or period.</li>
+<li><code>invest_max_total</code> - [MWh] Maximum storage investment over all solves. Constant.</li>
+<li><code>invest_max_period</code> - [MWh] Maximum storage investment for each period. Period.</li>
+<li><code>invest_min_total</code> - [MWh] Minimum storage investment over all solves. Constant.</li>
+<li><code>invest_min_period</code> - [MWh] Minimum storage investment for each period. Period.</li>
+<li><code>invest_forced</code> - [MWh] Storage capacity that must be invested in a given period. Investment cost will be included in the cost results even though the model does not have an investment variable. Constant or period.</li>
+<li><code>fixed_cost</code> - [CUR/kWh] Annual fixed cost for storage. Constant or period.</li>
+<li><code>penalty_up</code> - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time.</li>
+<li><code>penalty_down</code> - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time.</li>
+<li><code>virtual_unitsize</code> - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.</li>
 </ul>
 <h3 id="using-nodes-as-storages">Using nodes as storages</h3>
 <p>FlexTool manages storages through nodes. A regular node maintains an energy/material balance between all inputs and outputs (<code>has_balance</code> set to <em>yes</em>). A storage node includes an additional state variable, which means that the node can also use charging and discharging of the storage while maintaining the energy balance. A storage node is created by setting <code>has_storage</code> to <em>yes</em> and by adding storage capacity using the <code>existing</code> parameter and/or by letting the model invest in storage capacity (<code>invest_method</code>, <code>invest_cost</code>, <code>invest_max_period</code>, <code>invest_max_total</code> and <code>invest_forced</code> parameters).</p>
@@ -326,34 +334,31 @@
 </li>
 <li>Economic: <code>startup_cost</code>, <code>fixed_cost</code> (fuel cost comes through the use of fuel commodities and other variable costs are defined for flows between unit and node, see below)</li>
 </ul>
-<h3 id="investment-parameters-for-capacity-expansion">Investment parameters (for capacity expansion)</h3>
+<h3 id="investment-parameters-for-capacity-expansion">Investment parameters for capacity expansion</h3>
 <ul>
-<li>
-<p><strong>'invest_method'</strong> - Choice of investment method: either <em>not_allowed</em> or then a combination of </p>
-<ul>
+<li><code>invest_method</code> - Choice of investment method: either <em>not_allowed</em> or then a combination of <ul>
 <li><em>invest</em> and/or <em>retire</em> </li>
 <li>investment limits for each <em>period</em> and/or for all periods (<em>total</em>) or <em>no_limit</em> </li>
 </ul>
 </li>
-<li>
-<p><strong>'invest_cost'</strong> - [CUR/kW] Investment cost for new capacity. Constant or period.</p>
-</li>
-<li><strong>'salvage_value'</strong> - [CUR/kW] Salvage value of the unit capacity. Constant or period.</li>
-<li><strong>'lifetime'</strong> - [years] Lifetime of the unit. Constant or period.</li>
-<li><strong>'interest_rate'</strong> - [unitless, e.g. 0.05 means 5%] Interest rate for investments. Constant or period.</li>
-<li><strong>'invest_max_total'</strong> - [MW] Maximum capacity investment over all solves. Constant.</li>
-<li><strong>'invest_max_period'</strong> - [MW] Maximum capacity investment for each period. Period.</li>
-<li><strong>'invest_min_total'</strong> - [MW] Maximum capacity investment over all solves. Constant.</li>
-<li><strong>'invest_min_period'</strong> - [MW] Maximum capacity investment for each period. Period.</li>
-<li><strong>'invest_forced'</strong> - [MWh] Capacity that must be invested in a given period. Investment cost will be included in the cost results even though the model does not have an investment variable. Constant or period.</li>
-<li><strong>'retire_cost'</strong> - [CUR/kW] Retirement cost for new capacity. Constant or period.</li>
-<li><strong>'retire_max_total'</strong> - [MW] Maximum capacity retirement over all solves. Constant.</li>
-<li><strong>'retire_max_period'</strong> - [MW] Maximum capacity retirement for each period. Period.</li>
-<li><strong>'retire_min_total'</strong> - [MW] Minimum capacity retirement over all solves. Constant.</li>
-<li><strong>'retire_min_period'</strong> - [MW] Minimum capacity retirement for each period. Period.</li>
-<li><strong>'retire_forced'</strong> - [MW] Capacity that must be invested in a given period. Retirement cost will be included in the cost results even though the model does not have an retirement variable. Constant or period.</li>
-<li><strong>'fixed_cost'</strong> - [CUR/kW] Annual fixed cost for capacity. Constant or period. </li>
-<li><strong>'virtual_unitsize'</strong> - [MWh] Size of a single unit - used for integer investments (lumped investments). If not given, assumed from the existing capacity.</li>
+<li><code>lifetime_method</code> to choose how the investments behave after unit runs out of lifetime. Automatic reinvestment (reinvest_automatic - default) causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost until the end of model horizon without further choice by the model. Choice of reinvestment (reinvest_choice) removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built. If there is a need to remove the possibility to invest after lifetime, then the investment limits can be used.</li>
+<li><code>invest_cost</code> - [CUR/kW] Investment cost for new capacity. Constant or period.</li>
+<li><code>salvage_value</code> - [CUR/kW] Salvage value of the unit capacity. Constant or period.</li>
+<li><code>lifetime</code> - [years] Lifetime of the unit. Constant or period.</li>
+<li><code>interest_rate</code> - [unitless, e.g. 0.05 means 5%] Interest rate for investments. Constant or period.</li>
+<li><code>invest_max_total</code> - [MW] Maximum capacity investment over all solves. Constant.</li>
+<li><code>invest_max_period</code> - [MW] Maximum capacity investment for each period. Period.</li>
+<li><code>invest_min_total</code> - [MW] Maximum capacity investment over all solves. Constant.</li>
+<li><code>invest_min_period</code> - [MW] Maximum capacity investment for each period. Period.</li>
+<li><code>invest_forced</code> - [MWh] Capacity that must be invested in a given period. Investment cost will be included in the cost results even though the model does not have an investment variable. Constant or period.</li>
+<li><code>retire_cost</code> - [CUR/kW] Retirement cost for new capacity. Constant or period.</li>
+<li><code>retire_max_total</code> - [MW] Maximum capacity retirement over all solves. Constant.</li>
+<li><code>retire_max_period</code> - [MW] Maximum capacity retirement for each period. Period.</li>
+<li><code>retire_min_total</code> - [MW] Minimum capacity retirement over all solves. Constant.</li>
+<li><code>retire_min_period</code> - [MW] Minimum capacity retirement for each period. Period.</li>
+<li><code>retire_forced</code> - [MW] Capacity that must be invested in a given period. Retirement cost will be included in the cost results even though the model does not have an retirement variable. Constant or period.</li>
+<li><code>fixed_cost</code> - [CUR/kW] Annual fixed cost for capacity. Constant or period. </li>
+<li><code>virtual_unitsize</code> - [MWh] Size of a single unit - used for integer investments (lumped investments). If not given, assumed from the existing capacity.</li>
 </ul>
 <p><img alt="image" src="../generators.png" /></p>
 <h3 id="relationship-of-a-unit-to-a-node-and-determination-of-the-type-of-relationship">Relationship of a unit to a node and determination of the type of relationship</h3>
@@ -376,7 +381,20 @@
 <h3 id="units-constrained-by-profiles">Units constrained by profiles</h3>
 <p>Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a <code>profile</code> object with a <code>profile_method</code>, thats state whether the profile forces an <em>upper_limit</em>, <em>lower_limit</em> or <em>equal</em>ity. Finally <code>profile</code> object is given a <code>profile</code> time series (or it can also be a constant). One needs to use <code>node__profile</code>, <code>unit__node__profile</code> or <code>connection__profile</code> to apply the profile to specific energy flow (or storage state in the case of <code>node__profile</code>).</p>
 <h2 id="connections">Connections</h2>
-<p>Connections can have an <code>existing</code> transfer capacity as well as an opportunity to invest in new capacity and retire old capacity. The functional choices of connections include the <code>is_active</code>, <code>transfer_method</code>, <code>invest_method</code>, <code>startup_method</code> as well as a choice if the tranfer connection <code>is_DC</code>. Parameters for the connection are defined in the <code>connection</code> object, but the two <code>nodes</code> it connects are defined by establishing a relationship between <code>connection--leftNode--rightNode</code>.</p>
+<p>Connections can transfer energy between two nodes. Parameters for the connection are defined in the <code>connection</code> object, but the two <code>nodes</code> it connects are defined by establishing a relationship between <code>connection--leftNode--rightNode</code>.</p>
+<h3 id="defining-how-the-connection-functions">Defining how the connection functions</h3>
+<ul>
+<li><code>is_active</code> to state the alternative where the connection becomes active</li>
+<li><code>transfer_method</code> to define the way the connection transfers energy between the nodes</li>
+<li><code>startup_method</code> where <em>linear</em> startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. <em>binary</em> startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups.</li>
+<li><code>invest_method</code> to define investment and retirement limits: either <em>not_allowed</em> or then a combination of <ul>
+<li><em>invest</em> and/or <em>retire</em> </li>
+<li>investment limits for each <em>period</em> and/or for all periods (<em>total</em>) or <em>no_limit</em> </li>
+</ul>
+</li>
+<li><code>lifetime_method</code> to choose how the investments behave after unit runs out of lifetime. Automatic reinvestment (reinvest_automatic - default) causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost until the end of model horizon without further choice by the model. Choice of reinvestment (reinvest_choice) removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built. If there is a need to remove the possibility to invest after lifetime, then the investment limits can be used.</li>
+</ul>
+<h3 id="main-data-items-for-connections">Main data items for connections</h3>
 <ul>
 <li><code>existing</code> - [MW] Existing capacity. Constant.</li>
 <li><code>efficiency</code> - [factor, typically between 0-1] Efficiency of a connection. Constant or time.</li>
@@ -390,6 +408,8 @@
 <li><code>is_DC</code> - A flag whether the connection is DC (the flow will not be counted as synchronous if there is a <em>non_synchronous_limit</em>). Default false.</li>
 <li><code>virtual_unitsize</code> - [MW] Size of single connection - used for integer (lumped) investments.</li>
 </ul>
+<h3 id="investment-parameters-for-connections">Investment parameters for connections</h3>
+<p>These are the same as for units, see <a href="#Investment parameters for capacity expansion">here</a></p>
 <h2 id="commodities">Commodities</h2>
 <p>Some <code>nodes</code> can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a <code>price</code> and be connected to those <code>nodes</code> that serve (or buy) that particular <code>commodity</code> at the given <code>price</code>. In other words, <code>commodity</code> is separate from <code>node</code> so that the user can use the same <code>commodity</code> properties for multiple nodes. Commodities can also have a <code>co2_content</code>. The <code>commodity</code> and its <code>nodes</code> are connected by establishin a new relationship between the <code>commodity</code> and each of its <code>nodes</code> (e.g. <em>coal--coal_market</em>).</p>
 <ul>
@@ -467,7 +487,7 @@
 - <code>large_failure_ratio</code> - [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the connection (multiplied by this ratio). Constant.</p>
 <h2 id="additional-objects-for-further-functionality">Additional objects for further functionality</h2>
 <ul>
-<li><strong>constraint</strong>: to create user defined constraints between flow, state, and capacity variables (for nodes, units and connections)</li>
+<li><code>constraint</code>: to create user defined constraints between flow, state, and capacity variables (for nodes, units and connections)</li>
 </ul>
               
             </div>
