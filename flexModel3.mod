@@ -216,13 +216,14 @@ set dt dimen 2 within period_time;
 param dt_jump {(d, t) in dt};
 set dtttdt dimen 6;
 set period_invest dimen 1 within period;
-set invest_period_realized dimen 1 within period;
+set d_realize_invest dimen 1 within period;
 set period_with_history dimen 1 within periodAll;
 param p_period_from_solve{period_with_history};
 set time_in_use := setof {(d, t) in dt} (t);
+set period_in_use := setof {(d, t) in dt} (d);
 
 set dt_realize_dispatch dimen 2 within period_time;
-set d_realized_period := setof {(d, t) in dt} (d);
+set d_realized_period := setof {(d, t) in dt_realize_dispatch} (d);
 set dt_fix_storage_price dimen 2 within period_time;
 set dt_fix_storage_quantity dimen 2 within period_time;
 
@@ -419,7 +420,7 @@ table data IN 'CSV' 'solve_data/step_previous.csv' : dtttdt <- [period, time, pr
 table data IN 'CSV' 'solve_data/step_previous.csv' : [period, time], dt_jump~jump;
 table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <- [period];
 table data IN 'CSV' 'solve_data/period_with_history.csv' : [period], p_period_from_solve~param;
-table data IN 'CSV' 'solve_data/invest_realized_periods_of_current_solve.csv' : invest_period_realized <- [period];
+table data IN 'CSV' 'solve_data/invest_realized_periods_of_current_solve.csv' : d_realize_invest <- [period];
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
 table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
 table data IN 'CSV' 'solve_data/realized_dispatch.csv' : dt_realize_dispatch <- [period, step];
@@ -436,7 +437,7 @@ table data IN 'CSV' 'solve_data/p_entity_period_existing_capacity.csv' : [entity
 table data IN 'CSV' 'output/costs_discounted.csv' : [param_costs], costs_discounted;
 
 #check
-set ed_history_realized_first := {e in entity, d in d_realized_period : p_model["solveFirst"]};
+set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_realized_period) : p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
 set process__fork_method_yes dimen 2 within {process, fork_method} := 
@@ -2439,7 +2440,7 @@ solve;
 param w_solve := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest;
 display w_solve;
 
-param entity_all_capacity{e in entity, d in d_realized_period} :=
+param entity_all_capacity{e in entity, d in period} :=
   + p_entity_all_existing[e, d]
   + sum {(e, d_invest, d) in edd_invest} v_invest[e, d_invest].val * p_entity_unitsize[e]
   - sum {(e, d_divest) in ed_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[e, d_divest].val * p_entity_unitsize[e]
@@ -2709,15 +2710,15 @@ param potentialVREgen{(p, n) in process_sink, d in d_realized_period : p in proc
 
 param fn_entity_period_existing_capacity symbolic := "solve_data/p_entity_period_existing_capacity.csv";
 printf 'entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n' > fn_entity_period_existing_capacity;
-for {(e, d) in ed_history_realized union {e in entity, d in invest_period_realized}}
+for {(e, d) in ed_history_realized union {e in entity, d in d_realize_invest}}
   {
     printf '%s,%s,%.8g,%.8g\n', e, d,
 	  + (if p_model['solveFirst'] && e in process && d in period_first then p_process[e, 'existing'])
 	  + (if p_model['solveFirst'] && e in node    && d in period_first then    p_node[e, 'existing'])
 	  + (if not p_model['solveFirst'] && (e, d) in ed_history_realized then p_entity_period_existing_capacity[e, d])
-	  + (if (e, d) in ed_invest && d in invest_period_realized then ( v_invest[e, d].val ) * p_entity_unitsize[e]),
+	  + (if (e, d) in ed_invest && d in d_realize_invest then ( v_invest[e, d].val ) * p_entity_unitsize[e]),
 	  + (if not p_model['solveFirst'] && (e, d) in ed_history_realized  then p_entity_period_invested_capacity[e, d])
-	  + (if (e, d) in ed_invest && d in invest_period_realized then ( v_invest[e, d].val ) * p_entity_unitsize[e])
+	  + (if (e, d) in ed_invest && d in d_realize_invest then ( v_invest[e, d].val ) * p_entity_unitsize[e])
 	>> fn_entity_period_existing_capacity;
   }
   
@@ -2736,7 +2737,7 @@ printf 'Write unit capacity results...\n';
 param fn_unit_capacity symbolic := "output/unit_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'unit,solve,period,existing,invested,divested,total\n' > fn_unit_capacity; }  # Clear the file on the first solve
-for {s in solve_current, p in process_unit, d in invest_period_realized}
+for {s in solve_current, p in process_unit, d in d_realize_invest}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
 	        p_entity_all_existing[p, d], 
@@ -2752,7 +2753,7 @@ printf 'Write connection capacity results...\n';
 param fn_connection_capacity symbolic := "output/connection_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'connection,solve,period,existing,invested,divested,total\n' > fn_connection_capacity; }  # Clear the file on the first solve
-for {s in solve_current, p in process_connection, d in invest_period_realized}
+for {s in solve_current, p in process_connection, d in d_realize_invest}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
 	        p_entity_all_existing[p, d],
@@ -2766,7 +2767,7 @@ printf 'Write node/storage capacity results...\n';
 param fn_node_capacity symbolic := "output/node_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,existing,invested,divested,total\n' > fn_node_capacity; }  # Clear the file on the first solve
-for {s in solve_current, e in nodeState, d in invest_period_realized}
+for {s in solve_current, e in nodeState, d in d_realize_invest}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', e, s, d, 
 	        p_entity_all_existing[e, d],
@@ -2784,7 +2785,7 @@ for {i in 1..1 : p_model['solveFirst']}
 for {s in solve_current} { printf '\n\n"Solve",%s\n', s >> fn_summary; }
 printf '"Total cost obj. function (M CUR)",%.12g,"Minimized total system cost as ', (total_cost.val / 1000000) >> fn_summary;
 printf 'given by the solver (includes all penalty costs)"\n' >> fn_summary;
-printf '"Total cost (calculated) full horizon (M CUR)",%.12g,', sum{d in period} 
+printf '"Total cost (calculated) full horizon (M CUR)",%.12g,', sum{d in period_in_use} 
            ( + r_costOper_and_penalty_d[d] * p_discount_factor_operations_yearly[d] / period_share_of_year[d] 
 		     + r_costInvest_d[d]
 			 + r_costDivest_d[d]
@@ -2819,7 +2820,7 @@ for {d in period}
 printf '\n' >> fn_summary;
 
 printf '\nEmissions\n' >> fn_summary;
-printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for all periods"\n', sum{(c, n) in commodity_node_co2, d in period} (r_emissions_co2_d[c, n, d] ) / 1000000 >> fn_summary;
+printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for all periods"\n', sum{(c, n) in commodity_node_co2, d in period_in_use} (r_emissions_co2_d[c, n, d] ) / 1000000 >> fn_summary;
 printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for realized periods"\n', sum{(c, n) in commodity_node_co2, d in d_realized_period} (r_emissions_co2_d[c, n, d]) / 1000000 >> fn_summary;
 
 printf '\n"Slack variables (creating or removing energy/matter, creating inertia, ' >> fn_summary;
@@ -2938,7 +2939,7 @@ for {i in 1..1 : p_model['solveFirst']}
     printf 'solve,period,"operations discount factor",' > fn_discount;
 	printf '"investments discount factor"\n' >> fn_discount;
   }
-for {s in solve_current, d in invest_period_realized}
+for {s in solve_current, d in d_realize_invest}
   { 
     printf '%s,%s,%.12g,%.12g\n', 
       s, d,
@@ -2955,7 +2956,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	for {e in entity : e in entityInvest} printf ',%s', e >> fn_annuity;
 	  printf '\n' >> fn_annuity;
   }
-for {s in solve_current, d in period_invest : d in invest_period_realized}
+for {s in solve_current, d in period_invest : d in d_realize_invest}
   { 
     printf '%s,%s', s, d >> fn_annuity;
 	for {e in entityInvest}
@@ -3765,7 +3766,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {g in groupCapacityMargin}
       { printf ',%s', g >> fn_group_capmargin_slack__d; }
   }
-for {s in solve_current, d in period_invest : d in invest_period_realized}
+for {s in solve_current, d in period_invest : d in d_realize_invest}
   {
     for {g in groupCapacityMargin}
       {
