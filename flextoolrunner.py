@@ -796,13 +796,13 @@ class FlexToolRunner:
             #how should the end of the period handled?
             diff = len(starts)-len(ends)
             for i in range(0,diff):
-                if ended_duration and (start+duration)<=len(active_time):
+                if ended_duration and (start+duration)<len(active_time):
                     ends.append(start + duration)
                 else:
                     ends.append(len(active_time))
             diff = len(starts)-len(jumps)
             for i in range(0,diff):
-                if ended_duration and (start+duration)<=len(active_time):
+                if ended_duration and (start+duration)<len(active_time):
                     jumps.append(start + duration)
                 else:
                     jumps.append(len(active_time))
@@ -855,7 +855,7 @@ def main():
     solve_mode = 'rolling_window'
     for solve in solves:
         if solve_mode == 'rolling_window':
-            jump = 48
+            jump = 40
             duration = 168 
             start = 1
             horizon = 80

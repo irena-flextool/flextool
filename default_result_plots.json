@@ -5,7 +5,7 @@
         "separate_window": "scenario",
         "x1": "X_flow_type",
         "x2": "X_period",
-        "x3": "X_solve"
+        "x3": null
       },
       "plot_type": "bar",
       "selection": {
@@ -26,7 +26,7 @@
         "separate_window": "scenario",
         "x1": "X_time",
         "x2": "X_period",
-        "x3": null
+        "x3": "X_solve"
       },
       "plot_type": "stacked line",
       "selection": {
@@ -92,7 +92,7 @@
     {
       "dimensions": {
         "separate_window": null,
-        "x1": "scenario",
+        "x1": "X_period",
         "x2": null,
         "x3": null
       },
