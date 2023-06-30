@@ -47,8 +47,8 @@
     {
       "dimensions": {
         "separate_window": "entity_0",
-        "x1": null,
-        "x2": null,
+        "x1": "X_solve",
+        "x2": "X_period",
         "x3": null
       },
       "plot_type": "bar",
@@ -67,8 +67,8 @@
     {
       "dimensions": {
         "separate_window": "scenario",
-        "x1": "X_period",
-        "x2": null,
+        "x1": "X_solve",
+        "x2": "X_period",
         "x3": null
       },
       "plot_type": "bar",
@@ -92,8 +92,8 @@
     {
       "dimensions": {
         "separate_window": null,
-        "x1": "X_period",
-        "x2": null,
+        "x1": "X_solve",
+        "x2": "X_period",
         "x3": null
       },
       "plot_type": "stacked bar",
@@ -133,6 +133,30 @@
         ],
         "parameter": [
           "cost_t"
+        ]
+      }
+    },
+    {
+      "dimensions": {
+        "separate_window": "scenario",
+        "x1": "X_time",
+        "x2": "X_period",
+        "x3": "X_solve"
+      },
+      "plot_type": "stacked line",
+      "selection": {
+        "X_flow_type": ["state"],
+        "X_period": [],
+        "X_solve": [],
+        "X_time": [],
+        "entity_class": [
+          "node"
+        ],
+        "entity_0": [
+          "battery"
+        ],
+        "parameter": [
+          "balance_t"
         ]
       }
     }

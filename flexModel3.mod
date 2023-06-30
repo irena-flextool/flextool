@@ -170,6 +170,8 @@ set storage_start_end_method 'method to fix start and/or end value of storage in
 set node__storage_start_end_method within {node, storage_start_end_method};
 set storage_solve_horizon_method 'methods to set reference value or price for the end of horizon storage state';
 set node__storage_solve_horizon_method within {node, storage_solve_horizon_method};
+set storage_include_solve_fix_method 'methods to set the storage value for lower level solves'; 
+set node__storage_include_solve_fix_method within {node, storage_include_solve_fix_method};
 set node__profile__profile_method dimen 3 within {node,profile,profile_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
@@ -224,8 +226,15 @@ set period_in_use := setof {(d, t) in dt} (d);
 
 set dt_realize_dispatch dimen 2 within period_time;
 set d_realized_period := setof {(d, t) in dt_realize_dispatch} (d);
-set dt_fix_storage_price dimen 2 within period_time;
-set dt_fix_storage_quantity dimen 2 within period_time;
+
+set dt_fix_storage_timesteps dimen 2 within period_time;
+set d_fix_storage_period := setof {(d, t) in dt_fix_storage_timesteps} (d);
+set ndt_fix_storage_price dimen 3 within  {node, period, time};
+set ndt_fix_storage_quantity dimen 3 within  {node, period, time};
+set n_fix_storage_quantity := setof{(n,d,t) in ndt_fix_storage_quantity}(n);
+set n_fix_storage_price := setof{(n,d,t) in ndt_fix_storage_price}(n);
+param p_fix_storage_price {node, period, time};
+param p_fix_storage_quantity {node, period, time};
 
 set startTime dimen 1 within time;
 set startNext dimen 1 within time;
@@ -339,6 +348,7 @@ table data IN 'CSV' 'input/node__inflow_method.csv' : node__inflow_method_read <
 table data IN 'CSV' 'input/node__storage_binding_method.csv' : node__storage_binding_method_read <- [node,storage_binding_method];
 table data IN 'CSV' 'input/node__storage_start_end_method.csv' : node__storage_start_end_method <- [node,storage_start_end_method];
 table data IN 'CSV' 'input/node__storage_solve_horizon_method.csv' : node__storage_solve_horizon_method <- [node,storage_solve_horizon_method];
+table data IN 'CSV' 'input/node__storage_include_solve_fix_method.csv' : node__storage_include_solve_fix_method <- [node,storage_include_solve_fix_method];
 table data IN 'CSV' 'input/node__profile__profile_method.csv' : node__profile__profile_method <- [node,profile,profile_method];
 table data IN 'CSV' 'input/group__node.csv' : group_node <- [group,node];
 table data IN 'CSV' 'input/group__process.csv' : group_process <- [group,process];
@@ -424,8 +434,11 @@ table data IN 'CSV' 'solve_data/invest_realized_periods_of_current_solve.csv' : 
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
 table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
 table data IN 'CSV' 'solve_data/realized_dispatch.csv' : dt_realize_dispatch <- [period, step];
-#table data IN 'CSV' 'solve_data/fix_storage_price.csv' : dt_fix_storage_price <- [period, step];
-#table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : dt_fix_storage_quantity <- [period, step];
+table data IN 'CSV' 'solve_data/fix_storage_timesteps.csv' : dt_fix_storage_timesteps <- [period, step];
+table data IN 'CSV' 'solve_data/fix_storage_price.csv' : ndt_fix_storage_price <- [node, period, step] ;
+table data IN 'CSV' 'solve_data/fix_storage_price.csv' : [node, period, step], p_fix_storage_price;
+table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : ndt_fix_storage_quantity <- [node, period, step];
+table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : [node, period, step], p_fix_storage_quantity;
 
 # After rolling forward the investment model
 table data IN 'CSV' 'solve_data/p_entity_divested.csv' : [entity], p_entity_divested;
@@ -437,7 +450,7 @@ table data IN 'CSV' 'solve_data/p_entity_period_existing_capacity.csv' : [entity
 table data IN 'CSV' 'output/costs_discounted.csv' : [param_costs], costs_discounted;
 
 #check
-set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_realized_period) : p_model["solveFirst"]};
+set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_realized_period union d_fix_storage_period) : p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
 set process__fork_method_yes dimen 2 within {process, fork_method} := 
@@ -1364,6 +1377,15 @@ minimize total_cost:
 ;
 param w_total_cost := gmtime() - datetime0 - setup1 - w_calc_slope - setup2;
 display w_total_cost;
+
+#Storage state fix quantity for timesteps
+s.t. node_balance_fix_quantity_eq {(n, d, t) in ndt_fix_storage_quantity}:
+  + v_state[n,d,t]* p_entity_unitsize[n] = + p_fix_storage_quantity[n,d,t];
+
+#Storage state fix price for timesteps
+s.t. node_balance_fix_price_eq {(n, d, t) in ndt_fix_storage_price}:
+  + v_state[n,d,t]* pdNode[n, 'storage_state_reference_price', d]* p_entity_unitsize[n] = + p_fix_storage_price[n,d,t];
+
 
 # Energy balance in each node  
 s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
@@ -3438,6 +3460,26 @@ for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
       {
 	    printf ',%.8g', v_state[n, d, t].val * p_entity_unitsize[n] >> fn_nodeState__dt;
       }
+  }
+
+printf 'Write node state quantity for fixed timesteps ..\n';
+param fn_fix_quantity_nodeState__dt symbolic := "solve_data/fix_storage_quantity.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'period,time,node,p_fix_storage_quantity\n' > fn_fix_quantity_nodeState__dt;
+  }
+for {n in n_fix_storage_quantity ,  (d, t) in dt : (d, t) in dt_fix_storage_timesteps}
+  {
+    printf '\n%s,%s,%s,%.8g\n', n, d, t, v_state[n, d, t].val * p_entity_unitsize[n]>> fn_fix_quantity_nodeState__dt;
+  }
+
+printf 'Write node state price for fixed timesteps ..\n';
+param fn_fix_price_nodeState__dt symbolic := "solve_data/fix_storage_price.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'period,time,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
+  }
+for {n in n_fix_storage_price ,  (d, t) in dt : (d, t) in dt_fix_storage_timesteps}
+  {
+    printf '\n%s,%s,%s,%.8g\n', n, d, t, v_state[n, d, t].val * p_entity_unitsize[n]*pdNode[n, 'storage_state_reference_price', d]>> fn_fix_price_nodeState__dt;
   }
 
 printf 'Write reserve prices over time...\n';
