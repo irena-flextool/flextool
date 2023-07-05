@@ -2640,7 +2640,7 @@
                             },
                             {
                                 "map_type": "Object",
-                                "position": 0
+                                "position": -1
                             },
                             {
                                 "map_type": "ObjectMetadata",
@@ -2648,7 +2648,8 @@
                             },
                             {
                                 "map_type": "ParameterDefinition",
-                                "position": -1
+                                "position": "hidden",
+                                "value": "sum_flow"
                             },
                             {
                                 "map_type": "Alternative",
@@ -2670,7 +2671,7 @@
                             },
                             {
                                 "map_type": "ParameterValueIndex",
-                                "position": 1
+                                "position": 0
                             },
                             {
                                 "map_type": "IndexName",
@@ -2679,7 +2680,7 @@
                             },
                             {
                                 "map_type": "ParameterValueIndex",
-                                "position": 2
+                                "position": 1
                             },
                             {
                                 "map_type": "ExpandedValue",
@@ -3643,8 +3644,7 @@
             "group__process__node__period": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
-                "3": "float"
+                "2": "float"
             },
             "discount_factors__period": {
                 "0": "string",
@@ -3679,8 +3679,7 @@
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float",
-                "4": "float"
+                "3": "float"
             },
             "costs_discounted": {
                 "0": "string",
