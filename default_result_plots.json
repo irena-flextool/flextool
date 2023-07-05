@@ -145,7 +145,7 @@
       },
       "plot_type": "stacked line",
       "selection": {
-        "X_flow_type": ["state"],
+        "X_flow_type": ["inflow"],
         "X_period": [],
         "X_solve": [],
         "X_time": [],
@@ -153,10 +153,33 @@
           "node"
         ],
         "entity_0": [
-          "battery"
+          "west"
         ],
         "parameter": [
           "balance_t"
+        ]
+      }
+    },
+    {
+      "dimensions": {
+        "separate_window": "scenario",
+        "x1": "X_time",
+        "x2": "X_period",
+        "x3": "X_solve"
+      },
+      "plot_type": "stacked line",
+      "selection": {
+        "X_period": [],
+        "X_solve": [],
+        "X_time": [],
+        "entity_class": [
+          "unit__node"
+        ],
+        "entity_0": [],
+        "entity_1": ["west"],
+        "entity_2": [],
+        "parameter": [
+          "flow_t"
         ]
       }
     }
