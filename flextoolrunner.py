@@ -617,8 +617,6 @@ class FlexToolRunner:
                 previous_period_name = list(active_time_list)[period_counter]
             for i, step in enumerate(reversed(active_time)):
                 j = period_last - i - 1
-                if j == period_last - 1:
-                    store_last_time_step = step[0]
                 if j > 0:  # handle the first element of the period separately below
                     jump = active_time[j][1] - active_time[j - 1][1]
                     if jump > 1:
@@ -627,8 +625,8 @@ class FlexToolRunner:
                     else:
                         step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[j - 1][0], period, active_time[j - 1][0], jump))
                 else:  # first time step of the period is handled here
-                    jump = active_time[j][1] - active_time[period_last - 1][1]
-                    step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], previous_period_name, store_last_time_step, jump))
+                    jump = active_time[j][1] - active_time_list[previous_period_name][-1][1]
+                    step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], previous_period_name, active_time_list[previous_period_name][-1][0], jump))
         return step_lengths
 
     def write_step_jump(self, step_lengths):
@@ -797,7 +795,6 @@ class FlexToolRunner:
         if start != None and len(start) == 1:
             start = [list(full_active_time.items())[0][0],start]
            
-        print(jump,horizon,duration)
         for period, active_time in list(full_active_time.items()):
             for i, step in enumerate(active_time):
                 if started and not ended:
@@ -833,10 +830,6 @@ class FlexToolRunner:
         for i in range(0,diff):
             jumps.append(last_index)
 
-
-        print(starts)
-        print(jumps)
-        print(horizons)
         for index, i in enumerate(starts): 
             active = OrderedDict()
             realized = OrderedDict()
@@ -850,29 +843,29 @@ class FlexToolRunner:
                 for period, active_time in list(full_active_time.items()):
                     if started:
                         if period == horizons[index][0]:
-                            active[period] = full_active_time[period][0:horizons[index][1]]
+                            active[period] = full_active_time[period][0:horizons[index][1]+1]
                             break
                         else:
                             active[period] = full_active_time[period]
                     elif period == i[0]:
-                        active[i[0]] = full_active_time[period][i[1]:-1]
+                        active[i[0]] = full_active_time[period][i[1]:]
                         started = True
                 started = False
                 for period, active_time in list(full_active_time.items()):
                     if started:
                         if period == jumps[index][0]:
-                            realized[period] = full_active_time[period][0:jumps[index][1]]
+                            realized[period] = full_active_time[period][0:jumps[index][1]+1]
                             break
                         else:
                             realized[period] = full_active_time[period]
                     elif period == i[0]:
                         if period == jumps[index][0]:
-                            realized[period] = full_active_time[i[0]][i[1]:jumps[index][1]]
+                            realized[period] = full_active_time[i[0]][i[1]:jumps[index][1]+1]
                             break
                         else:
-                            realized[period] = full_active_time[period][i[1]:-1]
+                            realized[period] = full_active_time[period][i[1]:]
                             started = True
-            
+
             jump= self.make_step_jump(active)
             active_time_lists[solve_name] = active
             realized_time_lists[solve_name] = realized
