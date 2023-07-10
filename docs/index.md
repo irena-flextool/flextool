@@ -4,8 +4,9 @@ IRENA FlexTool is an energy systems optimisation model developed for power and e
 
 # Documentation structure
 
-- You can find the installation instructions for the interfaces [Interface Overview](https://irena-flextool.github.io/flextool/interface_overview)
-- Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/N3qB0rzxPYw)
+- You can find the installation instructions for IRENA FlexTool using Spine Toolbox as its interface (recommended in most cases): [Install with Toolbox](https://irena-flextool.github.io/flextool/install_toolbox/)
+- Follow video tutorial for installation with Spine Toolbox here: [Link to YouTube](https://youtu.be/N3qB0rzxPYw)
+- You can also use IRENA FlexTool with a web browser, but you will need to install a web server first: [Install with web server](https://irena-flextool.github.io/flextool/install_web_interface/)
 
 - If using FlexTool with Spine Toolbox, learn how the Spine Toolbox workflow functions: [Spine Toolbox workflow](https://irena-flextool.github.io/flextool/spine_toolbox).
 - If using FlexTool with a web-browser, read how it works: [Browser interface](https://irena-flextool.github.io/flextool/browser_interface)
