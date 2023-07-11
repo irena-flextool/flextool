@@ -87,6 +87,7 @@
         "input/pt_profile.csv",
         "input/pt_reserve__upDown__group.csv",
         "input/reserve__upDown__group__method.csv",
+        "input/solve__create_step_duration.csv",
         "input/solve__fix_storage_period.csv",
         "input/solve__include_solve.csv",
         "input/solve__invest_period.csv",

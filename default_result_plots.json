@@ -81,7 +81,8 @@
         "X_solve": [],
         "entity_class": [
           "unit",
-          "connection"
+          "connection",
+          "node"
         ],
         "entity_0": [],
         "parameter": [

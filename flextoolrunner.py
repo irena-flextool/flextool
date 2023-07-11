@@ -6,6 +6,7 @@ import sys
 import os
 import xml.etree.ElementTree as ET
 import pandas as pd
+import shutil
 from collections import OrderedDict
 from collections import defaultdict
 
@@ -50,8 +51,9 @@ class FlexToolRunner:
         self.solver_arguments = self.get_solver_arguments()
         self.included_solves = self.get_included_solves()
         self.rolling_times = self.get_rolling_times()
+        self.create_step_durations=self.get_create_step_durations()
         #self.write_full_timelines(self.timelines, 'steps.csv')
-
+    
     def get_solves(self):
         """
         read in
@@ -167,6 +169,212 @@ class FlexToolRunner:
                     break
         return solver_arguments_dict
 
+    def get_included_solves(self):
+        """
+        read in
+        the included_solves for each solve. return it as a dict of list of strings
+        :return:
+        """
+        with open('input/solve__include_solve.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            included_solves_dict = defaultdict(list)
+            while True:
+                try:
+                    datain = next(filereader)
+                    included_solves_dict[datain[0]].append((datain[1]))
+                except StopIteration:
+                    break
+        return included_solves_dict
+
+    def get_rolling_times(self):
+        """
+        read in
+        the rolling_times for each solve. return it as a dict of list of ints
+        :return:
+        """
+        with open('input/solve__rolling_times.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            rolling_parameters = defaultdict(list)
+            while True:
+                try:
+                    datain = next(filereader)
+                    rolling_parameters[datain[0]].append((datain[1],datain[2]))
+                except StopIteration:
+                    break
+        rolling_times=defaultdict(list)
+        for solve, data in list(rolling_parameters.items()):
+            start = None
+            horizon = 0
+            jump = 0
+            duration = -1
+            for param_value in data:
+                if "rolling_start_time" == param_value[0]:
+                    #timestamp
+                    start = param_value[1]
+                if "rolling_duration" in param_value[0]:
+                    duration = float(param_value[1])
+                if "rolling_solve_horizon" in param_value[0]:
+                    horizon = float(param_value[1])
+                if "rolling_solve_jump" in param_value[0]:
+                    jump = float(param_value[1])
+            
+            if self.solve_modes[solve] == 'rolling_window' and (horizon == 0 or jump == 0):
+                logging.error("When using rolling_window solve mode, rolling_solve_horizon and rolling_solve_jump have to defined and not be 0")
+                exit(-1)
+            rolling_times[solve] = [start,jump,horizon,duration]
+
+        return rolling_times
+
+    def create_timestep_duration(self,solves):
+        for solve in solves:
+            if solve in self.create_step_durations.keys():
+                step_duration= float(self.create_step_durations[solve])
+                timeblocks_changed = []
+                new_timeblocks_used_by_solves=[]
+                for period, timeblock_name in self.timeblocks_used_by_solves[solve]:
+                    new_timeblock_name = timeblock_name+"_"+str(int(step_duration))
+                    if timeblock_name not in timeblocks_changed:
+                        #crate the new timeline
+                        timeblocks_changed.append(timeblock_name)
+                        timeline_name = self.timeblocks__timeline[timeblock_name][0]
+                        old_steps = self.timelines[timeline_name]
+                        new_steps = []
+                        first_step = old_steps[0][0]
+                        step_counter = float(old_steps[0][1])
+                        for step in old_steps[1:-1]:
+                            if step_counter >= step_duration:
+                                new_steps.append((first_step,str(step_counter)))
+                                first_step = step[0]
+                                step_counter=0
+                                if step_counter> step_duration:
+                                    logging.warning("Warning: All new steps are not the size of the given step duration. The new step duration has to be multiple of old step durations for this to happen.")
+                            step_counter += float(step[1])
+                        new_steps.append((first_step,str(step_counter)))
+                        new_timeline_name = timeline_name+"_"+str(int(step_duration)) 
+                        self.timelines[new_timeline_name] = new_steps
+
+                        #create the new timeblocks
+                        old_timeblocks = self.timeblocks[timeblock_name]
+                        new_timeblocks = []
+                        for block in old_timeblocks:
+                            if any(block[0] == step[0] for step in new_steps):
+                                next_existing_start = block[0]
+                                index_first = [step[0] for step in old_steps].index(block[0])
+                            else:
+                                #finding the next step that exist in the new timeline
+                                index_first = [step[0] for step in old_steps].index(block[0])
+                                for i in range(0,len(old_steps)-index_first):
+                                    index_first += 1
+                                    if any(old_steps[index_first][0] == step[0] for step in new_steps):
+                                        next_existing_start = old_steps[index_first][0]
+                                        break
+                            index_last = int(index_first + float(block[1])-1) 
+                            end_timestep = old_steps[index_last][0]
+                            if any(end_timestep == step[0] for step in new_steps):
+                                #get the last timestep of the block
+                                next_existing_end = end_timestep
+                                end_found = True
+                            else:
+                                #or find the next existing step in the new timeline
+                                end_found = False
+                                for i in range(0,len(old_steps)-index_last-1):
+                                    index_last += 1
+                                    if any(old_steps[index_last][0] == step[0] for step in new_steps):
+                                        next_existing_end = old_steps[index_last][0]
+                                        end_found = True
+                                        break 
+                            if end_found:
+                                new_block_duration = [step[0] for step in new_steps].index(next_existing_end)-[step[0] for step in new_steps].index(next_existing_start)+1
+                            else:
+                                new_block_duration = len(new_steps)-[step[0] for step in new_steps].index(next_existing_start)
+                                
+                            new_timeblocks.append((next_existing_start,str(new_block_duration)))
+                        
+                        
+                        self.timeblocks[new_timeblock_name] = new_timeblocks
+                        self.timeblocks__timeline[new_timeblock_name] = [new_timeline_name]
+                    new_timeblocks_used_by_solves.append((period,new_timeblock_name))
+                self.timeblocks_used_by_solves[solve] = new_timeblocks_used_by_solves
+
+    def create_averaged_timeseries(self,solve):
+        timeseries_list=['pt_node.csv','pt_process.csv','pt_profile.csv','pt_process_source.csv','pt_process_sink.csv','pt_reserve__upDown__group.csv']
+        if solve not in self.create_step_durations.keys():
+            for timeseries in timeseries_list:
+                shutil.copy('input/'+timeseries,'solve_data/'+timeseries)
+        else:
+            for timeseries in timeseries_list:
+                with open('input/'+ timeseries,'r') as blk:
+                    filereader = csv.reader(blk, delimiter=',')
+                    with open('solve_data/'+timeseries,'w', newline='') as solve_file:
+                        filewriter = csv.writer(solve_file,delimiter=',')
+                        headers = next(filereader)
+                        filewriter.writerow(headers)
+                        #assumes that the data is in the format:
+                        #[group1, group2, ... group_last, time, numeric_value]
+                        #ie. the numeric data is the last column and the timestep is the one before it.
+                        #and that there are rows from other groups between the rows of one group 
+                        time_index = headers.index('time')
+                        timelines=[]
+                        for period, timeblock in self.timeblocks_used_by_solves[solve]:
+                            timeline = self.timeblocks__timeline[timeblock][0]
+                            if timeline not in timelines:
+                                timelines.append(timeline)
+                        
+                        for timeline in timelines:
+                            new_timeline = self.timelines[timeline]    
+                            started = False 
+                            while True:
+                                try:
+                                    datain = next(filereader)
+                                    if not started:
+                                        row = datain[0:time_index+1]
+                                        next_index = 1
+                                        values = []
+                                        started = True
+                                        values.append(float(datain[time_index+1]))
+
+                                    elif datain[time_index] == new_timeline[next_index][0]:
+                                        #write row
+                                        out_value = sum(values)/len(values)
+                                        row.append(out_value)
+                                        filewriter.writerow(row)
+
+                                        #new start values
+                                        row = datain[0:time_index+1]
+                                        values = [float(datain[time_index+1])]
+                                        next_index += 1
+                                        if next_index > len(new_timeline)-1:
+                                            next_index = 0
+                                    else:
+                                        values.append(float(datain[time_index+1]))
+                                except StopIteration:
+                                    #if the new timeline is not a multiple of the previous one, but the rest to the last step
+                                    if started:
+                                        out_value = sum(values)/len(values)
+                                        row.append(out_value)
+                                        filewriter.writerow(row)
+                                    break
+                    
+
+    
+    def get_create_step_durations(self):
+        """
+        read the new step duration for each solve
+        :return: dict : (period name, step_duration (hours))
+        """
+        with open('input/solve__create_step_duration.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            step_durations = defaultdict()
+            while True:
+                try:
+                    datain = next(filereader)
+                    step_durations[datain[0]]=datain[1]
+                except StopIteration:
+                    break
+        return step_durations 
 
     def get_timeblocks_used_by_solves(self):
         """
@@ -568,7 +776,7 @@ class FlexToolRunner:
         :param solve:
         :param blocklist:
         :return:
-        """
+        """ 
         active_time = defaultdict(list)
         for solve in timeblocks_used_by_solves:
             if solve == current_solve:
@@ -770,7 +978,7 @@ class FlexToolRunner:
                         realfile.write(period+","+i[0]+"\n")
 
 
-    def create_rolling_solves(self, solve, full_active_time, jump, horizon, start = None, duration = 0.0):
+    def create_rolling_solves(self, solve, full_active_time, jump, horizon, start = None, duration = -1):
         #can the steps be assumed to be constant?
         #period/timeblock jumps?
         
@@ -778,42 +986,37 @@ class FlexToolRunner:
         jump_lists = OrderedDict()
         realized_time_lists = OrderedDict()
         solves=[]
-
-        full_time = False
-        #if no duration defined, use the whole active time
-        if duration == 0.0:
-            full_time = True
+        starts=[]
+        jumps= []
+        horizons= []
         duration_counter = 0
         horizon_counter = 0
         jump_counter = 0
         started = False
         ended = False
-        starts=[]
-        jumps= []
-        horizons= []
-        
+        #if start time is given and not generated by parent. Given is just a timestamp. Generated is [period,timestamp]
         if start != None and len(start) == 1:
             start = [list(full_active_time.items())[0][0],start]
-           
+        
         for period, active_time in list(full_active_time.items()):
             for i, step in enumerate(active_time):
                 if started and not ended:
-                    last_index = [period,i]
-                    if duration_counter >= duration and not full_time:
-                        jumps.append([period,i])
-                        horizons.append([period,i])
+                    if duration_counter >= duration and duration != -1:
+                        jumps.append(last_index)
+                        horizons.append(last_index)
                         ended = True
                         break
                     if jump_counter >= jump:
-                        jumps.append([period,i])
+                        jumps.append(last_index)
                         starts.append([period,i])
                         jump_counter -= jump
                     if horizon_counter >= horizon:
-                        horizons.append([period,i])
+                        horizons.append(last_index)
                         horizon_counter -= jump
                     horizon_counter += float(step[2])
                     jump_counter += float(step[2])
                     duration_counter += float(step[2])
+                    last_index = [period,i]
                 else:
                     if start == None or start == [period,step[0]]:
                         starts.append([period,i])
@@ -821,50 +1024,53 @@ class FlexToolRunner:
                         horizon_counter += float(step[2])
                         jump_counter += float(step[2])
                         duration_counter += float(step[2])
-        
+                        last_index=[period,i]
+        #if there is start of the roll but not end, the end is the last index of the active time
         diff = len(starts)-len(horizons)
         for i in range(0,diff):
             horizons.append(last_index)
-
         diff = len(starts)-len(jumps)
         for i in range(0,diff):
             jumps.append(last_index)
-
-        for index, i in enumerate(starts): 
+        print(starts)
+        print(jumps)
+        print(horizons)
+        for index, start in enumerate(starts): 
             active = OrderedDict()
             realized = OrderedDict()
             solve_name= solve+"_roll_"+str(index)
             solves.append(solve_name) 
-            if i[0]==horizons[index][0]:
-                active[i[0]] = full_active_time[i[0]][i[1]:horizons[index][1]]
-                realized[i[0]] = full_active_time[i[0]][i[1]:jumps[index][1]]
+            if start[0]==horizons[index][0]: #if the whole roll is in the same period
+                active[start[0]] = full_active_time[start[0]][start[1]:horizons[index][1]+1]
             else:
                 started = False
                 for period, active_time in list(full_active_time.items()):
                     if started:
                         if period == horizons[index][0]:
-                            active[period] = full_active_time[period][0:horizons[index][1]+1]
+                            if horizons[index][1] != 0:
+                                active[period] = full_active_time[period][0:horizons[index][1]+1]
                             break
                         else:
                             active[period] = full_active_time[period]
-                    elif period == i[0]:
-                        active[i[0]] = full_active_time[period][i[1]:]
+                    elif period == start[0]:
+                        active[start[0]] = full_active_time[period][start[1]:]
                         started = True
+            
+            if start[0]==jumps[index][0]:
+                realized[start[0]] = full_active_time[start[0]][start[1]:jumps[index][1]+1]
+            else:
                 started = False
                 for period, active_time in list(full_active_time.items()):
                     if started:
                         if period == jumps[index][0]:
-                            realized[period] = full_active_time[period][0:jumps[index][1]+1]
+                            if jumps[index][1] != 0:
+                                realized[period] = full_active_time[period][0:jumps[index][1]+1]
                             break
                         else:
                             realized[period] = full_active_time[period]
-                    elif period == i[0]:
-                        if period == jumps[index][0]:
-                            realized[period] = full_active_time[i[0]][i[1]:jumps[index][1]+1]
-                            break
-                        else:
-                            realized[period] = full_active_time[period][i[1]:]
-                            started = True
+                    elif period == start[0]:
+                        realized[period] = full_active_time[period][start[1]:]
+                        started = True
 
             jump= self.make_step_jump(active)
             active_time_lists[solve_name] = active
@@ -873,83 +1079,23 @@ class FlexToolRunner:
 
         return solves, active_time_lists, jump_lists, realized_time_lists
 
-    def get_included_solves(self):
-        """
-        read in
-        the included_solves for each solve. return it as a dict of list of strings
-        :return:
-        """
-        with open('input/solve__include_solve.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            included_solves_dict = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    included_solves_dict[datain[0]].append((datain[1]))
-                except StopIteration:
-                    break
-        return included_solves_dict
-
-
-    def get_rolling_times(self):
-        """
-        read in
-        the rolling_times for each solve. return it as a dict of list of ints
-        :return:
-        """
-        with open('input/solve__rolling_times.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            rolling_parameters = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    rolling_parameters[datain[0]].append((datain[1],datain[2]))
-                except StopIteration:
-                    break
-        rolling_times=defaultdict(list)
-        for solve, data in list(rolling_parameters.items()):
-            start = 0
-            horizon = 0
-            jump = 0
-            duration = 0
-            for param_value in data:
-                if "rolling_start_time" == param_value[0]:
-                    start = param_value[1]
-                if "rolling_duration" in param_value[0]:
-                    duration = float(param_value[1])
-                if "rolling_solve_horizon" in param_value[0]:
-                    horizon = float(param_value[1])
-                if "rolling_solve_jump" in param_value[0]:
-                    jump = float(param_value[1])
-                
-            rolling_times[solve] = [start,jump,horizon,duration]
-
-        return rolling_times
-
-    def define_solve(self, solve, combined_name, start = None, duration = 0.0):
-        parent_solves= OrderedDict()
+    def define_solve(self, solve, combined_name, start = None, duration = -1):
+        parent_solves= OrderedDict() #parent_solve is for rolling, so that the rolls inherit the parameters of the solve
         active_time_lists= OrderedDict()    
         jump_lists = OrderedDict()
         realized_time_lists = OrderedDict()
         fix_storage_time_lists = OrderedDict()
         solves=[]
 
-        full_active_time = self.get_active_time(solve, self.timeblocks_used_by_solves, self.timeblocks,
-                                                self.timelines, self.timeblocks__timeline)
+        full_active_time = self.get_active_time(solve, self.timeblocks_used_by_solves, self.timeblocks,self.timelines, self.timeblocks__timeline)
         include_solve = self.included_solves[solve]
 
-        solve_mode = self.solve_modes[solve]
-
-        if solve_mode == "rolling_window":
+        if self.solve_modes[solve] == "rolling_window":
+            #rolling_times: 0:start, 1:jump, 2:horizon, 3:duration
             rolling_times = self.rolling_times[solve]
-            #0:start, 1:jump, 2:horizon, 3:duration
-            if duration == 0.0:
+            if duration == -1:
                 duration = rolling_times[3]
-            
             roll_solves, roll_active_time_lists, roll_jump_lists, roll_realized_time_lists = self.create_rolling_solves(combined_name+solve, full_active_time, rolling_times[1], rolling_times[2], start, duration)
-            
             for i in roll_solves:
                 parent_solves[i] = solve    
             
@@ -961,8 +1107,8 @@ class FlexToolRunner:
             if len(include_solve)>0:
                 for index, roll in enumerate(roll_solves):
                     solves.append(roll)
+                    #creating the start time for the rolling. This is the first [period, timestamp] of the active time of the parent roll 
                     start = [list(roll_active_time_lists[roll].items())[0][0],list(roll_active_time_lists[roll].items())[0][1][0][0]]
-                    print(start)
                     #upper_jump = lower_duration 
                     duration = rolling_times[1]
                     for i in include_solve:
@@ -978,13 +1124,12 @@ class FlexToolRunner:
         
         else:
             solves.append(solve)
-            parent_solves[solve]= solve #parent_solve is for rolling, so that the rolls inherit the parameters of the solve
-            active_time_list = full_active_time
-            active_time_lists[solve] = active_time_list
-            jumps = self.make_step_jump(active_time_list)
+            parent_solves[solve]= solve #parent_solve is for rolling, so that the rolls inherit the parameters of the solve. If not rolling, the solve is its own parent
+            active_time_lists[solve] = full_active_time
+            jumps = self.make_step_jump(full_active_time)
             jump_lists[solve] = jumps
-            realized_time_lists[solve]=active_time_list
-            fix_storage_time_lists[solve] = active_time_list 
+            realized_time_lists[solve]=full_active_time
+            fix_storage_time_lists[solve] = full_active_time 
 
             if len(include_solve)>0:
                 for i in include_solve:
@@ -1047,7 +1192,6 @@ def main():
     realized_time_lists = OrderedDict()
     parent_solve= OrderedDict()
     fix_storage_time_lists= OrderedDict()
-    rolling_solves = []
     all_solves=[]
 
     try:
@@ -1063,6 +1207,12 @@ def main():
         logging.error("No solves in model.")
         sys.exit(-1)
     
+    real_solves = solves
+    for solve, inner_solves in list(runner.included_solves.items()):
+        real_solves += inner_solves
+
+    runner.create_timestep_duration(real_solves)
+
     for solve in solves:
         solve_solves, solve_parent_solve, solve_active_time_lists, solve_jump_lists, solve_realized_time_lists, solve_fix_storage_timesteps = runner.define_solve(solve,solve)
         all_solves += solve_solves
@@ -1071,10 +1221,6 @@ def main():
         jump_lists.update(solve_jump_lists)
         realized_time_lists.update(solve_realized_time_lists)
         fix_storage_time_lists.update(solve_fix_storage_timesteps)
-    
-    real_solves = solves
-    for solve, inner_solves in list(runner.included_solves.items()):
-        real_solves += inner_solves
 
     for solve in real_solves:
         for solve_2 in real_solves:
@@ -1094,7 +1240,7 @@ def main():
                 if solve__period[0] == solve and not any(solve__period[1]== sublist[0] for sublist in solve_period_history[solve]):
                     solve_period_history[solve].append((solve__period[1], 1))
     solves = all_solves
-    
+
     first = True
     for i, solve in enumerate(solves):
         runner.write_full_timelines(runner.timeblocks_used_by_solves[parent_solve[solve]], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
@@ -1110,6 +1256,7 @@ def main():
         runner.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
         runner.write_realized_dispatch(realized_time_lists[solve],parent_solve[solve])
         runner.write_fixed_storage_timesteps(fix_storage_time_lists[solve],parent_solve[solve])
+        runner.create_averaged_timeseries(parent_solve[solve])
         last = i == len(solves) - 1
         runner.write_solve_status(first, last)
         if i == 0:
@@ -1138,7 +1285,6 @@ def main():
         "unit__inputNode__period": [],
         "unit__outputNode__period": [],
         }
-
         d3_relation_periodic_groupby = {
             "connection__period": []
         }
@@ -1150,6 +1296,7 @@ def main():
         runner.periodic_postprocess(d2_relation_periodic_groupby, method = "sum", relation=True, relation_row_index=[1])
         runner.periodic_postprocess(d3_relation_periodic_groupby, method = "sum", relation=True, relation_row_index=[1,2])
         runner.periodic_postprocess(d6_relation_periodic_groupby_average, method = "mean", relation=True, relation_row_index=[1,2,3,4,5])
+    
     if len(runner.model_solve) > 1:
         logging.error(
             f'Trying to run more than one model - not supported. The results of the first model are retained.')
