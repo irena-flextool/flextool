@@ -386,7 +386,7 @@ table data IN 'CSV' 'solve_data/pt_process_sink.csv' : process__sink__param__tim
 table data IN 'CSV' 'input/pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
 table data IN 'CSV' 'input/timeline.csv' : timeline__timestep__duration <- [timeline,timestep,duration];
 
-# Parameters for model data
+# Parameters for model data. Timestep values are in solve_data as they might be averaged for the solve
 table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_commodity;
 table data IN 'CSV' 'input/pd_commodity.csv' : [commodity, commodityParam, period], pd_commodity;
 table data IN 'CSV' 'input/p_group__process.csv' : [group, process, groupParam], p_group__process;
@@ -450,7 +450,7 @@ table data IN 'CSV' 'solve_data/p_entity_period_existing_capacity.csv' : [entity
 table data IN 'CSV' 'output/costs_discounted.csv' : [param_costs], costs_discounted;
 
 #check
-set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_realized_period union d_fix_storage_period) : p_model["solveFirst"]};
+set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
 set process__fork_method_yes dimen 2 within {process, fork_method} := 
@@ -1174,6 +1174,7 @@ param p_entity_all_existing {e in entity, d in period} :=
   + (if not p_model['solveFirst'] then p_entity_existing_later_solves[e, d])
   - (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
 ;
+display p_entity_all_existing;
 param p_entity_previously_invested_capacity {e in entity, d in period} :=
   + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_invested_capacity[e, d_history]);
 
@@ -2467,7 +2468,7 @@ param entity_all_capacity{e in entity, d in period} :=
   + sum {(e, d_invest, d) in edd_invest} v_invest[e, d_invest].val * p_entity_unitsize[e]
   - sum {(e, d_divest) in ed_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[e, d_divest].val * p_entity_unitsize[e]
 ;
-
+display entity_all_capacity;
 param r_process_online_dt{p in process_online, (d, t) in dt} :=
   + (if p in process_online_linear then v_online_linear[p, d, t].val)
   + (if p in process_online_integer then v_online_integer[p, d, t].val);
@@ -2985,7 +2986,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	for {e in entity : e in entityInvest} printf ',%s', e >> fn_annuity;
 	  printf '\n' >> fn_annuity;
   }
-for {s in solve_current, d in period_invest : d in d_realize_invest}
+for {s in solve_current, d in d_realize_invest}
   { 
     printf '%s,%s', s, d >> fn_annuity;
 	for {e in entityInvest}
@@ -3532,7 +3533,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {e in entityInvest : e in process_unit}
 	  { printf ',%s', e >> fn_unit_invested_marginal; }
   }
-for {s in solve_current, d in period_invest}
+for {s in solve_current, d in d_realize_invest}
   { printf '\n%s,%s', s, d >> fn_unit_invested_marginal;
     for {e in entityInvest : e in process_unit} 
       {
@@ -3546,7 +3547,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {e in entityInvest : e in process_connection}
 	  { printf ',%s', e >> fn_connection_invested_marginal; }
   }
-for {s in solve_current, d in period_invest}
+for {s in solve_current, d in d_realize_invest}
   { printf '\n%s,%s', s, d >> fn_connection_invested_marginal;
     for {e in entityInvest : e in process_connection} 
       {
@@ -3560,7 +3561,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {e in entityInvest : e in node}
 	  { printf ',%s', e >> fn_node_invested_marginal; }
   }
-for {s in solve_current, d in period_invest}
+for {s in solve_current, d in d_realize_invest}
   { printf '\n%s,%s', s, d >> fn_node_invested_marginal;
     for {e in entityInvest : e in node} 
       {
@@ -3815,7 +3816,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {g in groupCapacityMargin}
       { printf ',%s', g >> fn_group_capmargin_slack__d; }
   }
-for {s in solve_current, d in period_invest : d in d_realize_invest}
+for {s in solve_current, d in d_realize_invest}
   {
     for {g in groupCapacityMargin}
       {
