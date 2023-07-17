@@ -1759,8 +1759,8 @@ s.t. maxState {n in nodeState, (d, t) in dt} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   <=
   + p_entity_all_existing[n, d]
-  + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[n]
-  - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[n]
+  + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
+  - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 ;
 
 s.t. maxToSink {(p, source, sink) in process__source__sink_isNodeSink, (d, t) in dt} :
