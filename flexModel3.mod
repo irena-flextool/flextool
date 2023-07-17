@@ -1792,8 +1792,8 @@ s.t. maxState {n in nodeState, (d, t) in dt} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   <=
   + p_entity_all_existing[n, d]
-  + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[n]
-  - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[n]
+  + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
+  - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 ;
 
 s.t. maxToSink {(p, source, sink) in process__source__sink_isNodeSink, (d, t) in dt} :
@@ -1971,7 +1971,7 @@ s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_w
     * 60 * step_duration[d, t]
 	* p_process_source_coefficient[p, source]
     * ( + p_entity_all_existing[p, d]
-	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d] * p_entity_unitsize[p]
+	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
   + ( if p in process_online_linear then v_startup_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
@@ -1987,7 +1987,7 @@ s.t. ramp_sink_up_constraint {(p, source, sink, d, t, t_previous, t_previous_wit
     * 60 * step_duration[d, t]
 	* p_process_sink_coefficient[p, sink]
     * ( + p_entity_all_existing[p, d]
-	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d] * p_entity_unitsize[p]
+	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
   + ( if p in process_online_linear then v_startup_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
@@ -2003,7 +2003,7 @@ s.t. ramp_source_down_constraint {(p, source, sink, d, t, t_previous, t_previous
     * 60 * step_duration[d, t]
 	* p_process_source_coefficient[p, source]
     * ( + p_entity_all_existing[p, d]
-	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d] * p_entity_unitsize[p]
+	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
   - ( if p in process_online_linear then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
@@ -2019,7 +2019,7 @@ s.t. ramp_sink_down_constraint {(p, source, sink, d, t, t_previous, t_previous_w
     * 60 * step_duration[d, t]
 	* p_process_sink_coefficient[p, sink]
     * ( + p_entity_all_existing[p, d]
-	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d] * p_entity_unitsize[p]
+	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
   - ( if p in process_online_linear then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
@@ -2735,7 +2735,7 @@ param fn_entity_period_existing_capacity symbolic := "solve_data/p_entity_period
 printf 'entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n' > fn_entity_period_existing_capacity;
 for {(e, d) in ed_history_realized union {e in entity, d in d_realize_invest}}
   {
-    printf '%s,%s,%.8g,%.8g\n', e, d,
+    printf '%s,%s,%.12g,%.12g\n', e, d,
 	  + (if p_model['solveFirst'] && e in process && d in period_first then p_process[e, 'existing'])
 	  + (if p_model['solveFirst'] && e in node    && d in period_first then    p_node[e, 'existing'])
 	  + (if not p_model['solveFirst'] && (e, d) in ed_history_realized then p_entity_period_existing_capacity[e, d])
@@ -3881,7 +3881,8 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
 #display {p in process_online, (d, t) in dt : (d, t) in test_dt} : r_process_online_dt[p, d, t];
-#display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val * p_entity_unitsize[n];
+display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
+display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val * p_entity_unitsize[n];
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p];
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val * ptReserve_upDown_group[r, ud, ng, 'reservation', t];
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val * pdtNodeInflow_for_scaling[n, d, t];

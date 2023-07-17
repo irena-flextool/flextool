@@ -1047,9 +1047,7 @@ class FlexToolRunner:
                 for period, active_time in list(full_active_time.items()):
                     if started:
                         if period == horizons[index][0]:
-                            if horizons[index][1] != 0:
-                                active[period] = full_active_time[period][0:horizons[index][1]+1]
-                            break
+                            active[period] = full_active_time[period][0:horizons[index][1]+1]
                         else:
                             active[period] = full_active_time[period]
                     elif period == start[0]:
@@ -1063,9 +1061,7 @@ class FlexToolRunner:
                 for period, active_time in list(full_active_time.items()):
                     if started:
                         if period == jumps[index][0]:
-                            if jumps[index][1] != 0:
-                                realized[period] = full_active_time[period][0:jumps[index][1]+1]
-                            break
+                            realized[period] = full_active_time[period][0:jumps[index][1]+1]
                         else:
                             realized[period] = full_active_time[period]
                     elif period == start[0]:
@@ -1113,8 +1109,6 @@ class FlexToolRunner:
             if include_solve != None:
                 for index, roll in enumerate(roll_solves):
                     solves.append(roll)
-                    #print(roll_solves)
-                    #print(include_solve)
                     #creating the start time for the rolling. This is the first [period, timestamp] of the active time of the parent roll 
                     start = [list(roll_active_time_lists[roll].items())[0][0],list(roll_active_time_lists[roll].items())[0][1][0][0]]
                     #upper_jump = lower_duration 
@@ -1128,8 +1122,6 @@ class FlexToolRunner:
                     fix_storage_time_lists.update(inner_fix_storage_time_lists)
             else:
                 solves += roll_solves
-                #print(roll_solves)
-                #print(include_solve)
         
         else:
             solves.append(solve)
@@ -1250,7 +1242,6 @@ def main():
 
     first = True
     for i, solve in enumerate(solves):
-        print(active_time_lists[solve])
         runner.write_full_timelines(runner.timeblocks_used_by_solves[parent_solve[solve]], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
         runner.write_step_jump(jump_lists[solve])
