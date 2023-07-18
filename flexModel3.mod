@@ -1759,8 +1759,8 @@ s.t. maxState {n in nodeState, (d, t) in dt} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   <=
   + p_entity_all_existing[n, d]
-  + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[n]
-  - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[n]
+  + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
+  - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 ;
 
 s.t. maxToSink {(p, source, sink) in process__source__sink_isNodeSink, (d, t) in dt} :
@@ -1938,7 +1938,7 @@ s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_w
     * 60 * step_duration[d, t]
 	* p_process_source_coefficient[p, source]
     * ( + p_entity_all_existing[p, d]
-	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d] * p_entity_unitsize[p]
+	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
   + ( if p in process_online_linear then v_startup_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
@@ -1954,7 +1954,7 @@ s.t. ramp_sink_up_constraint {(p, source, sink, d, t, t_previous, t_previous_wit
     * 60 * step_duration[d, t]
 	* p_process_sink_coefficient[p, sink]
     * ( + p_entity_all_existing[p, d]
-	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d] * p_entity_unitsize[p]
+	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
   + ( if p in process_online_linear then v_startup_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
@@ -1970,7 +1970,7 @@ s.t. ramp_source_down_constraint {(p, source, sink, d, t, t_previous, t_previous
     * 60 * step_duration[d, t]
 	* p_process_source_coefficient[p, source]
     * ( + p_entity_all_existing[p, d]
-	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d] * p_entity_unitsize[p]
+	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
   - ( if p in process_online_linear then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
@@ -1986,7 +1986,7 @@ s.t. ramp_sink_down_constraint {(p, source, sink, d, t, t_previous, t_previous_w
     * 60 * step_duration[d, t]
 	* p_process_sink_coefficient[p, sink]
     * ( + p_entity_all_existing[p, d]
-	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d] * p_entity_unitsize[p]
+	    + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
   - ( if p in process_online_linear then v_shutdown_linear[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
