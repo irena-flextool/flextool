@@ -76,6 +76,7 @@ python update_flextool.py
     ```shell
     conda activate flextool
     ```
+
 3. Launch Spine Toolbox
 
     ```shell
