@@ -73,14 +73,14 @@ python update_flextool.py
 1. Open a conda prompt.
 2. Activate the environment
 
-```shell
-conda activate flextool
-```
+    ```shell
+    conda activate flextool
+    ```
 3. Launch Spine Toolbox
 
-```shell
-python -m spinetoolbox
-```
+    ```shell
+    python -m spinetoolbox
+    ```
 
 4. Open FlexTool3 project in Spine Toolbox (Choose the flextool *folder* from File > Open project dialog)
 
