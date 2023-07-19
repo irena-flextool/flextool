@@ -51,7 +51,8 @@ class FlexToolRunner:
         self.solver_arguments = self.get_solver_arguments()
         self.included_solves = self.get_included_solves()
         self.rolling_times = self.get_rolling_times()
-        self.create_step_durations=self.get_create_step_durations()
+        self.new_step_durations=self.get_new_step_durations()
+        self.create_timeline_from_timestep_duration()
         #self.write_full_timelines(self.timelines, 'steps.csv')
     
     def get_solves(self):
@@ -227,80 +228,40 @@ class FlexToolRunner:
 
         return rolling_times
 
-    def create_timestep_duration(self,real_solves):
-        for solve in real_solves:
-            if solve in self.create_step_durations.keys():
-                step_duration= float(self.create_step_durations[solve])
-                timeblocks_changed = []
-                new_timeblocks_used_by_solves=[]
-                for period, timeblock_name in self.timeblocks_used_by_solves[solve]:
-                    new_timeblock_name = timeblock_name+"_"+str(int(step_duration))
-                    if timeblock_name not in timeblocks_changed:
-                        #crate the new timeline
-                        timeblocks_changed.append(timeblock_name)
-                        timeline_name = self.timeblocks__timeline[timeblock_name][0]
-                        old_steps = self.timelines[timeline_name]
-                        new_steps = []
-                        first_step = old_steps[0][0]
-                        step_counter = float(old_steps[0][1])
-                        for step in old_steps[1:-1]:
-                            if step_counter >= step_duration:
-                                new_steps.append((first_step,str(step_counter)))
-                                first_step = step[0]
-                                step_counter=0
-                                if step_counter> step_duration:
-                                    logging.warning("Warning: All new steps are not the size of the given step duration. The new step duration has to be multiple of old step durations for this to happen.")
-                            step_counter += float(step[1])
-                        new_steps.append((first_step,str(step_counter)))
-                        new_timeline_name = timeline_name+"_"+str(int(step_duration)) 
-                        self.timelines[new_timeline_name] = new_steps
-
-                        #create the new timeblocks
-                        old_timeblocks = self.timeblocks[timeblock_name]
-                        new_timeblocks = []
-                        for block in old_timeblocks:
-                            if any(block[0] == step[0] for step in new_steps):
-                                next_existing_start = block[0]
-                                index_first = [step[0] for step in old_steps].index(block[0])
-                            else:
-                                #finding the next step that exist in the new timeline
-                                index_first = [step[0] for step in old_steps].index(block[0])
-                                for i in range(0,len(old_steps)-index_first):
-                                    index_first += 1
-                                    if any(old_steps[index_first][0] == step[0] for step in new_steps):
-                                        next_existing_start = old_steps[index_first][0]
-                                        break
-                            index_last = int(index_first + float(block[1])-1) 
-                            end_timestep = old_steps[index_last][0]
-                            if any(end_timestep == step[0] for step in new_steps):
-                                #get the last timestep of the block
-                                next_existing_end = end_timestep
-                                end_found = True
-                            else:
-                                #or find the next existing step in the new timeline
-                                end_found = False
-                                for i in range(0,len(old_steps)-index_last-1):
-                                    index_last += 1
-                                    if any(old_steps[index_last][0] == step[0] for step in new_steps):
-                                        next_existing_end = old_steps[index_last][0]
-                                        end_found = True
-                                        break 
-                            if end_found:
-                                new_block_duration = [step[0] for step in new_steps].index(next_existing_end)-[step[0] for step in new_steps].index(next_existing_start)+1
-                            else:
-                                new_block_duration = len(new_steps)-[step[0] for step in new_steps].index(next_existing_start)
-                                
-                            new_timeblocks.append((next_existing_start,str(new_block_duration)))
-                        
-                        
-                        self.timeblocks[new_timeblock_name] = new_timeblocks
-                        self.timeblocks__timeline[new_timeblock_name] = [new_timeline_name]
-                    new_timeblocks_used_by_solves.append((period,new_timeblock_name))
-                self.timeblocks_used_by_solves[solve] = new_timeblocks_used_by_solves
+    def create_timeline_from_timestep_duration(self):
+        for timeblockSet_name, timeblockSet in list(self.timeblocks.items()):
+            if timeblockSet_name in self.new_step_durations.keys():
+                step_duration= float(self.new_step_durations[timeblockSet_name])
+                #create the new timeline
+                timeline_name = self.timeblocks__timeline[timeblockSet_name][0]
+                old_steps = self.timelines[timeline_name]
+                new_steps = []
+                new_timeblocks = []
+                for timeblock in timeblockSet:
+                    first_step = timeblock[0]
+                    first_index = [step[0] for step in old_steps].index(timeblock[0])
+                    step_counter = float(old_steps[first_index][1])
+                    last_index = first_index + int(float(timeblock[1]))
+                    added_steps = 0
+                    for step in old_steps[first_index:last_index]:
+                        if step_counter >= step_duration:
+                            new_steps.append((first_step,str(step_counter)))
+                            first_step = step[0]
+                            step_counter=0
+                            added_steps += 1
+                            if step_counter> step_duration:
+                                logging.warning("Warning: All new steps are not the size of the given step duration. The new step duration has to be multiple of old step durations for this to happen.")
+                        step_counter += float(step[1])
+                    new_steps.append((first_step,str(step_counter)))
+                    new_timeblocks.append((timeblock[0], added_steps))
+                self.timeblocks[timeblockSet_name] = new_timeblocks 
+                new_timeline_name = timeline_name+ "_"+ timeblockSet_name 
+                self.timelines[new_timeline_name] = new_steps
+                self.timeblocks__timeline[timeblockSet_name] = [new_timeline_name]
 
     def create_averaged_timeseries(self,solve):
         timeseries_list=['pt_node.csv','pt_process.csv','pt_profile.csv','pt_process_source.csv','pt_process_sink.csv','pt_reserve__upDown__group.csv']
-        if solve not in self.create_step_durations.keys():
+        if not any(self.timeblocks_used_by_solves[solve]) in self.new_step_durations.keys():
             for timeseries in timeseries_list:
                 shutil.copy('input/'+timeseries,'solve_data/'+timeseries)
         else:
@@ -317,14 +278,20 @@ class FlexToolRunner:
                         #and that there are rows from other groups between the rows of one group 
                         time_index = headers.index('time')
                         timelines=[]
-                        for period, timeblock in self.timeblocks_used_by_solves[solve]:
-                            timeline = self.timeblocks__timeline[timeblock][0]
+                        for period, timeblockSet in self.timeblocks_used_by_solves[solve]:
+                            timeline = self.timeblocks__timeline[timeblockSet][0]
                             if timeline not in timelines:
+                                if len(timelines) != 0:
+                                    logging.error("Error: More than one timeline in the solve or the same timeline with different step durations in different timeblockSets")
+                                    exit(-1)
                                 timelines.append(timeline)
-                        
+
                         for timeline in timelines:
                             new_timeline = self.timelines[timeline]    
-                            started = False 
+                            started = False
+                            last_timestamp = new_timeline[-1][0]
+                            last_timestep_length = float(new_timeline[-1][1])
+                            last = False
                             while True:
                                 try:
                                     datain = next(filereader)
@@ -347,24 +314,33 @@ class FlexToolRunner:
                                         next_index += 1
                                         if next_index > len(new_timeline)-1:
                                             next_index = 0
+
+                                        if datain[time_index] == last_timestamp:
+                                            last = True
+                                            counter = 0
+
+                                    elif last:
+                                        if counter >= last_timestep_length:
+                                            #write row
+                                            out_value = sum(values)/len(values)
+                                            row.append(out_value)
+                                            filewriter.writerow(row)
+                                            break
+                                        values.append(float(datain[time_index+1]))
+                                        counter += 1
                                     else:
                                         values.append(float(datain[time_index+1]))
                                 except StopIteration:
-                                    #if the new timeline is not a multiple of the previous one, but the rest to the last step
-                                    if started:
-                                        out_value = sum(values)/len(values)
-                                        row.append(out_value)
-                                        filewriter.writerow(row)
                                     break
                     
 
     
-    def get_create_step_durations(self):
+    def get_new_step_durations(self):
         """
         read the new step duration for each solve
         :return: dict : (period name, step_duration (hours))
         """
-        with open('input/solve__create_step_duration.csv', 'r') as blk:
+        with open('input/timeblockSet__timeline_with_new_stepduration.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
             step_durations = defaultdict()
@@ -633,10 +609,10 @@ class FlexToolRunner:
                 print("HiGHS solved the problem\n")
                 
                 #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
-                with open('flexModel3.sol','r') as inf_file:
+                with open('HiGHS.log','r') as inf_file:
                     inf_content = inf_file.read() 
-                    if 'INFEASIBLE' in inf_content:
-                        logging.error(f"The model is infeasible. Check the constraints.")
+                    if 'Infeasible' in inf_content:
+                        logging.error(f"The model is infeasible. Check the storage constraints.")
                         exit(1)
             
             elif solver == "cplex": #or gurobi
@@ -777,6 +753,10 @@ class FlexToolRunner:
         :param blocklist:
         :return:
         """ 
+        print(timeblocks_used_by_solves)
+        print(timeblocks)
+        print(timeblocks__timelines)
+        print(timelines.keys())
         active_time = defaultdict(list)
         for solve in timeblocks_used_by_solves:
             if solve == current_solve:
@@ -1166,7 +1146,7 @@ class FlexToolRunner:
             cols[a], cols[b] = cols[b], cols[a]
             solve_first= solve_first[cols]
             
-            #group by by group,period and sum numeric_cols, other columns are removed
+            #group_by with group and period, sum numeric columns, other columns are removed
             if method == "sum":
                 modified= timestep_df.groupby(group+["period"],group_keys=False).sum(numeric_only=True).reset_index()
             elif method == "mean":
@@ -1177,8 +1157,20 @@ class FlexToolRunner:
             #put the relationship indicators back to the start of the file
             if relation:
                 combined = pd.concat([relationship_start_df,combined])
-            
-            combined.to_csv('output/' + key + '.csv',index=False)
+            if method == "sum":
+                combined.to_csv('output/' + key + '.csv',index=False)
+            else:
+                combined.to_csv('output/' + key + '_average.csv',index=False)
+    def combine_result_tables(self, inputfile1, inputfile2, outputfile, combine_headers = None, move_column = []):
+        input1 = pd.read_csv(inputfile1,header = 0)
+        input2 = pd.read_csv(inputfile2,header = 0)
+        combined = pd.concat([input1,input2])
+        #move columns to desired locations
+        for column in move_column:
+            name = combined.columns[column[0]]
+            col = combined.pop(name)
+            combined.insert(column[1],name,col)
+        combined.to_csv(outputfile, index= False)
 
 def main():
     """
@@ -1207,11 +1199,6 @@ def main():
         logging.error("No solves in model.")
         sys.exit(-1)
     
-    real_solves = [solves[0]] #real solves are the defined solves not including the individual rolls
-    for solve, inner_solve in list(runner.included_solves.items()):
-        real_solves.append(inner_solve)
-    runner.create_timestep_duration(real_solves)
-
     for solve in solves:
         solve_solves, solve_parent_solve, solve_active_time_lists, solve_jump_lists, solve_realized_time_lists, solve_fix_storage_timesteps = runner.define_solve(solve,solve)
         all_solves += solve_solves
@@ -1220,6 +1207,12 @@ def main():
         jump_lists.update(solve_jump_lists)
         realized_time_lists.update(solve_realized_time_lists)
         fix_storage_time_lists.update(solve_fix_storage_timesteps)
+
+    real_solves = [] 
+    for solve in solves: #real solves are the defined solves not including the individual rolls
+        real_solves.append(solve)
+    for solve, inner_solve in list(runner.included_solves.items()):
+        real_solves.append(inner_solve)
 
     for solve in real_solves:
         for solve_2 in real_solves:
@@ -1238,15 +1231,17 @@ def main():
             for solve__period in (runner.realized_periods+runner.invest_realized_periods+runner.fix_storage_periods):
                 if solve__period[0] == solve and not any(solve__period[1]== sublist[0] for sublist in solve_period_history[solve]):
                     solve_period_history[solve].append((solve__period[1], 1))
-    solves = all_solves # all solves have the individual rolls included
 
     first = True
-    for i, solve in enumerate(solves):
+    for i, solve in enumerate(all_solves):
         runner.write_full_timelines(runner.timeblocks_used_by_solves[parent_solve[solve]], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
         runner.write_step_jump(jump_lists[solve])
         runner.write_period_years(solve_period_history[parent_solve[solve]], 'solve_data/period_with_history.csv')
         runner.write_periods(parent_solve[solve], runner.invest_realized_periods, 'solve_data/invest_realized_periods_of_current_solve.csv')
+        #assume that if invest_realized_periods is not defined,but the invest_periods and realized_periods are defined, use realized_periods also as the invest_realized_periods
+        if (not any(parent_solve[solve] == step[0] for step in runner.invest_realized_periods)) and any(parent_solve[solve] == step[0] for step in runner.invest_periods) and any(parent_solve[solve] == step[0] for step in runner.realized_periods):
+             runner.write_periods(parent_solve[solve], runner.realized_periods, 'solve_data/invest_realized_periods_of_current_solve.csv')
         runner.write_periods(parent_solve[solve], runner.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
         runner.write_years_represented(runner.solve_period_years_represented[parent_solve[solve]],'solve_data/p_years_represented.csv')
         runner.write_period_years(runner.solve_period_years_represented[parent_solve[solve]],'solve_data/p_discount_years.csv')
@@ -1268,12 +1263,13 @@ def main():
             logging.info('Success!')
         else:
             logging.error(f'Error: {exit_status}')
+            exit(-1)
 
     if "rolling_window" in runner.solve_modes.values():
 
         periodic_groupby = {
         "node__period": ["node"],
-        "costs__period": [],
+        "annualized_dispatch_costs__period": [],
         "group__process__node__period": [],
         }
         periodic_groupby_average = {
@@ -1294,6 +1290,7 @@ def main():
         runner.periodic_postprocess(d2_relation_periodic_groupby, method = "sum", relation=True, relation_row_index=[1])
         runner.periodic_postprocess(d3_relation_periodic_groupby, method = "sum", relation=True, relation_row_index=[1,2])
         runner.periodic_postprocess(d6_relation_periodic_groupby_average, method = "mean", relation=True, relation_row_index=[1,2,3,4,5])
+        runner.combine_result_tables("output/annualized_investment_costs__period.csv","output/annualized_dispatch_costs__period.csv", "output/annualized_costs__period.csv",move_column =[(6,14)])
     
     if len(runner.model_solve) > 1:
         logging.error(

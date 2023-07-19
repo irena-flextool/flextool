@@ -3047,7 +3047,7 @@ printf '"upward reserve penalty",%.12g\n', costs_discounted["upward reserve pena
 printf '"downward reserve penalty",%.12g\n', costs_discounted["downward reserve penalty"] + sum{d in d_realized_period} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d] * p_discount_factor_operations_yearly[d])) / 1000000 >> fn_costs_discounted;
 
 printf 'Write annualized cost summary for realized periods...\n';
-param fn_summary_cost symbolic := "output/costs__period.csv";
+param fn_summary_cost symbolic := "output/annualized_costs__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
     printf 'solve,period,"unit investment/retirement","connection investment/retirement",' > fn_summary_cost;
@@ -3076,6 +3076,52 @@ for {s in solve_current, d in d_realized_period}
 	  sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d]) / 1000000,
 	  sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / period_share_of_year[d]) / 1000000
 	>> fn_summary_cost;
+  } 
+
+printf 'Write annualized investment cost summary for realized periods...\n';
+param fn_annual_investment_summary_cost symbolic := "output/annualized_investment_costs__period.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { 
+    printf 'solve,period,"unit investment/retirement","connection investment/retirement",' > fn_annual_investment_summary_cost;
+    printf '"storage investment/retirement","fixed cost of existing assets","capacity margin penalty"\n' >> fn_annual_investment_summary_cost;
+  }
+for {s in solve_current, d in d_realize_invest}
+  {
+    printf '%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
+      s, d,
+      (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_factor_operations_yearly[d] / 1000000,
+      (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_factor_operations_yearly[d] / 1000000,
+      (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_factor_operations_yearly[d] / 1000000,
+	  r_costExistingFixed_d[d] / p_discount_factor_operations_yearly[d] / 1000000,
+    sum{g in groupCapacityMargin : d in period_invest} (r_costPenalty_capacity_margin_d[g, d] / p_discount_factor_operations_yearly[d]) / 1000000
+    >> fn_annual_investment_summary_cost;
+  }
+
+printf 'Write annualized dispatch cost summary for realized periods...\n';
+param fn_annual_dispatch_summary_cost symbolic := "output/annualized_dispatch_costs__period__t.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { 
+    printf 'solve,period,time,' > fn_annual_dispatch_summary_cost;
+    printf 'commodity,CO2,' >> fn_annual_dispatch_summary_cost;
+	printf '"variable cost",starts,"upward penalty","downward penalty","inertia penalty",' >> fn_annual_dispatch_summary_cost;
+	printf '"non-synchronous penalty","upward reserve penalty",' >> fn_annual_dispatch_summary_cost;
+	printf '"downward reserve penalty"\n' >> fn_annual_dispatch_summary_cost;
+  }
+for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+  { 
+    printf '%s,%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
+      s, d, t,
+	  sum{(c, n) in commodity_node} r_cost_commodity_dt[c, n, d, t] / period_share_of_year[d] / 1000000,
+	  sum{(g, c, n, d, t) in gcndt_co2_price} r_cost_co2_dt[g, c, n, d, t] / period_share_of_year[d] / 1000000,
+	  sum{p in process} r_cost_process_other_operational_cost_dt[p, d, t] / period_share_of_year[d] / 1000000,
+	  sum{p in process_online : pdProcess[p, 'startup_cost', d]} r_cost_startup_dt[p, d, t] / period_share_of_year[d] / 1000000,
+	  sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_dt[n, 'up', d, t] / period_share_of_year[d]) / 1000000,
+	  sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_dt[n, 'down', d, t] / period_share_of_year[d]) / 1000000,
+	  sum{g in groupInertia} (r_costPenalty_inertia_dt[g, d, t] / period_share_of_year[d]) / 1000000,
+	  sum{g in groupNonSync} (r_costPenalty_non_synchronous_dt[g, d, t] / period_share_of_year[d]) / 1000000,
+	  sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_dt[r, ud, ng, d, t] / period_share_of_year[d]) / 1000000,
+	  sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_dt[r, ud, ng, d, t] / period_share_of_year[d]) / 1000000
+	>> fn_annual_dispatch_summary_cost;
   } 
 
 printf 'Write cost for realized periods and t...\n';
