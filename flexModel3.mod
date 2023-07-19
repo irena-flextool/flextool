@@ -2082,13 +2082,13 @@ s.t. minInvestGroup_entity_period {(g, d) in gd_invest_period} :
 ;
 
 s.t. minDivestGroup_entity_period {(g, d) in gd_divest_period} :
-  + sum{(g, e) in group_entity : (e, d) in ed_divest} v_invest[e, d] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity : (e, d) in ed_divest} v_divest[e, d] * p_entity_unitsize[e]
   >=
   + pdGroup[g, 'retire_min_period', d]
 ;
 
 s.t. maxInvestGroup_entity_total {g in g_invest_total, d in period} :
-  + sum{(g, e) in group_entity, d_invest in period : (e, d_invest, d) in edd_invest} v_invest[e, d] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity, d_invest in period : (e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e]
   + sum{(g, e) in group_entity} p_entity_previously_invested_capacity[e, d]
   <=
   + p_group[g, 'invest_max_total']
@@ -2102,7 +2102,7 @@ s.t. maxDivestGroup_entity_total {g in g_divest_total} :
 ;
 
 s.t. minInvestGroup_entity_total {g in g_invest_total, d in period} :
-  + sum{(g, e) in group_entity, d_invest in period : (e, d_invest, d) in edd_invest} v_invest[e, d] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity, d_invest in period : (e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e]
   + sum{(g, e) in group_entity} p_entity_previously_invested_capacity[e, d]
   >=
   + p_group[g, 'invest_min_total']
@@ -2154,7 +2154,7 @@ s.t. maxDivest_entity_total {e in e_divest_total} :  # Covers both processes and
 ;
 
 s.t. minInvest_entity_total {e in e_invest_total, d in period} :  # Covers both processes and nodes
-  + sum{(e, d_invest, d) in edd_invest} v_invest[e, d] * p_entity_unitsize[e] 
+  + sum{(e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e] 
   + p_entity_previously_invested_capacity[e, d]
   >= 
   + e_invest_min_total[e]
