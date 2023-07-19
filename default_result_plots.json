@@ -109,7 +109,7 @@
           "cost"
         ],
         "parameter": [
-          "cost"
+          "annualized_cost"
         ]
       }
     },
@@ -146,18 +146,15 @@
       },
       "plot_type": "stacked line",
       "selection": {
-        "X_flow_type": ["inflow"],
         "X_period": [],
         "X_solve": [],
         "X_time": [],
         "entity_class": [
           "node"
         ],
-        "entity_0": [
-          "west"
-        ],
+        "entity_0": [],
         "parameter": [
-          "balance_t"
+          "state_t"
         ]
       }
     },
