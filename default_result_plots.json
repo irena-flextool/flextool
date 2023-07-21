@@ -109,7 +109,7 @@
           "cost"
         ],
         "parameter": [
-          "annualized_cost"
+          "cost_annualized"
         ]
       }
     },

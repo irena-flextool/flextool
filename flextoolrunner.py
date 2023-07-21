@@ -509,6 +509,20 @@ class FlexToolRunner:
                 for item in period:
                     outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
 
+    def write_scaling_timelines(self, timeline, filename):
+        """
+        write to file a list of timesteps as defined by the active timeline of the parent solve
+        :param filename: filename to write to
+        :param timeline: list of tuples containing the period and the timestep
+        :return: nothing
+        """
+        with open(filename, 'w') as outfile:
+            # prepend with a header
+            outfile.write('period,step,scaling_step_duration\n')
+            for period_name, period in timeline.items():
+                for item in period:
+                    outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
+
 
     def write_years_represented(self, years_represented, filename):
         """
@@ -1124,43 +1138,41 @@ class FlexToolRunner:
 
         return solves, parent_solves, active_time_lists, jump_lists, realized_time_lists, fix_storage_time_lists
 
-    def periodic_postprocess(self, groupby_map, method, relation = False, relation_row_index = None):
+    def periodic_postprocess(self,groupby_map, method = None):
         for key, group in list(groupby_map.items()):
-            filepath = 'output/' + key + '__t.csv'
-            
-            #get the relationship indicators from the start of the file
-            if relation:
-                relationship_start_df=pd.read_csv(filepath, header = 0, nrows=len(relation_row_index))
-                relationship_start_df.drop(["time"],axis = 1, inplace=True)
-                timestep_df = pd.read_csv(filepath,header = 0,skiprows=relation_row_index)
+            if method == "timewise":
+                filepath = 'output/' + key + '__t.csv'
+            else:
+                filepath = 'output/' + key + '.csv'
+                #get the relationship indicators from the start of the file
+            if group[1]>1:
+                relationship_start_df=pd.read_csv(filepath, header = 0, nrows=group[1]-1)
+                if method == "timewise":
+                    relationship_start_df.drop(["time"],axis = 1, inplace=True)
+                timestep_df = pd.read_csv(filepath,header = 0,skiprows=range(1,group[1]))
             else:
                 timestep_df = pd.read_csv(filepath,header = 0)
-            
-            timestep_df.drop(["time"],axis = 1, inplace=True)
+            if method == "timewise":
+                timestep_df.drop(["time"],axis = 1, inplace=True)
             
             #create a df with only group,solve,period cols, where the solve is the first of the group,period combo
-            solve_period = timestep_df.filter(items= group +["solve","period"])
-            solve_first = solve_period.groupby(group +["period"]).first().reset_index()
+            solve_period = timestep_df.filter(items= group[0] +["solve","period"])
+            solve_first = solve_period.groupby(group[0] +["period"]).first().reset_index()
             cols = list(solve_first.columns)
             a,b = cols.index('period'),cols.index('solve')
             cols[a], cols[b] = cols[b], cols[a]
             solve_first= solve_first[cols]
             
             #group_by with group and period, sum numeric columns, other columns are removed
-            if method == "sum":
-                modified= timestep_df.groupby(group+["period"],group_keys=False).sum(numeric_only=True).reset_index()
-            elif method == "mean":
-                modified= timestep_df.groupby(group+["period"],group_keys=False).mean(numeric_only=True).reset_index()
-
+            modified= timestep_df.groupby(group[0]+["period"],group_keys=False).sum(numeric_only=True).reset_index()
             #combine with the solve name df
             combined = pd.merge(solve_first,modified)
             #put the relationship indicators back to the start of the file
-            if relation:
+            if group[1]>1:
                 combined = pd.concat([relationship_start_df,combined])
-            if method == "sum":
-                combined.to_csv('output/' + key + '.csv',index=False)
-            else:
-                combined.to_csv('output/' + key + '_average.csv',index=False)
+
+            combined.to_csv('output/' + key + '.csv',index=False)
+
     def combine_result_tables(self, inputfile1, inputfile2, outputfile, combine_headers = None, move_column = []):
         input1 = pd.read_csv(inputfile1,header = 0)
         input2 = pd.read_csv(inputfile2,header = 0)
@@ -1234,8 +1246,10 @@ def main():
 
     first = True
     for i, solve in enumerate(all_solves):
+        parent_active_time_lists = runner.get_active_time(parent_solve[solve], runner.timeblocks_used_by_solves, runner.timeblocks, runner.timelines, runner.timeblocks__timeline)
         runner.write_full_timelines(runner.timeblocks_used_by_solves[parent_solve[solve]], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
+        runner.write_scaling_timelines(parent_active_time_lists, 'solve_data/steps_for_scaling.csv')
         runner.write_step_jump(jump_lists[solve])
         runner.write_period_years(solve_period_history[parent_solve[solve]], 'solve_data/period_with_history.csv')
         runner.write_periods(parent_solve[solve], runner.invest_realized_periods, 'solve_data/invest_realized_periods_of_current_solve.csv')
@@ -1266,30 +1280,24 @@ def main():
             exit(-1)
 
     if "rolling_window" in runner.solve_modes.values():
+        #group by name and relation dimension
+        period_only = {
+        "group__process__node__period": [[],1],
+        "unit_online__period_average": [[],1],
+        "unit__inputNode__period": [[],2],
+        "unit__outputNode__period": [[],2],
+        "connection__period": [[],3],
+        "process__reserve__upDown__node__period_average": [[],6],
+        }
 
-        periodic_groupby = {
-        "node__period": ["node"],
-        "annualized_dispatch_costs__period": [],
-        "group__process__node__period": [],
+        timewise_groupby = {
+        "annualized_dispatch_costs__period": [[],1],
+        "node__period": [["node"],1],
+        "group_node__period": [["group"],1] #väärin
         }
-        periodic_groupby_average = {
-        "unit_online__period": []
-        }
-        d2_relation_periodic_groupby = {
-        "unit__inputNode__period": [],
-        "unit__outputNode__period": [],
-        }
-        d3_relation_periodic_groupby = {
-            "connection__period": []
-        }
-        d6_relation_periodic_groupby_average = {
-            "process__reserve__upDown__node__period": []
-        }
-        runner.periodic_postprocess(periodic_groupby, method = "sum")
-        runner.periodic_postprocess(periodic_groupby_average, method = "mean")
-        runner.periodic_postprocess(d2_relation_periodic_groupby, method = "sum", relation=True, relation_row_index=[1])
-        runner.periodic_postprocess(d3_relation_periodic_groupby, method = "sum", relation=True, relation_row_index=[1,2])
-        runner.periodic_postprocess(d6_relation_periodic_groupby_average, method = "mean", relation=True, relation_row_index=[1,2,3,4,5])
+
+        runner.periodic_postprocess(period_only, method = "periodic")
+        runner.periodic_postprocess(timewise_groupby, method = "timewise")
         runner.combine_result_tables("output/annualized_investment_costs__period.csv","output/annualized_dispatch_costs__period.csv", "output/annualized_costs__period.csv",move_column =[(6,14)])
     
     if len(runner.model_solve) > 1:
