@@ -420,9 +420,9 @@ class FlexToolRunner:
                 print("HiGHS solved the problem\n")
                 
                 #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
-                with open('flexModel3.sol','r') as inf_file:
+                with open('HiGHS.log','r') as inf_file:
                     inf_content = inf_file.read() 
-                    if 'INFEASIBLE' in inf_content:
+                    if 'Infeasible' in inf_content:
                         logging.error(f"The model is infeasible. Check the constraints.")
                         exit(1)
             
