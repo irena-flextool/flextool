@@ -774,7 +774,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^state$"
+                    "filter_re": "^state_t$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -915,8 +915,7 @@
                 },
                 {
                     "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^process$"
+                    "position": "hidden"
                 },
                 {
                     "map_type": "ParameterDefinition",
