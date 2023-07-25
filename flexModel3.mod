@@ -3379,17 +3379,16 @@ printf 'Write node results for time...\n';
 param fn_node__dt symbolic := "output/node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,time,inflow,"from units","from connections","to units","to connections",' > fn_node__dt;
-    printf '"state","state change","self discharge","upward slack","downward slack"\n' >> fn_node__dt; }  # Print the header on the first solve
+    printf '"state change","self discharge","upward slack","downward slack"\n' >> fn_node__dt; }  # Print the header on the first solve
 for {n in node, s in solve_current, (d, t) in dt : d in period_realized}
   {
-    printf '%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
+    printf '%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
 		, n, s, d, t
         , (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
 	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_unit} r_process_source_sink_flow_dt[p, source, n, d, t]
 	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_connection} r_process_source_sink_flow_dt[p, source, n, d, t]
   	    , sum{(p, n, sink) in process_source_sink_alwaysProcess : p in process_unit} -r_process_source_sink_flow_dt[p, n, sink, d, t]
   	    , sum{(p, n, sink) in process_source_sink_alwaysProcess : p in process_connection} -r_process_source_sink_flow_dt[p, n, sink, d, t]
-      , (if n in nodeState then v_state[n, d, t].val * p_entity_unitsize[n] else 0)
 	    , (if n in nodeState then r_nodeState_change_dt[n, d, t] else 0)
         , (if n in nodeSelfDischarge then r_selfDischargeLoss_dt[n, d, t] else 0)
 	    , (if n in nodeBalance then vq_state_up[n, d, t].val * pdtNodeInflow_for_scaling[n, d, t] else 0)
