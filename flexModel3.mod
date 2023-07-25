@@ -223,6 +223,7 @@ set period_with_history dimen 1 within periodAll;
 param p_period_from_solve{period_with_history};
 set time_in_use := setof {(d, t) in dt} (t);
 set period_in_use := setof {(d, t) in dt} (d);
+set period_first_of_solve := {d in period_in_use : sum{d2 in period_in_use : d2 <= d} 1 = 1};
 
 set dt_realize_dispatch dimen 2 within period_time;
 set d_realized_period := setof {(d, t) in dt_realize_dispatch} (d);
@@ -263,6 +264,7 @@ set node__param__time dimen 3 within {node, nodeTimeParam, time};
 set node__param_t := setof {(n, param, t) in node__param__time} (n, param);
 
 param p_model {modelParam};
+param p_nested_model {modelParam};
 param p_commodity {c in commodity, commodityParam} default 0;
 param pd_commodity {c in commodity, commodityPeriodParam, d in periodAll} default 0;
 
@@ -437,6 +439,7 @@ table data IN 'CSV' 'solve_data/period_with_history.csv' : [period], p_period_fr
 table data IN 'CSV' 'solve_data/invest_realized_periods_of_current_solve.csv' : d_realize_invest <- [period];
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
 table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
+table data IN 'CSV' 'solve_data/p_nested_model.csv' : [modelParam], p_nested_model;
 table data IN 'CSV' 'solve_data/realized_dispatch.csv' : dt_realize_dispatch <- [period, step];
 table data IN 'CSV' 'solve_data/fix_storage_timesteps.csv' : dt_fix_storage_timesteps <- [period, step];
 table data IN 'CSV' 'solve_data/fix_storage_price.csv' : ndt_fix_storage_price <- [node, period, step] ;
@@ -1224,8 +1227,8 @@ var v_startup_integer {p in process_online_integer, (d, t) in dt} >=0, <= p_enti
 var v_shutdown_integer {p in process_online_integer, (d, t) in dt} >=0, <= p_entity_max_units[p, d];
 var v_invest {(e, d) in ed_invest} >= 0, <= p_entity_max_units[e, d];
 var v_divest {(e, d) in ed_divest} >= 0, <= p_entity_max_units[e, d];
-var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0, <= 1;
-var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0, <= 1;
+var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
+var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0, <= 1;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0, <= 1;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
@@ -1399,7 +1402,7 @@ s.t. node_balance_fix_price_eq {(n, d, t) in ndt_fix_storage_price}:
 
 # Energy balance in each node  
 s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
-  + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] )
+  + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] )
   + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] )
   + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n] )
   + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n] )
@@ -1665,7 +1668,7 @@ s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, 
 ;
 
 s.t. storage_state_start {n in nodeState, (d, t) in period__time_first
-     : p_model['solveFirst'] 
+     : p_nested_model['solveFirst'] 
 	 && d in period_first 
 	 && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)} :
   + v_state[n, d, t] * p_entity_unitsize[n]
@@ -1678,7 +1681,7 @@ s.t. storage_state_start {n in nodeState, (d, t) in period__time_first
 ;
 
 s.t. storage_state_end {n in nodeState, (d, t) in period__time_last 
-     : p_model['solveLast'] 
+     : p_nested_model['solveLast'] 
 	 && d in period_last 
 	 && ((n, 'fix_end') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)} :
   + v_state[n, d, t] * p_entity_unitsize[n]
@@ -2457,7 +2460,7 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
   >=
   + sum {(g, n) in group_node} 
     ( - (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
-      + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && ((d, t) not in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
+      + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
       + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n])
@@ -2549,7 +2552,7 @@ param r_connection_d{c in process_connection, d in d_realized_period} :=
 ;
 
 param r_nodeState_change_dt{n in nodeState, (d, t_previous) in dt} := sum {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} (
-      + (if (n, 'bind_forward_only') in node__storage_binding_method && ((d, t) not in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
+      + (if (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n])
@@ -2750,7 +2753,7 @@ param fn_entity_period_existing_capacity symbolic := "solve_data/p_entity_period
 printf 'entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n' > fn_entity_period_existing_capacity;
 for {(e, d) in ed_history_realized union {e in entity, d in d_realize_invest}}
   {
-    printf '%s,%s,%.12g,%.12g\n', e, d,
+    printf '%s,%s,%.16g,%.16g\n', e, d,
 	  + (if p_model['solveFirst'] && e in process && d in period_first then p_process[e, 'existing'])
 	  + (if p_model['solveFirst'] && e in node    && d in period_first then    p_node[e, 'existing'])
 	  + (if not p_model['solveFirst'] && (e, d) in ed_history_realized then p_entity_period_existing_capacity[e, d])

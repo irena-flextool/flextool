@@ -495,34 +495,27 @@ class FlexToolRunner:
                                 for item in timelines[timeline]:
                                     outfile.write(period__timeblock[0] + ',' + item[0] + '\n')
 
-    def write_active_timelines(self, timeline, filename):
+    def write_active_timelines(self, timeline, filename, scaling = False):
         """
         write to file a list of timesteps as defined by the active timeline of the current solve
         :param filename: filename to write to
         :param timeline: list of tuples containing the period and the timestep
         :return: nothing
         """
-        with open(filename, 'w') as outfile:
-            # prepend with a header
-            outfile.write('period,step,step_duration\n')
-            for period_name, period in timeline.items():
-                for item in period:
-                    outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
-
-    def write_scaling_timelines(self, timeline, filename):
-        """
-        write to file a list of timesteps as defined by the active timeline of the parent solve
-        :param filename: filename to write to
-        :param timeline: list of tuples containing the period and the timestep
-        :return: nothing
-        """
-        with open(filename, 'w') as outfile:
-            # prepend with a header
-            outfile.write('period,step,scaling_step_duration\n')
-            for period_name, period in timeline.items():
-                for item in period:
-                    outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
-
+        if not scaling:
+            with open(filename, 'w') as outfile:
+                # prepend with a header
+                outfile.write('period,step,step_duration\n')
+                for period_name, period in timeline.items():
+                    for item in period:
+                        outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
+        else: 
+            with open(filename, 'w') as outfile:
+                # prepend with a header
+                outfile.write('period,step,scaling_step_duration\n')
+                for period_name, period in timeline.items():
+                    for item in period:
+                        outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
 
     def write_years_represented(self, years_represented, filename):
         """
@@ -903,23 +896,35 @@ class FlexToolRunner:
                 if item[0] == solve:
                     outfile.write(item[1] + '\n')
 
-    def write_solve_status(self, first_state, last_state):
+    def write_solve_status(self, first_state, last_state, nested = False):
         """
         make a file solve_first.csv that contains information if the current solve is the first to be run
 
         :param first_state: boolean if the current run is the first
 
         """
-        with open("input/p_model.csv", 'w') as p_model_file:
-            p_model_file.write("modelParam,p_model\n")
-            if first_state:
-                p_model_file.write("solveFirst,1\n")
-            else:
-                p_model_file.write("solveFirst,0\n")
-            if last_state:
-                p_model_file.write("solveLast,1\n")
-            else:
-                p_model_file.write("solveLast,0\n")
+        if not nested:
+            with open("input/p_model.csv", 'w') as p_model_file:
+                p_model_file.write("modelParam,p_model\n")
+                if first_state:
+                    p_model_file.write("solveFirst,1\n")
+                else:
+                    p_model_file.write("solveFirst,0\n")
+                if last_state:
+                    p_model_file.write("solveLast,1\n")
+                else:
+                    p_model_file.write("solveLast,0\n")
+        else:
+            with open("solve_data/p_nested_model.csv", 'w') as p_model_file:
+                p_model_file.write("modelParam,p_nested_model\n")
+                if first_state:
+                    p_model_file.write("solveFirst,1\n")
+                else:
+                    p_model_file.write("solveFirst,0\n")
+                if last_state:
+                    p_model_file.write("solveLast,1\n")
+                else:
+                    p_model_file.write("solveLast,0\n")
 
     def write_currentSolve(self, solve, filename):
         """
@@ -1244,12 +1249,21 @@ def main():
                 if solve__period[0] == solve and not any(solve__period[1]== sublist[0] for sublist in solve_period_history[solve]):
                     solve_period_history[solve].append((solve__period[1], 1))
 
+    real_solves_index = defaultdict(list)
+    for i, solve in enumerate(all_solves):
+        real_solves_index[parent_solve[solve]].append(i)
+    first_of_nested_level_list = []
+    last_of_nested_level_list = []
+    for solve in real_solves:
+        first_of_nested_level_list.append(real_solves_index[solve][0])
+        last_of_nested_level_list.append(real_solves_index[solve][-1])
+    
     first = True
     for i, solve in enumerate(all_solves):
         parent_active_time_lists = runner.get_active_time(parent_solve[solve], runner.timeblocks_used_by_solves, runner.timeblocks, runner.timelines, runner.timeblocks__timeline)
         runner.write_full_timelines(runner.timeblocks_used_by_solves[parent_solve[solve]], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
-        runner.write_scaling_timelines(parent_active_time_lists, 'solve_data/steps_for_scaling.csv')
+        runner.write_active_timelines(parent_active_time_lists, 'solve_data/steps_for_scaling.csv', scaling = True)
         runner.write_step_jump(jump_lists[solve])
         runner.write_period_years(solve_period_history[parent_solve[solve]], 'solve_data/period_with_history.csv')
         runner.write_periods(parent_solve[solve], runner.invest_realized_periods, 'solve_data/invest_realized_periods_of_current_solve.csv')
@@ -1265,6 +1279,15 @@ def main():
         runner.write_realized_dispatch(realized_time_lists[solve],parent_solve[solve])
         runner.write_fixed_storage_timesteps(fix_storage_time_lists[solve],parent_solve[solve])
         runner.create_averaged_timeseries(parent_solve[solve])
+        if i in first_of_nested_level_list:
+            first_of_nested_level = True
+        else:
+            first_of_nested_level = False
+        if i in last_of_nested_level_list:
+            last_of_nested_level = True
+        else:
+            last_of_nested_level = False
+        runner.write_solve_status(first_of_nested_level,last_of_nested_level, nested = True)
         last = i == len(solves) - 1
         runner.write_solve_status(first, last)
         if i == 0:
