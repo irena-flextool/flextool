@@ -760,10 +760,6 @@ class FlexToolRunner:
         :param blocklist:
         :return:
         """ 
-        print(timeblocks_used_by_solves)
-        print(timeblocks)
-        print(timeblocks__timelines)
-        print(timelines.keys())
         active_time = defaultdict(list)
         for solve in timeblocks_used_by_solves:
             if solve == current_solve:
@@ -1031,9 +1027,6 @@ class FlexToolRunner:
         diff = len(starts)-len(jumps)
         for i in range(0,diff):
             jumps.append(last_index)
-        print(starts)
-        print(jumps)
-        print(horizons)
         for index, start in enumerate(starts): 
             active = OrderedDict()
             realized = OrderedDict()
@@ -1047,6 +1040,7 @@ class FlexToolRunner:
                     if started:
                         if period == horizons[index][0]:
                             active[period] = full_active_time[period][0:horizons[index][1]+1]
+                            break
                         else:
                             active[period] = full_active_time[period]
                     elif period == start[0]:
@@ -1058,9 +1052,11 @@ class FlexToolRunner:
             else:
                 started = False
                 for period, active_time in list(full_active_time.items()):
+                    print(period, jumps[index][0])
                     if started:
                         if period == jumps[index][0]:
                             realized[period] = full_active_time[period][0:jumps[index][1]+1]
+                            break
                         else:
                             realized[period] = full_active_time[period]
                     elif period == start[0]:

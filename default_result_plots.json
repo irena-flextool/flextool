@@ -5,7 +5,7 @@
         "separate_window": "scenario",
         "x1": "X_flow_type",
         "x2": "X_period",
-        "x3": null
+        "x3": "X_solve"
       },
       "plot_type": "bar",
       "selection": {

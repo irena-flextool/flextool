@@ -2353,7 +2353,7 @@ s.t. inertia_constraint {g in groupInertia, (d, t) in dt} :
   + pdGroup[g, 'inertia_limit', d]
 ;
 
-s.t. co2_max_period{(g, c, n, d) in group_commodity_node_period_co2_period} :
+s.t. co2_max_period{(g, c, n, d) in group_commodity_node_period_co2_period : d in period_in_use} :
   + ( p_commodity[c, 'co2_content']  
 	* (
 	    # CO2 increases 
