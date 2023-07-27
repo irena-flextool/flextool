@@ -1604,12 +1604,13 @@ s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink_
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
-    /(if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
-      + (if (p, 'min_load_efficiency') in process__ct_method then 
-			  ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
-			  + (if p in process_online_integer then v_online_integer[p, d, t])
-			  )
-      * ptProcess_section[p, t] * p_entity_unitsize[p])
+      / (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+  + ( if (p, 'min_load_efficiency') in process__ct_method then 
+		( + (if p in process_online_linear then v_online_linear[p, d, t]) 
+		  + (if p in process_online_integer then v_online_integer[p, d, t])
+		)
+        * ptProcess_section[p, t] * p_entity_unitsize[p]
+	)
 ;
 
 s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_method, (d, t) in dt} :
