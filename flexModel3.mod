@@ -1191,8 +1191,8 @@ var v_startup_integer {p in process_online_integer, (d, t) in dt} >=0, <= p_enti
 var v_shutdown_integer {p in process_online_integer, (d, t) in dt} >=0, <= p_entity_max_units[p, d];
 var v_invest {(e, d) in ed_invest} >= 0, <= p_entity_max_units[e, d];
 var v_divest {(e, d) in ed_divest} >= 0, <= p_entity_max_units[e, d];
-var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0, <= 1;
-var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0, <= 1;
+var vq_state_up {n in nodeBalance, (d, t) in dt} >= 0;
+var vq_state_down {n in nodeBalance, (d, t) in dt} >= 0;
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0, <= 1;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0, <= 1;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
@@ -1559,6 +1559,13 @@ s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__s
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
+      / (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+  + ( if (p, 'min_load_efficiency') in process__ct_method then 
+	    ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
+		  + (if p in process_online_integer then v_online_integer[p, d, t])
+		)
+        * ptProcess_section[p, t] * p_entity_unitsize[p]
+	)
 ;
 
 s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
@@ -1575,6 +1582,13 @@ s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__s
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
+      / (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+  + ( if (p, 'min_load_efficiency') in process__ct_method then 
+		( + (if p in process_online_linear then v_online_linear[p, d, t]) 
+		  + (if p in process_online_integer then v_online_integer[p, d, t])
+		)
+        * ptProcess_section[p, t] * p_entity_unitsize[p]
+	)
 ;
 
 s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink__profile__profile_method, (d, t) in dt} :
@@ -1590,6 +1604,12 @@ s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink_
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
+    /(if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+      + (if (p, 'min_load_efficiency') in process__ct_method then 
+			  ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
+			  + (if p in process_online_integer then v_online_integer[p, d, t])
+			  )
+      * ptProcess_section[p, t] * p_entity_unitsize[p])
 ;
 
 s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_method, (d, t) in dt} :
@@ -2502,7 +2522,7 @@ param r_connection_d{c in process_connection, d in period_realized} :=
   + sum {(d, t) in dt} r_connection_dt[c, d, t]
 ;
 
-param r_nodeState_change_dt{n in nodeState, (d, t_previous) in dt} := sum {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} (
+param r_nodeState_change_dt{n in nodeState, (d, t) in dt} := sum {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} (
       + (if (n, 'bind_forward_only') in node__storage_binding_method && ((d, t) not in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
@@ -3379,7 +3399,7 @@ printf 'Write node results for time...\n';
 param fn_node__dt symbolic := "output/node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,time,inflow,"from units","from connections","to units","to connections",' > fn_node__dt;
-    printf '"state","self discharge","upward slack","downward slack"\n' >> fn_node__dt; }  # Print the header on the first solve
+    printf '"state change","self discharge","upward slack","downward slack"\n' >> fn_node__dt; }  # Print the header on the first solve
 for {n in node, s in solve_current, (d, t) in dt : d in period_realized}
   {
     printf '%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
