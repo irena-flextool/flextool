@@ -44,6 +44,11 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
 - `connection__node__node` relationship `flow` parameter - [MWh] cumulative flow through the connection (left to right is positive)
 - `connection__node__node` relationship `flow_t` parameter - [MWh] flow through the connection (left to right is positive)
 
+## Capacity factors
+
+- `unit__node` relationship `cf` parameter - [per unit] average capacity factor of the flow, i.e. the utilization rate of the flow from/to the unit. Average of flow [MWh/h] divided by capacity [MW] of the input or output to the unit.
+- `connection` relationship `cf` parameter - [per unit] average capacity factor of the flow, i.e. the utilization rate of the connection where flows in both directions are considered as utilization. Average of the absolute flow [MWh/h] divided by the capacity of the connection.
+
 ## Energy balance in nodes
 
 - `node` object `balance` parameter - [MWh] cumulative inputs (positive) and outputs (negative) to the node from all the possible sources (*from_units*, *from_connection*, *to_units*, *to_connections*, *state change* over the period, *self discharge* during the period, *upward slack* for involuntary demand reduction and *downward slack* for involuntary demand increase)
