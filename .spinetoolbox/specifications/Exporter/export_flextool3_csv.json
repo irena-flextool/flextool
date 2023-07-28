@@ -4699,12 +4699,12 @@
                 {
                     "map_type": "ObjectClass",
                     "position": "hidden",
-                    "filter_re": "node"
+                    "filter_re": "^node$"
                 },
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "storage_include_solve_fix_method"
+                    "filter_re": "^storage_include_solve_fix_method$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -4725,15 +4725,7 @@
                     "position": "hidden"
                 },
                 {
-                    "map_type": "IndexName",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ExpandedValue",
+                    "map_type": "ParameterValue",
                     "position": 1,
                     "header": "storage_include_solve_fix_method"
                 }
