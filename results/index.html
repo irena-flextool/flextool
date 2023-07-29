@@ -68,6 +68,8 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#energy-flows">Energy flows</a>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#capacity-factors">Capacity factors</a>
+    </li>
     <li class="toctree-l2"><a class="reference internal" href="#energy-balance-in-nodes">Energy balance in nodes</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#unit-online-and-startup">Unit online and startup</a>
@@ -167,6 +169,11 @@
 <li><code>unit__node</code> relationship <code>flow_t</code> parameter - [MWh] flow from the node (if node is input) or to the node (if node is output)</li>
 <li><code>connection__node__node</code> relationship <code>flow</code> parameter - [MWh] cumulative flow through the connection (left to right is positive)</li>
 <li><code>connection__node__node</code> relationship <code>flow_t</code> parameter - [MWh] flow through the connection (left to right is positive)</li>
+</ul>
+<h2 id="capacity-factors">Capacity factors</h2>
+<ul>
+<li><code>unit__node</code> relationship <code>cf</code> parameter - [per unit] average capacity factor of the flow, i.e. the utilization rate of the flow from/to the unit. Average of flow [MWh/h] divided by capacity [MW] of the input or output to the unit.</li>
+<li><code>connection</code> relationship <code>cf</code> parameter - [per unit] average capacity factor of the flow, i.e. the utilization rate of the connection where flows in both directions are considered as utilization. Average of the absolute flow [MWh/h] divided by the capacity of the connection.</li>
 </ul>
 <h2 id="energy-balance-in-nodes">Energy balance in nodes</h2>
 <ul>
