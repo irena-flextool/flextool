@@ -4735,13 +4735,13 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
-        "timeblockSet__timeline_with_new_stepduration": {
+        "timeblockSet__new_stepduration": {
             "type": "object_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "timeblockSet__timeline_with_new_stepduration"
+                    "value": "timeblockSet__new_stepduration"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -4751,7 +4751,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^timeline_with_new_stepduration$"
+                    "filter_re": "^new_stepduration$"
                 },
                 {
                     "map_type": "ParameterValueList",
