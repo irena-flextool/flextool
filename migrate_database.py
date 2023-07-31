@@ -8,8 +8,10 @@ from spinedb_api import import_data, DatabaseMapping, from_database
 
 def migrate_database(database_path):
 
-    update_functions=[add_version,
-                      add_lifetime_method]
+    update_functions=[
+                     add_version,
+                     add_lifetime_method,
+                     add_rolling_window]
 
     if not os.path.exists(database_path) or not database_path.endswith(".sqlite"):
         print("No sqlite file at " + database_path)
@@ -33,11 +35,24 @@ def migrate_database(database_path):
                 exit(-1)
             version += 1
 
-    version_up = [["model", "version", version, None, "Contains database version information."]]
+    version_up = [["model", "version", version, None, "Contains database version information. Do not touch!! Used for db migration when updating flextool"]]
     (num,log) = import_data(db, object_parameters = version_up)
     print(database_path+ " updated to version "+ str(version))
     
     db.commit_session("Updated Flextool data structure to version " + str(version))
+
+def add_rolling_window(db):
+    #get template JSON. This can be the master or old template if conflicting migrations in between
+    with open ('./version/flextool_template_rolling_window.json') as json_file:
+        template = json.load(json_file)
+
+    #With objective parameters, no duplicates are created. These will replace the old ones or create new. There will always be imports.
+    (num,log) = import_data(db, object_parameters = template["object_parameters"])
+
+    #Add parameter_value_lists. Note that object_parameter import and value_list import work differently. Former replaces all, latter adds what is missing.
+    (num,log) = import_data(db, parameter_value_lists = template["parameter_value_lists"])
+    db.commit_session("Added rolling_window object parameters and parameter value lists")
+    return 0 
 
 def add_version(db):
     # this function adds the version information to the database if there is none
@@ -51,7 +66,7 @@ def add_version(db):
 def add_lifetime_method(db):
     
     #get template JSON. This can be the master or old template if conflicting migrations in between
-    with open ('./version/flextool_template_master.json') as json_file:
+    with open ('./version/flextool_template_v2.json') as json_file:
         template = json.load(json_file)
 
     #With objective parameters, no duplicates are created. These will replace the old ones or create new. There will always be imports.

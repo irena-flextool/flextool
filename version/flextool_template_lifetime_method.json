@@ -580,18 +580,6 @@
             "bind_forward_only"
         ],
         [
-            "storage_include_solve_fix_method",
-            "no"
-        ],
-        [
-            "storage_include_solve_fix_method",
-            "fix_quantity"
-        ],
-        [
-            "storage_include_solve_fix_method",
-            "fix_price"
-        ],
-        [
             "storage_solve_horizon_methods",
             "free"
         ],
@@ -1065,13 +1053,6 @@
             "Sequence of solves in the model. Array."
         ],
         [
-            "model",
-            "version",
-            3.0,
-            null,
-            "Contains database version information. Do not touch!! Used for db migration when updating flextool"
-        ],
-        [
             "node",
             "annual_flow",
             null,
@@ -1290,13 +1271,6 @@
         ],
         [
             "node",
-            "storage_include_solve_fix_method",
-            "no",
-            "storage_include_solve_fix_method",
-            "Fix storage state for included solves. In the lower solves, the storage state quantity or price will be fixed to a value of this solve for the timesteps of the higher level solve. Fix_price requires storage_state_reference_price"
-        ],
-        [
-            "node",
             "storage_solve_horizon_method",
             "free",
             "storage_solve_horizon_methods",
@@ -1339,6 +1313,13 @@
         ],
         [
             "node",
+            "storate_state_end",
+            null,
+            null,
+            null
+        ],
+        [
+            "node",
             "virtual_unitsize",
             null,
             null,
@@ -1350,13 +1331,6 @@
             null,
             null,
             "[factor, typically between 0-1]. Availability time series for a fluctuating resource like wind power. Time."
-        ],
-        [
-            "solve",
-            "fix_storage_period",
-            "",
-            null,
-            "Array of periods where the storage_values are fixed when the node has storage_include_solve_fix_method is set"
         ],
         [
             "solve",
@@ -1381,24 +1355,10 @@
         ],
         [
             "solve",
-            "include_solve",
-            null,
-            null,
-            "Array of included_solves - used for nested solve sequences"
-        ],
-        [
-            "solve",
             "invest_periods",
             null,
             null,
             "Array of periods where investments are allowed."
-        ],
-        [
-            "solve",
-            "invest_realized_periods",
-            null,
-            null,
-            "Array of the periods that will realize the investment decisions. If not used when the invest_periods exist. The realized_periods are used to realize invests as well"
         ],
         [
             "solve",
@@ -1413,34 +1373,6 @@
             null,
             null,
             "Array of periods that will be realized in the solve."
-        ],
-        [
-            "solve",
-            "rolling_duration",
-            null,
-            null,
-            "Hours (Optional). Duration of rolling, if not stated, assumed to be the whole time of the solve"
-        ],
-        [
-            "solve",
-            "rolling_solve_horizon",
-            null,
-            null,
-            "Hours (Required if rolling_window solve). How long into the future the roll sees"
-        ],
-        [
-            "solve",
-            "rolling_solve_jump",
-            null,
-            null,
-            "Hours (Required if rolling_window solve). The length of the jumps between rolls. Should be smaller than the horizon"
-        ],
-        [
-            "solve",
-            "rolling_start_time",
-            null,
-            null,
-            "(Optional) Timestamp from the timeline that is linked to the timeblockSet used. Start of the rolling, if not stated, assumed to be the first timestep"
         ],
         [
             "solve",
@@ -1483,13 +1415,6 @@
             null,
             null,
             "Index: name of the the timestep that starts the timeblock, value: duration of the block in timesteps"
-        ],
-        [
-            "timeblockSet",
-            "new_stepduration",
-            null,
-            null,
-            "Hours. Creates a new timeline from the old for this timeblockSet with this timestep duration. Meaning the new timeline skips some of the old timesteps but increases the step_duration"
         ],
         [
             "timeline",
