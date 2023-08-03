@@ -3,73 +3,21 @@
 How to section contains examples on how to build common energy system components. The examples assume a working understanding of FlexTool.
 Each example will include an example database file that are located in the 'how to examples databases' folder or they are included in the init.sqlite as a scenario. You can change the filepath to database used as the input data by clicking the input_data tool.
 
-## How to create a hydro reservoir
-**hydro_reservoir.sq**
+## How to create a PV / Wind / hydro run-of-river-plant
+**(init.sqlite scenario: wind)**
+***init - west - wind ***
 
-~~~
-Note! This example concerns a single reservoir hydro power plant. 
-If the river system has multiple plants in a series and their operations are tied, 
-then multiple nodes and units are needed to represent the system.
-~~~
+These three plants don't use a commodity that's usage can be controlled, but instead are dependant on timeseries profile.
+To create these plants one needs a demand/storage node, an unit and a profile.
 
-The objective is to create a hydro power plant with a reservoir and connect it to a demand node.
+The unit only needs `is_active` and `existing` parameters, where the `existing` is the max capacity of the plant. The `conversion_method` should be at its default value constant_efficiency and the `efficiency` should be set to 1 as it should be included in the profile as it tends to change with time.
+The profile only has one parameter that is a timeseries map that tells what fraction of the capacity the plant produces at each timestep ie. the power-curve. 
 
-Hydro reservoir power plant requires three components:
+The realtionships unit_outputnode (plant|demand node) and unit_node_profile (plant|demand node|profile) should be both created.
 
-- Reservoir `node`
-- Hydro `unit`
-- Output `node`
+The unit_node_profile relationship needs a parameter `profile_method` that has three options `upper_limit`, `lower_limit` and `exact`. It states how the profile is considered. In most cases the `upper_limit` options should be used as it allows the option to curtail the production if there is more supply than demand. Otherwise the nodes or connections might have to produce downward_penalty.
 
-It can be useful to create a new alternative for these components to be able to include and exclude them from the scenarios.
-
-The reservoir is made with a node as only nodes can have storage in FlexTool. The incoming water can be represented by the inflow parameter. It can be a constant or a time variant. The unit of the inflow should be the power that can be created from the quantity of the incoming water at maximum efficiency [MW]. In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
-In this implementation of reservoir hydro power, there is an option to spill water (energy) from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled energy can be seen from the results as the 'downward slack' of the node.
-
-The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
-
-- `is_active`: yes
-- `has_balance`: yes
-- `has_storage`: yes
-- `inflow`: Mapping of the incoming water as the potential power [MW]
-- `existing`: The maximum size of the reservoir as the potential energy [MWh]
-- `penalty_up`: a large number to prefer not creating energy from nowhere
-- `penalty_down`: 0 or a large number (spilling or not)
-- a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeblock* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*.
-
-The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* (unit_c and unit_node_c in excel):
-
-- The `efficiency` of the unit can be set to 1 as the inflow time series are directly expressed in MWh (using piecewise linear efficiency is naturally possible).
-- Set `existing` capacity [MW]
-- `is_active`: yes 
-- Create relations unit__inputNode: hydro_plant|reservoir and unit__outputNode: hydro_plant|nodeA.
-
-![Hydro reservoir](./hydro_reservoir.PNG)
-
-## How to use CPLEX as the solver
-
-Using CPLEX requires that you have installed the software, have a licence for it and have added it to PATH or to the environment where you are using the FlexTool, so that the tool can find the solver.
-
-CPLEX is used when the **solve** parameter *solver* is set to 'cplex'. The tool passes the built optimization model to the CPLEX solver and converts the solution file to the filetype the tool requires. The solver will produce two additional files to the work directory: 'cplex.log' and 'flexModel3_cplex.sol'. The former is the logfile of the solver and the latter contains the solution in the CPLEX format.
-
-The tool uses [Interactive Optimizer](https://www.ibm.com/docs/en/icos/12.8.0.0?topic=cplex-interactive-optimizer) to pass the problem to the solver. The default command used:
-  
-```shell
-cplex -c 'read flexModel3.mps' 'opt' 'write flexModel3_cplex.sol' 'quit'
-```
-
-Additional parameters:
-
-- *solver_precommand* creates a text in front of the cplex call. This is useful when dealing with floating licences and if the licence system you are using allows to reserve the licence for the duration of the cplex program with a command line argument.
-- *solver_arguments* is an array containing additional CPLEX solver commands
-
-With these parameters, the command line call is:
-
-```shell
-'solver_precommand' cplex -c 'read flexModel3.mps' 'solver_command1' 'solver_command2' ... 'solver_command_last' 'opt' 'write flexModel3_cplex.sol' 'quit'
-```
-
-![Cplex parameters](./CPLEX.PNG)
-
+![Add another unit](./add_unit2.png)
 
 ## How to add a storage unit (battery) 
 
@@ -114,6 +62,115 @@ Additional parameters:
 Finally connection_node_node relationship is needed between inverter, the battery and the demand node (west). 
 
 ![Add a battery](./battery.png)
+
+
+## How to create a hydro reservoir
+**hydro_reservoir.sq**
+
+~~~
+Note! This example concerns a single reservoir hydro power plant. 
+If the river system has multiple plants in a series and their operations are tied, 
+then multiple nodes and units are needed to represent the system.
+~~~
+
+The objective is to create a hydro power plant with a reservoir and connect it to a demand node.
+
+Hydro reservoir power plant requires three components:
+
+- Reservoir `node`
+- Hydro `unit`
+- Output `node`
+
+It can be useful to create a new alternative for these components to be able to include and exclude them from the scenarios.
+
+The reservoir is made with a node as only nodes can have storage in FlexTool. The incoming water can be represented by the inflow parameter. It can be a constant or a time variant. The unit of the inflow should be the power that can be created from the quantity of the incoming water at maximum efficiency [MW]. In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
+In this implementation of reservoir hydro power, there is an option to spill water (energy) from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled energy can be seen from the results as the 'downward slack' of the node.
+
+The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
+
+- `is_active`: yes
+- `has_balance`: yes
+- `has_storage`: yes
+- `inflow`: Mapping of the incoming water as the potential power [MW]
+- `existing`: The maximum size of the reservoir as the potential energy [MWh]
+- `penalty_up`: a large number to prefer not creating energy from nowhere
+- `penalty_down`: 0 or a large number (spilling or not)
+- a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeblock* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*.
+
+The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* (unit_c and unit_node_c in excel):
+
+- The `efficiency` of the unit can be set to 1 as the inflow time series are directly expressed in MWh (using piecewise linear efficiency is naturally possible).
+- Set `existing` capacity [MW]
+- `is_active`: yes 
+- Create relations unit__inputNode: hydro_plant|reservoir and unit__outputNode: hydro_plant|nodeA.
+
+![Hydro reservoir](./hydro_reservoir.PNG)
+
+## How to create a hydro pump storage
+**(hydro_with_pump.sqlite)**
+
+For a hydro pump storage one needs four components: Demand node, hydro_plant with storage node, hydro_pump with storage node and outside surplus energy as the storage has losses.
+For demand node and hydro_plant we will use the same components as in the previous hydro_reservoir example. With the difference that both demand and hydro_plant capacities are doubled. For the surplus energy we will use a simple wind plant.
+
+First create the downstream storage (pump_storage) from the plant. Again it should have the parameters:
+
+- `is_active`: yes
+- `has_balance`: yes
+- `has_storage`: yes
+- `existing`: The maximum size of the storage [MWh]. Note that this really represents the mass of the water and it should be converted as the potential of the energy of the reservoir-plant system. So that 1 liter of water has the same energy in both storages.
+- `penalty_up`: a large number to prefer not creating energy from nowhere
+- `penalty_down`: 0 
+
+In this example database we have both closed system and river system. The difference is that in the closed system the inflow is zero in both reservoir and pump_storage. In river system we have incoming water as in the reservoir example. In the downstream pump_storage we implement a outflow as negative inflow representing the minimum amount of water that has to flow out of the system at each timestep to not dry out the river. The `penalty_down` is set as 0 to allow it let more water go when it needs to, otherwise the storages will endlessly to fill up if the incoming water is larger than the minimum outgoing water.
+
+The storage level fixes should be the same in both storages: Here fix start at 0.5 and bind_with_timeblock.
+
+Then create the pump unit. It only needs three parameters `efficiency` = 1, `existing` and `is_active`. Set the relationships as follows:
+
+- unit_outputNode for (hydro_plant | demand node), (hydro_plant | pump_storage ), (hydro_pump | reservoir)
+- unit_inputNode for (hydro_plant | reservor), (hydro_pump | pump_storage), (hydro_pump | demand node)
+
+Your system should look something like:
+
+![Hydro pump](./hydro_pump.PNG)
+
+Next comes the tricky part of preserving the water and energy as both are represented as generic energy in the model. This is done by setting extra coefficents and constraints to the flow. First the hydro_plant needs to both create the energy for the demand node and pass the mass to the pump_storage. This is done by doubling the efficiency in this example to 2 and setting a extra constraint to force the output flows to both the demand node and the storage to be the same. 
+Create a new constraint (here plant_storage_nodeA_split) and add the parameters:
+- `is_active`: yes
+- `sense`: equal
+- `constant`: 0.0
+
+And for the unit_outputNodes:
+
+- (hydro_plant | nodeA) constraint_flow_coefficient Map: plant_storage_nodeA_split , 1
+- (hydro_plant | pump_storage) constraint_flow_coefficient Map: plant_storage_nodeA_split , -1
+- Meaning: 
+```
+flow to nodeA - flow to pump_storage = 0
+```
+
+Then for the pump storage we will have to make sure that the same amount of water leaves the pump_storage and enters the reservoir. Also it still should use electricity from the demand node without increasing the energy (mass) that is moving from storage to another. First set the coefficient in the unit_inputNode (hydro_pump | demand node) to 0. (The default value of ceafficient is 1). This prevents the water amount from increasing as:
+```
+unit_output_flow = coeff1 * unit_input_flow1 + coeff2 * unit_input_flow2.
+```
+We still have to make the unit to consume some electricity. This is done by setting a new constraint (here pump_storage_nodeA_fix) with the parameters:
+- `is_active`: yes
+- `sense`: equal
+- `constant`: 0.0
+
+And setting parameters for unit_outputNode and unit_inputNode:
+- (hydro_pump | nodeA) constraint_flow_coefficient Map: plant_storage_nodeA_split , 2
+- (hydro_pump | reservoir) constraint_flow_coefficient Map: plant_storage_nodeA_split , -1
+
+```
+2 * flow_from_nodeA - flow_from_pump_storage = 0
+```
+Note that here the (constraint_flow_coefficient Map: plant_storage_nodeA_split , 2) actually sets the efficiency of the pump. 
+This means that here only half of the electricity used by the pump can be recovered when that amount of water is used by the hydro_plant. (Two units of energy are used to move 1 unit of water_energy)
+The constraint_flow_coefficient for pump_input should therefore be (1/efficiency)
+
+![Hydro pump parameters](./hydro_pump_parameters.PNG)
+![Hydro pump relation](./hydro_pump_relations.PNG)
 
 ##  How to add investment parameters to a storage/unit 
 
@@ -261,16 +318,75 @@ Next figure shows the values needed to define one solve (out of the four solves 
 
 ![Solve data](./data_for_one_solve.png)
 
-## How to create a PV / Wind / hydro run-of-river-plant
-**(init.sqlite scenario: wind)**
-***init - west - wind ***
+## How to create a non-synchronous limit
+**(non_sync_and_curtailment.sqlite)**
+***(scenario: non_sync)***
 
-These three plants don't use a commodity which usage can be controlled, but insted are dependant on timeseries profile.
-To create these plants one needs a demand/storage node, an unit and a profile. These three need to be connected by the unit_node_profile relationship. 
+Non-synchronous limit is a property of a node or a group of nodes. It states that the non-synchronous flow to the node cannot exceed a set share of the inputflows at any timestep. To demonstrate this we have set a system with a coal plant, a wind plant and a single demand node. However, it can be done to a group of nodes with unlimited amount of plants connected. So, one can limit the share on invdividual nodes and the whole system.
 
-The unit only needs `is_active` and `existing` parameters, where the `existing` is the max capacity of the plant. The `conversion_method` should be at its default value constant_efficiency and the `efficiency` should be set to 1 as it should be included in the profile as it tends to change with time.
-The profile only has one parameter that is a timeseries map that tells what fraction of the capacity the plant produces at each timestep.
+The non-synchronous limit is set to a group of nodes with one or multiple members. Note: These are set to the group with group_node relationship not with group_node_unit relationship!
 
-The unit_node_profile relationship needs a parameter `profile_method` that has three options `upper_limit`, `lower_limit` and `exact`. It states how the profile is considered. In most cases the `upper_limit` options should be used as it allows the option to reduce the production if the system cannot handle it. Otherwise the nodes or connections might have to produce downward_penalty.
+Create a group (here nodeA_group) and set a group_node relationship (nodeA_group |nodeA). Then add parameters:
+- has_non_synchronous : yes
+- non_synchronous_limit: 0.5
+- penalty_non_synchronous: 4000
 
-![Add another unit](./add_unit2.png)
+This forces the wind_plant flow to be at max 50% of the incoming flow to the nodeA. 
+The penalty should be always set as in some cases the constraint has to be broken and then without the penalty the result would just be infeasible.
+
+Then set which plants are considered non-synchronous by adding a parameter is_non_sync: yes to the unit_outputNode. Here the wind_plant | nodeA has the is_non_synchronous parameter.
+
+If you want to see the individual flows in the results you can create separate groups for the flows and add group_unit_node relations to it. The groups need the parameter output_results: yes to produce the flow results. Here we have 
+coal_flow group with relation coal_flow|coal_plant|nodeA
+and wind_flow group with relation wind_flow|wind_plant|nodeA.
+
+![non-sync](./non_sync.PNG)
+
+## How to see the VRE curtailment and VRE share results for a node
+**(non_sync_and_curtailment.sqlite)**
+***(scenario: curtailment)***
+
+When the system has profile-units with the `profile_method`: upper_limit, the model can curtail the unit's flow to avoid penalties.
+
+The curtailment can be done for several reasons:
+- the supply is higher than the demand and energy cannot get to a storage
+- non-synchronous limit
+- extra flow constraints have been set
+- any other constraint (ramp, start-up ...)
+
+To see the curtailment results you need to add a group of nodes (group_node not group_unit_node !) with one or more members. The group then needs the parameter output_results: yes
+
+This produces the group: indicator result to the Results database and group_summary table to the excel.
+
+These changes were done to the previous non-sync example database. 
+
+Note: The results are the share of curtailment in relation to the inflow (demand) so it can exceed 100% as seen in the figure.
+
+![Curtailment](./curtailment.PNG)
+
+![Curtailment results](./curtailment_results.PNG)
+
+## How to use CPLEX as the solver
+
+Using CPLEX requires that you have installed the software, have a licence for it and have added it to PATH or to the environment where you are using the FlexTool, so that the tool can find the solver.
+
+CPLEX is used when the **solve** parameter *solver* is set to 'cplex'. The tool passes the built optimization model to the CPLEX solver and converts the solution file to the filetype the tool requires. The solver will produce two additional files to the work directory: 'cplex.log' and 'flexModel3_cplex.sol'. The former is the logfile of the solver and the latter contains the solution in the CPLEX format.
+
+The tool uses [Interactive Optimizer](https://www.ibm.com/docs/en/icos/12.8.0.0?topic=cplex-interactive-optimizer) to pass the problem to the solver. The default command used:
+  
+```shell
+cplex -c 'read flexModel3.mps' 'opt' 'write flexModel3_cplex.sol' 'quit'
+```
+
+Additional parameters:
+
+- *solver_precommand* creates a text in front of the cplex call. This is useful when dealing with floating licences and if the licence system you are using allows to reserve the licence for the duration of the cplex program with a command line argument.
+- *solver_arguments* is an array containing additional CPLEX solver commands
+
+With these parameters, the command line call is:
+
+```shell
+'solver_precommand' cplex -c 'read flexModel3.mps' 'solver_command1' 'solver_command2' ... 'solver_command_last' 'opt' 'write flexModel3_cplex.sol' 'quit'
+```
+
+![Cplex parameters](./CPLEX.PNG)
