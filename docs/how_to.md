@@ -4,8 +4,9 @@ How to section contains examples on how to build common energy system components
 Each example will include an example database file that are located in the 'how to examples databases' folder or they are included in the init.sqlite as a scenario. You can change the filepath to database used as the input data by clicking the input_data tool.
 
 ## How to create a PV / Wind / hydro run-of-river-plant
+
 **(init.sqlite scenario: wind)**
-***init - west - wind ***
+***init - west - wind***
 
 These three plants don't use a commodity that's usage can be controlled, but instead are dependant on timeseries profile.
 To create these plants one needs a demand/storage node, an unit and a profile.
@@ -18,6 +19,56 @@ The realtionships unit_outputnode (plant|demand node) and unit_node_profile (pla
 The unit_node_profile relationship needs a parameter `profile_method` that has three options `upper_limit`, `lower_limit` and `exact`. It states how the profile is considered. In most cases the `upper_limit` options should be used as it allows the option to curtail the production if there is more supply than demand. Otherwise the nodes or connections might have to produce downward_penalty.
 
 ![Add another unit](./add_unit2.png)
+
+## How to connect grid nodes 
+**(connections.sqlite)**
+
+The nodes can represent the demand or the storage. The nodes can pass energy to each other also directly with a connection object. In most cases this represents a electricity connection but it can be any form of energy moving to a node to another. To create a connection one needs two nodes, a connection object and a relationship connection_node_node to tie these three together.
+
+The connection needs the parameters:
+- `is_active`: yes
+- `existing`: The capacity of moving energy [MW]
+- `efficiency`: represents the losses in moving the energy. Same in both directions.
+
+Optional parameters:
+- `is_DC`: Flag if the connection is counted as non-synchronous for the possible non-synchronous limit. (Yes is non-synchronous)
+- `transfer_method`: Four options: regular (default), exact, variable_cost_only, no_losses_no_variable_cost. 
+
+In most cases the regular should be used. The downside of it is that it allows the flows to both directions at the same time, but the model does this only in weird situtations to burn energy with the connection losses. For example, if connection capacity is 500 and efficiency 0.8, both nodes can send 500, but recive only 400 reducing the inflow by 100 in both nodes.
+The model does not want to produce extra energy as it has costs, so this happens only if you have `profile_method`: 'equal' in a unit or some otherwise impossible storage binding that causes it to empty energy from the storage any way possible without penalties.
+
+Exact method does not allow flow in both directions at the same time, but it requires interger optimization, which is computationally heavier. 
+
+Variable_cost_only and no_losses_no_varable_cost are special types for special use cases and are discussed with them.
+
+The results of connections can be seen from the node_balance table. However, these are the results from all the connections connected to the node. If you want to have the results from an individual connection or specified connections, you can create a group of connection_nodes (group_connection_node) with a parameter `output_results`. This will produce sum_flow results from the connection to the node. 
+
+The example database shows a two node connection where the other node has wind plant and the other coal plant. 
+
+![Connections](./connections.PNG)
+
+## How to set the demand in a node
+**(demand.sqlite)**
+
+The demand in a node is set with the inflow parameter. The values for demand should be negative and supply positive.
+The inflow parameter accepts two types of data: Constant or timeseries map. 
+In the timeseries map the same timeseries is used with every accociated period.
+You can also scale the inflow for different periods with `inflow_method` parameter:
+- `scale_to_annual_flow`: This will make the infow to match the `annual_flow`. This requires the node parameter `annual_flow` that is a periodic map of the summed annual flow. The sum of inflows is multiplied by (8760 / hours in period) before scaling.  
+- `scale_in_proportion`: The `annual_flow` is multipled by the timeline parameter `timeline_duration_in_years` before scaling.
+- `scale_to_annual_and_peak_flow`: The inflow scaled so that the peak is at the given `peak_flow` and the inflow sums to annual flow of the period. This is done by the following equation:
+
+```
+new_inflow = (peak/peak_old)*(1+c)*old_inflow-peak*c
+
+where c = ( (peak/peak_old)*(8760/hours_in_period)*sum(old_inflow) - annual_flow ) / ( peak*8760 - (peak/peak_old)*(8760/hours_in_period)*sum(old_inflow) )
+```
+
+Examples of all these options are shown in the demand.sqlite.
+
+![Demand](./Demand.PNG)
+
+
 
 ## How to add a storage unit (battery) 
 
@@ -57,7 +108,7 @@ The required paremeters of the connection are:
 - `transfer_method`: (see previous)
 
 Additional parameters:
--`efficiency` by default 1
+- `efficiency`: by default 1
 
 Finally connection_node_node relationship is needed between inverter, the battery and the demand node (west). 
 
@@ -322,19 +373,20 @@ Next figure shows the values needed to define one solve (out of the four solves 
 **(non_sync_and_curtailment.sqlite)**
 ***(scenario: non_sync)***
 
-Non-synchronous limit is a property of a node or a group of nodes. It states that the non-synchronous flow to the node cannot exceed a set share of the inputflows at any timestep. To demonstrate this we have set a system with a coal plant, a wind plant and a single demand node. However, it can be done to a group of nodes with unlimited amount of plants connected. So, one can limit the share on invdividual nodes and the whole system.
+Non-synchronous limit is a property of a node or a group of nodes. It states that the non-synchronous flow to the node cannot exceed a set share of the inputflows at any timestep. To demonstrate this we have set a system with a coal plant, a wind plant and a single demand node. However, it can be done to a group of nodes with unlimited amount of plants or connections connected. So, one can limit the share on invdividual nodes and the whole system.
 
-The non-synchronous limit is set to a group of nodes with one or multiple members. Note: These are set to the group with group_node relationship not with group_node_unit relationship!
+The non-synchronous limit is set to a group of nodes with one or multiple members. Note: These are set to the group with group_node relationship, not with group_node_unit relationship!
 
 Create a group (here nodeA_group) and set a group_node relationship (nodeA_group |nodeA). Then add parameters:
 - has_non_synchronous : yes
 - non_synchronous_limit: 0.5
 - penalty_non_synchronous: 4000
 
-This forces the wind_plant flow to be at max 50% of the incoming flow to the nodeA. 
-The penalty should be always set as in some cases the constraint has to be broken and then without the penalty the result would just be infeasible.
+This forces the non-sync flow to be at max 50% of the incoming flow to the nodeA. 
+The penalty should be always set as in some cases the constraint has to be broken and then without the penalty the result would just be infeasible (and you will have no idea what causes it).
 
-Then set which plants are considered non-synchronous by adding a parameter is_non_sync: yes to the unit_outputNode. Here the wind_plant | nodeA has the is_non_synchronous parameter.
+Then set which plants and connections are considered non-synchronous by adding a parameter is_non_sync: yes to the unit_outputNode or is_DC to the connection. 
+Here the wind_plant | nodeA has the is_non_synchronous parameter.
 
 If you want to see the individual flows in the results you can create separate groups for the flows and add group_unit_node relations to it. The groups need the parameter output_results: yes to produce the flow results. Here we have 
 coal_flow group with relation coal_flow|coal_plant|nodeA
@@ -390,3 +442,52 @@ With these parameters, the command line call is:
 ```
 
 ![Cplex parameters](./CPLEX.PNG)
+
+## How to connect grid nodes 
+**(connections.sqlite)**
+
+The nodes can represent the demand or the storage. The nodes can pass energy to each other also directly with a connection object. In most cases this represents a electricity connection but it can be any form of energy moving to a node to another. To create a connection one needs two nodes, a connection object and a relationship connection_node_node to tie these three together.
+
+The connection needs the parameters:
+- `is_active`: yes
+- `existing`: The capacity of moving energy [MW]
+- `efficiency`: represents the losses in moving the energy. Same in both directions.
+
+Optional parameters:
+- `is_DC`: Flag if the connection is counted as non-synchronous for the possible non-synchronous limit. (Yes is non-synchronous)
+- `transfer_method`: Four options: regular (default), exact, variable_cost_only, no_losses_no_variable_cost. 
+
+In most cases the regular should be used. The downside of it is that it allows the flows to both directions at the same time, but the model does this only in weird situtations to burn energy with the connection losses. For example, if connection capacity is 500 and efficiency 0.8, both nodes can send 500, but recive only 400 reducing the inflow by 100 in both nodes.
+The model does not want to produce extra energy as it has costs, so this happens only if you have `profile_method`: 'equal' in a unit or some otherwise impossible storage binding that causes it to empty energy from the storage any way possible without penalties.
+
+Exact method does not allow flow in both directions at the same time, but it requires interger optimization, which is computationally heavier. 
+
+Variable_cost_only and no_losses_no_varable_cost are special types for special use cases and are discussed with them.
+
+The results of connections can be seen from the node_balance table. However, these are the results from all the connections connected to the node. If you want to have the results from an individual connection or specified connections, you can create a group of connection_nodes (group_connection_node) with a parameter `output_results`. This will produce sum_flow results from the connection to the node. 
+
+The example database shows a two node connection where the other node has wind plant and the other coal plant. 
+
+![Connections](./connections.PNG)
+
+## How to set the demand in a node
+**(demand.sqlite)**
+
+The demand in a node is set with the inflow parameter. The values for demand should be negative and supply positive.
+The inflow parameter accepts two types of data: Constant or timeseries map. 
+In the timeseries map the same timeseries is used with every accociated period.
+You can also scale the inflow for different periods with `inflow_method` parameter:
+- `scale_to_annual_flow`: This will make the infow to match the `annual_flow`. This requires the node parameter `annual_flow` that is a periodic map of the summed annual flow. The sum of inflows is multiplied by (8760 / hours in period) before scaling.  
+- `scale_in_proportion`: The `annual_flow` is multipled by the timeline parameter `timeline_duration_in_years` before scaling.
+- `scale_to_annual_and_peak_flow`: The inflow scaled so that the peak is at the given `peak_flow` and the inflow sums to annual flow of the period. This is done by the following equation:
+
+```
+new_inflow = (peak/peak_old)*(1+c)*old_inflow-peak*c
+
+where c = ( (peak/peak_old)*(8760/hours_in_period)*sum(old_inflow) - annual_flow ) / ( peak*8760 - (peak/peak_old)*(8760/hours_in_period)*sum(old_inflow) )
+```
+
+Examples of all these options are shown in the demand.sqlite.
+
+![Demand](./Demand.PNG)
+
