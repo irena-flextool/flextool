@@ -305,12 +305,12 @@ This is done by adding a new `constraint` *coal_chp_fix* where the heat and powe
 
 ![Add CHP](./coal_chp.png)
 
-## How to add a minimum load
+## How to add a minimum load, start-up and ramp
+**(ramp_and_start_up.sqlite)**
 
-**(init.sqlite scenario: coal_min_load)**
-***init - west - coal - coal_min_load***
+Some plants cannot vary their output freely, but have some cost and limits associated with it. In this example we will add the minimum load behaviour to a *coal_plant* `unit` and add the cost and limits for starting up and ramping the plant.
 
-The next example adds a minimum load behavior to the *coal_plant* `unit`. Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a `startup_method` needs to be defined and an optional `startup_cost` can be given. The options are *no_startup*, *linear* and *binary*. *binary* would require an integer variable so *linear* is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (*flow* >= *min_load* x *capacity* x *online*), where 0 <= *online* <=1 .
+Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a `startup_method` needs to be defined and an optional `startup_cost` can be given. The options are *no_startup*, *linear* and *binary*. *binary* would require an integer variable so *linear* is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (*flow* >= *min_load* x *capacity* x *online*), where 0 <= *online* <=1 .
 
 The online variable also allows to change the efficiency of the plant between the minimum and full loads. An unit with a part-load efficiency will obey the following equation:
 
@@ -325,11 +325,17 @@ where   slope = 1 / efficiency - section
                 - ( 1 / efficiency - min_load / efficiency_at_min_load) / ( 1 - min_load )
 ```
 
-By default, `input_coefficient` and `output_coefficient` are 1, but if there is a need to tweak their relative contributions, these coefficients allow to do so (e.g. a coal plant might have lower efficieny when using lignite than when using brown coal).
+By default, `input_coefficient` and `output_coefficient` are 1, but if there is a need to tweak their relative contributions, these coefficients allow to do so (e.g. a coal plant might have lower efficiency when using lignite than when using brown coal).
 
 The input is required at different ouput levels is shown in the figure below, when Capacity = 100, Efficiency = 0.8, Minimum load = 0.6 and Efficiency at minimum load = 0.5.
 
 ![Min load figure](./Minimum_load.png)
+
+Next we will ramp limits. With the ramping limits, the user can force the change of a flow from a unit to be below a certain value.  The ramping is an effect of the flow. Therefore it does not require the minimum load and it's parameters are added to the unit_outputNode relationship:
+- ramp_method: ramp_cost, ramp_limit or both. Only ramp limit is currently implemented
+- ramp_speed_up: Limit on how fast the plant can ramp up. (fraction of unit / min) ie. Value 0.01 allows the change of 60% of capacity per hour. 
+- ramp_speed_down: Limit on how fast the plant can ramp down. (fraction of unit / min) ie. Value 0.01 allows the change of 60% of capacity per hour.
+- ramp_cost: NOT IMPLEMENTED. The cost of ramping the capacity. [CUR/MW] 
 
 ![Add min_load](./coal_min_load.png)
 
@@ -457,12 +463,14 @@ Optional parameters:
 - `is_DC`: Flag if the connection is counted as non-synchronous for the possible non-synchronous limit. (Yes is non-synchronous)
 - `transfer_method`: Four options: regular (default), exact, variable_cost_only, no_losses_no_variable_cost. 
 
-In most cases the regular should be used. The downside of it is that it allows the flows to both directions at the same time, but the model does this only in weird situtations to burn energy with the connection losses. For example, if connection capacity is 500 and efficiency 0.8, both nodes can send 500, but recive only 400 reducing the inflow by 100 in both nodes.
-The model does not want to produce extra energy as it has costs, so this happens only if you have `profile_method`: 'equal' in a unit or some otherwise impossible storage binding that causes it to empty energy from the storage any way possible without penalties.
+In most cases *regular* should be used. The downside of it is that it allows the flows to both directions at the same time, but the model does this only in weird situtations to burn energy with the connection losses. For example, if connection capacity is 500 and efficiency 0.8, both nodes can send 500, but recive only 400 reducing the inflow by 100 in both nodes.
+The model does not want to produce extra energy as it has costs, so this happens only if you have `profile_method`: *equal* in a unit or some otherwise impossible storage binding that causes it to empty energy from the storage any way possible without penalties.
 
-Exact method does not allow flow in both directions at the same time, but it requires interger optimization, which is computationally heavier. 
+*Exact* method does not allow flow in both directions at the same time, but it requires interger optimization, which is computationally heavier. 
 
-Variable_cost_only and no_losses_no_varable_cost are special types for special use cases and are discussed with them.
+*Variable_cost_only* can be used when there are no losses associated with the flow. Allows costs related to the flow, but if losses are included, should not be used.
+
+The *no_losses_no_variable_cost* makes the connection with only one variable. The flow for one direction is negative for other direction. This is makes the solver faster, but can only be used when there are no losses and no costs associated with the flow.
 
 The results of connections can be seen from the node_balance table. However, these are the results from all the connections connected to the node. If you want to have the results from an individual connection or specified connections, you can create a group of connection_nodes (group_connection_node) with a parameter `output_results`. This will produce sum_flow results from the connection to the node. 
 
@@ -477,7 +485,7 @@ The demand in a node is set with the inflow parameter. The values for demand sho
 The inflow parameter accepts two types of data: Constant or timeseries map. 
 In the timeseries map the same timeseries is used with every accociated period.
 You can also scale the inflow for different periods with `inflow_method` parameter:
-- `scale_to_annual_flow`: This will make the infow to match the `annual_flow`. This requires the node parameter `annual_flow` that is a periodic map of the summed annual flow. The sum of inflows is multiplied by (8760 / hours in period) before scaling.  
+- `scale_to_annual_flow`: This will make the summed inflow to match the `annual_flow`. This requires the node parameter `annual_flow` that is a periodic map of the summed annual flow. The sum of inflows is multiplied by (8760 / hours in period) before scaling.  
 - `scale_in_proportion`: The `annual_flow` is multipled by the timeline parameter `timeline_duration_in_years` before scaling.
 - `scale_to_annual_and_peak_flow`: The inflow scaled so that the peak is at the given `peak_flow` and the inflow sums to annual flow of the period. This is done by the following equation:
 
@@ -490,4 +498,5 @@ where c = ( (peak/peak_old)*(8760/hours_in_period)*sum(old_inflow) - annual_flow
 Examples of all these options are shown in the demand.sqlite.
 
 ![Demand](./Demand.PNG)
+
 
