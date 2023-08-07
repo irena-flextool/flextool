@@ -3230,6 +3230,199 @@
                         ]
                     }
                 }
+            ],
+            "costs_total_discounted": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "unit_curtailment_share__outputNode__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "RelationshipClass",
+                                "position": "hidden",
+                                "value": "unit__node"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Relationship",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -1,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -2,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "curtailment_share"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 4
+                            }
+                        ]
+                    }
+                }
+            ],
+            "unit_curtailment__outputNode__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "RelationshipClass",
+                                "position": "hidden",
+                                "value": "unit__node"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Relationship",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -1,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -2,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "curtailment_t"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 4
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -3275,7 +3468,10 @@
             "connection_cf__period",
             "group__process__node__period__t",
             "costs_discounted",
-            "costs_discounted__solve"
+            "costs_discounted__solve",
+            "costs_total_discounted",
+            "unit_curtailment_share__outputNode__period",
+            "unit_curtailment__outputNode__period__t"
         ],
         "table_options": {
             "node__period": {},
@@ -3386,6 +3582,13 @@
             },
             "costs_discounted__solve": {
                 "has_header": false
+            },
+            "costs_total_discounted": {},
+            "unit_curtailment_share__outputNode__period": {
+                "has_header": false
+            },
+            "unit_curtailment__outputNode__period__t": {
+                "has_header": false
             }
         },
         "table_types": {
@@ -3410,8 +3613,7 @@
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float",
-                "4": "float"
+                "3": "float"
             },
             "unit_capacity__period": {
                 "0": "string",
@@ -3665,8 +3867,7 @@
             "unit_cf__outputNode__period": {
                 "0": "string",
                 "1": "string",
-                "2": "float",
-                "3": "float"
+                "2": "float"
             },
             "connection_cf__period": {
                 "0": "string",
@@ -3703,6 +3904,17 @@
                 "13": "string",
                 "14": "string",
                 "15": "string"
+            },
+            "unit_curtailment_share__outputNode__period": {
+                "0": "string",
+                "1": "string",
+                "2": "float"
+            },
+            "unit_curtailment__outputNode__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float"
             }
         },
         "table_default_column_type": {
