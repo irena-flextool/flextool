@@ -1083,16 +1083,31 @@ class FlexToolRunner:
 
         return solves, active_time_lists, jump_lists, realized_time_lists
 
-    def define_solve(self, solve, start = None, duration = -1):
+    def define_solve(self, solve, realized = [], start = None, duration = -1):
         complete_solves= OrderedDict() #complete_solve is for rolling, so that the rolls inherit the parameters of the whole solve
         active_time_lists= OrderedDict()    
         jump_lists = OrderedDict()
         realized_time_lists = OrderedDict()
         fix_storage_time_lists = OrderedDict()
+        full_active_time = OrderedDict()
         solves=[]
+        print(solve)
+        print(realized)
+        #check that the lower level solves have periods only from of upper_level
+        full_active_time_own = self.get_active_time(solve, self.timeblocks_used_by_solves, self.timeblocks,self.timelines, self.timeblocks__timeline)
+        if len(realized) != 0:
+            for key, item in list(full_active_time_own.items()):
+                if key in realized :
+                    full_active_time[key] = item
+            for period in realized:
+                if (solve,period) not in self.realized_periods or self.invest_realized_periods or self.fix_storage_periods:
+                    realized.remove(period)
+        else:
+            for solve_period in list(set().union(self.realized_periods, self.invest_realized_periods,self.fix_storage_periods)):
+                if solve == solve_period[0]:
+                    realized.append(solve_period[1])
+            full_active_time = full_active_time_own
 
-        full_active_time = self.get_active_time(solve, self.timeblocks_used_by_solves, self.timeblocks,self.timelines, self.timeblocks__timeline)
-        
         if solve in self.included_solves.keys():
             include_solve = self.included_solves[solve]
         else:
@@ -1121,7 +1136,7 @@ class FlexToolRunner:
                     start = [list(roll_active_time_lists[roll].items())[0][0],list(roll_active_time_lists[roll].items())[0][1][0][0]]
                     #upper_jump = lower_duration 
                     duration = rolling_times[1]
-                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists = self.define_solve(include_solve,start,duration)
+                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists = self.define_solve(include_solve,realized,start,duration)
                     solves += inner_solves
                     complete_solves.update(inner_complete_solve)
                     active_time_lists.update(inner_active_time_lists)
@@ -1140,7 +1155,7 @@ class FlexToolRunner:
             fix_storage_time_lists[solve] = full_active_time 
 
             if include_solve != None:
-                inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists = self.define_solve(include_solve)
+                inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists = self.define_solve(include_solve,realized)
                 solves += inner_solves
                 complete_solves.update(inner_complete_solve)
                 active_time_lists.update(inner_active_time_lists)
@@ -1240,7 +1255,7 @@ def main():
         sys.exit(-1)
     
     for solve in solves:
-        solve_solves, solve_complete_solve, solve_active_time_lists, solve_jump_lists, solve_realized_time_lists, solve_fix_storage_timesteps = runner.define_solve(solve)
+        solve_solves, solve_complete_solve, solve_active_time_lists, solve_jump_lists, solve_realized_time_lists, solve_fix_storage_timesteps = runner.define_solve(solve,[])
         all_solves += solve_solves
         complete_solve.update(solve_complete_solve)
         active_time_lists.update(solve_active_time_lists)
