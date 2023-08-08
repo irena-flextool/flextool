@@ -412,7 +412,15 @@
             "invest_retire_period_total"
         ],
         [
+            "is_DC",
+            "yes"
+        ],
+        [
             "is_active",
+            "yes"
+        ],
+        [
+            "is_non_synchronous",
             "yes"
         ],
         [
@@ -1292,7 +1300,7 @@
             "node",
             "storage_include_solve_fix_method",
             "no",
-            "storage_include_solve_fix_method",
+            null,
             "Fix storage state for included solves. In the lower solves, the storage state quantity or price will be fixed to a value of this solve for the timesteps of the higher level solve. Fix_price requires storage_state_reference_price"
         ],
         [
@@ -1339,6 +1347,13 @@
         ],
         [
             "node",
+            "storate_state_end",
+            null,
+            null,
+            null
+        ],
+        [
+            "node",
             "virtual_unitsize",
             null,
             null,
@@ -1350,6 +1365,20 @@
             null,
             null,
             "[factor, typically between 0-1]. Availability time series for a fluctuating resource like wind power. Time."
+        ],
+        [
+            "solve",
+            "contains_solves",
+            null,
+            null,
+            "Array of solves - used for nested solve sequences"
+        ],
+        [
+            "solve",
+            "create_timestep_duration",
+            null,
+            null,
+            "Hours. Creates a new timeline and timeblocks for this solve with this timestep duration but using the timestamps of the old. Timeblock duration is the floor of old_timeblock_duration/step_duration. The next existing timestep on the new timeline is used as the start of the block"
         ],
         [
             "solve",
@@ -1398,7 +1427,7 @@
             "invest_realized_periods",
             null,
             null,
-            "Array of the periods that will realize the investment decisions. If not used when the invest_periods exist. The realized_periods are used to realize invests as well"
+            "Array of the periods that will realize the investment decisions"
         ],
         [
             "solve",
@@ -1406,6 +1435,13 @@
             null,
             null,
             "Map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name."
+        ],
+        [
+            "solve",
+            "realized_invest_periods",
+            null,
+            null,
+            "Array of the periods that will realize the investment decisions. If not used when the invest_periods exist. The realized_periods are used to realize invests as well"
         ],
         [
             "solve",
