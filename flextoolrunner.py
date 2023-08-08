@@ -46,11 +46,11 @@ class FlexToolRunner:
         self.timeblocks_used_by_solves = self.get_timeblocks_used_by_solves()
         self.invest_periods = self.get_list_of_tuples('input/solve__invest_period.csv')
         self.realized_periods = self.get_list_of_tuples('input/solve__realized_period.csv')
-        self.invest_realized_periods =  self.get_list_of_tuples('input/solve__invest_realized_period.csv')
+        self.realized_invest_periods =  self.get_list_of_tuples('input/solve__realized_invest_period.csv')
         self.fix_storage_periods = self.get_list_of_tuples('input/solve__fix_storage_period.csv')
         self.solver_precommand = self.get_solver_precommand()
         self.solver_arguments = self.get_solver_arguments()
-        self.included_solves = self.get_included_solves()
+        self.contains_solves = self.get_contains_solves()
         self.rolling_times = self.get_rolling_times()
         self.new_step_durations=self.get_new_step_durations()
         self.create_timeline_from_timestep_duration()
@@ -178,23 +178,23 @@ class FlexToolRunner:
                     break
         return solver_arguments_dict
 
-    def get_included_solves(self):
+    def get_contains_solves(self):
         """
         read in
-        the included_solves for each solve. return it as a dict of list of strings
+        the contains_solves for each solve. return it as a dict of list of strings
         :return:
         """
-        with open('input/solve__include_solve.csv', 'r') as blk:
+        with open('input/solve__contains_solve.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
-            included_solves_dict = defaultdict(list)
+            contains_solves_dict = defaultdict(list)
             while True:
                 try:
                     datain = next(filereader)
-                    included_solves_dict[datain[0]]= datain[1]
+                    contains_solves_dict[datain[0]]= datain[1]
                 except StopIteration:
                     break
-        return included_solves_dict
+        return contains_solves_dict
 
     def get_rolling_times(self):
         """
@@ -1100,18 +1100,18 @@ class FlexToolRunner:
                 if key in realized :
                     full_active_time[key] = item
             for period in realized:
-                if (solve,period) not in self.realized_periods or self.invest_realized_periods or self.fix_storage_periods:
+                if (solve,period) not in self.realized_periods or self.realized_invest_periods or self.fix_storage_periods:
                     realized.remove(period)
         else:
-            for solve_period in list(set().union(self.realized_periods, self.invest_realized_periods,self.fix_storage_periods)):
+            for solve_period in list(set().union(self.realized_periods, self.realized_invest_periods,self.fix_storage_periods)):
                 if solve == solve_period[0]:
                     realized.append(solve_period[1])
             full_active_time = full_active_time_own
 
-        if solve in self.included_solves.keys():
-            include_solve = self.included_solves[solve]
+        if solve in self.contains_solves.keys():
+            contains_solve = self.contains_solves[solve]
         else:
-            include_solve = None
+            contains_solve = None
         if solve not in self.solve_modes.keys():
             self.solve_modes[solve] = "single_solve"
 
@@ -1129,14 +1129,14 @@ class FlexToolRunner:
             realized_time_lists.update(roll_realized_time_lists)
             fix_storage_time_lists.update(roll_realized_time_lists)
 
-            if include_solve != None:
+            if contains_solve != None:
                 for index, roll in enumerate(roll_solves):
                     solves.append(roll)
                     #creating the start time for the rolling. This is the first [period, timestamp] of the active time of the complete solve 
                     start = [list(roll_active_time_lists[roll].items())[0][0],list(roll_active_time_lists[roll].items())[0][1][0][0]]
                     #upper_jump = lower_duration 
                     duration = rolling_times[1]
-                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists = self.define_solve(include_solve,realized,start,duration)
+                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists = self.define_solve(contains_solve,realized,start,duration)
                     solves += inner_solves
                     complete_solves.update(inner_complete_solve)
                     active_time_lists.update(inner_active_time_lists)
@@ -1154,8 +1154,8 @@ class FlexToolRunner:
             realized_time_lists[solve]=full_active_time
             fix_storage_time_lists[solve] = full_active_time 
 
-            if include_solve != None:
-                inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists = self.define_solve(include_solve,realized)
+            if contains_solve != None:
+                inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists = self.define_solve(contains_solve,realized)
                 solves += inner_solves
                 complete_solves.update(inner_complete_solve)
                 active_time_lists.update(inner_active_time_lists)
@@ -1266,14 +1266,14 @@ def main():
     real_solves = [] 
     for solve in solves: #real solves are the defined solves not including the individual rolls
         real_solves.append(solve)
-    for solve, inner_solve in list(runner.included_solves.items()):
+    for solve, inner_solve in list(runner.contains_solves.items()):
         real_solves.append(inner_solve)
 
     for solve in real_solves:
         for solve_2 in real_solves:
             if solve_2 == solve:
                 break
-            for solve__period in (runner.realized_periods+runner.invest_realized_periods+runner.fix_storage_periods):
+            for solve__period in (runner.realized_periods+runner.realized_invest_periods+runner.fix_storage_periods):
                 if solve__period[0] == solve_2:
                     this_solve = runner.solve_period_years_represented[solve_2]
                     for period in this_solve:
@@ -1283,7 +1283,7 @@ def main():
             if not any(period__year[0]== sublist[0] for sublist in solve_period_history[solve]):
                 solve_period_history[solve].append((period__year[0], period__year[1]))
         if not runner.solve_period_years_represented[solve]:
-            for solve__period in (runner.realized_periods+runner.invest_realized_periods+runner.fix_storage_periods):
+            for solve__period in (runner.realized_periods+runner.realized_invest_periods+runner.fix_storage_periods):
                 if solve__period[0] == solve and not any(solve__period[1]== sublist[0] for sublist in solve_period_history[solve]):
                     solve_period_history[solve].append((solve__period[1], 1))
 
@@ -1304,10 +1304,10 @@ def main():
         runner.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete = True)
         runner.write_step_jump(jump_lists[solve])
         runner.write_period_years(solve_period_history[complete_solve[solve]], 'solve_data/period_with_history.csv')
-        runner.write_periods(complete_solve[solve], runner.invest_realized_periods, 'solve_data/invest_realized_periods_of_current_solve.csv')
-        #assume that if invest_realized_periods is not defined,but the invest_periods and realized_periods are defined, use realized_periods also as the invest_realized_periods
-        if (not any(complete_solve[solve] == step[0] for step in runner.invest_realized_periods)) and any(complete_solve[solve] == step[0] for step in runner.invest_periods) and any(complete_solve[solve] == step[0] for step in runner.realized_periods):
-             runner.write_periods(complete_solve[solve], runner.realized_periods, 'solve_data/invest_realized_periods_of_current_solve.csv')
+        runner.write_periods(complete_solve[solve], runner.realized_invest_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
+        #assume that if realized_invest_periods is not defined,but the invest_periods and realized_periods are defined, use realized_periods also as the realized_invest_periods
+        if (not any(complete_solve[solve] == step[0] for step in runner.realized_invest_periods)) and any(complete_solve[solve] == step[0] for step in runner.invest_periods) and any(complete_solve[solve] == step[0] for step in runner.realized_periods):
+             runner.write_periods(complete_solve[solve], runner.realized_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
         runner.write_periods(complete_solve[solve], runner.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
         runner.write_years_represented(runner.solve_period_years_represented[complete_solve[solve]],'solve_data/p_years_represented.csv')
         runner.write_period_years(runner.solve_period_years_represented[complete_solve[solve]],'solve_data/p_discount_years.csv')
