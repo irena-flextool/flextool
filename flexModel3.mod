@@ -215,6 +215,7 @@ set commodity_node dimen 2 within {commodity, node};
 set dt dimen 2 within period_time;
 param dt_jump {(d, t) in dt};
 set dtttdt dimen 6;
+set dtt := setof {(d, t, t_previous, previous_within_block, previous_period, previous_within_solve) in dtttdt} (d, t, t_previous);
 set period_invest dimen 1 within period;
 set period_realized dimen 1 within period;
 set period_with_history dimen 1 within periodAll;
@@ -2494,14 +2495,19 @@ param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alw
 	)
 ;
 
-param r_process_source_sink_ramp_dt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
+param r_process_source_sink_ramp_dtt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t, t_previous) in dtt} :=
   + r_process_source_sink_flow_dt[p, source, sink, d, t]
-  - sum{(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} r_process_source_sink_flow_dt[p, source, sink, d, t_previous]
+  - r_process_source_sink_flow_dt[p, source, sink, d, t_previous]
 ;
 
-param r_node_ramp_dt{n in nodeBalance, (d, t) in dt} :=
-  + sum {(p, n, sink) in process_source_sink_alwaysProcess} r_process_source_sink_ramp_dt[p, n, sink, d, t]
-  + sum {(p, source, n) in process_source_sink_alwaysProcess} -r_process_source_sink_ramp_dt[p, source, n, d, t]
+param r_process_source_sink_ramp_dt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
+  + sum{(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} 
+      + r_process_source_sink_ramp_dtt[p, source, sink, d, t, t_previous]
+;
+
+param r_node_ramp_dtt{n in nodeBalance, (d, t, t_previous) in dtt} :=
+  + sum {(p, n, sink) in process_source_sink_alwaysProcess} r_process_source_sink_ramp_dtt[p, n, sink, d, t, t_previous]
+  + sum {(p, source, n) in process_source_sink_alwaysProcess} -r_process_source_sink_ramp_dtt[p, source, n, d, t, t_previous]
 ;
 
 param r_connection_dt{c in process_connection, (d, t) in dt} :=
@@ -2789,6 +2795,8 @@ for {s in solve_current, e in nodeState, d in period_realized}
 	 >> fn_node_capacity;
   }
 
+param w_capacity := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve;
+display w_capacity;
 
 printf 'Write summary results...\n';
 param fn_summary symbolic := "output/summary_solve.csv";
@@ -2877,6 +2885,8 @@ for {g in groupCapacityMargin}
 	  }
   }
 
+param w_summary := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity;
+display w_summary;
 
 printf 'Write group results for nodes...\n';
 param fn_groupNode__d symbolic := "output/group_node__period.csv";
@@ -2943,6 +2953,9 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
 	    >> fn_groupProcessNode__dt;
 	  }
   }
+
+param w_group := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity;
+display w_group;
 
 printf 'Write discount rates for realized periods...\n';
 param fn_discount symbolic := "output/discount_factors__period.csv";
@@ -3060,6 +3073,9 @@ for {s in solve_current, d in period_realized}
 	>> fn_summary_cost;
   } 
 
+param w_costs_period := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group;
+display w_costs_period;
+
 printf 'Write cost for realized periods and t...\n';
 param fn_summary_cost_dt symbolic := "output/costs__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -3084,6 +3100,9 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
 	  sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_dt[r, ud, ng, d, t])
 	>> fn_summary_cost_dt;
   } 
+
+param w_costs_time := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period;
+display w_costs_time;
 
 printf 'Write unit__outputNode flow for periods...\n';
 param fn_unit__sinkNode__d symbolic := "output/unit__outputNode__period.csv";
@@ -3183,6 +3202,9 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
 	  { printf ',%.8g', r_connection_dt[c, d, t] >> fn_connection__dt; }
   }
 
+param w_flow := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time;
+display w_flow;
+
 printf 'Write unit__outputNode capacity factors for periods...\n';
 param fn_unit__sinkNode__d_cf symbolic := "output/unit_cf__outputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -3200,7 +3222,7 @@ for {s in solve_current, d in period_realized}
 					      then r_process_sink_flow_d[u, sink, d] / hours_in_period[d] / entity_all_capacity[u, d]
 						  else 0 ) >> fn_unit__sinkNode__d_cf; }
   } 
-		
+
 printf 'Write unit__inputNode capacity factors for periods...\n';
 param fn_unit__sourceNode__d_cf symbolic := "output/unit_cf__inputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -3240,6 +3262,9 @@ for {s in solve_current, d in period_realized}
 										    else 0 ) >> fn_connection_cf__d; }
   }
 		
+param w_cf := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow;
+display w_cf;
+
 printf 'Write unit__outputNode curtailment share for periods...\n';
 param fn_unit__sinkNode__d_curtailment symbolic := "output/unit_curtailment_share__outputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -3274,6 +3299,9 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
       { printf ',%.8g', potentialVREgen_dt[u, sink, d, t] - r_process_source_sink_flow_dt[u, source, sink, d, t] >> fn_unit__sinkNode__dt_curtailment; }
   } 
   
+param w_curtailment := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf;
+display w_curtailment;
+
 printf 'Write ramps from units over time...\n';
 param fn_unit_ramp__sinkNode__dt symbolic := "output/unit_ramp__outputNode__dt.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -3283,11 +3311,11 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit_ramp__sinkNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', sink >> fn_unit_ramp__sinkNode__dt;
   }
-for {s in solve_current, (d, t) in dt : d in period_realized}
+for {s in solve_current, (d, t, t_previous) in dtt : d in period_realized}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sinkNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit}
-      { printf ',%.8g', r_process_source_sink_ramp_dt[u, source, sink, d, t] >> fn_unit_ramp__sinkNode__dt; }
+      { printf ',%.8g', r_process_source_sink_ramp_dtt[u, source, sink, d, t, t_previous] >> fn_unit_ramp__sinkNode__dt; }
   } 
 
 param fn_unit_ramp__sourceNode__dt symbolic := "output/unit_ramp__inputNode__dt.csv";
@@ -3298,12 +3326,15 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit_ramp__sourceNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', source >> fn_unit_ramp__sourceNode__dt;
   }
-for {s in solve_current, (d, t) in dt : d in period_realized}
+for {s in solve_current, (d, t, t_previous) in dtt : d in period_realized}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sourceNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}
-      { printf ',%.8g', r_process_source_sink_ramp_dt[u, source, sink, d, t] >> fn_unit_ramp__sourceNode__dt; }
+      { printf ',%.8g', r_process_source_sink_ramp_dtt[u, source, sink, d, t, t_previous] >> fn_unit_ramp__sourceNode__dt; }
   } 
+
+param w_ramps := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment;
+display w_ramps;
 
 printf 'Write reserve from processes over time...\n';
 param fn_process__reserve__upDown__node__dt symbolic := "output/process__reserve__upDown__node__period__t.csv";
@@ -3350,6 +3381,9 @@ for {s in solve_current, d in period_realized}
 	for {(p, r, ud, n) in process_reserve_upDown_node_active}
 	  { printf ',%.8g', sum{(d, t) in dt} (v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p] * step_duration[d, t]) / hours_in_period[d] >> fn_process__reserve__upDown__node__d; }
   }
+
+param w_reserves := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps;
+display w_reserves;
 
 printf 'Write online status of units over time...\n';
 param fn_unit_online__dt symbolic := "output/unit_online__period__t.csv";
@@ -3399,6 +3433,8 @@ for {s in solve_current, d in period_realized}
 	  }
   }
 
+param w_online := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves;
+display w_online;
  
 printf 'Write node results for periods...\n';
 param fn_node__d symbolic := "output/node__period.csv";
@@ -3522,6 +3558,9 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
       }
   }
 
+param w_node := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online;
+display w_node;
+
 printf 'Write marginal value for investment entities...\n';
 param fn_unit_invested_marginal symbolic := "output/unit_invest_marginal__period.csv";
 for {i in 1..1 : p_model['solveFirst']} 
@@ -3565,8 +3604,10 @@ for {s in solve_current, d in period_invest}
       }
   }
 
+param w_marginal_inv := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node;
+display w_marginal_inv;
 
-param r_node_ramproom_units_up_dt{n in nodeBalance, (d, t) in dt} := 
+param r_node_ramproom_units_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt} := 
           + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
               + p_process_sink_coefficient[u, n]
                 * ( if u in process_online 
@@ -3583,7 +3624,7 @@ param r_node_ramproom_units_up_dt{n in nodeBalance, (d, t) in dt} :=
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);
 
-param r_node_ramproom_units_down_dt{n in nodeBalance, (d, t) in dt} := 
+param r_node_ramproom_units_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt} := 
           - sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
 			  + r_process_source_sink_flow_dt[u, source, n, d, t]
 			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
@@ -3600,8 +3641,8 @@ param r_node_ramproom_units_down_dt{n in nodeBalance, (d, t) in dt} :=
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);  
 
-param r_node_ramproom_VRE_up_dt{n in nodeBalance, (d, t) in dt} := 
-          + r_node_ramproom_units_up_dt[n, d, t]
+param r_node_ramproom_VRE_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt} := 
+          + r_node_ramproom_units_up_dtt[n, d, t, t_previous]
 		  + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
               + p_process_sink_coefficient[u, n]
                 * ( if u in process_online 
@@ -3619,8 +3660,8 @@ param r_node_ramproom_VRE_up_dt{n in nodeBalance, (d, t) in dt} :=
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);
 
-param r_node_ramproom_VRE_down_dt{n in nodeBalance, (d, t) in dt} := 
-          + r_node_ramproom_units_down_dt[n, d, t]
+param r_node_ramproom_VRE_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt} := 
+          + r_node_ramproom_units_down_dtt[n, d, t, t_previous]
           - sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
 			  + r_process_source_sink_flow_dt[u, source, n, d, t]
 			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
@@ -3638,8 +3679,8 @@ param r_node_ramproom_VRE_down_dt{n in nodeBalance, (d, t) in dt} :=
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);  
 
-param r_node_ramproom_connections_up_dt{n in nodeBalance, (d, t) in dt} :=  
-          + r_node_ramproom_VRE_up_dt[n, d, t]
+param r_node_ramproom_connections_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt} :=  
+          + r_node_ramproom_VRE_up_dtt[n, d, t, t_previous]
           + sum{(u, source, n) in process_source_sink_alwaysProcess : (u, n) in process_sink && u in process_connection && u not in process_VRE} ( 
               + p_process_sink_coefficient[u, n]
                 * ( if u in process_online 
@@ -3656,8 +3697,8 @@ param r_node_ramproom_connections_up_dt{n in nodeBalance, (d, t) in dt} :=
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);
 
-param r_node_ramproom_connections_down_dt{n in nodeBalance, (d, t) in dt} := 
-          + r_node_ramproom_VRE_down_dt[n, d, t]
+param r_node_ramproom_connections_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt} := 
+          + r_node_ramproom_VRE_down_dtt[n, d, t, t_previous]
           - sum{(u, source, n) in process_source_sink_alwaysProcess : (u, n) in process_sink && u in process_connection && u not in process_VRE && u not in process_isNodeSink_yes2way} ( 
 			  + r_process_source_sink_flow_dt[u, source, n, d, t]
 			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
@@ -3686,23 +3727,26 @@ param r_node_ramproom_connections_down_dt{n in nodeBalance, (d, t) in dt} :=
 ;  
 
 printf 'Write node ramps for time...\n';
-param fn_node_ramp__dt symbolic := "output/node_ramp__period__t.csv";
+param fn_node_ramp__dtt symbolic := "output/node_ramp__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'node,solve,period,time,"ramp","+connections_up","+VRE_up","units_up",' > fn_node_ramp__dt;
-    printf '"units_down","+VRE_down","+connections_down"' >> fn_node_ramp__dt; }  # Print the header on the first solve
-for {n in nodeBalance, s in solve_current, (d, t) in dt : d in period_realized}
+  { printf 'node,solve,period,time,"ramp","+connections_up","+VRE_up","units_up",' > fn_node_ramp__dtt;
+    printf '"units_down","+VRE_down","+connections_down"' >> fn_node_ramp__dtt; }  # Print the header on the first solve
+for {n in nodeBalance, s in solve_current, (d, t, t_previous) in dtt : d in period_realized}
   {
     printf '\n%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g'
 		, n, s, d, t
-		, r_node_ramp_dt[n, d, t]
-		, r_node_ramproom_connections_up_dt[n, d, t]
-		, r_node_ramproom_VRE_up_dt[n, d, t]
-        , r_node_ramproom_units_up_dt[n, d, t]
-		, r_node_ramproom_units_down_dt[n, d, t]
-		, r_node_ramproom_VRE_down_dt[n, d, t]
-		, r_node_ramproom_connections_down_dt[n, d, t]
-	  >> fn_node_ramp__dt;
+		, r_node_ramp_dtt[n, d, t, t_previous]
+		, r_node_ramproom_connections_up_dtt[n, d, t, t_previous]
+		, r_node_ramproom_VRE_up_dtt[n, d, t, t_previous]
+        , r_node_ramproom_units_up_dtt[n, d, t, t_previous]
+		, r_node_ramproom_units_down_dtt[n, d, t, t_previous]
+		, r_node_ramproom_VRE_down_dtt[n, d, t, t_previous]
+		, r_node_ramproom_connections_down_dtt[n, d, t, t_previous]
+	  >> fn_node_ramp__dtt;
   }
+
+param w_ramp_room := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv;
+display w_ramp_room;
 
 printf 'Write group inertia over time...\n';
 param fn_group_inertia__dt symbolic := "output/group_inertia__period__t.csv";
@@ -3745,6 +3789,8 @@ for {s in solve_current, (d, t) in dt : d in period_realized}
 	  }
   }
 
+param w_inertia := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv - w_ramp_room;
+display w_inertia;
 
 printf 'Write reserve slack variables over time...\n';
 param fn_group_reserve_slack__dt symbolic := "output/slack__reserve__upDown__group__period__t.csv";
@@ -3823,6 +3869,9 @@ for {s in solve_current, d in period_invest : d in period_realized}
       }
   }
 
+param w_slacks := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv - w_ramp_room - w_inertia;
+display w_slacks;
+
 ### UNIT TESTS ###
 param unitTestFile symbolic := "tests/unitTests.txt";
 printf (if sum{d in debug} 1 then '%s --- ' else ''), time2str(gmtime(), "%FT%TZ") > unitTestFile;
@@ -3870,6 +3919,9 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 }
 
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
+
+param w_unit_test := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv - w_ramp_room - w_inertia - w_slacks;
+display w_unit_test;
 
 #display {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } : v_reserve[p, r, ud, n, d, t].dual / p_entity_unitsize[p];
 #display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
