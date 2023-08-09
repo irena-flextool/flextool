@@ -8,7 +8,11 @@ from migrate_database import migrate_database
 
 def update_flextool():
 
+    shutil.copy('./.spinetoolbox/project.json','./.spinetoolbox/project_temp.json')
+    completed = subprocess.run(["git","restore","."])
     completed = subprocess.run(["git","pull"])
+    shutil.copy('./.spinetoolbox/project_temp.json','./.spinetoolbox/project.json')
+    os.remove('./.spinetoolbox/project_temp.json')
 
     if completed.returncode != 0:
         print("Failed to get the new version")
