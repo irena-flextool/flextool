@@ -1,6 +1,6 @@
 {
     "project": {
-        "version": 10,
+        "version": 11,
         "description": "",
         "specifications": {
             "Importer": [
@@ -275,7 +275,10 @@
                 ]
             }
         ],
-        "jumps": []
+        "jumps": [],
+        "settings": {
+            "enable_execute_all": false
+        }
     },
     "items": {
         "FlexTool3": {
