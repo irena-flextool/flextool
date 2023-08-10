@@ -95,10 +95,12 @@ Update of IRENA FlexTool to the latest version is done as follows:
 
 If using Toolbox, start by updating it:
 
-- cd to the repository folder Spine-Toolbox
+- cd to the repository folder Spine-Toolbox, where you cloned it. 
+For example `cd C:\Users\YourUser\Documents\Spine-Toolbox`
 - `git pull`
 - `python -m pip install -U -r requirements.txt`
-- cd back to FlexTool directory
+- cd back to FlexTool directory, where you cloned it. 
+For example `cd C:\Users\YourUser\Documents\flextool`
 
 Update the Toolbox:
 
