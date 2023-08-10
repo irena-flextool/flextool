@@ -944,8 +944,7 @@ param ptProcess__source__sink__dt_varCost {(p, source, sink) in process_source_s
   + (if (p, source) in process_source then ptProcess_source[p, source, 'other_operational_cost', t])
   + (if (p, sink) in process_sink then ptProcess_sink[p, sink, 'other_operational_cost', t])
   + (if (p, source, sink) in process_source_sink then 
-      ( ( if (p, 'other_operational_cost', t) in process__param__time then ptProcess[p, 'other_operational_cost', t]
-	      else (if (p, 'other_operational_cost', d) in process__param__period then pdProcess[p, 'other_operational_cost', d]))
+      ( if ptProcess[p, 'other_operational_cost', t] then ptProcess[p, 'other_operational_cost', t]
 	  )
 	)
 ;
@@ -955,8 +954,8 @@ param ptProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in pr
   + (if (p, sink) in process_sink then ptProcess_sink[p, sink, 'other_operational_cost', t])
   + (if (p, source, sink) in process_source_sink_alwaysProcess 
         && ((p, sink) in process_sink || (p, sink) in process_source)
-	 then ( if (p, 'other_operational_cost', t) in process__param__time then ptProcess[p, 'other_operational_cost', t]
-	      else (if (p, 'other_operational_cost', d) in process__param__period then pdProcess[p, 'other_operational_cost', d]))
+	 then ( if ptProcess[p, 'other_operational_cost', t] then ptProcess[p, 'other_operational_cost', t]
+	      )
     )
 ;
 
@@ -2498,11 +2497,6 @@ param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alw
 param r_process_source_sink_ramp_dtt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t, t_previous) in dtt} :=
   + r_process_source_sink_flow_dt[p, source, sink, d, t]
   - r_process_source_sink_flow_dt[p, source, sink, d, t_previous]
-;
-
-param r_process_source_sink_ramp_dt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
-  + sum{(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} 
-      + r_process_source_sink_ramp_dtt[p, source, sink, d, t, t_previous]
 ;
 
 param r_node_ramp_dtt{n in nodeBalance, (d, t, t_previous) in dtt} :=
