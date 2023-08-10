@@ -54,6 +54,8 @@ class FlexToolRunner:
         self.rolling_times = self.get_rolling_times()
         self.new_step_durations=self.get_new_step_durations()
         self.create_timeline_from_timestep_duration()
+        self.first_of_solve = []
+        self.last_of_solve = []
         #self.write_full_timelines(self.timelines, 'steps.csv')
     
     def get_solves(self):
@@ -248,7 +250,7 @@ class FlexToolRunner:
                 for timeblock in timeblockSet:
                     first_step = timeblock[0]
                     first_index = [step[0] for step in old_steps].index(timeblock[0])
-                    step_counter = float(old_steps[first_index][1])
+                    step_counter = 0 #float(old_steps[first_index][1])
                     last_index = first_index + int(float(timeblock[1]))
                     added_steps = 0
                     for step in old_steps[first_index:last_index]:
@@ -261,6 +263,7 @@ class FlexToolRunner:
                                 logging.warning("Warning: All new steps are not the size of the given step duration. The new step duration has to be multiple of old step durations for this to happen.")
                         step_counter += float(step[1])
                     new_steps.append((first_step,str(step_counter)))
+                    added_steps += 1
                     new_timeblocks.append((timeblock[0], added_steps))
                 self.timeblocks[timeblockSet_name] = new_timeblocks 
                 new_timeline_name = timeline_name+ "_"+ timeblockSet_name 
@@ -269,9 +272,16 @@ class FlexToolRunner:
 
     def create_averaged_timeseries(self,solve):
         timeseries_list=['pt_node.csv','pt_process.csv','pt_profile.csv','pt_process_source.csv','pt_process_sink.csv','pt_reserve__upDown__group.csv']
-        if not any(self.timeblocks_used_by_solves[solve]) in self.new_step_durations.keys():
+        create = False
+        for period_timeblock in self.timeblocks_used_by_solves[solve]:
+            if period_timeblock[1] in self.new_step_durations.keys():
+                create = True
+        if not create:    
             for timeseries in timeseries_list:
                 shutil.copy('input/'+timeseries,'solve_data/'+timeseries)
+            print(self.timeblocks_used_by_solves[solve])
+            print(self.new_step_durations.keys())
+            print("not")
         else:
             for timeseries in timeseries_list:
                 with open('input/'+ timeseries,'r') as blk:
@@ -283,7 +293,7 @@ class FlexToolRunner:
                         #assumes that the data is in the format:
                         #[group1, group2, ... group_last, time, numeric_value]
                         #ie. the numeric data is the last column and the timestep is the one before it.
-                        #and that there are rows from other groups between the rows of one group 
+                        #and that there are no rows from other groups between the rows of one group 
                         time_index = headers.index('time')
                         timelines=[]
                         for period, timeblockSet in self.timeblocks_used_by_solves[solve]:
@@ -322,23 +332,13 @@ class FlexToolRunner:
                                         next_index += 1
                                         if next_index > len(new_timeline)-1:
                                             next_index = 0
-
-                                        if datain[time_index] == last_timestamp:
-                                            last = True
-                                            counter = 0
-
-                                    elif last:
-                                        if counter >= last_timestep_length:
-                                            #write row
-                                            out_value = sum(values)/len(values)
-                                            row.append(out_value)
-                                            filewriter.writerow(row)
-                                            break
-                                        values.append(float(datain[time_index+1]))
-                                        counter += 1
                                     else:
                                         values.append(float(datain[time_index+1]))
                                 except StopIteration:
+                                    if started:
+                                        out_value = sum(values)/len(values)
+                                        row.append(out_value)
+                                        filewriter.writerow(row)
                                     break
                     
  
@@ -1065,7 +1065,6 @@ class FlexToolRunner:
             else:
                 started = False
                 for period, active_time in list(full_active_time.items()):
-                    print(period, jumps[index][0])
                     if started:
                         if period == jumps[index][0]:
                             realized[period] = full_active_time[period][0:jumps[index][1]+1]
@@ -1090,9 +1089,9 @@ class FlexToolRunner:
         realized_time_lists = OrderedDict()
         fix_storage_time_lists = OrderedDict()
         full_active_time = OrderedDict()
+
         solves=[]
-        print(solve)
-        print(realized)
+
         #check that the lower level solves have periods only from of upper_level
         full_active_time_own = self.get_active_time(solve, self.timeblocks_used_by_solves, self.timeblocks,self.timelines, self.timeblocks__timeline)
         if len(realized) != 0:
@@ -1100,10 +1099,10 @@ class FlexToolRunner:
                 if key in realized :
                     full_active_time[key] = item
             for period in realized:
-                if (solve,period) not in self.realized_periods or self.realized_invest_periods or self.fix_storage_periods:
+                if (solve,period) not in self.fix_storage_periods and (solve,period) not in self.realized_periods and (solve,period) not in self.realized_invest_periods:
                     realized.remove(period)
         else:
-            for solve_period in list(set().union(self.realized_periods, self.realized_invest_periods,self.fix_storage_periods)):
+            for solve_period in set().union(self.realized_periods, self.realized_invest_periods,self.fix_storage_periods):
                 if solve == solve_period[0]:
                     realized.append(solve_period[1])
             full_active_time = full_active_time_own
@@ -1128,6 +1127,8 @@ class FlexToolRunner:
             jump_lists.update(roll_jump_lists)
             realized_time_lists.update(roll_realized_time_lists)
             fix_storage_time_lists.update(roll_realized_time_lists)
+            self.first_of_solve.append(roll_solves[0])
+            self.last_of_solve.append(roll_solves[-1])
 
             if contains_solve != None:
                 for index, roll in enumerate(roll_solves):
@@ -1152,7 +1153,9 @@ class FlexToolRunner:
             jumps = self.make_step_jump(full_active_time)
             jump_lists[solve] = jumps
             realized_time_lists[solve]=full_active_time
-            fix_storage_time_lists[solve] = full_active_time 
+            fix_storage_time_lists[solve] = full_active_time
+            self.first_of_solve.append(solve)
+            self.last_of_solve.append(solve)
 
             if contains_solve != None:
                 inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists = self.define_solve(contains_solve,realized)
@@ -1265,7 +1268,7 @@ def main():
 
     real_solves = [] 
     for solve in solves: #real solves are the defined solves not including the individual rolls
-        real_solves.append(solve)
+        real_solves.append(solve)     
     for solve, inner_solve in list(runner.contains_solves.items()):
         real_solves.append(inner_solve)
 
@@ -1286,15 +1289,6 @@ def main():
             for solve__period in (runner.realized_periods+runner.realized_invest_periods+runner.fix_storage_periods):
                 if solve__period[0] == solve and not any(solve__period[1]== sublist[0] for sublist in solve_period_history[solve]):
                     solve_period_history[solve].append((solve__period[1], 1))
-
-    real_solves_index = defaultdict(list)
-    for i, solve in enumerate(all_solves):
-        real_solves_index[complete_solve[solve]].append(i)
-    first_of_nested_level_list = []
-    last_of_nested_level_list = []
-    for solve in real_solves:
-        first_of_nested_level_list.append(real_solves_index[solve][0])
-        last_of_nested_level_list.append(real_solves_index[solve][-1])
     
     first = True
     for i, solve in enumerate(all_solves):
@@ -1318,11 +1312,11 @@ def main():
         runner.write_fixed_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
         #if timeline created from new step_duration, all timeseries have to be averaged for the new timestep
         runner.create_averaged_timeseries(complete_solve[solve])
-        if i in first_of_nested_level_list:
+        if i in runner.first_of_solve:
             first_of_nested_level = True
         else:
             first_of_nested_level = False
-        if i in last_of_nested_level_list:
+        if i in runner.last_of_solve:
             last_of_nested_level = True
         else:
             last_of_nested_level = False
@@ -1341,7 +1335,11 @@ def main():
             logging.error(f'Error: {exit_status}')
             exit(-1)
     #produce periodic data as post-process for rolling window solves
-    if "rolling_window" in runner.solve_modes.values():
+    post_process_results = False
+    for solve in complete_solve.keys():
+        if runner.solve_modes[complete_solve[solve]] == "rolling_window":
+            post_process_results = True
+    if post_process_results:
         #[[group by], [relation dimensions]]
         period_only = {
         "group__process__node__period": [[],1],

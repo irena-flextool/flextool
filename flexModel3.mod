@@ -234,12 +234,12 @@ param complete_step_duration{(d, t) in dt_complete};
 
 set dt_fix_storage_timesteps dimen 2 within period_time;
 set d_fix_storage_period := setof {(d, t) in dt_fix_storage_timesteps} (d);
-set ndt_fix_storage_price dimen 3 within  {node, period, time};
-set ndt_fix_storage_quantity dimen 3 within  {node, period, time};
+set ndt_fix_storage_price dimen 3 within  {node, period_solve, time};
+set ndt_fix_storage_quantity dimen 3 within  {node, period_solve, time};
 set n_fix_storage_quantity := setof{(n,d,t) in ndt_fix_storage_quantity}(n);
 set n_fix_storage_price := setof{(n,d,t) in ndt_fix_storage_price}(n);
-param p_fix_storage_price {node, period, time};
-param p_fix_storage_quantity {node, period, time};
+param p_fix_storage_price {node, period_solve, time};
+param p_fix_storage_quantity {node, period_solve, time};
 
 set startTime dimen 1 within time;
 set startNext dimen 1 within time;
@@ -436,7 +436,7 @@ table data IN 'CSV' 'solve_data/step_previous.csv' : dtttdt <- [period, time, pr
 table data IN 'CSV' 'solve_data/step_previous.csv' : [period, time], dt_jump~jump;
 table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <- [period];
 table data IN 'CSV' 'solve_data/period_with_history.csv' : [period], p_period_from_solve~param;
-table data IN 'CSV' 'solve_data/invest_realized_periods_of_current_solve.csv' : d_realize_invest <- [period];
+table data IN 'CSV' 'solve_data/realized_invest_periods_of_current_solve.csv' : d_realize_invest <- [period];
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
 table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
 table data IN 'CSV' 'solve_data/p_nested_model.csv' : [modelParam], p_nested_model;

@@ -847,7 +847,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "invest_periods"
+                    "filter_re": "^invest_periods$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -866,7 +866,7 @@
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
-                    "filter_re": "Array, 1d_map"
+                    "filter_re": "array|1d_map"
                 },
                 {
                     "map_type": "IndexName",
@@ -4794,7 +4794,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^contains_solve$"
+                    "filter_re": "^contains_solves$"
                 },
                 {
                     "map_type": "ParameterValueList",

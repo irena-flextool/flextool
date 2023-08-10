@@ -45,6 +45,20 @@ The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* 
 
 ![Hydro reservoir](./hydro_reservoir.PNG)
 
+
+## How to use Rolling window for dispatch solve
+
+The rolling window solve can be used when the model gets too big and solving times get too long. When using rolling window solve, you are solving the model with less information. Therefore, it will change the results and it is important to know how the results change and what phenomena is left out when certain information is left out of the model. 
+The rolling window solve splits the time dimension into overlapping parts and solves them separatelly. For example, instead of a full year in one solve, you can split it to 6 four-month solves where each solve outputs only the first twho months. The solves would therefore include the months:
+- 1: [1,2,3,4] -> [1,2]
+- 2: [3,4,5,6] -> [3,4]
+- 3: [5,6,7,8] -> [5,6]
+- 4: [7,8,9,10] -> [7,8]
+- 5: [9,10,11,12] ->[9,10]
+- 6: [11,12] -> [11,12]
+
+
+
 ## How to use CPLEX as the solver
 
 Using CPLEX requires that you have installed the software, have a licence for it and have added it to PATH or to the environment where you are using the FlexTool, so that the tool can find the solver.
