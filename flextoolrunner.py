@@ -271,19 +271,23 @@ class FlexToolRunner:
                 self.timeblocks__timeline[timeblockSet_name] = [new_timeline_name]
 
     def create_averaged_timeseries(self,solve):
-        timeseries_list=['pt_node.csv','pt_process.csv','pt_profile.csv','pt_process_source.csv','pt_process_sink.csv','pt_reserve__upDown__group.csv']
+        timeseries_map={
+            'pt_node.csv': "sum",
+            'pt_process.csv': "average",
+            'pt_profile.csv': "average",
+            'pt_process_source.csv': "average",
+            'pt_process_sink.csv': "average",
+            'pt_reserve__upDown__group.csv': "average"
+        }
         create = False
         for period_timeblock in self.timeblocks_used_by_solves[solve]:
             if period_timeblock[1] in self.new_step_durations.keys():
                 create = True
         if not create:    
-            for timeseries in timeseries_list:
+            for timeseries in timeseries_map.keys():
                 shutil.copy('input/'+timeseries,'solve_data/'+timeseries)
-            print(self.timeblocks_used_by_solves[solve])
-            print(self.new_step_durations.keys())
-            print("not")
         else:
-            for timeseries in timeseries_list:
+            for timeseries in timeseries_map.keys():
                 with open('input/'+ timeseries,'r') as blk:
                     filereader = csv.reader(blk, delimiter=',')
                     with open('solve_data/'+timeseries,'w', newline='') as solve_file:
@@ -322,7 +326,10 @@ class FlexToolRunner:
 
                                     elif datain[time_index] == new_timeline[next_index][0]:
                                         #write row
-                                        out_value = sum(values)/len(values)
+                                        if timeseries_map[timeseries] == "average":
+                                            out_value = sum(values)/len(values)
+                                        else:
+                                            out_value = sum(values)
                                         row.append(out_value)
                                         filewriter.writerow(row)
 
@@ -336,7 +343,10 @@ class FlexToolRunner:
                                         values.append(float(datain[time_index+1]))
                                 except StopIteration:
                                     if started:
-                                        out_value = sum(values)/len(values)
+                                        if timeseries_map[timeseries] == "average":
+                                            out_value = sum(values)/len(values)
+                                        else:
+                                            out_value = sum(values)
                                         row.append(out_value)
                                         filewriter.writerow(row)
                                     break

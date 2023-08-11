@@ -1356,13 +1356,13 @@ minimize total_cost:
   + sum {g in groupInertia, (d, t) in dt} vq_inertia[g, d, t] * pdGroup[g, 'inertia_limit', d]
                                             * pdGroup[g, 'penalty_inertia', d] * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
   + sum {g in groupNonSync, (d, t) in dt} vq_non_synchronous[g, d, t] * pgdNodeInflow_for_scaling[g, d]
-                                            * pdGroup[g, 'penalty_non_synchronous', d] * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
+                                            * pdGroup[g, 'penalty_non_synchronous', d]  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
   + sum {n in nodeBalance, (d, t) in dt} vq_state_up[n, d, t] * pdtNodeInflow_for_scaling[n, d, t]
-                                            * ptNode[n, 'penalty_up', t] * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
+                                            * ptNode[n, 'penalty_up', t]  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
   + sum {n in nodeBalance, (d, t) in dt} vq_state_down[n, d, t] * pdtNodeInflow_for_scaling[n, d, t]
-                                            * ptNode[n, 'penalty_down', t] * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
+                                            * ptNode[n, 'penalty_down', t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
   + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} vq_reserve[r, ud, ng, d, t]  * ptReserve_upDown_group[r, ud, ng, 'reservation', t]
-                                            * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve'] * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
+                                            * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 
   - sum {n in nodeState, (d, t) in period__time_last : (n, 'use_reference_price') in node__storage_solve_horizon_method && d in period_last}
       + pdNode[n, 'storage_state_reference_price', d]
@@ -1409,7 +1409,7 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
   =
   # n is sink
   + sum {(p, source, n) in process_source_sink} (
-      + v_flow[p, source, n, d, t] * p_entity_unitsize[p]
+      + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t]
 	)  
   # n is source
   - sum {(p, n, sink) in process_source_sink_eff } ( 
@@ -1423,10 +1423,10 @@ s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_bloc
 			    * ptProcess_section[p, t]
 				* p_entity_unitsize[p]
 		)
-    )		
+    ) * step_duration[d, t]		
   - sum {(p, n, sink) in process_source_sink_noEff} 
     ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-    )
+    ) * step_duration[d, t]
   + (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
   - (if n in nodeSelfDischarge then 
       + v_state[n, d, t] 
@@ -1495,7 +1495,7 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
 	                                                    * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
 	   )
   + sum {(n, ng) in group_node : p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio']}
-	   (pdtNodeInflow[n, d, t] * p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio'])
+	   (pdtNodeInflow[n, d, t] * p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio'])/ step_duration[d, t]
 ;
 
 s.t. reserveBalance_up_n_1_eq{(r, 'up', ng, r_m) in reserve__upDown__group__method_n_1, p_n_1 in process_large_failure, (d, t) in dt :
@@ -1714,11 +1714,11 @@ s.t. constraint_greater_than {(c, 'greater_than') in constraint__sense, (d, t) i
   + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_flow_constraint}
     ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
 	      * p_process_node_constraint_flow_coefficient[p, source, c]
-	)
+	) * step_duration[d, t]
   + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_flow_constraint}
     ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] * p_entity_unitsize[p]
 	      * p_process_node_constraint_flow_coefficient[p, sink, c]
-	)
+	) * step_duration[d, t]
   + sum {(n, c) in node_state_constraint}
     ( + v_state[n, d, t]
 	      * p_node_constraint_state_coefficient[n, c]
@@ -1744,11 +1744,11 @@ s.t. process_constraint_less_than {(c, 'lesser_than') in constraint__sense, (d, 
   + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_flow_constraint}
     ( + v_flow[source, source, p, d, t] * p_entity_unitsize[p]
 	      * p_process_node_constraint_flow_coefficient[p, source, c]
-	)
+	) * step_duration[d, t]
   + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_flow_constraint}
     ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
 	      * p_process_node_constraint_flow_coefficient[p, sink, c]
-	)
+	) * step_duration[d, t]
   + sum {(n, c) in node_state_constraint}
     ( + v_state[n, d, t]
 	      * p_node_constraint_state_coefficient[n, c]
@@ -1970,8 +1970,8 @@ s.t. maxShutdown {p in process_online, (d, t) in dt} :
 s.t. ramp_up_variable {(p, source, sink) in process_source_sink_ramp, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
   + v_ramp[p, source, sink, d, t]
   =
-  + v_flow[p, source, sink, d, t]
-  - v_flow[p, source, sink, d, t_previous]
+  + v_flow[p, source, sink, d, t]  * step_duration[d, t]
+  - v_flow[p, source, sink, d, t_previous] * step_duration[d, t]
 ;
 
 s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_up} :
@@ -2072,7 +2072,7 @@ s.t. reserve_process_downward{(p, r, 'down', n, d, t) in prundt} :
           ) * ( if (sum{(p, prof, 'lower_limit') in process__profile__profile_method} 1) then
 	              ( + sum{(p, prof, 'lower_limit') in process__profile__profile_method} pt_profile[prof, t] )
 	          )
-	  )		  
+	  )    
 ;
 
 s.t. maxInvestGroup_entity_period {(g, d) in gd_invest_period} :
@@ -2200,7 +2200,7 @@ s.t. maxCumulative_flow_solve {g in group : p_group[g, 'max_cumulative_flow']} :
       - sum {(p, n, sink) in process_source_sink_noEff } (
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 		)
-	)
+	) * step_duration[d, t]
 	<=
   + p_group[g, 'max_cumulative_flow'] 
       * hours_in_solve
@@ -2227,7 +2227,7 @@ s.t. minCumulative_flow_solve {g in group : p_group[g, 'min_cumulative_flow']} :
       - sum {(p, n, sink) in process_source_sink_noEff } (
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 		)  
-	)
+	) * step_duration[d, t]
 	>=
   + p_group[g, 'min_cumulative_flow'] 
       * hours_in_solve
@@ -2254,7 +2254,7 @@ s.t. maxCumulative_flow_period {g in group, d in period : pd_group[g, 'max_cumul
       - sum {(p, n, sink) in process_source_sink_noEff } (
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 		)
-	)   
+	)  * step_duration[d, t]
 	<=
   + pd_group[g, 'max_cumulative_flow', d] 
       * hours_in_period[d]
@@ -2281,7 +2281,7 @@ s.t. minCumulative_flow_period {g in group, d in period : pd_group[g, 'min_cumul
       - sum {(p, n, sink) in process_source_sink_noEff } (
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 		)
-	)
+	) * step_duration[d, t]
 	>=
   + pd_group[g, 'min_cumulative_flow', d] 
       * hours_in_period[d]
@@ -2385,7 +2385,7 @@ s.t. co2_max_period{(g, c, n, d) in group_commodity_node_period_co2_period : d i
 
 s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
   + sum {(p, source, sink) in process_source_sink_noEff : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
-    ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] )
+    ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]  * step_duration[d, t])
   + sum {(p, source, sink) in process_source_sink_eff : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
     ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
 	    * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
@@ -2397,11 +2397,11 @@ s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
 		    * ptProcess_section[p, t]
 		    * p_entity_unitsize[p]
 	    )	  
-	)	
+	)	 * step_duration[d, t]
   - vq_non_synchronous[g, d, t] * pgdNodeInflow_for_scaling[g, d]
   <=
   ( + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node} 
-        + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
+        + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t]
     + sum {(g, n) in group_node} -pdtNodeInflow[n, d, t]
   ) * pdGroup[g, 'non_synchronous_limit', d]
 ;
@@ -2451,10 +2451,10 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
 			    * ptProcess_section[p, t]
 			    * p_entity_unitsize[p]
 	  	    )
-	    )
+	    ) * step_duration[d, t]
 	  + if (p, source, sink) in process_source_sink_noEff then
         ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
-        )
+        ) * step_duration[d, t]
 	)
   + vq_capacity_margin[g, d] * pgdNodeInflow_for_scaling[g, d]
   >=
@@ -2522,7 +2522,7 @@ param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alw
 ;
 
 param r_process_source_sink_ramp_dt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
-  + r_process_source_sink_flow_dt[p, source, sink, d, t]
+  + r_process_source_sink_flow_dt[p, source, sink, d, t] 
   - sum{(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} r_process_source_sink_flow_dt[p, source, sink, d, t_previous]
 ;
 
@@ -2532,8 +2532,8 @@ param r_node_ramp_dt{n in nodeBalance, (d, t) in dt} :=
 ;
 
 param r_connection_dt{c in process_connection, (d, t) in dt} :=
-  + sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_sink} r_process_source_sink_flow_dt[c, c, n, d, t]
-  - sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_source} r_process_source_sink_flow_dt[c, c, n, d, t]
+  + sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_sink} r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
+  - sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_source} r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
 ;
 
 param r_process_source_sink_flow_d{(p, source, sink) in process_source_sink_alwaysProcess, d in d_realized_period} :=
@@ -2636,12 +2636,12 @@ param r_cost_startup_dt{p in process, (d, t) in dt : p in process_online && pdPr
   );
 
 param r_costPenalty_nodeState_upDown_dt{n in nodeBalance, ud in upDown, (d, t) in dt} :=
-  + (if ud = 'up'   then step_duration[d, t] * vq_state_up[n, d, t] * pdtNodeInflow_for_scaling[n, d, t] * ptNode[n, 'penalty_up', t])
-  + (if ud = 'down' then step_duration[d, t] * vq_state_down[n, d, t] * pdtNodeInflow_for_scaling[n, d, t] * ptNode[n, 'penalty_down', t]) ;
+  + (if ud = 'up'   then vq_state_up[n, d, t] * pdtNodeInflow_for_scaling[n, d, t] * ptNode[n, 'penalty_up', t])
+  + (if ud = 'down' then vq_state_down[n, d, t] * pdtNodeInflow_for_scaling[n, d, t] * ptNode[n, 'penalty_down', t]) ;
 
 param r_penalty_nodeState_upDown_d{n in nodeBalance, ud in upDown, d in d_realized_period} :=
-  + sum {(d, t) in dt_realize_dispatch : ud = 'up'} step_duration[d, t] * vq_state_up[n, d, t] * pdtNodeInflow_for_scaling[n, d, t]
-  + sum {(d, t) in dt_realize_dispatch : ud = 'down'} step_duration[d, t] * vq_state_down[n, d, t] * pdtNodeInflow_for_scaling[n, d, t];
+  + sum {(d, t) in dt_realize_dispatch : ud = 'up'}  vq_state_up[n, d, t] * pdtNodeInflow_for_scaling[n, d, t]
+  + sum {(d, t) in dt_realize_dispatch : ud = 'down'}  vq_state_down[n, d, t] * pdtNodeInflow_for_scaling[n, d, t];
 
 param r_costPenalty_inertia_dt{g in groupInertia, (d, t) in dt} :=
   + step_duration[d, t]
@@ -3975,7 +3975,7 @@ display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val
 display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val * p_entity_unitsize[n];
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p];
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val * ptReserve_upDown_group[r, ud, ng, 'reservation', t];
-#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val * pdtNodeInflow_for_scaling[n, d, t];
+display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val;# * pdtNodeInflow_for_scaling[n, d, t];
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val * pdtNodeInflow_for_scaling[n, d, t];
 #display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d];

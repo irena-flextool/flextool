@@ -49,7 +49,8 @@ The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* 
 ## How to use Rolling window for dispatch solve
 
 The rolling window solve can be used when the model gets too big and solving times get too long. When using rolling window solve, you are solving the model with less information. Therefore, it will change the results and it is important to know how the results change and what phenomena is left out when certain information is left out of the model. 
-The rolling window solve splits the time dimension into overlapping parts and solves them separatelly. For example, instead of a full year in one solve, you can split it to 6 four-month solves where each solve outputs only the first twho months. The solves would therefore include the months:
+The rolling window solve splits the time dimension into overlapping parts and solves them separatelly. For example, instead of a full year in one solve, you can split it to 6 four-month solves where each solve outputs only the first two months. The solves would therefore include the months:
+- Roll: Solve months -> output months
 - 1: [1,2,3,4] -> [1,2]
 - 2: [3,4,5,6] -> [3,4]
 - 3: [5,6,7,8] -> [5,6]
@@ -57,7 +58,7 @@ The rolling window solve splits the time dimension into overlapping parts and so
 - 5: [9,10,11,12] ->[9,10]
 - 6: [11,12] -> [11,12]
 
-
+This can be done manually as discribed in the 'How to run a multi year model'. However, this is tedious to do if there are many solves and each solve is limitted solving whole timeblocks. In the rolling window solve, the user can set the `rolling_jump` and `rolling_horizon` as hours. Former sets the solve start point interval and the output interval as they are the same, the latter sets the solve length. In the previous example the `rolling_jump` would be 60 days and `rolling_horizon` 120 days. In addition if the user does not want to start from the beginning, the user has the option to set the starting point of the first solve as a timestamp. The `rolling_duration` sets the length of the combined solves, here 12 months. If it is not set it defaults to rolling trough the whole timeline set to the solve. 
 
 ## How to use CPLEX as the solver
 
