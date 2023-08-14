@@ -74,29 +74,7 @@
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#5th-step-add-a-reserve">5th step - add a reserve</a>
     </li>
-        </ul>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#more-functionality">More functionality</a>
-        <ul>
-    <li class="toctree-l3"><a class="reference internal" href="#adding-a-storage-unit-battery">Adding a storage unit (battery)</a>
-    </li>
-    <li class="toctree-l3"><a class="reference internal" href="#adding-battery-investment-capabilities">Adding battery investment capabilities</a>
-    </li>
-    <li class="toctree-l3"><a class="reference internal" href="#combined-heat-and-power-chp-example">Combined heat and power (CHP) example</a>
-    </li>
-    <li class="toctree-l3"><a class="reference internal" href="#minimum-load-example">Minimum load example</a>
-    </li>
-    <li class="toctree-l3"><a class="reference internal" href="#adding-co2-emissions-and-costs">Adding CO2 emissions and costs</a>
-    </li>
-    <li class="toctree-l3"><a class="reference internal" href="#full-year-model">Full year model</a>
-    </li>
-    <li class="toctree-l3"><a class="reference internal" href="#a-system-with-coal-wind-network-battery-and-co2-over-a-full-year">A system with coal, wind, network, battery and CO2 over a full year</a>
-    </li>
-    <li class="toctree-l3"><a class="reference internal" href="#representative-periods">Representative periods</a>
-    </li>
-    <li class="toctree-l3"><a class="reference internal" href="#multi-year-model">Multi-year model</a>
-    </li>
-    <li class="toctree-l3"><a class="reference internal" href="#discount-calculations">Discount calculations</a>
+    <li class="toctree-l3"><a class="reference internal" href="#more-functionality">More functionality</a>
     </li>
         </ul>
     </li>
@@ -356,117 +334,10 @@ Finally, if it does not exist yet, add a new object `UpDown', called <em>up</em>
 <p>Parameters from the <code>reserve__upDown__unit__node</code> class should be used to define how different units can contribute to different reserves. Parameter <code>max_share</code> says how large share of the total capacity of the timestep (existing * efficiency<em> (profile)) of the unit can contribute to this reserve category (e.g. </em>coal_plant<em>, in this example, has ramping restrictions and can only provide 1% of it's capacity to this upward primary reserve.) Meanwhile, parameter <code>reliability</code> affects what portion of the reserved capacity actually contributes to the reserve (e.g. in this contrived example, </em>wind_plant* must have extra capacity of 20 MW to provide 10 MW of reserve).</p>
 <p>Create the scenario, <strong>commit</strong>, execute and explore how the reserve requirements affect the model results.</p>
 <p><img alt="Add a reserve" src="../reserves.png" /></p>
-<h2 id="more-functionality">More functionality</h2>
+<h3 id="more-functionality">More functionality</h3>
 <p>Now you have learned how to create a small model. If you want to save it, make a copy of the <em>Input_data</em> database and name it something else for example Tutorial.sqlite. Remember that you can change which database is used as the <em>Input_data</em> by clicking it. In the same way, the <em>Results</em> database can be saved and changed.</p>
-<p>For the rest of the tutorial, you can look and play with the ready scenarios from the init database. Purge <em>Input_data</em> and <em>Initialize</em> it to copy the init database to it. This can be done with the 'purge' tool from the Database Editor menu: in <code>purge</code>, click on both <em>Select entity and value items</em>, and <em>Select scenario items</em> and then purge.   </p>
-<h3 id="adding-a-storage-unit-battery">Adding a storage unit (battery)</h3>
-<p><strong>(scenario: wind_battery)</strong>
-<strong><em>init - west - wind - battery</em></strong></p>
-<p>In the <strong><em>Init</em></strong> SQLite database, there is a <code>scenario</code> <em>wind_battery</em> - the <em>wind_plant</em> alone is not able to meet the load in all conditions, but the <em>battery</em> will help it to improve the situation.</p>
-<p>In FlexTool, only <code>nodes</code> can have storage. This means that <code>existing</code> capacity and all investment parameters for <code>nodes</code> refer to the amount of storage the <code>node</code> can have. In this example, a <em>battery</em> <code>node</code> is established to describe the storage properties of the <em>battery</em> (e.g. <code>existing</code> capacity and <code>self_discharge_loss</code> in each hour). </p>
-<p>You can see that the battery has three storage methods defined. Having multiple storage methods can create infeasible problems. This is why some of the combinations shouldn't (and couldn't) be used at the same time. If multiple methods are used, some of them might be ignored by the method hierarcy. More information can be found from <a href="https://irena-flextool.github.io/flextool/reference">Model Parameters: Using nodes as storages</a>. For now, you can change the <code>storage_start_end_method</code> to <em>fix_start_end</em>. This overrides the other methods and sets the start and end capacities of the storage.</p>
-<p>Battery also needs charging and discharging capabilities. These could be presented either with a <code>connection</code> or by having a charging <code>unit</code> and a discharging <code>unit</code>. In here, we are using a <code>connection</code> called <em>batter_inverter</em>, since its easier to prevent simultaneous charging and discharging that way (although, in a linear model, this cannot be fully prevented since that requires an integer variable). Please note that the <code>efficiency</code> parameter of the <code>connection</code> applies to both directions, so the round-trip <code>efficiency</code> will be <code>efficiency</code> squared.</p>
-<p>The <code>transfer_method</code> can be used by all types of connections, but in this case it is best to choose <em>regular</em>, which tries to avoid simultaneous charging and discharing, but can still do it when the model needs to dissipate energy. <em>exact</em> method would prevent that, but it would require integer variables and make the storage computationally much more expensive. Model leakage will be reported in the results (forthcoming).</p>
-<p><img alt="Add a battery" src="../battery.png" /></p>
-<h3 id="adding-battery-investment-capabilities">Adding battery investment capabilities</h3>
-<p><strong>(scenario: wind_battery_invest)</strong>
-<strong><em>init - west - wind - battery - battery_invest</em></strong></p>
-<p>To make the <em>wind_battery</em> <code>scenario</code> more interesting, an option to invest in <em>battery</em> and <em>battery_inverter</em> is added. It also demonstrates how FlexTool can have more complicated constraints that the user defines through data. </p>
-<p>First, the investment parameters need to be included both for the <em>battery_inverter</em> and <em>battery</em> objects:</p>
-<ul>
-<li><code>invest_method</code> - the modeller needs to choose between <em>only_invest</em>, <em>only_retire</em>, <em>invest_and_retire</em> or <em>not_allowed</em></li>
-<li><code>invest_cost</code> - overnight investment cost new capacity [currency/kW] for the <em>battery_inverter</em> and [currency/kWh] for the <em>battery</em>. Other one can be left empty or zero, since they will be tied together in the next phase. Here we will assume a fixed relation between kW and kWh for this battery technology, but for example flow batteries could have separate investments for storage and charging capacities.</li>
-<li><code>invest_max_total</code> - maximum investment (power [MW] or energy [MWh]) to the virtual capacity of a group of units or to the storage capacity of a group of nodes. This should not be empty or zero, since then the model cannot invest in the technology.</li>
-<li><code>interest_rate</code> - an interest rate [e.g. 0.05 means 5%] for the technology that is sufficient to cover capital costs assuming that the economic lifetime equals the technical lifetime</li>
-<li><code>lifetime</code> - technical lifetime of the technology to calculate investment annuity (together with interest rate)</li>
-</ul>
-<p>Second, a new constraint needs to be created that ties together the storage capacity of the <em>battery</em> and the charging/discharging capacity of the <em>battery_inverter</em>. A new <code>constraint</code> object <em>battery_tie_kW_kWh</em> is created and it is given parameters <code>constant</code>, <code>is_active</code> and <code>sense</code>. Constant could be left out, since it is zero, but <code>is_active</code> must be defined in order to include the constraint in the <em>battery_invest</em> <code>alternative</code>. The <code>sense</code> of the constraint must be <em>equal</em> to enforce the kw/kWh relation.</p>
-<p>Third, both <em>battery_inverter</em> and <em>battery</em> need a coefficient to tell the model how they relate to each other. The equation has the capacity variables on the left side of the equation and the constant on the right side.</p>
-<pre><code>sum_i(`constraint_capacity_coefficient` * `invested_capacity`) = `constant` 
-      where i is any unit, connection or node that is part of the constraint
-</code></pre>
-<p>When the <code>constraint_capacity_coefficient</code> for <em>battery</em> is set at 1 and for the <em>battery_inverter</em> at -8, then the equation will force <em>battery_inverter</em> <code>capacity</code>to be 8 times smaller than the <em>battery</em> <code>capacity</code>. The negative term can be seen to move to the right side of the equation, which yields:</p>
-<p><code>1 x *battery* = 8 x *battery_inverter*, which can be true only if *battery_inverter* is 1/8 of *battery*</code></p>
-<p><code>constraint_capacity_coefficient</code> is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the object to participate in multiple constraints.</p>
-<p>Finally, FlexTool can actually mix three different types of constraint coefficients: <code>constraint_capacity_coefficient</code>, <code>constraint_state_coefficient</code> and <code>constraint_flow_coefficient</code> allowing the user to create custom constraints between any types of objects in the model for the main variables in the model (<em>flow</em>, <em>state</em> as well as <em>invest</em> and <em>divest</em>). So, the equation above is in full form:</p>
-<pre><code>  + sum_i [constraint_capacity_coefficient(i) * invested_capacity]
-           where i contains [node, unit, connection] belonging to the constraint
-  + sum_j [constraint_flow_coefficient(j) * invested_capacity]
-           where j contains [unit--node, connection--node] belonging to the constraint
-  + sum_k [constraint_state_coefficient(k) * invested_capacity] 
-           where k contains [node] belonging to the constraint
-  = 
-  constant
-</code></pre>
-<p><img alt="Add battery investments" src="../battery_invest.png" /></p>
-<h3 id="combined-heat-and-power-chp-example">Combined heat and power (CHP) example</h3>
-<p><strong>(scenario: coal_chp)</strong>
-<strong><em>init - west - coal_chp - heat</em></strong></p>
-<p>This CHP plant is an another example where the user defined <code>constraint</code> (see the last equation in the previous example) is used to achieve desired behaviour. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plant the relation is more complicated - there is an allowed operating area between heat and power. Both can be depicted in FlexTool, but here a backpressure example is given. An extraction plant would require two or more <em>greater_than</em> and/or <em>lesser_than</em> <code>constraints</code> to define an operating area.</p>
-<p>First, a new <em>heat</em> <code>node</code> is added and it is given the necessary parameters. Then the <em>coal_chp</em> <code>unit</code> is made with a high <code>efficiency</code> parameter, since CHP units convert fuel energy to power and heat at high overall rates. In FlexTool, <code>efficiency</code> is a property of the unit - it demarcates at what rate the sum of inputs is converted to the sum of outputs. However, without any additional constraints, the <code>unit</code> is free to choose in what proportion to use inputs and in which proportion to use outputs. In units with only one input and output, this freedom does not exist, but in here, the <em>coal_chp</em> needs to be constrained as otherwise the unit could produce electricity at 90% efficiency, which is not feasible. </p>
-<p>This is done by adding a new <code>constraint</code> <em>coal_chp_fix</em> where the heat and power co-efficients are fixed. You need to create the two relationships <code>unit__outputNode</code>, for <em>coal_chp--heat</em> and <em>coal_chp--west</em>. As can be seen in the bottom part of the figure below, the <code>constraint_flow_coefficient</code> parameter for the <em>coal_chp--heat</em> and <em>coal_chp--west</em> is set as a map value where the <code>constraint</code> name matches with the <em>coal_chp_fix</em> <code>constraint</code> object name. The values are set so that the constraint equation forces the heat output to be twice as large as the electricity output. Again, the negative value moves the other variable to the right side of the equality, creating this:</p>
-<p><code>1 x *electricity* = 0.5 x *heat*, which is true only if *heat* is 2 x *electricity*</code></p>
-<p><img alt="Add CHP" src="../coal_chp.png" /></p>
-<h3 id="minimum-load-example">Minimum load example</h3>
-<p><strong>(scenario: coal_min_load)</strong>
-<strong><em>init - west - coal - coal_min_load</em></strong></p>
-<p>The next example adds a minimum load behavior to the <em>coal_plant</em> <code>unit</code>. Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a <code>startup_method</code> needs to be defined and an optional <code>startup_cost</code> can be given. The options are <em>no_startup</em>, <em>linear</em> and <em>binary</em>. <em>binary</em> would require an integer variable so <em>linear</em> is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (<em>flow</em> &gt;= <em>min_load</em> x <em>capacity</em> x <em>online</em>), where 0 &lt;= <em>online</em> &lt;=1 .</p>
-<p>The online variable also allows to change the efficiency of the plant between the minimum and full loads. An unit with a part-load efficiency will obey the following equation:</p>
-<pre><code>  + sum_i[ input(i) * input_coefficient(i) ]
-  =
-  + sum_o[ output(o) * output_coefficient(o) ] * slope
-  + online * section
-
-where   slope = 1 / efficiency - section
-  and section = 1 / efficiency 
-                - ( 1 / efficiency - min_load / efficiency_at_min_load) / ( 1 - min_load )
-</code></pre>
-<p>By default, <code>input_coefficient</code> and <code>output_coefficient</code> are 1, but if there is a need to tweak their relative contributions, these coefficients allow to do so (e.g. a coal plant might have lower efficieny when using lignite than when using brown coal).</p>
-<p>The input is required at different ouput levels is shown in the figure below, when Capacity = 100, Efficiency = 0.8, Minimum load = 0.6 and Efficiency at minimum load = 0.5.</p>
-<p><img alt="Min load figure" src="../Minimum_load.png" /></p>
-<p><img alt="Add min_load" src="../coal_min_load.png" /></p>
-<h3 id="adding-co2-emissions-and-costs">Adding CO2 emissions and costs</h3>
-<p><strong>(scenario: coal_co2)</strong>
-<strong><em>init - west - coal - co2</em></strong></p>
-<p>Carbon dioxide emissions are added to FlexTool by associating relevant <code>commodities</code> (e.g. <em>coal</em>) with a <code>co2_content</code> parameter (CO2 content per MWh of energy contained in the fuel). To set a price for the CO2, the nodes that use those commodities will need to be linked to a <code>group</code> of <code>nodes</code> that set the <code>co2_price</code> (currency / CO2 ton). Therefore, in addition to what is visible in the figure below, a relationship <em>co2_price--coal_market</em> must be established so that the model knows to point the <code>CO2_price</code> to the <em>coal_market</em> <code>node</code> based on the <code>co2_content</code> of the <em>coal</em> <code>commodity</code> used.</p>
-<p><img alt="Add CO2" src="../coal_co2.png" /></p>
-<h3 id="full-year-model">Full year model</h3>
-<p><strong><em>init - west - fullYear</em></strong></p>
-<p>So far the model has been using only two days to keep it fast to run. This example extends the model horizon to a full year. To do so, a new <code>solve</code> object <em>y2020_fullYear_dispatch</em> is added. Each <code>solve</code> object needs to know what <code>periods</code> it will contain and what <code>periods</code> it will realize (print out results). <code>solve_mode</code> does not do anything at present, but will be used when FlexTool can be set to do automatic rolling window optimization (at present, it needs to be set manually using multiple solves). The key difference here is that the <code>period_timeblockSet</code> parameter points the <em>p2020</em> period to a timeblockSet definition that covers the full year instead of the two days used before.</p>
-<p><img alt="fullYear" src="../fullYear.png" /></p>
-<h3 id="a-system-with-coal-wind-network-battery-and-co2-over-a-full-year">A system with coal, wind, network, battery and CO2 over a full year</h3>
-<p><strong>(scenario: network_coal_wind_battery_co2_fullYear)</strong>
-<strong><em>init - west - coal - wind - network - battery - co2 - fullYear</em></strong></p>
-<p>This example shows a system where many of the previous examples have been put into one model and run for one year. The graph below shows the physical objects in the example.</p>
-<p><img alt="Entity graph" src="../coal_wind_chp_battery_graph.png" /></p>
-<h3 id="representative-periods">Representative periods</h3>
-<p><strong>(scenario: wind_battery_invest)</strong>
-<strong><em>init - west - wind - battery - battery_invest - 5weeks</em></strong></p>
-<p>When using the model for investment decisions, the model can often become too large to solve. Representative periods can be used to take a sample of a full year that tries to depict the dynamics in a reasonable manner. In FlexTool, this is done with the <code>block_duration</code> parameter. It needs to contain the starting timestep and the duration of each period as shown in figure below.</p>
-<p><img alt="Representative periods" src="../representative_periods.png" /></p>
-<h3 id="multi-year-model">Multi-year model</h3>
-<p><strong>(scenario: multi_year)</strong>
-<strong><em>init - west - wind - coal - coal_invest - 5weeks - multi-year</em></strong></p>
-<p>A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the <em>west</em> <code>node</code>. This means that all periods can use the same timeblockset <em>5weeks</em> from the same timeline <em>y2020</em>, but one can also make separate timelines for each year, if the data is available for this. The <code>inflow</code> time series are scaled to match the value in <code>annual_flow</code> that is mapped for each period. The model is using the <code>inflow_method</code> <em>scale_to_annual</em> in order to achieve this (default is <em>use_original</em> that would not perform scaling). There should also be a <code>discount_rate</code> parameter set for the <code>model</code> object <em>flexTool</em> if something else than the model default of 5% (0.05 value) is to be used.</p>
-<p><img alt="Multi-year model data" src="../multi_year_solves.png" /></p>
-<p>A multi-year model could be solved at one go or by rolling through several solves where each solve has a foresight horizon and a realisation horizon as can be seen from the figure below. In this example, the model rolls through several solves and therefore, in the figure above, the <code>model</code> object <em>flexTool</em> has four values in the <code>solves</code> array. Each value respresents one solve and it's position in the sequence of solves.</p>
-<p><img alt="One vs multi solve" src="../one_multi_solve.png" /></p>
-<p>Next figure shows the values needed to define one solve (out of the four solves in the example). All of these need to be repeated for each solve in the model.</p>
-<ul>
-<li><code>years_represented</code> parameter is used by the model to calculate the discounting factors for the periods in the model (often future years). It should  state the number of years each period will be representing. For example, a period for 2025 could represent the years 2025-2029 if its <code>years_represented</code> is set to 5. Any investments would be take place at the start of 2025 and discounted to the beginning of 2025, but the operational costs would accrue from each year in 2025-2029 each with a different discounting factor (decreasing based on interest rate).</li>
-<li><code>invest_periods</code> parameter says in which periods the model is allowed to make investments</li>
-<li><code>realized_periods</code> parameter states the periods that will be realized in this solve (results output)</li>
-<li><code>period_timeblockset</code> defines the set of representative 'periods' (timeblocks in FlexTool) to be used in each FlexTool <code>period</code>.</li>
-</ul>
-<p><img alt="Solve data" src="../data_for_one_solve.png" /></p>
-<h3 id="discount-calculations">Discount calculations</h3>
-<p>Each asset that can be invested in should have <code>invest_cost</code>, <code>lifetime</code> and <code>interest_rate</code> parameters set and could have an optional <code>fixed_cost</code>. These are used to calculate the annuity of the investment. Annuity is used to annualize the investment cost, since FlexTool scales all costs (operational, investment and fixed) to annual level in order to make them comparable. Annuity is calculated as follows:</p>
-<p><code>invest_cost</code> * <code>interest_rate</code> / { 1 - [ 1 / ( 1 + <code>interest_rate</code> ) ] ^ <code>lifetime</code> } + <code>fixed_cost</code></p>
-<p>The next step is to consider discounting - future is valued less than the present. There is a model-wide assumption for the <code>discount_rate</code>. By default it is 0.05 (i.e. 5%), but it can be changed through the <code>discount_rate</code> parameter set for the <em>flexTool</em> <code>model</code> object. Discount factor for every period in the model is calculated from the <code>discount_rate</code> using the <code>years_represented</code> parameter of each <code>solve</code>, which how many years the period represents. Values for <code>years_represented</code> are used to calculate how many <code>years_from_solve_start</code> each year is. The formula is:</p>
-<p>[ 1 / ( 1 + <code>discount_rate</code> ) ] ^ <code>years_from_solve_start</code></p>
-<p>Operational costs are also discounted using the same <code>discount_rate</code>. However, with operational costs it is assumed that they take place on average at the middle of the year whereas investment costs are assumed to take place at the beginning of the year (they are available for the whole year). These can be tweaked with the <code>discount_offset_investments</code> and <code>discount_offset_operations</code> parameters (given in years). Please note that given this formulation, <strong><code>invest_cost</code> should be the overnight built cost</strong> (as is typical in energy system modelling, the model does not assume any construction time - the financing costs of the construction period need to be included in your cost assumptions).</p>
-<p>The model has a model horizon based on the <code>years_represented</code> parameters. The model will not include discounted investment annuities after the model horizon (in other words, the investments are 'returned' at the end of the model horizon). Naturally also operational costs are included only until the end of the model horizon. </p>
-<p>Finally, the retirements work similar to investments using the same <code>discount_rate</code> and <code>interest_rate</code> parameters but with <code>salvage_value</code> as the benefit from retiring the unit.</p>
+<p>More instructions on how to create individual parts of the model can be found in the <a href="https://irena-flextool.github.io/flextool/how_to">How to</a> section.</p>
+<p>You can also look and play with the ready scenarios from the init database. Purge <em>Input_data</em> and <em>Initialize</em> it to copy the init database to it. This can be done with the 'purge' tool from the Database Editor menu: in <code>purge</code>, click on both <em>Select entity and value items</em>, and <em>Select scenario items</em> and then purge. Then select the initialize tool and run it to copy the init.sqlite to the input_data.sqlite.</p>
               
             </div>
           </div><footer>

@@ -88,6 +88,8 @@
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#investment-parameters-for-capacity-expansion">Investment parameters for capacity expansion</a>
     </li>
+    <li class="toctree-l3"><a class="reference internal" href="#discount-calculations">Discount calculations</a>
+    </li>
     <li class="toctree-l3"><a class="reference internal" href="#relationship-of-a-unit-to-a-node-and-determination-of-the-type-of-relationship">Relationship of a unit to a node and determination of the type of relationship</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#properties-of-unit-inputnode-and-unit-outputnode-relationships">Properties of unit--inputNode and unit--outputNode relationships</a>
@@ -361,6 +363,14 @@
 <li><code>virtual_unitsize</code> - [MWh] Size of a single unit - used for integer investments (lumped investments). If not given, assumed from the existing capacity.</li>
 </ul>
 <p><img alt="image" src="../generators.png" /></p>
+<h3 id="discount-calculations">Discount calculations</h3>
+<p>Each asset that can be invested in should have <code>invest_cost</code>, <code>lifetime</code> and <code>interest_rate</code> parameters set and could have an optional <code>fixed_cost</code>. These are used to calculate the annuity of the investment. Annuity is used to annualize the investment cost, since FlexTool scales all costs (operational, investment and fixed) to annual level in order to make them comparable. Annuity is calculated as follows:</p>
+<p><code>invest_cost</code> * <code>interest_rate</code> / { 1 - [ 1 / ( 1 + <code>interest_rate</code> ) ] ^ <code>lifetime</code> } + <code>fixed_cost</code></p>
+<p>The next step is to consider discounting - future is valued less than the present. There is a model-wide assumption for the <code>discount_rate</code>. By default it is 0.05 (i.e. 5%), but it can be changed through the <code>discount_rate</code> parameter set for the <em>flexTool</em> <code>model</code> object. Discount factor for every period in the model is calculated from the <code>discount_rate</code> using the <code>years_represented</code> parameter of each <code>solve</code>, which how many years the period represents. Values for <code>years_represented</code> are used to calculate how many <code>years_from_solve_start</code> each year is. The formula is:</p>
+<p>[ 1 / ( 1 + <code>discount_rate</code> ) ] ^ <code>years_from_solve_start</code></p>
+<p>Operational costs are also discounted using the same <code>discount_rate</code>. However, with operational costs it is assumed that they take place on average at the middle of the year whereas investment costs are assumed to take place at the beginning of the year (they are available for the whole year). These can be tweaked with the <code>discount_offset_investments</code> and <code>discount_offset_operations</code> parameters (given in years). Please note that given this formulation, <strong><code>invest_cost</code> should be the overnight built cost</strong> (as is typical in energy system modelling, the model does not assume any construction time - the financing costs of the construction period need to be included in your cost assumptions).</p>
+<p>The model has a model horizon based on the <code>years_represented</code> parameters. The model will not include discounted investment annuities after the model horizon (in other words, the investments are 'returned' at the end of the model horizon). Naturally also operational costs are included only until the end of the model horizon. </p>
+<p>Finally, the retirements work similar to investments using the same <code>discount_rate</code> and <code>interest_rate</code> parameters but with <code>salvage_value</code> as the benefit from retiring the unit.</p>
 <h3 id="relationship-of-a-unit-to-a-node-and-determination-of-the-type-of-relationship">Relationship of a unit to a node and determination of the type of relationship</h3>
 <ul>
 <li>If the unit’s outputs are flowing into the node, the node acts as output for the unit.</li>
