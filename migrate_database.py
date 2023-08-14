@@ -25,6 +25,7 @@ def migrate_database(database_path):
     else:
         version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
+    version_updated_flag = False
     for index, func in enumerate(update_functions):
         if index >= version:
             completed = func(db)
@@ -32,12 +33,15 @@ def migrate_database(database_path):
                 print(str(database_path) + " migration failed in the jump to version " + str(version + 1))
                 exit(-1)
             version += 1
+            version_updated_flag = True
 
-    version_up = [["model", "version", version, None, "Contains database version information."]]
-    (num,log) = import_data(db, object_parameters = version_up)
-    print(database_path+ " updated to version "+ str(version))
-    
-    db.commit_session("Updated Flextool data structure to version " + str(version))
+    if version_updated_flag:
+        version_up = [["model", "version", version, None, "Contains database version information."]]
+        (num,log) = import_data(db, object_parameters = version_up)
+        print(database_path+ " updated to version "+ str(version))
+        db.commit_session("Updated Flextool data structure to version " + str(version))
+    else:
+        print(database_path+ " already up-to-date at version "+ str(version))
 
 def add_version(db):
     # this function adds the version information to the database if there is none
