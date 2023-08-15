@@ -44,10 +44,6 @@ class FlexToolRunner:
         self.timeblocks = self.get_timeblocks()
         self.timeblocks__timeline = self.get_timeblocks_timelines()
         self.timeblocks_used_by_solves = self.get_timeblocks_used_by_solves()
-        self.invest_periods = self.get_list_of_tuples('input/solve__invest_period.csv')
-        self.realized_periods = self.get_list_of_tuples('input/solve__realized_period.csv')
-        self.realized_invest_periods =  self.get_list_of_tuples('input/solve__realized_invest_period.csv')
-        self.fix_storage_periods = self.get_list_of_tuples('input/solve__fix_storage_period.csv')
         self.solver_precommand = self.get_solver_precommand()
         self.solver_arguments = self.get_solver_arguments()
         self.contains_solves = self.get_contains_solves()
@@ -56,8 +52,74 @@ class FlexToolRunner:
         self.create_timeline_from_timestep_duration()
         self.first_of_solve = []
         self.last_of_solve = []
+        self.invest_periods = self.get_list_of_tuples('input/solve__invest_period.csv') + self.get_2d_map_periods('input/solve__invest_period_2d_map.csv')
+        self.realized_periods = self.get_list_of_tuples('input/solve__realized_period.csv') + self.get_2d_map_periods('input/solve__realized_period_2d_map.csv')
+        self.realized_invest_periods = self.get_list_of_tuples('input/solve__realized_invest_period.csv') + self.get_2d_map_periods('input/solve__realized_invest_period_2d_map.csv')
+        self.fix_storage_periods = self.get_list_of_tuples('input/solve__fix_storage_period.csv') + self.get_2d_map_periods('input/solve__fix_storage_period_2d_map.csv')
+        self.remove_periods()
         #self.write_full_timelines(self.timelines, 'steps.csv')
     
+    def remove_periods(self):
+        for solve, items in list(self.solve_period_years_represented.items()):
+            keep=[]
+            for period_years in items:
+                if (solve,period_years[0])  in self.fix_storage_periods or (solve,period_years[0]) in self.realized_periods or (solve,period_years[0]) in self.realized_invest_periods or (solve,period_years[0]) in self.invest_periods:
+                    keep.append(period_years)
+            self.solve_period_years_represented[solve] = keep 
+
+        for solve, items in list(self.timeblocks_used_by_solves.items()):
+            keep=[]
+            for period_timeblock in items:
+                if (solve,period_timeblock[0])  in self.fix_storage_periods or (solve,period_timeblock[0]) in self.realized_periods or (solve,period_timeblock[0]) in self.realized_invest_periods or (solve,period_timeblock[0]) in self.invest_periods:
+                    keep.append(period_timeblock)
+            self.timeblocks_used_by_solves[solve] = keep 
+    
+    
+    def get_2d_map_periods(self,input_filename):
+
+        with open(input_filename, 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            period_list = []
+            while True:
+                try:
+                    datain = next(filereader)
+                    new_name = datain[0]+"_"+datain[1]
+                    self.duplicate_solve(datain[0],new_name)
+                    period_list.append((new_name,datain[2]))
+                except StopIteration:
+                    break
+        return period_list
+    
+    def duplicate_map(self,old_solve,new_solve,dup_map):
+        if old_solve in dup_map.keys():
+            dup_map[new_solve]=dup_map[old_solve]
+        
+    def duplicate_solve(self, old_solve, new_name):
+        if new_name not in self.model_solve.values() and new_name not in self.contains_solves.values():
+            dup_map_list=[
+                self.solve_modes,
+                self.roll_counter,
+                self.highs_presolve,
+                self.highs_method,
+                self.highs_parallel,
+                self.solve_period_years_represented,
+                self.solvers,
+                self.timeblocks_used_by_solves,
+                self.solver_precommand,
+                self.solver_arguments,
+                self.contains_solves,
+                self.rolling_times
+            ]
+            for dup_map in dup_map_list:
+                self.duplicate_map(old_solve,new_name,dup_map)
+            for model, solves in list(self.model_solve.items()):
+                if old_solve in solves:
+                    solves.remove(old_solve)
+                if new_name not in solves:
+                    solves.append(new_name)
+                self.model_solve[model] = solves
+
     def get_solves(self):
         """
         read in
@@ -1102,7 +1164,7 @@ class FlexToolRunner:
 
         solves=[]
 
-        #check that the lower level solves have periods only from of upper_level
+        #check that the lower level solves have periods only from of upper_level realizations
         full_active_time_own = self.get_active_time(solve, self.timeblocks_used_by_solves, self.timeblocks,self.timelines, self.timeblocks__timeline)
         if len(realized) != 0:
             for key, item in list(full_active_time_own.items()):
@@ -1286,7 +1348,7 @@ def main():
         for solve_2 in real_solves:
             if solve_2 == solve:
                 break
-            for solve__period in (runner.realized_periods+runner.realized_invest_periods+runner.fix_storage_periods):
+            for solve__period in (runner.realized_periods+runner.realized_invest_periods+runner.fix_storage_periods+runner.realized_invest_periods):
                 if solve__period[0] == solve_2:
                     this_solve = runner.solve_period_years_represented[solve_2]
                     for period in this_solve:
@@ -1322,11 +1384,11 @@ def main():
         runner.write_fixed_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
         #if timeline created from new step_duration, all timeseries have to be averaged for the new timestep
         runner.create_averaged_timeseries(complete_solve[solve])
-        if i in runner.first_of_solve:
+        if solve in runner.first_of_solve:
             first_of_nested_level = True
         else:
             first_of_nested_level = False
-        if i in runner.last_of_solve:
+        if solve in runner.last_of_solve:
             last_of_nested_level = True
         else:
             last_of_nested_level = False

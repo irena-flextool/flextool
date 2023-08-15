@@ -1368,7 +1368,7 @@ minimize total_cost:
       + pdNode[n, 'storage_state_reference_price', d]
         * v_state[n, d, t] * p_entity_unitsize[n]
 		* step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
-  + sum {e in entity, d in period}  # This is constant term and will be dropped by the solver. Here for completeness.
+  + sum {e in entity, d in period_in_use}  # This is constant term and will be dropped by the solver. Here for completeness.
     + p_entity_all_existing[e, d]
       * ( + (if e in node then pdNode[e, 'fixed_cost', d] * 1000)
 	      + (if e in process then pdProcess[e, 'fixed_cost', d] * 1000)
@@ -1392,11 +1392,11 @@ param w_total_cost := gmtime() - datetime0 - setup1 - w_calc_slope - setup2;
 display w_total_cost;
 
 #Storage state fix quantity for timesteps
-s.t. node_balance_fix_quantity_eq {(n, d, t) in ndt_fix_storage_quantity: (d, t) in dt}:
+s.t. node_balance_fix_quantity_eq {(n, d, t) in ndt_fix_storage_quantity: (d, t) in dt && (d,t) not in period__time_first && (d,t) not in period__time_last}:
   + v_state[n,d,t]* p_entity_unitsize[n] = + p_fix_storage_quantity[n,d,t];
 
 #Storage state fix price for timesteps
-s.t. node_balance_fix_price_eq {(n, d, t) in ndt_fix_storage_price: (d, t) in dt}:
+s.t. node_balance_fix_price_eq {(n, d, t) in ndt_fix_storage_price: (d, t) in dt && (d,t) not in period__time_first && (d,t) not in period__time_last}:
   + v_state[n,d,t]* pdNode[n, 'storage_state_reference_price', d]* p_entity_unitsize[n] = + p_fix_storage_price[n,d,t];
 
 
@@ -3124,21 +3124,21 @@ for {s in solve_current, d in period}
   { 
     printf '%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
       s, d,
-    if d in d_realize_invest then (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0,
-    if d in d_realize_invest then  (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0,
-    if d in d_realize_invest then  (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0,
-	  if d in d_realize_invest then  r_costExistingFixed_d[d] / p_discount_factor_operations_yearly[d] / 1000000 else 0,
-    if d in d_realize_invest then sum{g in groupCapacityMargin : d in period_invest} (r_costPenalty_capacity_margin_d[g, d] / p_discount_factor_operations_yearly[d]) / 1000000 else 0,
-    if d in d_realized_period then  r_cost_commodity_d[d] / complete_period_share_of_year[d] / 1000000 else 0,
-	  if d in d_realized_period then r_cost_co2_d[d] / complete_period_share_of_year[d] / 1000000 else 0,
-	  if d in d_realized_period then r_cost_variable_d[d] / complete_period_share_of_year[d] / 1000000 else 0,
-	  if d in d_realized_period then r_cost_startup_d[d] / complete_period_share_of_year[d] / 1000000 else 0,
-	  if d in d_realized_period then sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'up', d] / complete_period_share_of_year[d]) / 1000000 else 0,
-	  if d in d_realized_period then sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / complete_period_share_of_year[d]) / 1000000 else 0,
-	  if d in d_realized_period then sum{g in groupInertia} (r_costPenalty_inertia_d[g, d] / complete_period_share_of_year[d]) / 1000000 else 0,
-	  if d in d_realized_period then sum{g in groupNonSync} (r_costPenalty_non_synchronous_d[g, d] / complete_period_share_of_year[d]) / 1000000 else 0,
-	  if d in d_realized_period then sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / complete_period_share_of_year[d]) / 1000000 else 0,
-	  if d in d_realized_period then sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / complete_period_share_of_year[d]) / 1000000  else 0
+    (if d in d_realize_invest then (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0),
+    (if d in d_realize_invest then  (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0),
+    (if d in d_realize_invest then  (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0),
+	  (if d in d_realize_invest then  r_costExistingFixed_d[d] / p_discount_factor_operations_yearly[d] / 1000000 else 0),
+    (if d in d_realize_invest then sum{g in groupCapacityMargin : d in period_invest} (r_costPenalty_capacity_margin_d[g, d] / p_discount_factor_operations_yearly[d]) / 1000000 else 0),
+    (if d in d_realized_period then  r_cost_commodity_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
+	  (if d in d_realized_period then r_cost_co2_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
+	  (if d in d_realized_period then r_cost_variable_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
+	  (if d in d_realized_period then r_cost_startup_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
+	  (if d in d_realized_period then sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'up', d] / complete_period_share_of_year[d]) / 1000000 else 0),
+	  (if d in d_realized_period then sum{n in nodeBalance} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / complete_period_share_of_year[d]) / 1000000 else 0),
+	  (if d in d_realized_period then sum{g in groupInertia} (r_costPenalty_inertia_d[g, d] / complete_period_share_of_year[d]) / 1000000 else 0),
+	  (if d in d_realized_period then sum{g in groupNonSync} (r_costPenalty_non_synchronous_d[g, d] / complete_period_share_of_year[d]) / 1000000 else 0),
+	  (if d in d_realized_period then sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / complete_period_share_of_year[d]) / 1000000 else 0),
+	  (if d in d_realized_period then sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / complete_period_share_of_year[d]) / 1000000  else 0)
 	>> fn_summary_cost;
   } 
 

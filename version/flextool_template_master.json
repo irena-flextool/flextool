@@ -537,11 +537,11 @@
         ],
         [
             "solve_mode",
-            "rolling_window"
+            "single_solve"
         ],
         [
             "solve_mode",
-            "single_solve"
+            "rolling_window"
         ],
         [
             "solver",
@@ -1347,13 +1347,6 @@
         ],
         [
             "node",
-            "storate_state_end",
-            null,
-            null,
-            null
-        ],
-        [
-            "node",
             "virtual_unitsize",
             null,
             null,
@@ -1375,14 +1368,7 @@
         ],
         [
             "solve",
-            "create_timestep_duration",
-            null,
-            null,
-            "Hours. Creates a new timeline and timeblocks for this solve with this timestep duration but using the timestamps of the old. Timeblock duration is the floor of old_timeblock_duration/step_duration. The next existing timestep on the new timeline is used as the start of the block"
-        ],
-        [
-            "solve",
-            "fix_storage_period",
+            "fix_storage_periods",
             "",
             null,
             "Array of periods where the storage_values are fixed when the node has storage_include_solve_fix_method is set"
@@ -1410,24 +1396,10 @@
         ],
         [
             "solve",
-            "include_solve",
-            null,
-            null,
-            "Array of included_solves - used for nested solve sequences"
-        ],
-        [
-            "solve",
             "invest_periods",
             null,
             null,
             "Array of periods where investments are allowed."
-        ],
-        [
-            "solve",
-            "invest_realized_periods",
-            null,
-            null,
-            "Array of the periods that will realize the investment decisions"
         ],
         [
             "solve",
@@ -1902,13 +1874,6 @@
         ],
         [
             "unit__inputNode",
-            "max_relative_capacity",
-            null,
-            null,
-            null
-        ],
-        [
-            "unit__inputNode",
             "other_operational_cost",
             null,
             null,
@@ -1976,13 +1941,6 @@
             null,
             null,
             "Chooses whether the unit is synchronously connected to this node."
-        ],
-        [
-            "unit__outputNode",
-            "max_relative_capacity",
-            null,
-            null,
-            null
         ],
         [
             "unit__outputNode",
