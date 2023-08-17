@@ -184,6 +184,22 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 ![image](./generators.png)
 
+### Discount calculations
+
+Each asset that can be invested in should have `invest_cost`, `lifetime` and `interest_rate` parameters set and could have an optional `fixed_cost`. These are used to calculate the annuity of the investment. Annuity is used to annualize the investment cost, since FlexTool scales all costs (operational, investment and fixed) to annual level in order to make them comparable. Annuity is calculated as follows:
+
+`invest_cost` * `interest_rate` / { 1 - [ 1 / ( 1 + `interest_rate` ) ] ^ `lifetime` } + `fixed_cost`
+
+The next step is to consider discounting - future is valued less than the present. There is a model-wide assumption for the `discount_rate`. By default it is 0.05 (i.e. 5%), but it can be changed through the `discount_rate` parameter set for the *flexTool* `model` object. Discount factor for every period in the model is calculated from the `discount_rate` using the `years_represented` parameter of each `solve`, which how many years the period represents. Values for `years_represented` are used to calculate how many `years_from_solve_start` each year is. The formula is:
+
+[ 1 / ( 1 + `discount_rate` ) ] ^ `years_from_solve_start`
+
+Operational costs are also discounted using the same `discount_rate`. However, with operational costs it is assumed that they take place on average at the middle of the year whereas investment costs are assumed to take place at the beginning of the year (they are available for the whole year). These can be tweaked with the `discount_offset_investments` and `discount_offset_operations` parameters (given in years). Please note that given this formulation, **`invest_cost` should be the overnight built cost** (as is typical in energy system modelling, the model does not assume any construction time - the financing costs of the construction period need to be included in your cost assumptions).
+
+The model has a model horizon based on the `years_represented` parameters. The model will not include discounted investment annuities after the model horizon (in other words, the investments are 'returned' at the end of the model horizon). Naturally also operational costs are included only until the end of the model horizon. 
+ 
+Finally, the retirements work similar to investments using the same `discount_rate` and `interest_rate` parameters but with `salvage_value` as the benefit from retiring the unit.
+
 ### Relationship of a unit to a node and determination of the type of relationship
 
 - If the unit’s outputs are flowing into the node, the node acts as output for the unit.

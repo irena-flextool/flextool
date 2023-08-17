@@ -698,7 +698,7 @@ class FlexToolRunner:
                 with open('HiGHS.log','r') as inf_file:
                     inf_content = inf_file.read() 
                     if 'Infeasible' in inf_content:
-                        logging.error(f"The model is infeasible. Check the storage constraints.")
+                        logging.error(f"The model is infeasible. Check the constraints.")
                         exit(1)
             
             elif solver == "cplex": #or gurobi

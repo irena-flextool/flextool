@@ -1,17 +1,27 @@
 import json
 import os
 import subprocess
+import shutil
 
 from migrate_database import migrate_database
 
 
 def update_flextool():
 
+    shutil.copy('./.spinetoolbox/project.json','./.spinetoolbox/project_temp.json')
+    completed = subprocess.run(["git","restore","."])
     completed = subprocess.run(["git","pull"])
+    shutil.copy('./.spinetoolbox/project_temp.json','./.spinetoolbox/project.json')
+    os.remove('./.spinetoolbox/project_temp.json')
 
     if completed.returncode != 0:
         print("Failed to get the new version")
         exit(-1)
+
+    if not os.path.exists('Input_data.sqlite'):
+        shutil.copy('input_data_template.sqlite','Input_data.sqlite')
+    if not os.path.exists('Results.sqlite'):
+        shutil.copy('Results_template.sqlite','Results.sqlite')
 
     db_to_update = []
     db_to_update.append('init.sqlite')
