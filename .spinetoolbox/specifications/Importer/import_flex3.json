@@ -3233,6 +3233,26 @@
                     }
                 }
             ],
+            "annualized_dispatch_costs__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
             "annualized_dispatch_costs__period__t": [
                 {
                     "Mapping 1": {
@@ -3274,6 +3294,26 @@
                 }
             ],
             "group_node__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "costs_total_discounted": [
                 {
                     "Mapping 1": {
                         "mapping": [
@@ -3510,10 +3550,10 @@
             "group__process__node__period__t",
             "costs_discounted",
             "costs_discounted__solve",
-            "annualized_costs__period",
             "costs_total_discounted",
             "unit_curtailment_share__outputNode__period",
-            "unit_curtailment__outputNode__period__t"
+            "unit_curtailment__outputNode__period__t",
+            "annualized_costs__period"
         ],
         "table_options": {
             "node__period": {},
@@ -3624,6 +3664,7 @@
             "costs_discounted__solve": {
                 "has_header": false
             },
+            "costs_total_discounted": {},
             "unit_curtailment_share__outputNode__period": {
                 "has_header": false
             },
@@ -3631,6 +3672,7 @@
                 "has_header": false
             },
             "annualized_costs__period": {},
+            "annualized_dispatch_costs__period": {},
             "annualized_dispatch_costs__period__t": {},
             "annualized_investment_costs__period": {},
             "group_node__period__t": {}
@@ -3948,7 +3990,7 @@
                 "3": "float"
             },
             "annualized_costs__period": {
-                "0": "string",
+                "0": "float",
                 "1": "string",
                 "2": "float",
                 "3": "float",
@@ -3965,6 +4007,20 @@
                 "14": "float",
                 "15": "float",
                 "16": "float"
+            },
+            "annualized_dispatch_costs__period": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string",
+                "6": "string",
+                "7": "string",
+                "8": "string",
+                "9": "string",
+                "10": "string",
+                "11": "string"
             },
             "annualized_dispatch_costs__period__t": {
                 "0": "string",
