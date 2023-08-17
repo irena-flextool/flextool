@@ -126,7 +126,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "cost"
+                    "value": "cost_annualized"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -136,7 +136,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^cost$"
+                    "filter_re": "^cost_annualized$"
                 },
                 {
                     "map_type": "ParameterValueList",
