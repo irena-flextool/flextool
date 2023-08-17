@@ -1426,8 +1426,7 @@ def main():
         }
         timewise_groupby = {
         "annualized_dispatch_costs__period": [[],1],
-        "node__period": [["node"],1],
-        "group_node__period": [["group"],1]
+        "node__period": [["node"],1]
         }
         timewise_average_groupby = {
         "process__reserve__upDown__node__period": [[],6],
