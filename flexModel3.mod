@@ -2504,7 +2504,7 @@ param entity_all_capacity{e in entity, d in period} :=
   + sum {(e, d_invest, d) in edd_invest} v_invest[e, d_invest].val * p_entity_unitsize[e]
   - sum {(e, d_divest) in ed_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[e, d_divest].val * p_entity_unitsize[e]
 ;
-display entity_all_capacity;
+
 param r_process_online_dt{p in process_online, (d, t) in dt} :=
   + (if p in process_online_linear then v_online_linear[p, d, t].val)
   + (if p in process_online_integer then v_online_integer[p, d, t].val);
@@ -3037,7 +3037,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	    printf ',%s', g >> fn_groupProcessNode__dt;
 	  }
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
     printf '\n%s,%s,%s', s, d, t >> fn_groupProcessNode__dt;
 	for {g in groupOutput_process}
@@ -3199,7 +3199,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '"non-synchronous penalty","upward reserve penalty",' >> fn_annual_dispatch_summary_cost;
 	printf '"downward reserve penalty"\n' >> fn_annual_dispatch_summary_cost;
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   { 
     printf '%s,%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
       s, d, t,
@@ -3227,7 +3227,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '"downward slack penalty","inertia slack penalty","non-synchronous slack penalty",' >> fn_summary_cost_dt;
 	printf '"upward reserve slack penalty","downward reserves slack penalty"\n' >> fn_summary_cost_dt;
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   { 
     printf '%s,%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
       s, d, t,
@@ -3272,7 +3272,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit__sinkNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', sink >> fn_unit__sinkNode__dt;
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit__sinkNode__dt;
     for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit}
@@ -3304,7 +3304,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit__sourceNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', source >> fn_unit__sourceNode__dt;
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit__sourceNode__dt;
     for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}
@@ -3338,7 +3338,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_connection__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection__dt;
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_connection__dt;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3417,7 +3417,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_unit__sinkNode__d_curtailment;
 	for {(u, sink) in process_sink : u in process_VRE} printf ',%s', sink >> fn_unit__sinkNode__d_curtailment;
   }
-for {s in solve_current, d in period_realized}
+for {s in solve_current, d in d_realized_period}
   {
 	printf '\n%s,%s', s, d >> fn_unit__sinkNode__d_curtailment;
     for {(u, sink) in process_sink : u in process_VRE}
@@ -3435,7 +3435,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit__sinkNode__dt_curtailment;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_VRE} printf ',%s', sink >> fn_unit__sinkNode__dt_curtailment;
   }
-for {s in solve_current, (d, t) in dt : d in period_realized}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit__sinkNode__dt_curtailment;
     for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_VRE}
@@ -3495,7 +3495,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_process__reserve__upDown__node__dt;
     for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', n >> fn_process__reserve__upDown__node__dt;
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_process__reserve__upDown__node__dt;
 	for {(p, r, ud, n) in process_reserve_upDown_node_active}
@@ -3588,7 +3588,7 @@ for {n in node, s in solve_current, d in d_realized_period}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
 		, n, s, d
-        , (if (n, 'no_inflow') not in node__inflow_method then sum{(d, t) in dt : (d, t) in dt_realize_dispatch} pdtNodeInflow[n, d, t])
+        , (if (n, 'no_inflow') not in node__inflow_method then sum{(d, t) in dt_realize_dispatch} pdtNodeInflow[n, d, t])
 	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_unit} r_process_source_sink_flow_d[p, source, n, d]
 	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_connection} r_process_source_sink_flow_d[p, source, n, d]
   	    , sum{(p, n, sink) in process_source_sink_alwaysProcess : p in process_unit} -r_process_source_sink_flow_d[p, n, sink, d]
@@ -3657,7 +3657,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {n in nodeState}
       { printf ',%s', n >> fn_nodeState__dt; }
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   { printf '\n%s,%s,%s', s, d, t >> fn_nodeState__dt;
     for {n in nodeState} 
       {
@@ -3678,7 +3678,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {(r, ud, g) in reserve__upDown__group}
       { printf ',%s', g >> fn_group_reserve_price__dt; }
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
     printf '\n%s,%s,%s', s, d, t >> fn_group_reserve_price__dt;
     for {(r, ud, g) in reserve__upDown__group}
@@ -3898,7 +3898,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {g in groupInertia}
 	  { printf ',%s', g >> fn_group_inertia__dt; }
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
     printf '\n%s,%s,%s', s, d, t >> fn_group_inertia__dt;
 	for {g in groupInertia}
@@ -3921,7 +3921,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {g in groupInertia}
 	  { printf ',%s', g >> fn_group_inertia_largest_flow__dt; }
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
     printf '\n%s,%s,%s', s, d, t >> fn_group_inertia_largest_flow__dt;
 	for {g in groupInertia}
@@ -3948,7 +3948,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {(r, ud, g) in reserve__upDown__group}
       { printf ',%s', g >> fn_group_reserve_slack__dt; }
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
     printf '\n%s,%s,%s', s, d, t >> fn_group_reserve_slack__dt;
     for {(r, ud, g) in reserve__upDown__group}
@@ -3965,7 +3965,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {g in groupNonSync}
       { printf ',%s', g >> fn_group_nonsync_slack__dt; }
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
     for {g in groupNonSync}
       {
@@ -3983,7 +3983,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {g in groupInertia}
       { printf ',%s', g >> fn_group_inertia_slack__dt; }
   }
-for {s in solve_current, (d, t) in dt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
     for {g in groupInertia}
       {
@@ -4072,11 +4072,11 @@ display w_unit_test;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
 #display {p in process_online, (d, t) in dt : (d, t) in test_dt} : r_process_online_dt[p, d, t];
-display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
-display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val * p_entity_unitsize[n];
+#display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
+#display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val * p_entity_unitsize[n];
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p];
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val * ptReserve_upDown_group[r, ud, ng, 'reservation', t];
-display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val;# * pdtNodeInflow_for_scaling[n, d, t];
+#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val;# * pdtNodeInflow_for_scaling[n, d, t];
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val * pdtNodeInflow_for_scaling[n, d, t];
 #display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
 #display {n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d];
