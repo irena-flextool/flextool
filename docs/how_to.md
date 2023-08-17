@@ -506,9 +506,11 @@ Next figure shows the values needed to define one solve (out of the four solves 
 
 ## How to use Rolling window for dispatch solve
 
-The rolling window solve can be used when the model gets too big and solving times get too long. When using rolling window solve, you are solving the model with less information. Therefore, it will change the results and it is important to know how the results change and what phenomena is left out when certain information is left out of the model. 
-The rolling window solve splits the time dimension into overlapping parts and solves them separatelly. For example, instead of a full year in one solve, you can split it to 6 four-month solves where each solve outputs only the first two months. The solves would therefore include the months:
-- Roll: Solve months -> output months
+The rolling window solve can be used when the model gets too big and solving times get too long. 
+
+When using rolling window solve, you are solving the model with less information. Therefore, it will change the results and it is important to know how the results change and what phenomena is left out when certain information is left out of the model. 
+The rolling window solve splits the time dimension into overlapping parts and solves them separatelly. For example, instead of a full year in one solve, you can split it to six four-month solves where each solve outputs only the first two months. The solves would therefore include the months:
+- Roll: Solve months -> Output months
 - 1: [1,2,3,4] -> [1,2]
 - 2: [3,4,5,6] -> [3,4]
 - 3: [5,6,7,8] -> [5,6]
@@ -516,7 +518,118 @@ The rolling window solve splits the time dimension into overlapping parts and so
 - 5: [9,10,11,12] ->[9,10]
 - 6: [11,12] -> [11,12]
 
-This can be done manually as discribed in the 'How to run a multi year model'. However, this is tedious to do if there are many solves and each solve is limitted solving whole timeblocks. In the rolling window solve, the user can set the `rolling_jump` and `rolling_horizon` as hours. Former sets the solve start point interval and the output interval as they are the same, the latter sets the solve length. In the previous example the `rolling_jump` would be 60 days and `rolling_horizon` 120 days. In addition if the user does not want to start from the beginning, the user has the option to set the starting point of the first solve as a timestamp. The `rolling_duration` sets the length of the combined solves, here 12 months. If it is not set it defaults to rolling trough the whole timeline set to the solve. 
+This can be done manually as discribed in the 'How to run a multi year model'. However, this is tedious to do if there are many solves and each solve is limitted solving whole timeblocks. In the rolling window solve, the user can set the `rolling_jump` and `rolling_horizon` as hours. Former sets both the solve start point interval and the output interval as they are the same, the latter sets the solve length. In the previous example the `rolling_jump` would be 60 days (1440 hours) and `rolling_horizon` 120 days (2880 hours). In addition, if the user does not want to start from the beginning, the user has the option to set the starting point of the first solve as a timestamp `rolling_start_time`. The `rolling_duration` sets the length of the combined solves, here 12 months. If it is not set, it defaults to rolling through the whole timeline. 
+
+What information is lost? The most obvious problems are related to the long term storage and investments. If the model only sees a few months to the future, it can't see how much energy needs to be stored after that. Problems with investments are more numerous: If the first roll is really windy, it would invest too much on wind which wouldn't produce enough energy in later rolls and then it would need to invest again to something else. How can it consider lifetimes? If the option of retiring is allowed it might retire something that is needed for later rolls. 
+
+*Both long term storage and investments can be taken into account with nested rolling solves that have a separate how-to*
+
+Still, even the short term storage is operated less optimally. However, it might be operate more *realistically* as the linear optimization models have the issue of being 'too optimal'. When setting the storage level of one day, it might take into consideration the wind speed of a certain hour of a day of hundreds of days later. The forecasts of the operators are not that good. The solution of a *rolling_window* solve should always be less optimal than from the complete *single_solve* meaning that it will have higher combined cost.
+
+To set a dispatch rolling window model you need to set the object `solve` parameters:
+- `solve_mode`: *rolling_window*
+- `rolling_jump`: Hours, The desired length of the solve interval
+- `rolling_horizon`: Hours, The desired length of each roll solve
+- `rolling_duration`: (Optional) Hours, The length of the combined outputs. If not set, the whole timeline is used.
+- `rolling_start`: (Optional) Hours, The starting timestep the whole solve, if not wanting to start from the beginning 
+
+Considerations on the rolling times:
+- The `rolling_jump` and `rolling_horizon` have to be large enough to make the solve faster. If too small intervals are used, the creation of solves and moving data from solve to another might take too much time.
+- If you are not using 1 hour timesteps, preferably use multiples of the timestep you are using as the `rolling_jump` and `rolling_horizon`. The steps included in each solve are calculated by summing the step durations until they are larger or equal to the hours given. So, if multiples are not used, the rolls might not be exactly the same size.
+- The model can roll over timeblock and period jumps, which might cause some issues if storage constraints are used. Using timeblock length or its multiples is therefore recommended. For example, the `rolling_jump` could be a half of a timeblock and the `rolling_horizon` whole timeblock or `rolling_jump` a timeblock and `rolling_horizon` three timeblocks.
+
+Considerations on storage parameters:
+- `storage_solve_horizon_method` is the preferred way of binding storage values with the `storage_state_start_end_method`: *start*. It binds the storage values or prices of the end of *horizon* not the end of *jump*. This allows the output values to be more flexible. 
+- `bind_within_timeblock` does not work correctly if the rolls don't include whole timeblocks. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeblock. Do not use in nested solves if you are not nusing whole timeblocks or its multiples as `rolling_jump`
+- the same applies to the `bind_within_period`
+- `storage_start_end_method` sets the first timestep of the first roll and the last timestep of the last roll
+- `bind_within_solve` binds the start and end of each *roll* not the start and end of the whole set. Do not use in nested solves.
+
+## How to use Nested Rolling window solves (investments and long term storage)
+
+The basic rolling solve has problems on dealing with long term storage (if the rolling times are smaller than it) and with investments.
+
+What information is lost? The most obvious problems are related to the long term storage and investments. If the model only sees a few months to the future, it really can't see how much energy needs to be stored. Problems with investments are more numerous: What if the first roll is really windy, so it would invest too much on wind which wouldn't produce enough energy in later rolls and then it would need to invest again to something else. How can it consider lifetimes? If the option of retiring is allowed it might retire something that is needed for later rolls. 
+
+Nested solve sequences can first solve the investments and long term storage levels and pass them to the dispatch solve. Both storage solve and dispatch solve can be rolling solves.
+
+![Nested graph](./Nested_graph.PNG)
+
+However, the obvious issue is that these values cannot be solved using the old complete solve as it wouldn't make the solve time any shorter. Actually, it would make it longer as the same time would be used to get the investment values than it would be to get all the values. 
+Therefore, we need to decrease the information for investment and storage solves as well. There are a few options for this:
+1. Use lower resolution (longer timesteps). This is really the only option for long term storage.
+2. Take a sample of the timeline as the investment solve. This works well if there is a clear time interval when the demand-supply relation is the most demanding. Other option for the sample is to include for example every third week of the year.
+3. Split the investment timeline by manually creating a horizon solve sequence for the investment solves like with (How to create a multi year model). This can be combined with the first and second option.
+
+Each of these have their pros and cons:
+- Using the lower resolution is in most cases fastest, but the phenomena with a higher frequency than the new step size will be lost as the timestep varying parameters are averaged or summed for the new timestep. For example, consider a model with investment options to solar and storage. If the step duration is changed to 24 hours, the model won't invest in the storage enough. When these investments are passed to the dispatch solve, the investments cannot satisfy the demand.
+- Using the sample can be effective if the sample is chosen well, but all the needs that are not in these samples are not included. The speed is heavily dependent on the sample size.
+- Splitting the timeline is the slowest, but the previously mentioned issues do not apply. It works the best if there are not large changes between the periods, so each period should include whole or multiple years.
+
+The investment decisions with less information are always less optimal than with complete solves. Therefore, when they are passed to the dispatch solve, it will in some cases have penalties in the results as the investments are not enough.
+
+The long term storage solve should be done using a lower resolution solve. The solve sets a 'fix-constraint' to the ends dispatch solves. This means that on the last step of the roll or the period, the storage quantity (or price) will have to match the quantity (or price) in the storage solve.  The `rolling_jump` and `rolling_horizon` in the storage solve have to be longer than in the dispatch solve. You can set which storages are included as long term storage for this solve.
+
+To create a nested solve sequence, one needs two or three `solve` objects. Either the investment solve or the storage solve can be left out.
+The nested levels are set by the parameter `contains_solve`: *solve_name*. The investment solve is always on the top followed by the storage solve and dispatch solve:
+- *investment_solve* `solve` parameter `contains_solve`: *storage_solve_name* 
+- *storage_solve* `solve` parameter `contains_solve`: *dispatch_solve_name*
+
+To create a storage solve:
+- `solve` parameter `fix_storage_period`: Array of periods where the storage values are fixed in the lower solve. Should be the same as `realized_periods` for the dispatch solve.
+- `node` parameter `storage_fix_method`: *fix_quantity* or *fix_price*, includes this storage to be fixed. *fix_price* requires *storage_state_reference_price* to be set.
+
+To create a investment_solve:
+- `solve` parameter `invest_periods`: Array  of periods where the model can invest.
+- `solve` parameter `realized_invest_periods`: Array of periods where the model will realize investment decisions to the lower solves and results.
+- `solve` parameter `realized_periods`: Should not be used in this solve! You don't want the dispatch results from this solve, but from the dispatch solve.
+
+In addition, the rolling dispatch solve should be created as in the *How to use Rolling window solve for dispatch*. This solve should have the parameter `realized_periods` set to produce the dispatch results. The model parameters apply to all of the solves. Therefore, the considerations of the storage value binding that were discussed in the *How to use Rolling window solve* should be taken into account here as well.
+- Storage levels can be fixed with `storage_solve_horizon_method`: *use_reference_value* or *use_reference_price*, these will fix the end of each horizon not each jump.
+- `storage_start_end_method` fixes the starts and/or ends of each solve level, meaning the first step of the first roll and the last step of the last roll for all the solves. 
+- In most cases the `bind_storage_method` should be left as *bind_forward_only*
+- Do not use `bind_within_timeblock` if you are not using full timeblock or its multiples as the `rolling_jump` in the dispatch model, otherwise you might cause a infeasible problem. 
+- Do not use `bind_within_period` if you are not using full periods or its multiples as the `rolling_jump` in the dispatch model, otherwise you might cause a infeasible problem. 
+- Do not use `bind_within_solve`
+
+To create a lower resolution solve:
+- Make a new `timeblockSet`, but use the same `timeline` and `block_duration` for it as with the high resolution solve
+- Set `timeblockSet` parameter `new_stepduration`: Hours
+- In the `solve` use this new `timeblockSet` in the `period_timeblockSet`
+
+The model will create a new timeline for this solve with the `new_stepduration`. All the timestep map data like `inflow` or `profile` will be either summed or averaged for the new timeline. Again, the `new_stepduration` should be multiple of the old step duration. If the `block_duration` is not a multiple of the `new_stepduration` the last timestep will be shorter than the rest.
+![New step duration](./new_stepduration.PNG)
+
+A sample solve you have actually done already in the tutorial with *5weeks* where the year is represented with five sample weeks. It is done with the `timeblockSet` parameter `block_duration` where instead of choosing the whole timeline by setting the first timestep and the duration of whole timeline, you choose multiple starting points with smaller durations. The example for the *5weeks* is below
+
+![New step duration](./5weeks.PNG)
+
+To create investment solve sequence, you have two options:
+- Create manually a series of solves and set the `invest_periods` and `realized_invest_periods` individually for the solves. *How to create a multi year solve* has example of this with the difference that here you use `realized_invest_periods` instead of `realized_periods` and that each of the solves requires the `contains_solve` parameter. 
+
+If you have many splits, this option can get tedious and prone to mistakes.
+
+The other option is to use only one investment `solve` object:
+
+- The `invest_periods` and `realized_invest_periods` should then be set with a 2D map where the first column tells the solve (you don't have to create separate `solve` objects for these) and the second column tells the period. To get a 2D map, chooce the parameter type as *Map* and then right click the table and choose *Insert column after/before*. The value column does not matter. The model will generate these solves, with the periods given. Note that the solve names should match in both 2D-maps.  
+
+You can use the same lower level solve with all of the investment solves as the lower level solves will exclude the periods that are not included in either of the upper level realized periods: `realized_invest_periods` or `fix_storage_periods`. So, the lower level solve should have all the periods that it is used for in any the solves.
+
+![2D_map](./2d_map.PNG)
+
+
+Note that the results of a nested rolling solve run are 'close enough', not exact, because the information in the model is decreased. This is the price you pay for the speed. Therefore, the results should not be taken they are, instead it is important to know how to interpret the results: What is phenomena are missing? How will they affect the results? Where should extra investments go to satisfy the demand?
+
+In the init.sqlite there are four example scenarios related to this:
+- *multi_fullYear_battery*: The four period full year single solve, with coal, wind, battery storage with unlimited investment possibilities. Running this is still possible, but takes a few minutes. This is here as a reference for the nested solves.
+- *multi_fullYear_battery_nested_24h_invest_one_solve*: This has the nested structure and the investment solve is done with 24h timesteps and storage solve 6h timesteps.
+- *multi_fullYear_battery_nested_multi_invest*: This has split the investment to four solves with each having two period horizon. Nested structure with 6h storage solve timesteps.
+- *multi_fullYear_battery_nested_sample_invest_one_solve*: This has the investment solve as 5weeks sample but all the four periods are included in the same investment solve. Nested structure with 6h storage solve timesteps.
+
+The 24h is clearly too long timestep and the it invests too little for storage and coal. Large upward penalty insues.
+The sample invest also invests too little, as the largest demand-supply ratio weeks are not in the five week sample. However, the investments are spread more accurately.
+The splitted investment run in this case actually gives the same results as the complete single solve. This is not always the case! Here we have used the same values in all the periods except scaling the demand (inflow) linearly up for later years. 
+
 
 ## How to use CPLEX as the solver
 
