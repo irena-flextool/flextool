@@ -2952,7 +2952,7 @@ for {g in groupCapacityMargin}
 param w_summary := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity;
 display w_summary;
 
-printf 'Write group results for nodes...\n';
+printf 'Write group results for nodes for realized periods...\n';
 param fn_groupNode__d symbolic := "output/group_node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
@@ -2978,30 +2978,27 @@ for {g in groupOutput_node, s in solve_current, d in d_realized_period: sum{(g, 
 	>> fn_groupNode__d;
   }
 
-printf 'Write group results for realized time steps...\n';
-param fn_groupNode__dt symbolic := "output/group_node__period__t.csv";
+printf 'Write VRE share for node groups for realized timesteps\n';
+param fn_groupNode__dt_VRE_share symbolic := "output/group_node_VRE_share__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf 'group,solve,period,time,' > fn_groupNode__dt;
-	printf '"-100_pdtNodeInflow" ,"sum of annualized inflows [MWh]","VRE share [\% of annual inflow]",' >> fn_groupNode__dt;
-  printf '"curtailed VRE share, [\% of annual inflow]","upward slack [\% of annual inflow]",' >> fn_groupNode__dt;
-	printf '"downward slack [\% of annual inflow]"\n' >> fn_groupNode__dt;
+    printf 'solve,period,time' > fn_groupNode__dt_VRE_share;
+	for {g in groupOutput_node : sum{(g, n) in group_node, d in d_realized_period} pdNodeInflow[n, d]}
+	  { printf ',%s', g >> fn_groupNode__dt_VRE_share; }
   }
-for {g in groupOutput_node, s in solve_current, (d, t) in dt_realize_dispatch: sum{(g, n) in group_node} pdtNodeInflow[n, d, t]}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
-    printf '%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g\n', g, s, d, t
-     , ( - sum{(g, n) in group_node} pdtNodeInflow[n, d, t] )/100
-     , sum{(g, n) in group_node} pdtNodeInflow[n, d, t] / complete_period_share_of_year[d]
-     , ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
-            r_process_source_sink_flow_dt[p, source, n, d, t]  
-		 )   
-	   , ( + sum{(p, n) in process_sink : p in process_VRE} potentialVREgen_dt[p, n, d, t]
-	       - sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
-		         r_process_source_sink_flow_dt[p, source, n, d, t] 
-		 ) 
-	   , ( sum{(g, n) in group_node} r_costPenalty_nodeState_upDown_dt[n, 'up', d, t] / ptNode[n, 'penalty_up', t]) 
-	   , ( sum{(g, n) in group_node} r_costPenalty_nodeState_upDown_dt[n, 'down', d, t] / ptNode[n, 'penalty_down', t] ) 
-	>> fn_groupNode__dt;
+    printf '\n%s,%s,%s', s, d, t >> fn_groupNode__dt_VRE_share;
+	for {g in groupOutput_node : sum{(g, n) in group_node} pdNodeInflow[n, d]}
+	  { printf ',%.5g',
+	      ( if sum{(g, n) in group_node} pdtNodeInflow[n, d, t] then
+              ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
+	                 r_process_source_sink_flow_dt[p, source, n, d, t]  
+		      ) / ( - sum{(g, n) in group_node} pdtNodeInflow[n, d, t] ) * 100
+		  
+		)
+	    >> fn_groupNode__dt_VRE_share;
+	  }
   }
 
 printf 'Write results for groups for realized periods...\n';
