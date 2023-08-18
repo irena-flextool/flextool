@@ -1439,6 +1439,10 @@ def main():
         runner.periodic_postprocess(timewise_average_groupby, method = "timewise", arithmetic= "average")
         runner.combine_result_tables("output/annualized_investment_costs__period.csv","output/annualized_dispatch_costs__period.csv", "output/annualized_costs__period.csv")
         runner.divide_column("output/group_node__period.csv",div_col_ind = 3, to_cols_ind=[5,6,7,8], remove = True)
+        os.remove("output/annualized_dispatch_costs__period.csv")
+    os.remove("output/annualized_dispatch_costs__period__t.csv")
+    os.remove("output/annualized_investment_costs__period.csv")
+    os.remove("output/group_node__period__t.csv")
     if len(runner.model_solve) > 1:
         logging.error(
             f'Trying to run more than one model - not supported. The results of the first model are retained.')
