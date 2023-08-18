@@ -260,7 +260,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^(?!has_|inflow_method|invest_method|is_active|storage_binding_method|storage_start_end_method|storage_solve_horizon_method|lifetime_method|storage_include_solve_fix_method)",
+                    "filter_re": "^(?!has_|inflow_method|invest_method|is_active|storage_binding_method|storage_start_end_method|storage_solve_horizon_method|lifetime_method|storage_nested_fix_method)",
                     "header": "nodeParam"
                 },
                 {
@@ -4581,53 +4581,6 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
-        "node__storage_include_solve_fix_method": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "node__storage_include_solve_fix_method"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "filter_re": "^node$"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "^storage_include_solve_fix_method$"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": 0,
-                    "header": "node"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValue",
-                    "position": 1,
-                    "header": "storage_include_solve_fix_method"
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "group_fn": "no_group",
-            "use_fixed_table_name": true
-        },
         "timeblockSet__new_stepduration": {
             "type": "object_parameter_values",
             "mapping": [
@@ -5039,6 +4992,53 @@
                 {
                     "map_type": "ExpandedValue",
                     "position": "hidden"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "node__storage_nested_fix_method": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "node__storage_nested_fix_method"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^node$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^storage_nested_fix_method$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "node"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": 1,
+                    "header": "storage_nested_fix_method"
                 }
             ],
             "enabled": true,

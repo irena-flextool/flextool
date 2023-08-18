@@ -170,8 +170,8 @@ set storage_start_end_method 'method to fix start and/or end value of storage in
 set node__storage_start_end_method within {node, storage_start_end_method};
 set storage_solve_horizon_method 'methods to set reference value or price for the end of horizon storage state';
 set node__storage_solve_horizon_method within {node, storage_solve_horizon_method};
-set storage_include_solve_fix_method 'methods to set the storage value for lower level solves';
-set node__storage_include_solve_fix_method within {node, storage_include_solve_fix_method};
+set storage_nested_fix_method 'methods to set the storage value for lower level solves';
+set node__storage_nested_fix_method within {node, storage_nested_fix_method};
 set node__profile__profile_method dimen 3 within {node,profile,profile_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
@@ -355,7 +355,7 @@ table data IN 'CSV' 'input/node__inflow_method.csv' : node__inflow_method_read <
 table data IN 'CSV' 'input/node__storage_binding_method.csv' : node__storage_binding_method_read <- [node,storage_binding_method];
 table data IN 'CSV' 'input/node__storage_start_end_method.csv' : node__storage_start_end_method <- [node,storage_start_end_method];
 table data IN 'CSV' 'input/node__storage_solve_horizon_method.csv' : node__storage_solve_horizon_method <- [node,storage_solve_horizon_method];
-table data IN 'CSV' 'input/node__storage_include_solve_fix_method.csv' : node__storage_include_solve_fix_method <- [node,storage_include_solve_fix_method];
+table data IN 'CSV' 'input/node__storage_nested_fix_method.csv' : node__storage_nested_fix_method <- [node,storage_nested_fix_method];
 table data IN 'CSV' 'input/node__profile__profile_method.csv' : node__profile__profile_method <- [node,profile,profile_method];
 table data IN 'CSV' 'input/group__node.csv' : group_node <- [group,node];
 table data IN 'CSV' 'input/group__process.csv' : group_process <- [group,process];
@@ -2798,7 +2798,7 @@ param fn_fix_quantity_nodeState__dt symbolic := "solve_data/fix_storage_quantity
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'period,step,node,p_fix_storage_quantity\n' > fn_fix_quantity_nodeState__dt;
   }
-for {(n,'fix_quantity') in node__storage_include_solve_fix_method, (d, t) in dt : (d, t) in dt_fix_storage_timesteps}
+for {(n,'fix_quantity') in node__storage_nested_fix_method, (d, t) in dt : (d, t) in dt_fix_storage_timesteps}
   {
     printf '%s,%s,%s,%.8g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]>> fn_fix_quantity_nodeState__dt;
   }
@@ -2808,7 +2808,7 @@ param fn_fix_price_nodeState__dt symbolic := "solve_data/fix_storage_price.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'period,step,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
   }
-for {(n,'fix_price') in node__storage_include_solve_fix_method, (d, t) in dt : (d, t) in dt_fix_storage_timesteps}
+for {(n,'fix_price') in node__storage_nested_fix_method, (d, t) in dt : (d, t) in dt_fix_storage_timesteps}
   {
     printf '%s,%s,%s,%.8g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]*pdNode[n, 'storage_state_reference_price', d]>> fn_fix_price_nodeState__dt;
   }
@@ -2974,6 +2974,32 @@ for {g in groupOutput_node, s in solve_current, d in d_realized_period: sum{(g, 
 	  , ( sum{(g, n) in group_node} r_penalty_nodeState_upDown_d[n, 'down', d] ) 
 	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] ) * 100
 	>> fn_groupNode__d;
+  }
+
+printf 'Write group results for realized time steps...\n';
+param fn_groupNode__dt symbolic := "output/group_node__period__t.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { 
+    printf 'group,solve,period,time,' > fn_groupNode__dt;
+	printf '"-100_pdtNodeInflow" ,"sum of annualized inflows [MWh]","VRE share [\% of annual inflow]",' >> fn_groupNode__dt;
+  printf '"curtailed VRE share, [\% of annual inflow]","upward slack [\% of annual inflow]",' >> fn_groupNode__dt;
+	printf '"downward slack [\% of annual inflow]"\n' >> fn_groupNode__dt;
+  }
+for {g in groupOutput_node, s in solve_current, (d, t) in dt_realize_dispatch: sum{(g, n) in group_node} pdtNodeInflow[n, d, t]}
+  {
+    printf '%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g\n', g, s, d, t
+     , ( - sum{(g, n) in group_node} pdtNodeInflow[n, d, t] )/100
+     , sum{(g, n) in group_node} pdtNodeInflow[n, d, t] / complete_period_share_of_year[d]
+     , ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
+            r_process_source_sink_flow_dt[p, source, n, d, t]  
+		 )   
+	   , ( + sum{(p, n) in process_sink : p in process_VRE} potentialVREgen_dt[p, n, d, t]
+	       - sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
+		         r_process_source_sink_flow_dt[p, source, n, d, t] 
+		 ) 
+	   , ( sum{(g, n) in group_node} r_costPenalty_nodeState_upDown_dt[n, 'up', d, t] / ptNode[n, 'penalty_up', t]) 
+	   , ( sum{(g, n) in group_node} r_costPenalty_nodeState_upDown_dt[n, 'down', d, t] / ptNode[n, 'penalty_down', t] ) 
+	>> fn_groupNode__dt;
   }
 
 printf 'Write VRE share for node groups for realized timesteps\n';

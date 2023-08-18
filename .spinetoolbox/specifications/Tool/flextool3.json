@@ -40,7 +40,7 @@
         "input/node__inflow_method.csv",
         "input/node__profile__profile_method.csv",
         "input/node__storage_binding_method.csv",
-        "input/node__storage_include_solve_fix_method.csv",
+        "input/node__storage_nested_fix_method.csv",
         "input/node__storage_solve_horizon_method.csv",
         "input/node__storage_start_end_method.csv",
         "input/p_commodity.csv",

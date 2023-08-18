@@ -3628,6 +3628,46 @@
                         ]
                     }
                 }
+            ],
+            "annualized_dispatch_costs__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "group_node__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -3674,8 +3714,6 @@
             "costs_discounted",
             "costs_discounted__solve",
             "annualized_costs__period",
-            "annualized_dispatch_costs__period__t",
-            "annualized_investment_costs__period",
             "unit_curtailment_share__outputNode__period",
             "unit_curtailment__outputNode__period__t",
             "group_node_VRE_share__period__t"
@@ -3800,7 +3838,9 @@
             "annualized_investment_costs__period": {},
             "group_node_VRE_share__period__t": {
                 "has_header": false
-            }
+            },
+            "annualized_dispatch_costs__period": {},
+            "group_node__period__t": {}
         },
         "table_types": {
             "unit__outputNode__period": {

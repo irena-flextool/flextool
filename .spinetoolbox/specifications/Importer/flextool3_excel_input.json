@@ -12,7 +12,6 @@
                                 "position": "hidden",
                                 "value": "solve",
                                 "skip_columns": [
-                                    8,
                                     9,
                                     10,
                                     11,
@@ -20,7 +19,8 @@
                                     13,
                                     14,
                                     15,
-                                    16
+                                    16,
+                                    17
                                 ]
                             },
                             {
@@ -118,7 +118,8 @@
                                     4,
                                     5,
                                     6,
-                                    7
+                                    7,
+                                    8
                                 ]
                             },
                             {
@@ -1865,6 +1866,110 @@
                             }
                         ]
                     }
+                },
+                {
+                    "realized_invest_periods": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "solve",
+                                "read_start_row": 2
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "realized_invest_periods"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": 7,
+                                "filter_re": "yes"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "array"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 2
+                            }
+                        ]
+                    }
+                },
+                {
+                    "fix_storage_periods": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "solve",
+                                "read_start_row": 2
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "fix_storage_periods"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": 8,
+                                "filter_re": "yes"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "array"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 2
+                            }
+                        ]
+                    }
                 }
             ],
             "timeline_t": [
@@ -3067,6 +3172,44 @@
                         ]
                     }
                 }
+            ],
+            "rolling_parameters": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "solve",
+                                "read_start_row": 2
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValue",
+                                "position": 0
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -3111,7 +3254,8 @@
             "connection_node_constraint_c",
             "node_constraint_c",
             "unit_constraint_c",
-            "connection_constraint_c"
+            "connection_constraint_c",
+            "rolling_parameters"
         ],
         "table_options": {
             "solve_sequence": {
@@ -3181,7 +3325,8 @@
             "connection_node_constraint_c": {},
             "node_constraint_c": {},
             "unit_constraint_c": {},
-            "connection_constraint_c": {}
+            "connection_constraint_c": {},
+            "rolling_parameters": {}
         },
         "table_types": {
             "solve_sequence": {
@@ -3201,13 +3346,15 @@
                 "13": "string",
                 "14": "string",
                 "15": "string",
-                "16": "string"
+                "16": "string",
+                "17": "string"
             },
             "timeblockSet": {
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float"
+                "3": "float",
+                "4": "float"
             },
             "timeline_c": {
                 "0": "string",
@@ -3230,7 +3377,7 @@
                 "8": "string",
                 "9": "string",
                 "10": "string",
-                "11": "float",
+                "11": "string",
                 "12": "float",
                 "13": "float",
                 "14": "float",
@@ -3250,7 +3397,8 @@
                 "28": "float",
                 "29": "float",
                 "30": "float",
-                "31": "float"
+                "31": "float",
+                "32": "float"
             },
             "node_p": {
                 "0": "string",
@@ -3266,7 +3414,8 @@
                 "10": "float",
                 "11": "float",
                 "12": "float",
-                "13": "float"
+                "13": "float",
+                "14": "float"
             },
             "node_t": {
                 "0": "string",
@@ -3596,11 +3745,13 @@
             "solve_period": {
                 "0": "string",
                 "1": "string",
-                "2": "string",
+                "2": "float",
                 "3": "string",
                 "4": "float",
                 "5": "string",
-                "6": "string"
+                "6": "string",
+                "7": "string",
+                "8": "string"
             },
             "timeline_t": {
                 "0": "string",
@@ -3621,7 +3772,8 @@
                 "9": "float",
                 "10": "float",
                 "11": "float",
-                "12": "float"
+                "12": "float",
+                "13": "float"
             },
             "unit_node_c": {
                 "0": "string",
@@ -3640,8 +3792,7 @@
                 "13": "float",
                 "14": "float",
                 "15": "float",
-                "16": "float",
-                "17": "float"
+                "16": "float"
             },
             "unit_node_t": {
                 "0": "string",
@@ -3754,6 +3905,26 @@
                 "1": "string",
                 "2": "string",
                 "3": "float"
+            },
+            "rolling_parameters": {
+                "0": "string",
+                "1": "string",
+                "2": "float",
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float"
             }
         },
         "table_default_column_type": {
@@ -3907,6 +4078,9 @@
                 "1": "string"
             },
             "connection_constraint_c": {
+                "1": "string"
+            },
+            "rolling_parameters": {
                 "1": "string"
             }
         },
