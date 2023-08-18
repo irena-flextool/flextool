@@ -588,15 +588,15 @@
             "bind_forward_only"
         ],
         [
-            "storage_fix_method",
+            "storage_nested_fix_method",
             "no"
         ],
         [
-            "storage_fix_method",
+            "storage_nested_fix_method",
             "fix_quantity"
         ],
         [
-            "storage_fix_method",
+            "storage_nested_fix_method",
             "fix_price"
         ],
         [
@@ -1298,7 +1298,7 @@
         ],
         [
             "node",
-            "storage_fix_method",
+            "storage_nested_fix_method",
             "no",
             null,
             "Used in nested solve sequences. Fix storage state for contained solves. In the lower level solves, the storage state quantity or price will be fixed to a value of this solve for the timesteps of the higher level solve. Fix_price requires storage_state_reference_price"
