@@ -518,6 +518,8 @@ The rolling window solve splits the time dimension into overlapping parts and so
 - 5: [9,10,11,12] ->[9,10]
 - 6: [11,12] -> [11,12]
 
+![Rolling](./Rolling.png)
+
 This can be done manually as discribed in the 'How to run a multi year model'. However, this is tedious to do if there are many solves and each solve is limitted solving whole timeblocks. In the rolling window solve, the user can set the `rolling_jump` and `rolling_horizon` as hours. Former sets both the solve start point interval and the output interval as they are the same, the latter sets the solve length. In the previous example the `rolling_jump` would be 60 days (1440 hours) and `rolling_horizon` 120 days (2880 hours). In addition, if the user does not want to start from the beginning, the user has the option to set the starting point of the first solve as a timestamp `rolling_start_time`. The `rolling_duration` sets the length of the combined solves, here 12 months. If it is not set, it defaults to rolling through the whole timeline. 
 
 What information is lost? The most obvious problems are related to the long term storage and investments. If the model only sees a few months to the future, it can't see how much energy needs to be stored after that. Problems with investments are more numerous: If the first roll is really windy, it would invest too much on wind which wouldn't produce enough energy in later rolls and then it would need to invest again to something else. How can it consider lifetimes? If the option of retiring is allowed it might retire something that is needed for later rolls. 
