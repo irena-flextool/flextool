@@ -1234,7 +1234,6 @@ var vq_inertia {g in groupInertia, (d, t) in dt} >= 0, <= 1;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
 var vq_capacity_margin {g in groupCapacityMargin, d in period_invest} >= 0, <= ceil((pdGroup[g, 'capacity_margin', d] + pgdNodeInflow_for_scaling[g, d]) / pgdNodeInflow_for_scaling[g, d]);
 
-display solve_period;
 #########################
 ## Data checks 
 printf 'Checking: Eff. data for 1 variable conversions directly from source to sink (and possibly back)\n';
@@ -2758,7 +2757,7 @@ param r_costInvest_d{d in period} := r_costInvestUnit_d[d] + r_costInvestConnect
 param r_costDivest_d{d in period} := r_costDivestUnit_d[d] + r_costDivestConnection_d[d] + r_costDivestState_d[d];
 param r_costExistingFixed_d{d in period} := sum{e in entity : (e, d) not in ed_invest} r_cost_entity_existing_fixed[e, d];
 
-param pdNodeInflow{n in node, d in d_realized_period} := sum{(d, t) in dt_realize_dispatch} pdtNodeInflow[n, d, t];
+param pdNodeInflow{n in node, d in period} := sum{(d, t) in dt} pdtNodeInflow[n, d, t];
 
 param potentialVREgen_dt{(p, n) in process_sink, (d, t) in dt_realize_dispatch:  p in process_VRE} :=
   + sum{(p, source, n, f, m) in process__source__sink__profile__profile_method: m = 'upper_limit'} 
@@ -3007,7 +3006,7 @@ param fn_groupNode__dt_VRE_share symbolic := "output/group_node_VRE_share__perio
 for {i in 1..1 : p_model['solveFirst']}
   { 
     printf 'solve,period,time' > fn_groupNode__dt_VRE_share;
-	for {g in groupOutput_node : sum{(g, n) in group_node, d in d_realized_period} pdNodeInflow[n, d]}
+	for {g in groupOutput_node : sum{(g, n) in group_node, d in period} pdNodeInflow[n, d]}
 	  { printf ',%s', g >> fn_groupNode__dt_VRE_share; }
   }
 for {s in solve_current, (d, t) in dt_realize_dispatch}
@@ -3048,6 +3047,7 @@ for {s in solve_current, d in d_realized_period}
       >> fn_groupProcessNode__d;
     }
   }
+
 printf 'Write flow results for groups for realized time steps...\n';
 param fn_groupProcessNode__dt symbolic := "output/group__process__node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -3429,7 +3429,7 @@ for {s in solve_current, d in d_realized_period}
 param w_cf := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow;
 display w_cf;
 
-printf 'Write unit__outputNode curtailment share for periods...\n';
+printf 'Write unit__outputNode curtailment share of VRE units for periods...\n';
 param fn_unit__sinkNode__d_curtailment symbolic := "output/unit_curtailment_share__outputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
@@ -3447,7 +3447,7 @@ for {s in solve_current, d in d_realized_period}
 						  else 0 ) >> fn_unit__sinkNode__d_curtailment; }
   } 
 
-printf 'Write unit__outputNode curtailment share for time...\n';
+printf 'Write unit__outputNode curtailment of VRE units for time...\n';
 param fn_unit__sinkNode__dt_curtailment symbolic := "output/unit_curtailment__outputNode__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   {
