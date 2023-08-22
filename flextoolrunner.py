@@ -954,6 +954,21 @@ class FlexToolRunner:
             for period_name, period in timeline.items():
                 for item in period[-1:]:
                     outfile.write(period_name + ',' + item[0] + '\n')
+    
+    def write_last_step(self, timeline, filename):
+        """
+        write to file the last step of timeline
+
+        :param steps: a tuple containing the period and the timestep
+        """
+        with open(filename, 'w') as outfile:
+            # prepend with a header
+            outfile.write('period,step\n')
+            out= []
+            for period_name, period in timeline.items():
+                for item in period[-1:]:
+                    out = [period_name,item[0]]
+            outfile.write(out[0] + ',' + out[1] + '\n')
 
     def write_periods(self, solve, periods, filename):
         """
@@ -1025,6 +1040,8 @@ class FlexToolRunner:
             firstfile.write("node, period, step, ndt_fix_storage_price\n")
         with open("solve_data/fix_storage_quantity.csv", 'w') as firstfile:
             firstfile.write("node, period, step, ndt_fix_storage_quantity\n")
+        with open("solve_data/p_roll_continue_state.csv", 'w') as firstfile:
+            firstfile.write("node, p_roll_continue_state\n")
 
     def write_headers_for_empty_output_files(self, filename, header):
         """
@@ -1380,6 +1397,7 @@ def main():
         runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
         runner.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
         runner.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
+        runner.write_last_step(realized_time_lists[solve], 'solve_data/last_realized_timestep.csv')
         runner.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
         runner.write_fixed_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
         #if timeline created from new step_duration, all timeseries have to be averaged for the new timestep

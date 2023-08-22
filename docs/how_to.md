@@ -542,7 +542,7 @@ Considerations on the rolling times:
 
 Considerations on storage parameters:
 - `storage_solve_horizon_method` is the preferred way of binding storage values with the `storage_state_start_end_method`: *start*. It binds the storage values or prices of the end of *horizon* not the end of *jump*. This allows the output values to be more flexible. 
-- `bind_within_timeblock` does not work correctly if the rolls don't include whole timeblocks. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeblock. Do not use in nested solves if you are not nusing whole timeblocks or its multiples as `rolling_jump`
+- `bind_within_timeblock` does not work correctly if the rolls don't include whole timeblocks. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeblock. Do not use in nested solves if you are not using whole timeblocks or its multiples as `rolling_jump`
 - the same applies to the `bind_within_period`
 - `storage_start_end_method` sets the first timestep of the first roll and the last timestep of the last roll
 - `bind_within_solve` binds the start and end of each *roll* not the start and end of the whole set. Do not use in nested solves.
@@ -561,7 +561,7 @@ However, the obvious issue is that these values cannot be solved using the old c
 Therefore, we need to decrease the information for investment and storage solves as well. There are a few options for this:
 1. Use lower resolution (longer timesteps). This is really the only option for long term storage.
 2. Take a sample of the timeline as the investment solve. This works well if there is a clear time interval when the demand-supply relation is the most demanding. Other option for the sample is to include for example every third week of the year.
-3. Split the investment timeline by manually creating a horizon solve sequence for the investment solves like with (How to create a multi year model). This can be combined with the first and second option.
+3. Split the investment timeline by manually creating a horizon solve sequence for the investment solves like with (How to create a multi year model). This can be combined with the first or second option. If not, nested stucture should not be used. Instead, realize the dispatch results also from the investment solve. 
 
 Each of these have their pros and cons:
 - Using the lower resolution is in most cases fastest, but the phenomena with a higher frequency than the new step size will be lost as the timestep varying parameters are averaged or summed for the new timestep. For example, consider a model with investment options to solar and storage. If the step duration is changed to 24 hours, the model won't invest in the storage enough. When these investments are passed to the dispatch solve, the investments cannot satisfy the demand.
@@ -588,7 +588,7 @@ To create a investment_solve:
 
 In addition, the rolling dispatch solve should be created as in the *How to use Rolling window solve for dispatch*. This solve should have the parameter `realized_periods` set to produce the dispatch results. The model parameters apply to all of the solves. Therefore, the considerations of the storage value binding that were discussed in the *How to use Rolling window solve* should be taken into account here as well.
 - Storage levels can be fixed with `storage_solve_horizon_method`: *use_reference_value* or *use_reference_price*, these will fix the end of each horizon not each jump.
-- `storage_start_end_method` fixes the starts and/or ends of each solve level, meaning the first step of the first roll and the last step of the last roll for all the solves. 
+- `storage_start_end_method` fixes the starts and/or ends of each solve level, meaning the first step of the first roll and the last step of the last roll.
 - In most cases the `bind_storage_method` should be left as *bind_forward_only*
 - Do not use `bind_within_timeblock` if you are not using full timeblock or its multiples as the `rolling_jump` in the dispatch model, otherwise you might cause a infeasible problem. 
 - Do not use `bind_within_period` if you are not using full periods or its multiples as the `rolling_jump` in the dispatch model, otherwise you might cause a infeasible problem. 
@@ -607,6 +607,7 @@ A sample solve you have actually done already in the tutorial with *5weeks* wher
 ![New step duration](./5weeks.PNG)
 
 To create investment solve sequence, you have two options:
+
 - Create manually a series of solves and set the `invest_periods` and `realized_invest_periods` individually for the solves. *How to create a multi year solve* has example of this with the difference that here you use `realized_invest_periods` instead of `realized_periods` and that each of the solves requires the `contains_solve` parameter. 
 
 If you have many splits, this option can get tedious and prone to mistakes.
@@ -623,14 +624,15 @@ You can use the same lower level solve with all of the investment solves as the 
 Note that the results of a nested rolling solve run are 'close enough', not exact, because the information in the model is decreased. This is the price you pay for the speed. Therefore, the results should not be taken they are, instead it is important to know how to interpret the results: What is phenomena are missing? How will they affect the results? Where should extra investments go to satisfy the demand?
 
 In the init.sqlite there are four example scenarios related to this:
+
 - *multi_fullYear_battery*: The four period full year single solve, with coal, wind, battery storage with unlimited investment possibilities. Running this is still possible, but takes a few minutes. This is here as a reference for the nested solves.
 - *multi_fullYear_battery_nested_24h_invest_one_solve*: This has the nested structure and the investment solve is done with 24h timesteps and storage solve 6h timesteps.
-- *multi_fullYear_battery_nested_multi_invest*: This has split the investment to four solves with each having two period horizon. Nested structure with 6h storage solve timesteps.
 - *multi_fullYear_battery_nested_sample_invest_one_solve*: This has the investment solve as 5weeks sample but all the four periods are included in the same investment solve. Nested structure with 6h storage solve timesteps.
+- *multi_fullYear_battery_nested_multi_invest*: This has split the investment to four solves with each having two period 5weeks sample period horizon. Nested structure with 6h storage solve timesteps.
 
 The 24h is clearly too long timestep and the it invests too little for storage and coal. Large upward penalty insues.
-The sample invest also invests too little, as the largest demand-supply ratio weeks are not in the five week sample. However, the investments are spread more accurately.
-The splitted investment run in this case actually gives the same results as the complete single solve. This is not always the case! Here we have used the same values in all the periods except scaling the demand (inflow) linearly up for later years. 
+The sample one solve invest also invests too little, as the largest demand-supply ratio weeks are not in the five week sample. However, the investments are spread more accurately.
+The splitted sample investment run in this case similar results as the one solve sample run. This is not always the case! Here the only difference between periods was linarly increased demand.  
 
 
 ## How to use CPLEX as the solver

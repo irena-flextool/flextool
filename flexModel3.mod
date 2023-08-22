@@ -228,6 +228,7 @@ set period_first_of_solve := {d in period_in_use : sum{d2 in period_in_use : d2 
 
 set dt_realize_dispatch dimen 2 within period_time;
 set d_realized_period := setof {(d, t) in dt_realize_dispatch} (d);
+set realized_period__time_last dimen 2 within period_time;
 #dt_complete is the timesteps of the whole rolling_window set, not just single roll. For single_solve it is the same as dt
 set dt_complete dimen 2 within period_time;
 set complete_time_in_use := setof {(d, t) in dt_complete} (t);
@@ -241,6 +242,7 @@ set n_fix_storage_quantity := setof{(n,d,t) in ndt_fix_storage_quantity}(n);
 set n_fix_storage_price := setof{(n,d,t) in ndt_fix_storage_price}(n);
 param p_fix_storage_price {node, period_solve, time};
 param p_fix_storage_quantity {node, period_solve, time};
+param p_roll_continue_state {node};
 
 set startTime dimen 1 within time;
 set startNext dimen 1 within time;
@@ -433,6 +435,7 @@ table data IN 'CSV' 'solve_data/steps_in_use.csv' : [period, step], step_duratio
 table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,step];
 table data IN 'CSV' 'solve_data/first_timesteps.csv' : period__time_first <- [period,step];
 table data IN 'CSV' 'solve_data/last_timesteps.csv' : period__time_last <- [period,step];
+table data IN 'CSV' 'solve_data/last_realized_timestep.csv' : realized_period__time_last <- [period,step];
 table data IN 'CSV' 'solve_data/step_previous.csv' : dtttdt <- [period, time, previous, previous_within_block, previous_period, previous_within_solve];
 table data IN 'CSV' 'solve_data/step_previous.csv' : [period, time], dt_jump~jump;
 table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <- [period];
@@ -449,6 +452,7 @@ table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : ndt_fix_storage_quan
 table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : [node, period, step], p_fix_storage_quantity;
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : dt_complete <- [period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : [period, step], complete_step_duration;
+table data IN 'CSV' 'solve_data/p_roll_continue_state.csv' : [node], p_roll_continue_state;
 
 # After rolling forward the investment model
 table data IN 'CSV' 'solve_data/p_entity_divested.csv' : [entity], p_entity_divested;
@@ -1685,6 +1689,15 @@ s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, 
 	  )
 ;
 
+
+s.t. storage_state_roll_continue {n in nodeState, (d, t) in period__time_first
+     : not p_nested_model['solveFirst'] 
+	 && d in period_first_of_solve } :
+  + v_state[n, d, t] * p_entity_unitsize[n]
+  =
+  + p_roll_continue_state[n]
+;
+
 s.t. storage_state_start {n in nodeState, (d, t) in period__time_first
      : p_nested_model['solveFirst'] 
 	 && d in period_first 
@@ -2810,6 +2823,14 @@ for {i in 1..1 : p_model['solveFirst']}
 for {(n,'fix_price') in node__storage_nested_fix_method, (d, t) in dt : (d, t) in dt_fix_storage_timesteps}
   {
     printf '%s,%s,%s,%.8g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]*pdNode[n, 'storage_state_reference_price', d]>> fn_fix_price_nodeState__dt;
+  }
+
+printf 'Write node state last timestep ..\n';
+param fn_p_roll_continue_state symbolic := "solve_data/p_roll_continue_state.csv";
+printf 'node,p_roll_continue_state\n' > fn_p_roll_continue_state;
+for {n in nodeState, (d, t) in dt_realize_dispatch : (d, t) in realized_period__time_last}
+  {
+    printf '%s,%.8g\n', n, v_state[n, d, t].val* p_entity_unitsize[n]  >> fn_p_roll_continue_state;
   }
 
 printf 'Write unit capacity results...\n';
