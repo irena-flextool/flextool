@@ -553,7 +553,7 @@ The basic rolling solve has problems on dealing with long term storage (if the r
 
 What information is lost? The most obvious problems are related to the long term storage and investments. If the model only sees a few months to the future, it really can't see how much energy needs to be stored. Problems with investments are more numerous: What if the first roll is really windy, so it would invest too much on wind which wouldn't produce enough energy in later rolls and then it would need to invest again to something else. How can it consider lifetimes? If the option of retiring is allowed it might retire something that is needed for later rolls. 
 
-Nested solve sequences can first solve the investments and long term storage levels and pass them to the dispatch solve. Both storage solve and dispatch solve can be rolling solves.
+Nested solve sequences can first solve the investments and long term storage levels and pass them to the dispatch solve. Both storage solve and dispatch solve can be rolling solves. The dispatch solves can then send the end storage values to the investment and long term storage solves as start values to reduce the error of these solves.
 
 ![Nested graph](./Nested_graph.PNG)
 
