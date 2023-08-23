@@ -3233,159 +3233,6 @@
                     }
                 }
             ],
-            "annualized_dispatch_costs__period__t": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden",
-                                "value": "model"
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": "hidden",
-                                "value": "cost"
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterDefinition",
-                                "position": "hidden",
-                                "value": "cost_annualized"
-                            },
-                            {
-                                "map_type": "Alternative",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValueMetadata",
-                                "position": "hidden",
-                                "value": ""
-                            },
-                            {
-                                "map_type": "ParameterValueType",
-                                "position": "hidden",
-                                "value": "map"
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "cost_type"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": "header"
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "solve"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 0
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "period"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 1
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "time"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 2
-                            },
-                            {
-                                "map_type": "ExpandedValue",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "annualized_investment_costs__period": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden",
-                                "value": "model"
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": "hidden",
-                                "value": "cost"
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterDefinition",
-                                "position": "hidden",
-                                "value": "cost_annualized"
-                            },
-                            {
-                                "map_type": "Alternative",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValueMetadata",
-                                "position": "hidden",
-                                "value": ""
-                            },
-                            {
-                                "map_type": "ParameterValueType",
-                                "position": "hidden",
-                                "value": "map"
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "cost_type"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": "header"
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "solve"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 0
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "period"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 1
-                            },
-                            {
-                                "map_type": "ExpandedValue",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
             "unit_curtailment_share__outputNode__period": [
                 {
                     "Mapping 1": {
@@ -3579,7 +3426,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "VRE_share"
+                                "value": "VRE_share_t"
                             },
                             {
                                 "map_type": "Alternative",
@@ -3623,46 +3470,6 @@
                             },
                             {
                                 "map_type": "ExpandedValue",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "annualized_dispatch_costs__period": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "group_node__period__t": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
                                 "position": "hidden"
                             }
                         ]
@@ -3834,13 +3641,9 @@
                 "has_header": false
             },
             "annualized_costs__period": {},
-            "annualized_dispatch_costs__period__t": {},
-            "annualized_investment_costs__period": {},
             "group_node_VRE_share__period__t": {
                 "has_header": false
-            },
-            "annualized_dispatch_costs__period": {},
-            "group_node__period__t": {}
+            }
         },
         "table_types": {
             "unit__outputNode__period": {
@@ -4170,30 +3973,6 @@
                 "14": "float",
                 "15": "float",
                 "16": "float"
-            },
-            "annualized_dispatch_costs__period__t": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float"
-            },
-            "annualized_investment_costs__period": {
-                "0": "string",
-                "1": "string",
-                "2": "float",
-                "3": "float",
-                "4": "float",
-                "5": "float",
-                "6": "float"
             },
             "entity_annuity": {
                 "0": "string",
