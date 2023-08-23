@@ -3688,7 +3688,7 @@ for {s in solve_current, (d, t, t_previous, t_previous_within_block, d_previous,
     printf '\n%s,%s,%s', s, d, t >> fn_nodal_prices__dt;
     for {n in nodeBalance}
 	  {
-	    printf ',%8g', -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective >> fn_nodal_prices__dt;
+	    printf ',%8g', -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * period_share_of_year[d] / scale_the_objective >> fn_nodal_prices__dt;
       }
   }
 
