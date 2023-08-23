@@ -3334,7 +3334,7 @@ for {s in solve_current, d in d_realized_period}
   {
 	printf '\n%s,%s', s, d >> fn_unit__sourceNode__d;
     for {(u, source) in process_source : u in process_unit}
-      { printf ',%.8g', r_process_source_flow_d[u, source, d] / complete_period_share_of_year[d] >> fn_unit__sourceNode__d; }
+      { printf ',%.8g', -r_process_source_flow_d[u, source, d] / complete_period_share_of_year[d] >> fn_unit__sourceNode__d; }
   } 
 
 printf 'Write unit__inputNode flow for time...\n';
@@ -3350,7 +3350,7 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit__sourceNode__dt;
     for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}
-      { printf ',%.8g', r_process_source_sink_flow_dt[u, source, sink, d, t] >> fn_unit__sourceNode__dt; }
+      { printf ',%.8g', -r_process_source_sink_flow_dt[u, source, sink, d, t] >> fn_unit__sourceNode__dt; }
   } 
 
 printf 'Write connection flow for periods...\n';
