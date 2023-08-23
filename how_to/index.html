@@ -139,32 +139,42 @@ Each example will either include an example database file that is located in the
 <strong><em>init - west - wind</em></strong></p>
 <p>These three power plant types don't use any commodities (i.e. fuels), but are instead dependant on a timeseries profile.
 To create these plants one needs an output node, an unit and a profile.</p>
-<p>The unit only needs parameters:
-- <code>is_active</code>: <em>yes</em>
-- <code>existing</code>: [The maximum capacity of the plant] 
-Additionally these parameters should be at their default values:
-- <code>conversion_method</code>: <em>constant_efficiency</em>
-- <code>efficiency</code>: 1</p>
+<p>The unit only needs parameters:</p>
+<ul>
+<li><code>is_active</code>: <em>yes</em></li>
+<li><code>existing</code>: [The maximum capacity of the plant] 
+Additionally these parameters should be at their default values:</li>
+<li><code>conversion_method</code>: <em>constant_efficiency</em></li>
+<li><code>efficiency</code>: 1</li>
+</ul>
 <p>The <code>profile</code> object only has one parameter: <code>profile</code>. It is a timeseries map which tells what fraction of the capacity the plant can produce at each timestep.</p>
-<p>The relationships 
-- <code>unit__outputnode</code>: (plant|output node) and 
-- <code>unit__node__profile</code>: (plant|output node|profile) need to be both created.</p>
+<p>The relationships </p>
+<ul>
+<li><code>unit__outputnode</code>: (plant|output node) and </li>
+<li><code>unit__node__profile</code>: (plant|output node|profile) need to be both created.</li>
+</ul>
 <p>The <code>unit__node__profile</code> relationship needs a parameter <code>profile_method</code> that has three options: <code>upper_limit</code>, <code>lower_limit</code> and <code>exact</code>. It states how the profile is considered. In most cases the <code>upper_limit</code> option should be used as it allows the plant to curtail the production if there is more supply than demand. Otherwise the output node might have to use <code>downward_penalty</code> to spill energy.</p>
 <p>The same profile can be used for multiple <code>unit__outputnode</code>s (and that is why the profile is not a unit parameter but its own entity).</p>
 <p><img alt="Add another unit" src="../add_unit2.png" /></p>
 <h2 id="how-to-connect-nodes-in-the-same-energy-network">How to connect nodes in the same energy network</h2>
 <p><strong>(connections.sqlite)</strong></p>
-<p>Typically nodes are used to maintain an energy balance and therefore they are used to represent a location with demand or a storage. The nodes can pass energy to each other through a connection entity. This is often an electricity connection but it can be any form of energy (or matter)  moving between two nodes. To create a connection one needs:
-- two <code>nodes</code> 
-- <code>connection</code>
-- relationship <code>connection__node__node</code> to tie these three together.</p>
-<p>The connection needs the parameters:
-- <code>is_active</code>: <em>yes</em>
-- <code>existing</code>: The maximum capacity of the connection [MW]. Applies to both directions.
-- <code>efficiency</code>: represents the losses in transferring the energy. Same in both directions.</p>
-<p>Optional parameters:
-- <code>is_DC</code>: <em>yes</em>, flag if the connection is counted as non-synchronous for the possible non-synchronous limit. If <code>is_DC</code> (direct current) is yes, then the connection is non-synchronous. More at: How-to create a non-synchronous limit
-- <code>transfer_method</code>: Four options: <em>regular</em> (default), <em>exact</em>, <em>variable_cost_only</em>, <em>no_losses_no_variable_cost</em>. </p>
+<p>Typically nodes are used to maintain an energy balance and therefore they are used to represent a location with demand or a storage. The nodes can pass energy to each other through a connection entity. This is often an electricity connection but it can be any form of energy (or matter)  moving between two nodes. To create a connection one needs:</p>
+<ul>
+<li>two <code>nodes</code> </li>
+<li><code>connection</code></li>
+<li>relationship <code>connection__node__node</code> to tie these three together.</li>
+</ul>
+<p>The connection needs the parameters:</p>
+<ul>
+<li><code>is_active</code>: <em>yes</em></li>
+<li><code>existing</code>: The maximum capacity of the connection [MW]. Applies to both directions.</li>
+<li><code>efficiency</code>: represents the losses in transferring the energy. Same in both directions.</li>
+</ul>
+<p>Optional parameters:</p>
+<ul>
+<li><code>is_DC</code>: <em>yes</em>, flag if the connection is counted as non-synchronous for the possible non-synchronous limit. If <code>is_DC</code> (direct current) is yes, then the connection is non-synchronous. More at: How-to create a non-synchronous limit</li>
+<li><code>transfer_method</code>: Four options: <em>regular</em> (default), <em>exact</em>, <em>variable_cost_only</em>, <em>no_losses_no_variable_cost</em>. </li>
+</ul>
 <p>In most cases <em>regular</em> should be used. The downside of it is that it allows the flows to both directions at the same time, but the model does this only in specific circumstances when its beneficial to leak energy through the connection losses. For example, if connection capacity is 500 and efficiency 0.8, both nodes can send 500, but recive only 400 reducing the incoming energy by 100 in both nodes without any cost.
 Typically the model does not want to produce extra energy as it usually has costs, but it can happen if there is a cost to curtailing energy generation from a free source or if a unit is forced to generate at some level ('e.g. using <code>profile_method</code>: 'equal').</p>
 <p><em>Exact</em> method does not allow flow in both directions at the same time, but it requires a binary variable, which will be computationally heavier (especially if the model would otherwise be fully linear). </p>
@@ -250,13 +260,17 @@ In the example, the <em>wind_plant</em> alone is not able to meet the load in al
 <li><code>interest_rate</code> - an interest rate [e.g. 0.05 means 5%] for the technology that is sufficient to cover capital costs. The chosen interest rate should reflect the assumption that in the model economic lifetime equals the technical lifetime.</li>
 <li><code>lifetime</code> - technical lifetime of the technology to calculate investment annuity (together with the interest rate)</li>
 </ul>
-<p>Additional parameters:
-- <code>invest_max_total</code>: maximum investment (power [MW] or energy [MWh]) to the virtual capacity of a group of units or to the storage capacity of a group of nodes. 
-    - In the same way investment limits can be set for total and period, investment and retirement, min and max
-- <code>lifetime_method</code>: Model can either be forced to reinvest when the lifetime ends <code>reinvest_automatic</code> or have a choice <code>reinvest_choice</code>
-- <code>salvage_value</code>: Sets the extra value that can be gained for retiring [CUR/kW]
-- <code>fixed_cost</code>: Annual cost for capacity [CUR/kW]
-- <code>retire_forced</code>: forces to retire at least this amount of capacity</p>
+<p>Additional parameters:</p>
+<ul>
+<li><code>invest_max_total</code>: maximum investment (power [MW] or energy [MWh]) to the virtual capacity of a group of units or to the storage capacity of a group of nodes. <ul>
+<li>In the same way investment limits can be set for total and period, investment and retirement, min and max</li>
+</ul>
+</li>
+<li><code>lifetime_method</code>: Model can either be forced to reinvest when the lifetime ends <code>reinvest_automatic</code> or have a choice <code>reinvest_choice</code></li>
+<li><code>salvage_value</code>: Sets the extra value that can be gained for retiring [CUR/kW]</li>
+<li><code>fixed_cost</code>: Annual cost for capacity [CUR/kW]</li>
+<li><code>retire_forced</code>: forces to retire at least this amount of capacity</li>
+</ul>
 <p>In many cases some of the investment decisions are tied to each other. Here the battery capacity and the connection capacity of the <em>battery_inverter</em> will be tied as they are simultaneously limited by the choice of the battery technology to be invested in.
 To model this, a new constraint needs to be created that ties together the storage capacity of the <em>battery</em> and the charging/discharging capacity of the <em>battery_inverter</em>. A new <code>constraint</code> object <em>battery_tie_kW_kWh</em> is created and it is given parameters <code>constant</code>, <code>is_active</code> and <code>sense</code>. Constant could be left out, since it is zero, but <code>is_active</code> must be defined in order to include the constraint in the <em>battery_invest</em> <code>alternative</code>. The <code>sense</code> of the constraint must be <em>equal</em> to enforce the kw/kWh relation.</p>
 <p>Both <em>battery_inverter</em> and <em>battery</em> need a coefficient to tell the model how they relate to each other. The equation has the capacity variables on the left side of the equation and the constant on the right side.</p>
@@ -295,14 +309,20 @@ To model this, a new constraint needs to be created that ties together the stora
 <p>Then the <em>coal_chp</em> <code>unit</code> is made with a high <code>efficiency</code> parameter, since CHP units convert fuel energy to power and heat at high overall rates. In FlexTool, <code>efficiency</code> is a property of the unit - it demarcates at what rate the sum of inputs is converted to the sum of outputs. However, without any additional constraints, the <code>unit</code> is free to choose in what proportion to use inputs and in what proportion to use outputs. In units with only one input and output, this freedom does not exist, but in here, the <em>coal_chp</em> needs to be constrained as otherwise the unit could produce only electricity and no heat at 90% efficiency, which is not feasible. </p>
 <p>This CHP plant is an another example where the user defined <code>constraint</code> (see the last equation in the previous example) is used to achieve the desired behaviour. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plant the relation is more complicated - there is an allowed operating area between heat and power. Both can be represented in FlexTool, but here a backpressure example is given. An extraction plant would require two or more <em>greater_than</em> and/or <em>lesser_than</em> <code>constraints</code> to define an operating area.</p>
 <p>Electricity and heat outputs are fixed by adding a new <code>constraint</code> <em>coal_chp_fix</em> where the heat and power co-efficients are fixed. You need to create the two relationships <code>unit__outputNode</code>, for <em>coal_chp--heat</em> and <em>coal_chp--west</em>. As can be seen in the bottom part of the figure below, the <code>constraint_flow_coefficient</code> parameter for the <em>coal_chp--heat</em> and <em>coal_chp--west</em> is set as a map value where the <code>constraint</code> name matches with the <em>coal_chp_fix</em> <code>constraint</code> object name. The values are set so that the constraint equation forces the heat output to be twice as large as the electricity output.</p>
-<p>Create constraint  <em>coal_chp_fix</em> object with parameters:
-- <code>is_active</code>: yes
-- <code>sense</code>: equal
-- <code>constant</code>: 0.0</p>
-<p>Create <code>unit_outputNode</code> (coal_chp|heat):
-- <code>constraint_flow_coefficient</code> : <em>coal_chp_fix</em>, -0.5</p>
-<p>Create <code>unit_outputNode</code> (coal_chp|west):
-- <code>constraint_flow_coefficient</code> : <em>coal_chp_fix</em>, 2</p>
+<p>Create constraint  <em>coal_chp_fix</em> object with parameters:</p>
+<ul>
+<li><code>is_active</code>: yes</li>
+<li><code>sense</code>: equal</li>
+<li><code>constant</code>: 0.0</li>
+</ul>
+<p>Create <code>unit_outputNode</code> (coal_chp|heat):</p>
+<ul>
+<li><code>constraint_flow_coefficient</code> : <em>coal_chp_fix</em>, -0.5</li>
+</ul>
+<p>Create <code>unit_outputNode</code> (coal_chp|west):</p>
+<ul>
+<li><code>constraint_flow_coefficient</code> : <em>coal_chp_fix</em>, 2</li>
+</ul>
 <p>Again, the negative value can be turned positive by arranging it to the right side of the equality, creating this:</p>
 <pre><code>1 x *electricity* = 0.5 x *heat*, which is true only if *heat* is 2 x *electricity*
 </code></pre>
@@ -344,13 +364,15 @@ In this implementation of reservoir hydro power, there is an option to spill wat
 <p><img alt="Hydro reservoir" src="../hydro_reservoir.PNG" /></p>
 <h2 id="how-to-create-a-hydro-pump-storage">How to create a hydro pump storage</h2>
 <p><strong>(hydro_with_pump.sqlite)</strong></p>
-<p>For a hydro pump storage one needs the following components:
-- Demand <code>node</code> 
-- hydro_plant <code>unit</code> with 
-- storage <code>node</code>, 
-- hydro_pump <code>unit</code> with 
-- pump storage <code>node</code> 
-- a source for external energy (pumped storage plant will lose energy due to charging losses)</p>
+<p>For a hydro pump storage one needs the following components:</p>
+<ul>
+<li>Demand <code>node</code> </li>
+<li>hydro_plant <code>unit</code> with </li>
+<li>storage <code>node</code>, </li>
+<li>hydro_pump <code>unit</code> with </li>
+<li>pump storage <code>node</code> </li>
+<li>a source for external energy (pumped storage plant will lose energy due to charging losses)</li>
+</ul>
 <p>For the demand node and the hydro plant we will use the same components as in the previous hydro_reservoir example. With the difference that both demand and hydro_plant capacities are doubled. Wind power plant will be used as a source for external energy.</p>
 <p>First create the pump_storage. This is the downstream storage from the hydro plant. Again it should have the parameters as the reservoir:</p>
 <ul>
@@ -362,15 +384,19 @@ In this implementation of reservoir hydro power, there is an option to spill wat
 <li><code>penalty_down</code>: 0 </li>
 </ul>
 <p>In this example database, we have both a closed system and a river system. The difference is that in the closed system the inflow is zero in both reservoir and pump_storage. In river system we have the incoming water for the reservoir as in the reservoir example. In the downstream pump storage we implement a outflow as the negative inflow representing the minimum amount of water that has to flow out of the system at each timestep to not dry out the river. The <code>penalty_down</code> is set as 0 to allow it let more water go when it needs to, otherwise the storages will keep filling up if the incoming water is larger than the minimum outgoing water.</p>
-<p>The storage level fixes should be the same in both storages (reservoir and pump storage). Here:
-- <code>fix_start_end_method</code>: <em>fix_start</em>
-- <code>storage_state_start</code>: 0.5
-- <code>bind_storage_method</code>: <em>bind_with_timeblock</em></p>
+<p>The storage level fixes should be the same in both storages (reservoir and pump storage). Here:</p>
+<ul>
+<li><code>fix_start_end_method</code>: <em>fix_start</em></li>
+<li><code>storage_state_start</code>: 0.5</li>
+<li><code>bind_storage_method</code>: <em>bind_with_timeblock</em></li>
+</ul>
 <p>This sets the starting storage levels to be 50%. The binding will also constrain the state of the storage at the end of of each timeblock to be the same as in the beginning of the timeblock.</p>
-<p>Then create the pump unit. It only needs three parameters:
-- <code>efficiency</code> = 1, The real efficiency of the pump is set elsewhere, so use 1.0 here. 
-- <code>existing</code>: The wanted capacity
-- <code>is_active</code>: <em>yes</em> </p>
+<p>Then create the pump unit. It only needs three parameters:</p>
+<ul>
+<li><code>efficiency</code> = 1, The real efficiency of the pump is set elsewhere, so use 1.0 here. </li>
+<li><code>existing</code>: The wanted capacity</li>
+<li><code>is_active</code>: <em>yes</em> </li>
+</ul>
 <p>Set the relationships as follows:</p>
 <ul>
 <li><code>unit_outputNode</code> for (hydro_plant | nodeA), (hydro_plant | pump_storage ), (hydro_pump | reservoir)</li>
@@ -379,12 +405,16 @@ In this implementation of reservoir hydro power, there is an option to spill wat
 <p>Your system should look something like:</p>
 <p><img alt="Hydro pump" src="../hydro_pump.PNG" /></p>
 <p>Next comes the tricky part of preserving the water and energy as both are represented as generic energy in the model. This is done by setting extra coefficents and constraints to the flows. First the hydro_plant needs to both create the energy for the demand node and pass the mass to the pump_storage. This is done by doubling the efficiency in this example to 2 and setting a extra constraint to force the output flows to both the demand node and the storage to be the same. </p>
-<p>For the hydro plant:
-- <code>Efficiency</code>:  2 </p>
-<p>Create a new constraint (here <em>plant_storage_nodeA_split</em>) and add the parameters:
-- <code>is_active</code>: yes
-- <code>sense</code>: equal
-- <code>constant</code>: 0.0</p>
+<p>For the hydro plant:</p>
+<ul>
+<li><code>Efficiency</code>:  2 </li>
+</ul>
+<p>Create a new constraint (here <em>plant_storage_nodeA_split</em>) and add the parameters:</p>
+<ul>
+<li><code>is_active</code>: yes</li>
+<li><code>sense</code>: equal</li>
+<li><code>constant</code>: 0.0</li>
+</ul>
 <p>And for the <code>unit_outputNodes</code>:</p>
 <ul>
 <li>(hydro_plant | nodeA) <code>constraint_flow_coefficient</code> Map: plant_storage_nodeA_split , 1</li>
@@ -400,13 +430,17 @@ First to prevent the energy from the demand node from increasing the water flow,
 <p>This prevents the water amount from increasing as:</p>
 <pre><code>unit_output_flow = coeff1 * unit_input_flow1 + coeff2 * unit_input_flow2.
 </code></pre>
-<p>We still have to make the unit to consume electricity even though it does not affect the unit output directly. This is done by setting a new constraint to tie the flows to the pump unit from pump storage and the nodeA. Add a constraint (here <em>pump_storage_nodeA_fix</em>) the with the parameters:
-- <code>is_active</code>: yes
-- <code>sense</code>: equal
-- <code>constant</code>: 0.0</p>
-<p>And setting parameters for <code>unit_outputNode</code> and <code>unit_inputNode</code>:
-- (hydro_pump | nodeA) <code>constraint_flow_coefficient</code> Map: plant_storage_nodeA_split , 2
-- (hydro_pump | pump_storage) <code>constraint_flow_coefficient</code> Map: plant_storage_nodeA_split , -1</p>
+<p>We still have to make the unit to consume electricity even though it does not affect the unit output directly. This is done by setting a new constraint to tie the flows to the pump unit from pump storage and the nodeA. Add a constraint (here <em>pump_storage_nodeA_fix</em>) the with the parameters:</p>
+<ul>
+<li><code>is_active</code>: yes</li>
+<li><code>sense</code>: equal</li>
+<li><code>constant</code>: 0.0</li>
+</ul>
+<p>And setting parameters for <code>unit_outputNode</code> and <code>unit_inputNode</code>:</p>
+<ul>
+<li>(hydro_pump | nodeA) <code>constraint_flow_coefficient</code> Map: plant_storage_nodeA_split , 2</li>
+<li>(hydro_pump | pump_storage) <code>constraint_flow_coefficient</code> Map: plant_storage_nodeA_split , -1</li>
+</ul>
 <pre><code>2 * flow_from_nodeA - flow_from_pump_storage = 0
 </code></pre>
 <p>Note that here the (<code>constraint_flow_coefficient</code> Map: plant_storage_nodeA_split , 2) actually sets the efficiency of the pump. 
@@ -432,11 +466,13 @@ where   slope = 1 / efficiency - section
 <p>By default, <code>input_coefficient</code> and <code>output_coefficient</code> are 1, but if there is a need to tweak their relative contributions, these coefficients allow to do so (e.g. a coal plant might have lower efficiency when using lignite than when using brown coal).</p>
 <p>The input is required at different ouput levels is shown in the figure below, when Capacity = 100, Efficiency = 0.8, Minimum load = 0.6 and Efficiency at minimum load = 0.5.</p>
 <p><img alt="Min load figure" src="../Minimum_load.png" /></p>
-<p>Next we will add ramp limits. With the ramping limits, the user can force the change of a flow from a unit to be below a certain value each timestep. The ramping is an attribute of the flow. Therefore it does not require the minimum load behaviour and its parameters are added to the <code>unit_outputNode</code> relationship:
-- <code>ramp_method</code>: ramp_cost, ramp_limit or both. Only ramp limit is currently implemented (August 2023).
-- <code>ramp_speed_up</code>: Limit on how fast the plant can ramp up. (fraction of unit / min) ie. Value 0.01 allows the change of 60% of capacity per hour. 
-- <code>ramp_speed_down</code>: Limit on how fast the plant can ramp down. (fraction of unit / min) ie. Value 0.01 allows the change of 60% of capacity per hour.
-- <code>ramp_cost</code>: NOT YET IMPLEMENTED. The cost of ramping the capacity. [CUR/MW] </p>
+<p>Next we will add ramp limits. With the ramping limits, the user can force the change of a flow from a unit to be below a certain value each timestep. The ramping is an attribute of the flow. Therefore it does not require the minimum load behaviour and its parameters are added to the <code>unit_outputNode</code> relationship:</p>
+<ul>
+<li><code>ramp_method</code>: ramp_cost, ramp_limit or both. Only ramp limit is currently implemented (August 2023).</li>
+<li><code>ramp_speed_up</code>: Limit on how fast the plant can ramp up. (fraction of unit / min) ie. Value 0.01 allows the change of 60% of capacity per hour. </li>
+<li><code>ramp_speed_down</code>: Limit on how fast the plant can ramp down. (fraction of unit / min) ie. Value 0.01 allows the change of 60% of capacity per hour.</li>
+<li><code>ramp_cost</code>: NOT YET IMPLEMENTED. The cost of ramping the capacity. [CUR/MW] </li>
+</ul>
 <p><img alt="Add min_load" src="../coal_min_load.png" /></p>
 <h2 id="how-to-add-co2-emissions-costs-and-limits">How to add CO2 emissions, costs and limits</h2>
 <p><strong>(init.sqlite scenario: coal_co2 )</strong>
@@ -451,20 +487,24 @@ To set a price one needs to create set the co2_method parameter to <em>price</em
 <strong><em>(scenario: non_sync)</em></strong></p>
 <p>Non-synchronous limit is a property of a <code>group</code> of nodes. It states that the non-synchronous flow to the node cannot exceed a set share of the input flows at any timestep. To demonstrate this we have set a system with a coal plant, a wind plant and a single demand node. However, it can be done to a group of nodes with unlimited amount of plants or connections connected. So, one can limit the share on invdividual nodes and the whole system.</p>
 <p>The non-synchronous limit is set to a <code>group</code> of nodes with one or multiple members. Note: These are set to the group with <code>group_node</code> relationship, not with <code>group_node_unit</code> relationship!</p>
-<p>Create a group (here <em>nodeA_group</em>) and set a <code>group_node</code> relationship (nodeA_group |nodeA). Then add parameters:
-- <code>has_non_synchronous</code> : yes
-- <code>non_synchronous_limit</code>: 0.5
-- <code>penalty_non_synchronous</code>: 4000</p>
+<p>Create a group (here <em>nodeA_group</em>) and set a <code>group_node</code> relationship (nodeA_group |nodeA). Then add parameters:</p>
+<ul>
+<li><code>has_non_synchronous</code> : yes</li>
+<li><code>non_synchronous_limit</code>: 0.5</li>
+<li><code>penalty_non_synchronous</code>: 4000</li>
+</ul>
 <p>This forces the non-sync flow to be at max 50% of the incoming flow to the nodeA. 
 The penalty should be always set as in some cases there is no other way to keep the constraint feasible (and it will be difficult to find the reason why the model does not solve). The existance of the non-synchrounous penalty in your results indicates that this constraint has been violated and you should investigate the reason for this in your system. If the <code>penalty_non_synchronous</code> is lower than the <code>upward_penalty</code> of the demand <code>node</code>, the system will prefer breaking the non-sync constraint instead of the <code>node</code> balance equation. In other words it will not curtail the production of <code>profile</code> plants if the demand is not satisfied even though it will break the non-synchronous penalty. If it is higher, the curtailment will take place instead.</p>
-<p>Then set which plants and connections are considered non-synchronous by adding a parameters:
-<code>unit_outputNode</code>:
+<p>Then set which plants and connections are considered non-synchronous by adding a parameters:</p>
+<p><code>unit_outputNode</code>:
 - <code>is_non_synchronous</code>: yes </p>
 <p><code>Connection_node_node</code>:
 - <code>is_DC</code>: yes </p>
 <p>Here the (wind_plant|nodeA) has the <code>is_non_synchronous</code> parameter.</p>
-<p>If you want to see the individual flows in the results you can create separate <code>groups</code> for the flows and add <code>group_unit_node</code> relations to it. To produce the flow results, the groups need the parameter 
-- <code>output_results</code>: yes </p>
+<p>If you want to see the individual flows in the results you can create separate <code>groups</code> for the flows and add <code>group_unit_node</code> relations to it. To produce the flow results, the groups need the parameter </p>
+<ul>
+<li><code>output_results</code>: yes </li>
+</ul>
 <p>Here we have <em>coal_flow</em> <code>group</code> with <code>group_unit_node</code> relation coal_flow|coal_plant|nodeA
 and <em>wind_flow</em> <code>group</code> with <code>group_unit_node</code> relation wind_flow|wind_plant|nodeA.</p>
 <p><img alt="non-sync" src="../non_sync.PNG" /></p>
@@ -472,13 +512,17 @@ and <em>wind_flow</em> <code>group</code> with <code>group_unit_node</code> rela
 <p><strong>(non_sync_and_curtailment.sqlite)</strong>
 <strong><em>(scenario: curtailment)</em></strong></p>
 <p>When the system has profile-units with the <code>profile_method</code>: upper_limit, the model can curtail the unit's flow to avoid penalties.</p>
-<p>The curtailment could take place for several reasons:
-- the supply is higher than the demand and the energy cannot be stored or transferred (further)
-- non-synchronous limit
-- extra flow constraints have been set
-- other unit specific constraint affecting how VRE units or other units are forced to behave (ramp, start-up ...)</p>
-<p>To see the curtailment results you need to add a <code>group</code> of nodes (<code>group_node</code> not <code>group_unit_node</code> !) with one or more members. The group then needs the parameter:
-- <code>output_results</code>: yes</p>
+<p>The curtailment could take place for several reasons:</p>
+<ul>
+<li>the supply is higher than the demand and the energy cannot be stored or transferred (further)</li>
+<li>non-synchronous limit</li>
+<li>extra flow constraints have been set</li>
+<li>other unit specific constraint affecting how VRE units or other units are forced to behave (ramp, start-up ...)</li>
+</ul>
+<p>To see the curtailment results you need to add a <code>group</code> of nodes (<code>group_node</code> not <code>group_unit_node</code> !) with one or more members. The group then needs the parameter:</p>
+<ul>
+<li><code>output_results</code>: yes</li>
+</ul>
 <p>This produces the <code>group</code>: <em>indicator</em> result to the Results database and <em>group_summary</em> table to the excel.</p>
 <p>These changes were done to the previous non-sync example database. </p>
 <p>Note: The results are the share of curtailment in relation to the inflow (demand) so it can exceed 100% as seen in the figure.</p>
@@ -503,73 +547,95 @@ and <em>wind_flow</em> <code>group</code> with <code>group_unit_node</code> rela
 <h2 id="how-to-use-rolling-window-for-dispatch-solve">How to use Rolling window for dispatch solve</h2>
 <p>The rolling window solve can be used when the model gets too big and solving times get too long. </p>
 <p>When using rolling window solve, you are solving the model with less information. Therefore, it will change the results and it is important to know how the results change and what phenomena is left out when certain information is left out of the model. 
-The rolling window solve splits the time dimension into overlapping parts and solves them separatelly. For example, instead of a full year in one solve, you can split it to six four-month solves where each solve outputs only the first two months. The solves would therefore include the months:
-- Roll: Solve months -&gt; Output months
-- 1: [1,2,3,4] -&gt; [1,2]
-- 2: [3,4,5,6] -&gt; [3,4]
-- 3: [5,6,7,8] -&gt; [5,6]
-- 4: [7,8,9,10] -&gt; [7,8]
-- 5: [9,10,11,12] -&gt;[9,10]
-- 6: [11,12] -&gt; [11,12]</p>
+The rolling window solve splits the time dimension into overlapping parts and solves them separatelly. For example, instead of a full year in one solve, you can split it to six four-month solves where each solve outputs only the first two months. The solves would therefore include the months:</p>
+<ul>
+<li>Roll: Solve months -&gt; Output months</li>
+<li>1: [1,2,3,4] -&gt; [1,2]</li>
+<li>2: [3,4,5,6] -&gt; [3,4]</li>
+<li>3: [5,6,7,8] -&gt; [5,6]</li>
+<li>4: [7,8,9,10] -&gt; [7,8]</li>
+<li>5: [9,10,11,12] -&gt;[9,10]</li>
+<li>6: [11,12] -&gt; [11,12]</li>
+</ul>
 <p><img alt="Rolling" src="./Rolling.png" /></p>
 <p>This can be done manually as discribed in the 'How to run a multi year model'. However, this is tedious to do if there are many solves and each solve is limitted solving whole timeblocks. In the rolling window solve, the user can set the <code>rolling_jump</code> and <code>rolling_horizon</code> as hours. Former sets both the solve start point interval and the output interval as they are the same, the latter sets the solve length. In the previous example the <code>rolling_jump</code> would be 60 days (1440 hours) and <code>rolling_horizon</code> 120 days (2880 hours). In addition, if the user does not want to start from the beginning, the user has the option to set the starting point of the first solve as a timestamp <code>rolling_start_time</code>. The <code>rolling_duration</code> sets the length of the combined solves, here 12 months. If it is not set, it defaults to rolling through the whole timeline. </p>
 <p>What information is lost? The most obvious problems are related to the long term storage and investments. If the model only sees a few months to the future, it can't see how much energy needs to be stored after that. Problems with investments are more numerous: If the first roll is really windy, it would invest too much on wind which wouldn't produce enough energy in later rolls and then it would need to invest again to something else. How can it consider lifetimes? If the option of retiring is allowed it might retire something that is needed for later rolls. </p>
 <p><em>Both long term storage and investments can be taken into account with nested rolling solves that have a separate how-to</em></p>
 <p>Still, even the short term storage is operated less optimally. However, it might be operate more <em>realistically</em> as the linear optimization models have the issue of being 'too optimal'. When setting the storage level of one day, it might take into consideration the wind speed of a certain hour of a day of hundreds of days later. The forecasts of the operators are not that good. The solution of a <em>rolling_window</em> solve should always be less optimal than from the complete <em>single_solve</em> meaning that it will have higher combined cost.</p>
-<p>To set a dispatch rolling window model you need to set the object <code>solve</code> parameters:
-- <code>solve_mode</code>: <em>rolling_window</em>
-- <code>rolling_jump</code>: Hours, The desired length of the solve interval
-- <code>rolling_horizon</code>: Hours, The desired length of each roll solve
-- <code>rolling_duration</code>: (Optional) Hours, The length of the combined outputs. If not set, the whole timeline is used.
-- <code>rolling_start</code>: (Optional) Hours, The starting timestep the whole solve, if not wanting to start from the beginning </p>
-<p>Considerations on the rolling times:
-- The <code>rolling_jump</code> and <code>rolling_horizon</code> have to be large enough to make the solve faster. If too small intervals are used, the creation of solves and moving data from solve to another might take too much time.
-- If you are not using 1 hour timesteps, preferably use multiples of the timestep you are using as the <code>rolling_jump</code> and <code>rolling_horizon</code>. The steps included in each solve are calculated by summing the step durations until they are larger or equal to the hours given. So, if multiples are not used, the rolls might not be exactly the same size.
-- The model can roll over timeblock and period jumps, which might cause some issues if storage constraints are used. Using timeblock length or its multiples is therefore recommended. For example, the <code>rolling_jump</code> could be a half of a timeblock and the <code>rolling_horizon</code> whole timeblock or <code>rolling_jump</code> a timeblock and <code>rolling_horizon</code> three timeblocks.</p>
-<p>Considerations on storage parameters:
-- <code>storage_solve_horizon_method</code> is the preferred way of binding storage values with the <code>storage_state_start_end_method</code>: <em>start</em>. It binds the storage values or prices of the end of <em>horizon</em> not the end of <em>jump</em>. This allows the output values to be more flexible. 
-- <code>bind_within_timeblock</code> does not work correctly if the rolls don't include whole timeblocks. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeblock. Do not use in nested solves if you are not using whole timeblocks or its multiples as <code>rolling_jump</code>
-- the same applies to the <code>bind_within_period</code>
-- <code>storage_start_end_method</code> sets the first timestep of the first roll and the last timestep of the last roll
-- <code>bind_within_solve</code> binds the start and end of each <em>roll</em> not the start and end of the whole set. Do not use in nested solves.</p>
+<p>To set a dispatch rolling window model you need to set the object <code>solve</code> parameters:</p>
+<ul>
+<li><code>solve_mode</code>: <em>rolling_window</em></li>
+<li><code>rolling_jump</code>: Hours, The desired length of the solve interval</li>
+<li><code>rolling_horizon</code>: Hours, The desired length of each roll solve</li>
+<li><code>rolling_duration</code>: (Optional) Hours, The length of the combined outputs. If not set, the whole timeline is used.</li>
+<li><code>rolling_start</code>: (Optional) Hours, The starting timestep the whole solve, if not wanting to start from the beginning </li>
+</ul>
+<p>Considerations on the rolling times:</p>
+<ul>
+<li>The <code>rolling_jump</code> and <code>rolling_horizon</code> have to be large enough to make the solve faster. If too small intervals are used, the creation of solves and moving data from solve to another might take too much time.</li>
+<li>If you are not using 1 hour timesteps, preferably use multiples of the timestep you are using as the <code>rolling_jump</code> and <code>rolling_horizon</code>. The steps included in each solve are calculated by summing the step durations until they are larger or equal to the hours given. So, if multiples are not used, the rolls might not be exactly the same size.</li>
+<li>The model can roll over timeblock and period jumps, which might cause some issues if storage constraints are used. Using timeblock length or its multiples is therefore recommended. For example, the <code>rolling_jump</code> could be a half of a timeblock and the <code>rolling_horizon</code> whole timeblock or <code>rolling_jump</code> a timeblock and <code>rolling_horizon</code> three timeblocks.</li>
+</ul>
+<p>Considerations on storage parameters:</p>
+<ul>
+<li><code>storage_solve_horizon_method</code> is the preferred way of binding storage values with the <code>storage_state_start_end_method</code>: <em>start</em>. It binds the storage values or prices of the end of <em>horizon</em> not the end of <em>jump</em>. This allows the output values to be more flexible. </li>
+<li><code>bind_within_timeblock</code> does not work correctly if the rolls don't include whole timeblocks. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeblock. Do not use in nested solves if you are not using whole timeblocks or its multiples as <code>rolling_jump</code></li>
+<li>the same applies to the <code>bind_within_period</code></li>
+<li><code>storage_start_end_method</code> sets the first timestep of the first roll and the last timestep of the last roll</li>
+<li><code>bind_within_solve</code> binds the start and end of each <em>roll</em> not the start and end of the whole set. Do not use in nested solves.</li>
+</ul>
 <h2 id="how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves (investments and long term storage)</h2>
 <p>The basic rolling solve has problems on dealing with long term storage (if the rolling times are smaller than it) and with investments.</p>
 <p>What information is lost? The most obvious problems are related to the long term storage and investments. If the model only sees a few months to the future, it really can't see how much energy needs to be stored. Problems with investments are more numerous: What if the first roll is really windy, so it would invest too much on wind which wouldn't produce enough energy in later rolls and then it would need to invest again to something else. How can it consider lifetimes? If the option of retiring is allowed it might retire something that is needed for later rolls. </p>
 <p>Nested solve sequences can first solve the investments and long term storage levels and pass them to the dispatch solve. Both storage solve and dispatch solve can be rolling solves. The dispatch solves can then send the end storage values to the investment and long term storage solves as start values to reduce the error of these solves.</p>
 <p><img alt="Nested graph" src="../Nested_graph.PNG" /></p>
 <p>However, the obvious issue is that these values cannot be solved using the old complete solve as it wouldn't make the solve time any shorter. Actually, it would make it longer as the same time would be used to get the investment values than it would be to get all the values. 
-Therefore, we need to decrease the information for investment and storage solves as well. There are a few options for this:
-1. Use lower resolution (longer timesteps). This is really the only option for long term storage.
-2. Take a sample of the timeline as the investment solve. This works well if there is a clear time interval when the demand-supply relation is the most demanding. Other option for the sample is to include for example every third week of the year.
-3. Split the investment timeline by manually creating a horizon solve sequence for the investment solves like with (How to create a multi year model). This can be combined with the first or second option. If not, nested stucture should not be used. Instead, realize the dispatch results also from the investment solve. </p>
-<p>Each of these have their pros and cons:
-- Using the lower resolution is in most cases fastest, but the phenomena with a higher frequency than the new step size will be lost as the timestep varying parameters are averaged or summed for the new timestep. For example, consider a model with investment options to solar and storage. If the step duration is changed to 24 hours, the model won't invest in the storage enough. When these investments are passed to the dispatch solve, the investments cannot satisfy the demand.
-- Using the sample can be effective if the sample is chosen well, but all the needs that are not in these samples are not included. The speed is heavily dependent on the sample size.
-- Splitting the timeline is the slowest, but the previously mentioned issues do not apply. It works the best if there are not large changes between the periods, so each period should include whole or multiple years.</p>
+Therefore, we need to decrease the information for investment and storage solves as well. There are a few options for this:</p>
+<ol>
+<li>Use lower resolution (longer timesteps). This is really the only option for long term storage.</li>
+<li>Take a sample of the timeline as the investment solve. This works well if there is a clear time interval when the demand-supply relation is the most demanding. Other option for the sample is to include for example every third week of the year.</li>
+<li>Split the investment timeline by manually creating a horizon solve sequence for the investment solves like with (How to create a multi year model). This can be combined with the first or second option. If not, nested stucture should not be used. Instead, realize the dispatch results also from the investment solve. </li>
+</ol>
+<p>Each of these have their pros and cons:</p>
+<ul>
+<li>Using the lower resolution is in most cases fastest, but the phenomena with a higher frequency than the new step size will be lost as the timestep varying parameters are averaged or summed for the new timestep. For example, consider a model with investment options to solar and storage. If the step duration is changed to 24 hours, the model won't invest in the storage enough. When these investments are passed to the dispatch solve, the investments cannot satisfy the demand.</li>
+<li>Using the sample can be effective if the sample is chosen well, but all the needs that are not in these samples are not included. The speed is heavily dependent on the sample size.</li>
+<li>Splitting the timeline is the slowest, but the previously mentioned issues do not apply. It works the best if there are not large changes between the periods, so each period should include whole or multiple years.</li>
+</ul>
 <p>The investment decisions with less information are always less optimal than with complete solves. Therefore, when they are passed to the dispatch solve, it will in some cases have penalties in the results as the investments are not enough.</p>
 <p>The long term storage solve should be done using a lower resolution solve. The solve sets a 'fix-constraint' to the ends dispatch solves. This means that on the last step of the roll or the period, the storage quantity (or price) will have to match the quantity (or price) in the storage solve.  The <code>rolling_jump</code> and <code>rolling_horizon</code> in the storage solve have to be longer than in the dispatch solve. You can set which storages are included as long term storage for this solve.</p>
 <p>To create a nested solve sequence, one needs two or three <code>solve</code> objects. Either the investment solve or the storage solve can be left out.
-The nested levels are set by the parameter <code>contains_solve</code>: <em>solve_name</em>. The investment solve is always on the top followed by the storage solve and dispatch solve:
-- <em>investment_solve</em> <code>solve</code> parameter <code>contains_solve</code>: <em>storage_solve_name</em> 
-- <em>storage_solve</em> <code>solve</code> parameter <code>contains_solve</code>: <em>dispatch_solve_name</em></p>
-<p>To create a storage solve:
-- <code>solve</code> parameter <code>fix_storage_period</code>: Array of periods where the storage values are fixed in the lower solve. Should be the same as <code>realized_periods</code> for the dispatch solve.
-- <code>node</code> parameter <code>storage_fix_method</code>: <em>fix_quantity</em> or <em>fix_price</em>, includes this storage to be fixed. <em>fix_price</em> requires <em>storage_state_reference_price</em> to be set.</p>
-<p>To create a investment_solve:
-- <code>solve</code> parameter <code>invest_periods</code>: Array  of periods where the model can invest.
-- <code>solve</code> parameter <code>realized_invest_periods</code>: Array of periods where the model will realize investment decisions to the lower solves and results.
-- <code>solve</code> parameter <code>realized_periods</code>: Should not be used in this solve! You don't want the dispatch results from this solve, but from the dispatch solve.</p>
-<p>In addition, the rolling dispatch solve should be created as in the <em>How to use Rolling window solve for dispatch</em>. This solve should have the parameter <code>realized_periods</code> set to produce the dispatch results. The model parameters apply to all of the solves. Therefore, the considerations of the storage value binding that were discussed in the <em>How to use Rolling window solve</em> should be taken into account here as well.
-- Storage levels can be fixed with <code>storage_solve_horizon_method</code>: <em>use_reference_value</em> or <em>use_reference_price</em>, these will fix the end of each horizon not each jump.
-- <code>storage_start_end_method</code> fixes the starts and/or ends of each solve level, meaning the first step of the first roll and the last step of the last roll.
-- In most cases the <code>bind_storage_method</code> should be left as <em>bind_forward_only</em>
-- Do not use <code>bind_within_timeblock</code> if you are not using full timeblock or its multiples as the <code>rolling_jump</code> in the dispatch model, otherwise you might cause a infeasible problem. 
-- Do not use <code>bind_within_period</code> if you are not using full periods or its multiples as the <code>rolling_jump</code> in the dispatch model, otherwise you might cause a infeasible problem. 
-- Do not use <code>bind_within_solve</code></p>
-<p>To create a lower resolution solve:
-- Make a new <code>timeblockSet</code>, but use the same <code>timeline</code> and <code>block_duration</code> for it as with the high resolution solve
-- Set <code>timeblockSet</code> parameter <code>new_stepduration</code>: Hours
-- In the <code>solve</code> use this new <code>timeblockSet</code> in the <code>period_timeblockSet</code></p>
+The nested levels are set by the parameter <code>contains_solve</code>: <em>solve_name</em>. The investment solve is always on the top followed by the storage solve and dispatch solve:</p>
+<ul>
+<li><em>investment_solve</em> <code>solve</code> parameter <code>contains_solve</code>: <em>storage_solve_name</em> </li>
+<li><em>storage_solve</em> <code>solve</code> parameter <code>contains_solve</code>: <em>dispatch_solve_name</em></li>
+</ul>
+<p>To create a storage solve:</p>
+<ul>
+<li><code>solve</code> parameter <code>fix_storage_period</code>: Array of periods where the storage values are fixed in the lower solve. Should be the same as <code>realized_periods</code> for the dispatch solve.</li>
+<li><code>node</code> parameter <code>storage_fix_method</code>: <em>fix_quantity</em> or <em>fix_price</em>, includes this storage to be fixed. <em>fix_price</em> requires <em>storage_state_reference_price</em> to be set.</li>
+</ul>
+<p>To create a investment_solve:</p>
+<ul>
+<li><code>solve</code> parameter <code>invest_periods</code>: Array  of periods where the model can invest.</li>
+<li><code>solve</code> parameter <code>realized_invest_periods</code>: Array of periods where the model will realize investment decisions to the lower solves and results.</li>
+<li><code>solve</code> parameter <code>realized_periods</code>: Should not be used in this solve! You don't want the dispatch results from this solve, but from the dispatch solve.</li>
+</ul>
+<p>In addition, the rolling dispatch solve should be created as in the <em>How to use Rolling window solve for dispatch</em>. This solve should have the parameter <code>realized_periods</code> set to produce the dispatch results. The model parameters apply to all of the solves. Therefore, the considerations of the storage value binding that were discussed in the <em>How to use Rolling window solve</em> should be taken into account here as well.</p>
+<ul>
+<li>Storage levels can be fixed with <code>storage_solve_horizon_method</code>: <em>use_reference_value</em> or <em>use_reference_price</em>, these will fix the end of each horizon not each jump.</li>
+<li><code>storage_start_end_method</code> fixes the starts and/or ends of each solve level, meaning the first step of the first roll and the last step of the last roll.</li>
+<li>In most cases the <code>bind_storage_method</code> should be left as <em>bind_forward_only</em></li>
+<li>Do not use <code>bind_within_timeblock</code> if you are not using full timeblock or its multiples as the <code>rolling_jump</code> in the dispatch model, otherwise you might cause a infeasible problem. </li>
+<li>Do not use <code>bind_within_period</code> if you are not using full periods or its multiples as the <code>rolling_jump</code> in the dispatch model, otherwise you might cause a infeasible problem. </li>
+<li>Do not use <code>bind_within_solve</code></li>
+</ul>
+<p>To create a lower resolution solve:</p>
+<ul>
+<li>Make a new <code>timeblockSet</code>, but use the same <code>timeline</code> and <code>block_duration</code> for it as with the high resolution solve</li>
+<li>Set <code>timeblockSet</code> parameter <code>new_stepduration</code>: Hours</li>
+<li>In the <code>solve</code> use this new <code>timeblockSet</code> in the <code>period_timeblockSet</code></li>
+</ul>
 <p>The model will create a new timeline for this solve with the <code>new_stepduration</code>. All the timestep map data like <code>inflow</code> or <code>profile</code> will be either summed or averaged for the new timeline. Again, the <code>new_stepduration</code> should be multiple of the old step duration. If the <code>block_duration</code> is not a multiple of the <code>new_stepduration</code> the last timestep will be shorter than the rest.
 <img alt="New step duration" src="../new_stepduration.PNG" /></p>
 <p>A sample solve you have actually done already in the tutorial with <em>5weeks</em> where the year is represented with five sample weeks. It is done with the <code>timeblockSet</code> parameter <code>block_duration</code> where instead of choosing the whole timeline by setting the first timestep and the duration of whole timeline, you choose multiple starting points with smaller durations. The example for the <em>5weeks</em> is below</p>
