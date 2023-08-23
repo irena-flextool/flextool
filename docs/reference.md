@@ -49,13 +49,26 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
 
   - *period_timeblockset*: map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name.
   - *realized_periods*: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve
+  - *realized_invest_periods* Array of the periods that will realize the investment decisions. If this is not defined when the invest_periods exist, the realized_periods are used to realize the invests as well
   - *invest_periods*: array of periods where investements are allowed in this solve (applies only to objects that can be invested in)
   - *years_represented*: Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years.
   - *solver*: choice of a solver ('highs'(default), 'glpsol', 'cplex' (requires a licence))
   - *highs_method*: HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.
   - *highs_parallel*: HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.
   - *highs_presolve*: HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large. 
-  - *solve_mode*: a single solve or a set of rolling optimisation windows solved in a sequence (not functional yet, always a single solve).
+  - *solve_mode*: a single solve or a set of rolling optimisation windows solved in a sequence 
+  - Rolling window parameters:
+
+    - *rolling_start_time*: (Optional) Timestamp from the timeline that is linked to the timeblockSet used. Starting point of the rolling. If this is not stated, it is assumed to be the first timestep
+    - *rolling_solve_jump*: Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Also the output interval. This should be smaller than the horizon
+    - *rolling_solve_horizon*: Hours, (Required if rolling_window solve). The length of the horizon of the roll. How long into the future the roll sees. For an individual roll, horizon is the solve length and jump is the output length.
+    - *rolling_duration*: Hours, (Optional). Duration of rolling, if not stated, assumed to be the whole timeline of the solve
+
+  - Nested solve sequence parameters:
+
+    - *contains_solve*: Array of solves that are run with after this solve using the realized data of this solve. Read 'How to use Nested Rolling window solves (investments and long term storage)'
+    - *fix_storage_periods*: Array of periods where the last storage value of the long term storage node is passed to the contained solve as a target. (Defined using the node parameter `storage_nested_fix_method`)
+  
   - For commercial solvers:
 
     - *solver_precommand* the commandline text in front of the call for the commercial (CPLEX) solver. For a possibility of reserving a floating licence for the duration of the solve
@@ -64,6 +77,8 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
 - `timeblockset`: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)
 
   - *block_duration* a map with index *timestep_name* that starts the timeblock and value that defines the duration of the block (how many timesteps)
+  - *new_stepduration*: Hours. Creates a new `timeline` from the old for this `timeblockSet` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps. 
+
 
 - `timeline`: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.
 
@@ -138,6 +153,11 @@ There are three methods associated with storage start and end values: `storage_b
 
   - The `storage_binding_method` is ignored (exeption *bind_forward_only*), if `storage_start_end_method` has the value *fix_start_end*,
   - The `storage_solve_horizon_method` *use_reference_value* is ignored, if other storage state methods are used. Only exeptions are *fix_start* or *bind_forward_only*
+
+-Nested Parameters:
+
+- `storage_nested_fix_method`: Set this storage as a long term storage, which end state is passed to the lower level solves as a target. *Fix_price* requires `storage_state_reference_price`
+
 
 ## Units
 
