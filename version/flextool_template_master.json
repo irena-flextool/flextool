@@ -661,6 +661,13 @@
         ],
         [
             "connection",
+            "availability",
+            null,
+            null,
+            "[e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant or time."
+        ],
+        [
+            "connection",
             "constraint_capacity_coefficient",
             null,
             null,
@@ -1088,6 +1095,13 @@
         ],
         [
             "node",
+            "availability",
+            null,
+            null,
+            "[e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time."
+        ],
+        [
+            "node",
             "constraint_capacity_coefficient",
             null,
             null,
@@ -1512,6 +1526,13 @@
             null,
             null,
             "Map of time steps in the timeline. Index: time step name, value: time step duration in hours."
+        ],
+        [
+            "unit",
+            "availability",
+            null,
+            null,
+            "[e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time."
         ],
         [
             "unit",

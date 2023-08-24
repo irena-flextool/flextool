@@ -130,6 +130,9 @@ Input data is set with the following parameters:
 - `penalty_up` - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time.
 - `penalty_down` - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time.
 - `virtual_unitsize` - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.
+- `self_discharge_loss` - [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.
+- `availablity` - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.
+
 
 ### Using nodes as storages
 
@@ -175,6 +178,7 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 - Capacity: `existing` (and the investment and retirement parameters below)
 - Technical: `efficiency`, `min_load`, `efficiency_at_min_load`, `min_uptime`, `min_downtime`
 	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time.
+  - `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time.
 - Economic: `startup_cost`, `fixed_cost` (fuel cost comes through the use of fuel commodities and other variable costs are defined for flows between unit and node, see below)
 
 ### Investment parameters for capacity expansion
@@ -268,6 +272,7 @@ Connections can transfer energy between two nodes. Parameters for the connection
 - other investment parameters: `invest_max_total`, `invest_max_period`, `invest_min_total`, `invest_min_period`, `invest_forced`, `salvage_value`
 - `is_DC` - A flag whether the connection is DC (the flow will not be counted as synchronous if there is a *non_synchronous_limit*). Default false.
 - `virtual_unitsize` - [MW] Size of single connection - used for integer (lumped) investments.
+- `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant or time.
 
 ### Investment parameters for connections
 
