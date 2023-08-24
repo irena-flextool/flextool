@@ -112,7 +112,7 @@ Update the Toolbox:
         - init.sqlite
         - input_data_template.sqlite
         - how to example databases
-- If the git complains about merge conflicts, it is probably due to you modifying the template files. Use `git restore .` This will restore ALL the files downloaded from the repository to their original states. Then repeat the update_flextool
+- If the git complains about merge conflicts, it is probably due to you modifying the template files. Use `git restore .`  and `git pull `. This will restore ALL the files downloaded from the repository to their original states. Then repeat the update_flextool
 
 - One can also migrate other input databases to the new version by calling:
     - `python migrate_database.py *absolute_path_to_database*` or
