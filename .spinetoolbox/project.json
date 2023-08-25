@@ -287,7 +287,7 @@
             "x": 71.01140335411533,
             "y": -8.906879167446874,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": [],
             "kill_completed_processes": false
         },

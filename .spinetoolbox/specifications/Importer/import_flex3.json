@@ -3475,27 +3475,7 @@
                         ]
                     }
                 }
-            ],
-            "costs__period": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
-                                "position": "hidden"
-                            }
                         ]
-                    }
-                }
-            ]
         },
         "selected_tables": [
             "node__period",
@@ -3533,7 +3513,6 @@
             "group_inertia_largest_flow__period__t",
             "group__process__node__period",
             "discount_factors__period",
-            "entity_annuity",
             "unit_cf__inputNode__period",
             "unit_cf__outputNode__period",
             "connection_cf__period",
@@ -3543,8 +3522,7 @@
             "annualized_costs__period",
             "unit_curtailment_share__outputNode__period",
             "unit_curtailment__outputNode__period__t",
-            "group_node_VRE_share__period__t",
-            "costs__period"
+            "group_node_VRE_share__period__t"
         ],
         "table_options": {
             "node__period": {},
@@ -3664,9 +3642,8 @@
             "annualized_costs__period": {},
             "group_node_VRE_share__period__t": {
                 "has_header": false
+            }
             },
-            "costs__period": {}
-        },
         "table_types": {
             "unit__outputNode__period": {
                 "0": "string",
