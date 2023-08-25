@@ -354,7 +354,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^sum_flow$"
+                    "filter_re": "^sum_flow_annualized$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -990,7 +990,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^flow$"
+                    "filter_re": "^flow_annualized$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1696,7 +1696,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^flow$"
+                    "filter_re": "^flow_annualized$"
                 },
                 {
                     "map_type": "ParameterValueList",

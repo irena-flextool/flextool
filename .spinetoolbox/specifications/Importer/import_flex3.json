@@ -750,7 +750,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "flow"
+                                "value": "flow_annualized"
                             },
                             {
                                 "map_type": "Alternative",
@@ -3475,7 +3475,7 @@
                         ]
                     }
                 }
-            ]
+                        ]
         },
         "selected_tables": [
             "node__period",
@@ -3513,7 +3513,6 @@
             "group_inertia_largest_flow__period__t",
             "group__process__node__period",
             "discount_factors__period",
-            "entity_annuity",
             "unit_cf__inputNode__period",
             "unit_cf__outputNode__period",
             "connection_cf__period",
@@ -3644,7 +3643,7 @@
             "group_node_VRE_share__period__t": {
                 "has_header": false
             }
-        },
+            },
         "table_types": {
             "unit__outputNode__period": {
                 "0": "string",
@@ -3892,7 +3891,10 @@
             },
             "connection_cf__period": {
                 "0": "string",
-                "1": "string"
+                "1": "string",
+                "2": "float",
+                "3": "float",
+                "4": "float"
             },
             "group__process__node__period__t": {
                 "0": "string",
