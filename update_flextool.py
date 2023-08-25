@@ -48,9 +48,8 @@ def update_flextool():
     #get template JSON. This can be the master or old template if conflicting migrations in between
     with open ('./version/flextool_template_results_master.json') as json_file:
         template = json.load(json_file)
-    #With objective parameters, no duplicates are created. These will replace the old ones or create new. There will always be imports.
+    #these update the old descriptions, but wont remove them or change names (the new name is created, but old stays)
     (num,log) = import_data(db, object_parameters = template["object_parameters"])
-    #With relationship parameters, no duplicates are created. These will replace the old ones or create new. There will always be imports.
     (num,log) = import_data(db, relationship_parameters = template["relationship_parameters"])
     db.commit_session("Updated relationship_parameters, object parameters to the Results.sqlite")
     
