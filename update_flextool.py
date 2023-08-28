@@ -4,7 +4,6 @@ import os
 import subprocess
 import shutil
 from spinedb_api import import_data, DatabaseMapping
-from migrate_database import migrate_database
 
 
 def update_flextool(skip_git):
@@ -23,6 +22,8 @@ def update_flextool(skip_git):
 
     shutil.copy("./.spinetoolbox/project_temp.json", "./.spinetoolbox/project.json")
     os.remove("./.spinetoolbox/project_temp.json")
+
+    from migrate_database import migrate_database
 
     if not os.path.exists("Input_data.sqlite"):
         shutil.copy("input_data_template.sqlite", "Input_data.sqlite")
