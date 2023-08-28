@@ -68,9 +68,11 @@ set sense_equal within sense;
 set commodityParam;
 set commodityPeriodParam within commodityParam;
 set nodeParam;
+set nodeParam_def1 within nodeParam;
 set nodePeriodParam;
 set nodeTimeParam within nodeParam;
 set processParam;
+set processParam_def1 within processParam;
 set processPeriodParam;
 set processTimeParam within processParam;
 set sourceSinkParam;
@@ -263,6 +265,7 @@ set process__sink__param dimen 3 within {process_sink, sourceSinkParam};
 set process__sink__param__time dimen 4 within {process_sink, sourceSinkTimeParam, time};
 set process__sink__param_t := setof {(p, sink, param, t) in process__sink__param__time} (p, sink, param);
 
+set node__param dimen 2 within {node, nodeParam};
 set node__param__time dimen 3 within {node, nodeTimeParam, time};
 set node__param_t := setof {(n, param, t) in node__param__time} (n, param);
 
@@ -368,6 +371,7 @@ table data IN 'CSV' 'input/p_node_constraint_capacity_coefficient.csv' : node_ca
 table data IN 'CSV' 'input/p_node_constraint_state_coefficient.csv' : node_state_constraint <- [node, constraint];
 table data IN 'CSV' 'input/constraint__sense.csv' : constraint__sense <- [constraint, sense];
 table data IN 'CSV' 'input/p_process.csv' : process__param <- [process, processParam];
+table data IN 'CSV' 'input/p_node.csv' : node__param <- [node, nodeParam];
 table data IN 'CSV' 'input/pd_node.csv' : node__param__period <- [node, nodeParam, period];
 table data IN 'CSV' 'solve_data/pt_node.csv' : node__param__time <- [node, nodeParam, time];
 table data IN 'CSV' 'input/pd_process.csv' : process__param__period <- [process, processParam, period];
@@ -729,7 +733,11 @@ param pdNode {n in node, param in nodePeriodParam, d in period_with_history} :=
 param ptNode {n in node, param in nodeTimeParam, t in complete_time_in_use} :=
         + if (n, param, t) in node__param__time
 		  then pt_node[n, param, t]
-		  else p_node[n, param];
+		  else if (n, param) in node__param 
+      then p_node[n, param]
+      else if param in nodeParam_def1
+      then 1
+      else 0;
 param ptNode_inflow {n in node, t in time} :=
         + if (n, 'inflow', t) in node__param__time
 		  then pt_node[n, 'inflow', t]
@@ -747,6 +755,8 @@ param ptProcess {p in process, param in processTimeParam, t in time_in_use} :=
 		  then pt_process[p, param, t]
 		  else if (p, param) in process__param
 		  then p_process[p, param]
+      else if param in processParam_def1
+      then 1
 		  else 0;
 
 param p_entity_unitsize {e in entity} := 
@@ -1260,6 +1270,41 @@ check {d in period : d not in period_first && (sum{(e, d) in ed_invest} 1 || sum
 
 printf 'Checking: Does a node with has_storage also have has_balance set to yes\n';
 check {n in nodeState} : n in nodeBalance;
+
+printf 'Checking: Availability conflicts with storage constraints\n';
+check {n in nodeState, (d,t) in period__time_first: (n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method}:
+  p_node[n,'storage_state_start'] <= ptNode[n,'availability',t];
+check {n in nodeState, (d,t) in period__time_last: (n, 'fix_end') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method}:
+  p_node[n,'storage_state_end'] <= ptNode[n,'availability',t];
+
+check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
+&& ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
+  p_node[n,'storage_state_start'] <= ptNode[n,'availability',t];
+check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
+&& ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
+  p_node[n,'storage_state_end'] <= ptNode[n,'availability',t];
+
+check {n in nodeState, (d,t,t_previous,t_previous_within_block,d_previous,t_previous_within_solve) in dtttdt: 
+((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
+&& (n, 'bind_within_timeblock') in node__storage_binding_method
+&& dt_jump[d,t] != 1}:
+  p_node[n,'storage_state_end'] <= ptNode[n,'availability',t] && p_node[n,'storage_state_end'] <= ptNode[n,'availability',t_previous];
+
+check {n in nodeState, (d,t,t_previous,t_previous_within_block,d_previous,t_previous_within_solve) in dtttdt: 
+((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
+&& (n, 'bind_within_timeblock') in node__storage_binding_method
+&& dt_jump[d,t] != 1}:
+  (p_node[n,'storage_state_start'] <= ptNode[n,'availability',t] && p_node[n,'storage_state_start'] <= ptNode[n,'availability',t_previous]);
+  
+check {n in nodeState, (d,t) in period__time_last: 
+  (n, 'use_reference_value') in node__storage_solve_horizon_method 
+   && (n, 'fix_end') not in node__storage_start_end_method 
+   && (n, 'fix_start_end') not in node__storage_start_end_method
+   && (n, 'bind_within_solve') not in node__storage_binding_method
+   && (n, 'bind_within_period') not in node__storage_binding_method
+   && (n, 'bind_within_timeblock') not in node__storage_binding_method}:
+  p_node[n,'storage_state_reference_value'] <= ptNode[n,'availability',t];
+
 
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
@@ -1831,12 +1876,14 @@ s.t. process_constraint_equal {(c, 'equal') in constraint__sense, (d, t) in dt} 
   + p_constraint_constant[c]
 ;
 
+
 s.t. maxState {n in nodeState, (d, t) in dt} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   <=
-  + p_entity_all_existing[n, d]
-  + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
-  - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
+  + ( +p_entity_all_existing[n, d]
+    + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
+    - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
+    )* ptNode[n,'availability',t]
 ;
 
 s.t. maxToSink {(p, source, sink) in process__source__sink_isNodeSink, (d, t) in dt} :
@@ -1848,17 +1895,19 @@ s.t. maxToSink {(p, source, sink) in process__source__sink_isNodeSink, (d, t) in
         * ( + p_entity_all_existing[p, d]
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
-	      )	
+	      )	* ptProcess[p,'availability',t]
 	)
   + ( if p in process_online_linear then
       + p_process_sink_coefficient[p, sink]
         * v_online_linear[p, d, t]
 		* p_entity_unitsize[p]
+    * ptProcess[p,'availability',t]
     ) 
   + ( if p in process_online_integer then
       + p_process_sink_coefficient[p, sink]
         * v_online_integer[p, d, t]
 		* p_entity_unitsize[p]
+    * ptProcess[p,'availability',t]
     ) 
 ;
 
@@ -1902,17 +1951,19 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt} :
         * ( + p_entity_all_existing[p, d]
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
-	      )	
+	      ) * ptProcess[p,'availability',t]
 	)
   + ( if p in process_online_linear then
       + p_process_sink_coefficient[p, sink]
         * v_online_linear[p, d, t] 
 		* p_entity_unitsize[p]
+    * ptProcess[p,'availability',t]
     )  
   + ( if p in process_online_integer then
       + p_process_sink_coefficient[p, sink]
         * v_online_integer[p, d, t] 
 		* p_entity_unitsize[p]
+    * ptProcess[p,'availability',t]
     )  
 ;
 

@@ -3,7 +3,7 @@ import json
 import os
 import subprocess
 import shutil
-
+from spinedb_api import import_data, DatabaseMapping
 from migrate_database import migrate_database
 
 
@@ -49,6 +49,16 @@ def update_flextool(skip_git):
     for i in db_to_update:
         migrate_database(i)
 
+    #update result parameter definitions
+    db = DatabaseMapping('sqlite:///' + 'Results.sqlite', create = False)
+    #get template JSON. This can be the master or old template if conflicting migrations in between
+    with open ('./version/flextool_template_results_master.json') as json_file:
+        template = json.load(json_file)
+    #these update the old descriptions, but wont remove them or change names (the new name is created, but old stays)
+    (num,log) = import_data(db, object_parameters = template["object_parameters"])
+    (num,log) = import_data(db, relationship_parameters = template["relationship_parameters"])
+    db.commit_session("Updated relationship_parameters, object parameters to the Results.sqlite")
+    
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()

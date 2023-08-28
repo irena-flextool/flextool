@@ -309,7 +309,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^inflow$|^penalty_down$|^penalty_up$|^self_discharge_loss$",
+                    "filter_re": "^inflow$|^penalty_down$|^penalty_up$|^self_discharge_loss$|^availability$",
                     "header": "nodeParam"
                 },
                 {
@@ -1645,7 +1645,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^efficiency$|^efficiency_at_min_load$|^min_load$|^other_operational_cost$",
+                    "filter_re": "^efficiency$|^efficiency_at_min_load$|^min_load$|^other_operational_cost$|^availability$",
                     "header": "processParam"
                 },
                 {
