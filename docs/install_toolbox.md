@@ -1,4 +1,4 @@
-### Installing Spine Toolbox and IRENA FlexTool on a local computer
+## Installing Spine Toolbox and IRENA FlexTool on a local computer
 
 Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/N3qB0rzxPYw).
 
@@ -69,7 +69,8 @@ cd ../flextool
 python update_flextool.py
 ```
 
-### Run
+## Starting IRENA FlexTool in Spine Toolbox
+
 1. Open a conda prompt.
 2. Activate the environment
 
@@ -87,13 +88,12 @@ python update_flextool.py
 
 ## Updating IRENA FlexTool
 
-### New update version (release 3.1.4 or later):
-Update of IRENA FlexTool to the latest version is done as follows:
+### Updates for version 3.1.4 or later:
 
-- Start anaconda prompt
+- Start anaconda/miniconda prompt
 - `conda activate flextool` (or whatever is your conda environment name for IRENA FlexTool)
 
-If using Toolbox, start by updating it:
+If using Spine Toolbox, start by updating Spine Toolbox:
 
 - cd to the repository folder Spine-Toolbox, where you cloned it. 
 For example `cd C:\Users\YourUser\Documents\Spine-Toolbox`
@@ -102,7 +102,7 @@ For example `cd C:\Users\YourUser\Documents\Spine-Toolbox`
 - cd back to FlexTool directory, where you cloned it. 
 For example `cd C:\Users\YourUser\Documents\flextool`
 
-Update the Toolbox:
+Update IRENA FlexTool:
 
 - cd to the FlexTool directory
 - `python update_flextool.py`
@@ -112,7 +112,7 @@ Update the Toolbox:
         - init.sqlite
         - input_data_template.sqlite
         - how to example databases
-- If the git complains about merge conflicts, it is probably due to you modifying the template files. Use `git restore .`  and `git pull `. This will restore ALL the files downloaded from the repository to their original states. Then repeat the update_flextool
+- If the git complains about merge conflicts, it is probably due to you modifying the template files. Use `git restore .`  and `git pull `. This will restore ALL the files downloaded from the repository to their original states. Then repeat `python update_flextool.py`
 
 - One can also migrate other input databases to the new version by calling:
     - `python migrate_database.py *absolute_path_to_database*` or
