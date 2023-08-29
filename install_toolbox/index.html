@@ -99,7 +99,7 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
             <div class="section" itemprop="articleBody">
               
-                <h3 id="installing-spine-toolbox-and-irena-flextool-on-a-local-computer">Installing Spine Toolbox and IRENA FlexTool on a local computer</h3>
+                <h2 id="installing-spine-toolbox-and-irena-flextool-on-a-local-computer">Installing Spine Toolbox and IRENA FlexTool on a local computer</h2>
 <p>Follow video tutorial for installation here: <a href="https://youtu.be/N3qB0rzxPYw">Link to YouTube</a>.</p>
 <ul>
 <li>Install <a href="https://docs.conda.io/en/latest/miniconda.html">Miniconda</a> (or Anaconda)  [Can be ignored if already installed]</li>
@@ -157,7 +157,7 @@
 </ul>
 <pre><code class="language-shell">python update_flextool.py
 </code></pre>
-<h3 id="run">Run</h3>
+<h2 id="starting-irena-flextool-in-spine-toolbox">Starting IRENA FlexTool in Spine Toolbox</h2>
 <ol>
 <li>Open a conda prompt.</li>
 <li>
@@ -173,13 +173,12 @@
 </li>
 </ol>
 <h2 id="updating-irena-flextool">Updating IRENA FlexTool</h2>
-<h3 id="new-update-version-release-314-or-later">New update version (release 3.1.4 or later):</h3>
-<p>Update of IRENA FlexTool to the latest version is done as follows:</p>
+<h3 id="updates-for-version-314-or-later">Updates for version 3.1.4 or later:</h3>
 <ul>
-<li>Start anaconda prompt</li>
+<li>Start anaconda/miniconda prompt</li>
 <li><code>conda activate flextool</code> (or whatever is your conda environment name for IRENA FlexTool)</li>
 </ul>
-<p>If using Toolbox, start by updating it:</p>
+<p>If using Spine Toolbox, start by updating Spine Toolbox:</p>
 <ul>
 <li>cd to the repository folder Spine-Toolbox, where you cloned it. 
 For example <code>cd C:\Users\YourUser\Documents\Spine-Toolbox</code></li>
@@ -188,7 +187,7 @@ For example <code>cd C:\Users\YourUser\Documents\Spine-Toolbox</code></li>
 <li>cd back to FlexTool directory, where you cloned it. 
 For example <code>cd C:\Users\YourUser\Documents\flextool</code></li>
 </ul>
-<p>Update the Toolbox:</p>
+<p>Update IRENA FlexTool:</p>
 <ul>
 <li>cd to the FlexTool directory</li>
 <li><code>python update_flextool.py</code></li>
@@ -203,7 +202,7 @@ For example <code>cd C:\Users\YourUser\Documents\flextool</code></li>
 </ul>
 </li>
 <li>
-<p>If the git complains about merge conflicts, it is probably due to you modifying the template files. Use <code>git restore .</code>  and <code>git pull</code>. This will restore ALL the files downloaded from the repository to their original states. Then repeat the update_flextool</p>
+<p>If the git complains about merge conflicts, it is probably due to you modifying the template files. Use <code>git restore .</code>  and <code>git pull</code>. This will restore ALL the files downloaded from the repository to their original states. Then repeat <code>python update_flextool.py</code></p>
 </li>
 <li>
 <p>One can also migrate other input databases to the new version by calling:</p>
