@@ -222,13 +222,30 @@
 <p><em>period_timeblockset</em>: map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name.</p>
 </li>
 <li><em>realized_periods</em>: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve</li>
+<li><em>realized_invest_periods</em> Array of the periods that will realize the investment decisions. If this is not defined when the invest_periods exist, the realized_periods are used to realize the invests as well</li>
 <li><em>invest_periods</em>: array of periods where investements are allowed in this solve (applies only to objects that can be invested in)</li>
 <li><em>years_represented</em>: Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years.</li>
 <li><em>solver</em>: choice of a solver ('highs'(default), 'glpsol', 'cplex' (requires a licence))</li>
 <li><em>highs_method</em>: HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.</li>
 <li><em>highs_parallel</em>: HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.</li>
 <li><em>highs_presolve</em>: HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large. </li>
-<li><em>solve_mode</em>: a single solve or a set of rolling optimisation windows solved in a sequence (not functional yet, always a single solve).</li>
+<li><em>solve_mode</em>: a single solve or a set of rolling optimisation windows solved in a sequence </li>
+<li>
+<p>Rolling window parameters:</p>
+<ul>
+<li><em>rolling_start_time</em>: (Optional) Timestamp from the timeline that is linked to the timeblockSet used. Starting point of the rolling. If this is not stated, it is assumed to be the first timestep</li>
+<li><em>rolling_solve_jump</em>: Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Also the output interval. This should be smaller than the horizon</li>
+<li><em>rolling_solve_horizon</em>: Hours, (Required if rolling_window solve). The length of the horizon of the roll. How long into the future the roll sees. For an individual roll, horizon is the solve length and jump is the output length.</li>
+<li><em>rolling_duration</em>: Hours, (Optional). Duration of rolling, if not stated, assumed to be the whole timeline of the solve</li>
+</ul>
+</li>
+<li>
+<p>Nested solve sequence parameters:</p>
+<ul>
+<li><em>contains_solve</em>: Array of solves that are run with after this solve using the realized data of this solve. Read 'How to use Nested Rolling window solves (investments and long term storage)'</li>
+<li><em>fix_storage_periods</em>: Array of periods where the last storage value of the long term storage node is passed to the contained solve as a target. (Defined using the node parameter <code>storage_nested_fix_method</code>)</li>
+</ul>
+</li>
 <li>
 <p>For commercial solvers:</p>
 <ul>
@@ -241,6 +258,9 @@
 </li>
 <li>
 <p><em>block_duration</em> a map with index <em>timestep_name</em> that starts the timeblock and value that defines the duration of the block (how many timesteps)</p>
+</li>
+<li>
+<p><em>new_stepduration</em>: Hours. Creates a new <code>timeline</code> from the old for this <code>timeblockSet</code> with this timestep duration. The new timeline will sum or average the other timeseries data like <code>profile</code> and <code>inflow</code> for the new timesteps. </p>
 </li>
 <li>
 <p><code>timeline</code>: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.</p>
@@ -297,6 +317,8 @@
 <li><code>penalty_up</code> - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time.</li>
 <li><code>penalty_down</code> - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time.</li>
 <li><code>virtual_unitsize</code> - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.</li>
+<li><code>self_discharge_loss</code> - [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.</li>
+<li><code>availablity</code> - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.</li>
 </ul>
 <h3 id="using-nodes-as-storages">Using nodes as storages</h3>
 <p>FlexTool manages storages through nodes. A regular node maintains an energy/material balance between all inputs and outputs (<code>has_balance</code> set to <em>yes</em>). A storage node includes an additional state variable, which means that the node can also use charging and discharging of the storage while maintaining the energy balance. A storage node is created by setting <code>has_storage</code> to <em>yes</em> and by adding storage capacity using the <code>existing</code> parameter and/or by letting the model invest in storage capacity (<code>invest_method</code>, <code>invest_cost</code>, <code>invest_max_period</code>, <code>invest_max_total</code> and <code>invest_forced</code> parameters).</p>
@@ -318,6 +340,10 @@
 <li>The <code>storage_binding_method</code> is ignored (exeption <em>bind_forward_only</em>), if <code>storage_start_end_method</code> has the value <em>fix_start_end</em>,</li>
 <li>The <code>storage_solve_horizon_method</code> <em>use_reference_value</em> is ignored, if other storage state methods are used. Only exeptions are <em>fix_start</em> or <em>bind_forward_only</em></li>
 </ul>
+<p>-Nested Parameters:</p>
+<ul>
+<li><code>storage_nested_fix_method</code>: Set this storage as a long term storage, which end state is passed to the lower level solves as a target. <em>Fix_price</em> requires <code>storage_state_reference_price</code></li>
+</ul>
 <h2 id="units">Units</h2>
 <p>Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine), but the can also have multiple inputs and/or outputs (e.g. combined heat and power plant). The input nodes are defined with the relationship <code>unit--inputNode</code> while the output nodes are defined through the relationship <code>unit--outputNode</code>.</p>
 <h3 id="defining-how-the-unit-functions">Defining how the unit functions</h3>
@@ -334,6 +360,7 @@
 <li><code>min_load</code> - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time.</li>
 </ul>
 </li>
+<li><code>availability</code> - [e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time.</li>
 <li>Economic: <code>startup_cost</code>, <code>fixed_cost</code> (fuel cost comes through the use of fuel commodities and other variable costs are defined for flows between unit and node, see below)</li>
 </ul>
 <h3 id="investment-parameters-for-capacity-expansion">Investment parameters for capacity expansion</h3>
@@ -417,6 +444,7 @@
 <li>other investment parameters: <code>invest_max_total</code>, <code>invest_max_period</code>, <code>invest_min_total</code>, <code>invest_min_period</code>, <code>invest_forced</code>, <code>salvage_value</code></li>
 <li><code>is_DC</code> - A flag whether the connection is DC (the flow will not be counted as synchronous if there is a <em>non_synchronous_limit</em>). Default false.</li>
 <li><code>virtual_unitsize</code> - [MW] Size of single connection - used for integer (lumped) investments.</li>
+<li><code>availability</code> - [e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant or time.</li>
 </ul>
 <h3 id="investment-parameters-for-connections">Investment parameters for connections</h3>
 <p>These are the same as for units, see <a href="#Investment parameters for capacity expansion">here</a></p>
