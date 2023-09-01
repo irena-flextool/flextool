@@ -1284,9 +1284,15 @@ class FlexToolRunner:
             
             #group_by with group and period, sum numeric columns, other columns are removed
             if arithmetic == "sum":
-                modified= timestep_df.groupby(group[0]+["period"],group_keys=False).sum(numeric_only=True).reset_index()
+                if not timestep_df.empty:
+                    modified= timestep_df.groupby(group[0]+["period"],group_keys=False).sum(numeric_only=True).reset_index()
+                else:
+                    modified = timestep_df
             else:
-                modified = timestep_df.groupby(group[0]+["period"],group_keys=False).mean(numeric_only=True).reset_index()
+                if not timestep_df.empty:
+                    modified = timestep_df.groupby(group[0]+["period"],group_keys=False).mean(numeric_only=True).reset_index()
+                else:
+                    modified = timestep_df
             #combine with the solve name df
             combined = pd.merge(solve_first,modified)
             #put the relationship indicators back to the start of the file
