@@ -12,5 +12,6 @@ IRENA FlexTool is an energy systems optimisation model developed for power and e
 - If using FlexTool with a web-browser, read how it works: [Browser interface](https://irena-flextool.github.io/flextool/browser_interface)
 
 - The tutorial is recommended for the new users of FlexTool: [Tutorial](https://irena-flextool.github.io/flextool/tutorial)
+- How to section has examples on building parts of a model: [How to](https://irena-flextool.github.io/flextool/how_to)
 - More advanced users can find the model parameter descprtions useful: [Model parameters](https://irena-flextool.github.io/flextool/reference)
 - Finally, result parameters are documented here: [Model results](https://irena-flextool.github.io/flextool/results)

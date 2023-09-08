@@ -24,15 +24,6 @@ Remark: in case you had already populated the ***Input data*** database, you nee
   - [4th step - add a network](#4th-step---add-a-network)
   - [5th step - add a reserve](#5th-step---add-a-reserve)
 - [More functionality](#more-functionality)
-  - [Adding a storage unit (battery)](#adding-a-storage-unit-battery)
-  - [Adding battery investment capabilities](#adding-battery-investment-capabilities)
-  - [Minimum load example](#minimum-load-example)
-  - [Adding CO2 emissions and costs](#adding-co2-emissions-and-costs)
-  - [Full year model](#full-year-model)
-  - [A system with coal, wind, network, battery and CO2 over a full year](#a-system-with-coal-wind-network-battery-and-co2-over-a-full-year)
-  - [Representative periods](#representative-periods)
-  - [Multi-year model](#multi-year-model)
-  - [Discount calculations](#discount-calculations)
 
 ## Building a small test system
 
@@ -109,6 +100,8 @@ The new objects, relationships and parameters have now been staged. Even though 
 Even though the model is very simple and will not do anything interesting, it can be executed. It is first necessary to create the scenario to be executed. Scenarios are created from `alternatives` in the Scenario tree widget of the Database Editor. In the figure below, a `scenario` called *base* is created that should contain `alternatives` *west* and *init* in order to have both a node and a model structure included in the model. The new `scenario` must also be **committed**, before it can be used. A new scenario should be added after each step in the tutorial process. 
 
 ![Add scenario](./add_scenario.png)
+
+Note that the order of the alternatives matter if there are conflicts between the alternatives. The lower alternatives override the upper alternatives. For example if you would add a parameter `inflow` with a value -100 to the *west* node in the alternative `init`, it would use that instead of the previously set timeseries, because the `init` alternative is lower in the scenario tree.
 
 Once the scenario has been committed to the database, it becomes available in the Spine Toolbox workflow. One can select scenarios to be executed from the arrow that leaves the ***Input data*** database. At this point, there will be only the *base* `scenario` available and should be selected. There is also a tool filter with *FlexTool3* pre-selected. This selection needs to be present when running scenarios (it is used to filter the `is_active` entities into the scenario).
 
