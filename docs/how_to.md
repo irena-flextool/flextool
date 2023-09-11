@@ -489,7 +489,7 @@ Then set which plants and connections are considered non-synchronous by adding a
 
 Here the (wind_plant|nodeA) relation has the `is_non_synchronous` parameter and battery connection `is_DC` parameter.
 
-If the node that has the non-synchronous limit has connections (is_DC or not), they all have to use binary variables (`transfer_method`: exact). Otherwise, it tries to circumvent the constraint by moving energy to both directions at the same time, changing the relation but keeping the balance.
+Consider a node that has the non-synchronous limit. If it has synchronous connections (parameter `is_DC` is not used) they have to use binary variables (`transfer_method`: exact). Otherwise, it tries to circumvent the constraint by moving energy to both directions at the same time, changing the relation but keeping the balance.
 
 If you want to see the individual flows in the results you can create separate `groups` for the flows and add `group_unit_node` relations to it. To produce the flow results, the groups need the parameter 
 
