@@ -101,7 +101,7 @@ Even though the model is very simple and will not do anything interesting, it ca
 
 ![Add scenario](./add_scenario.png)
 
-Note that the order of the alternatives matter if there are conflicts between the alternatives. The lower alternatives override the upper alternatives. For example if you would add a parameter `inflow` with a value -100 to the *west* node in the alternative `init`, it would use that instead of the previously set timeseries, because the `init` alternative is lower in the scenario tree.
+Note that the order of the alternatives matter if there are conflicts between the alternatives. The alternatives lower down override the alternatives higher up on the list. For example if you would add a parameter `inflow` with a value -100 to the *west* node in the alternative `init`, it would use that instead of the previously set timeseries, because the `init` alternative is lower down in the alternative list of the scenario.
 
 Once the scenario has been committed to the database, it becomes available in the Spine Toolbox workflow. One can select scenarios to be executed from the arrow that leaves the ***Input data*** database. At this point, there will be only the *base* `scenario` available and should be selected. There is also a tool filter with *FlexTool3* pre-selected. This selection needs to be present when running scenarios (it is used to filter the `is_active` entities into the scenario).
 
