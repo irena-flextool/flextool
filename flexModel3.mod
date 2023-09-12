@@ -4084,11 +4084,10 @@ for {i in 1..1 : p_model['solveFirst']}
   }
 for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
+    printf '\n%s,%s,%s', s, d, t >> fn_group_inertia_slack__dt;
     for {g in groupInertia}
       {
-        printf '\n%s,%s,%s,%.8g'
-	        , s, d, t
-		    , vq_inertia[g, d, t].val * pdGroup[g, 'inertia_limit', d]
+		    printf ',%.8g', vq_inertia[g, d, t].val * pdGroup[g, 'inertia_limit', d]
 		    >> fn_group_inertia_slack__dt;
       }
   }
@@ -4102,11 +4101,10 @@ for {i in 1..1 : p_model['solveFirst']}
   }
 for {s in solve_current, d in d_realize_invest}
   {
-    for {g in groupCapacityMargin}
+    printf '\n%s,%s', s, d >> fn_group_capmargin_slack__d;
+		for {g in groupCapacityMargin}
       {
-        printf '\n%s,%s,%.8g'
-	        , s, d
-		    , vq_capacity_margin[g, d].val * group_capacity_for_scaling[g, d]
+        printf ',%.8g', vq_capacity_margin[g, d].val * group_capacity_for_scaling[g, d]
 		    >> fn_group_capmargin_slack__d;
       }
   }
