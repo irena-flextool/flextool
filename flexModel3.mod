@@ -1966,7 +1966,7 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt} :
     )  
   + ( if p in process_online_integer then
       + p_process_sink_coefficient[p, sink]
-        * v_online_integer[p, d, t] 
+      * (1- v_online_integer[p, d, t]) 
 		* p_entity_unitsize[p]
     * ptProcess[p,'availability',t]
     )  
@@ -2471,9 +2471,9 @@ s.t. co2_max_period{(g, c, n, d) in group_commodity_node_period_co2_period : d i
 
 
 s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
-  + sum {(p, source, sink) in process_source_sink_noEff : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
+  + sum {(p, source, sink) in process_source_sink_noEff : (p, sink) in process__sink_nonSync && (g, sink) in group_node && (g, source) not in group_node}
     ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]  * step_duration[d, t])
-  + sum {(p, source, sink) in process_source_sink_eff : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
+  + sum {(p, source, sink) in process_source_sink_eff : (p, sink) in process__sink_nonSync && (g, sink) in group_node && (g, source) not in group_node}
     ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
 	    * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
 	    * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, source] else 1)
@@ -2487,7 +2487,7 @@ s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
 	)	 * step_duration[d, t]
   - vq_non_synchronous[g, d, t] * group_capacity_for_scaling[g, d]
   <=
-  ( + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node} 
+  ( + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && (g, sink) not in group_node} 
         + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t]
     + sum {(g, n) in group_node} -pdtNodeInflow[n, d, t]
   ) * pdGroup[g, 'non_synchronous_limit', d]
@@ -3958,7 +3958,9 @@ param r_node_ramproom_connections_down_dtt{n in nodeBalance, (d, t, t_previous) 
 		  - sum{(u, n, sink) in process_source_sink_alwaysProcess : (u, n) in process_source && u in process_connection && u not in process_VRE && u not in process_isNodeSink_yes2way} ( 
               + p_process_source_coefficient[u, n]
                 * ( if u in process_online 
-			  	    then r_process_online_dt[u, d, t] * p_process[u, 'min_load'] * p_entity_unitsize[u]
+			  	    then (if u in process_online_integer then (1-r_process_online_dt[u, d, t])
+                else r_process_online_dt[u, d, t])
+               * p_process[u, 'min_load'] * p_entity_unitsize[u]
 					else entity_all_capacity[u, d]
 		          )
 			  - r_process_source_sink_flow_dt[u, n, sink, d, t]
