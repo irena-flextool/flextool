@@ -142,7 +142,7 @@
             "VRE_share_t",
             null,
             null,
-            "[%] Share of VRE generation in the group of nodes (sum of 'upper_limit' flows into nodes divided by the sum of inflow into those nodes)."
+            "[%] Share of VRE generation in the group of nodes (sum of 'upper_limit' flows into nodes divided by the sum of inflexible inflow (parameter 'inflow') into those nodes)."
         ],
         [
             "group",
@@ -348,6 +348,13 @@
             null,
             null,
             "[MWh] cumulative flow through the connection (left to right is positive)."
+        ],
+        [
+            "connection__node__node",
+            "flow_annualized",
+            null,
+            null,
+            null
         ],
         [
             "connection__node__node",
