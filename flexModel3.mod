@@ -4067,13 +4067,12 @@ for {i in 1..1 : p_model['solveFirst']}
   }
 for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
-    for {g in groupNonSync}
-      {
-        printf '\n%s,%s,%s,%.8g'
-	        , s, d, t
-		    , vq_non_synchronous[g, d, t].val * group_capacity_for_scaling[g, d]
+      printf '\n%s,%s,%s', s, d, t >> fn_group_nonsync_slack__dt;
+      for {g in groupNonSync}
+        { 
+		    printf ',%.8g', vq_non_synchronous[g, d, t].val * group_capacity_for_scaling[g, d]
 		    >> fn_group_nonsync_slack__dt;
-      }
+        }
   }
 
 printf 'Write inertia slack variables over time...\n';
