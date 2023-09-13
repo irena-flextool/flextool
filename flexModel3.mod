@@ -1282,28 +1282,28 @@ check {n in nodeState} : n in nodeBalance;
 
 printf 'Checking: Availability conflicts with storage constraints\n';
 check {n in nodeState, (d,t) in period__time_first: (n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method}:
-  p_node[n,'storage_state_start'] <= ptNode[n,'availability',t];
+  p_node[n,'storage_state_start'] <= ptNode[n, 'availability', t];
 check {n in nodeState, (d,t) in period__time_last: (n, 'fix_end') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method}:
-  p_node[n,'storage_state_end'] <= ptNode[n,'availability',t];
+  p_node[n,'storage_state_end'] <= ptNode[n, 'availability', t];
 
 check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
 && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
-  p_node[n,'storage_state_start'] <= ptNode[n,'availability',t];
+  p_node[n,'storage_state_start'] <= ptNode[n, 'availability', t];
 check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
 && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
-  p_node[n,'storage_state_end'] <= ptNode[n,'availability',t];
+  p_node[n,'storage_state_end'] <= ptNode[n, 'availability', t];
 
 check {n in nodeState, (d,t,t_previous,t_previous_within_block,d_previous,t_previous_within_solve) in dtttdt: 
 ((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
 && (n, 'bind_within_timeblock') in node__storage_binding_method
 && dt_jump[d,t] != 1}:
-  p_node[n,'storage_state_end'] <= ptNode[n,'availability',t] && p_node[n,'storage_state_end'] <= ptNode[n,'availability',t_previous];
+  p_node[n,'storage_state_end'] <= ptNode[n, 'availability', t] && p_node[n,'storage_state_end'] <= ptNode[n,'availability',t_previous];
 
 check {n in nodeState, (d,t,t_previous,t_previous_within_block,d_previous,t_previous_within_solve) in dtttdt: 
 ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
 && (n, 'bind_within_timeblock') in node__storage_binding_method
 && dt_jump[d,t] != 1}:
-  (p_node[n,'storage_state_start'] <= ptNode[n,'availability',t] && p_node[n,'storage_state_start'] <= ptNode[n,'availability',t_previous]);
+  (p_node[n,'storage_state_start'] <= ptNode[n, 'availability', t] && p_node[n,'storage_state_start'] <= ptNode[n,'availability',t_previous]);
   
 check {n in nodeState, (d,t) in period__time_last: 
   (n, 'use_reference_value') in node__storage_solve_horizon_method 
@@ -1312,7 +1312,7 @@ check {n in nodeState, (d,t) in period__time_last:
    && (n, 'bind_within_solve') not in node__storage_binding_method
    && (n, 'bind_within_period') not in node__storage_binding_method
    && (n, 'bind_within_timeblock') not in node__storage_binding_method}:
-  p_node[n,'storage_state_reference_value'] <= ptNode[n,'availability',t];
+  p_node[n,'storage_state_reference_value'] <= ptNode[n, 'availability', t];
 
 
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
@@ -1659,12 +1659,14 @@ s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__s
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
+      * ptProcess[p, 'availability', t]
       / (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
   + ( if (p, 'min_load_efficiency') in process__ct_method then 
 	    ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 		  + (if p in process_online_integer then v_online_integer[p, d, t])
 		)
         * ptProcess_section[p, t] * p_entity_unitsize[p]
+        * ptProcess[p, 'availability', t]
 	)
 ;
 
@@ -1682,12 +1684,14 @@ s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__s
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
+      * ptProcess[p, 'availability', t]
       / (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
   + ( if (p, 'min_load_efficiency') in process__ct_method then 
 		( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 		  + (if p in process_online_integer then v_online_integer[p, d, t])
 		)
         * ptProcess_section[p, t] * p_entity_unitsize[p]
+        * ptProcess[p, 'availability', t]
 	)
 ;
 
@@ -1704,12 +1708,14 @@ s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink_
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
+      * ptProcess[p, 'availability', t]
       / (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
   + ( if (p, 'min_load_efficiency') in process__ct_method then 
 		( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 		  + (if p in process_online_integer then v_online_integer[p, d, t])
 		)
         * ptProcess_section[p, t] * p_entity_unitsize[p]
+        * ptProcess[p, 'availability', t]
 	)
 ;
 
@@ -1721,6 +1727,7 @@ s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )
+      * ptNode[n, 'availability', t]
 ;
 
 s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_method, (d, t) in dt} :
@@ -1731,6 +1738,7 @@ s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )
+      * ptNode[n, 'availability', t]
 ;
 
 s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, t) in dt} :
@@ -1741,6 +1749,7 @@ s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, 
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )
+      * ptNode[n, 'availability', t]
 ;
 
 
@@ -1892,7 +1901,8 @@ s.t. maxState {n in nodeState, (d, t) in dt} :
   + ( +p_entity_all_existing[n, d]
     + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
     - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
-    )* ptNode[n,'availability',t]
+    ) 
+	* ptNode[n, 'availability', t]
 ;
 
 s.t. maxToSink {(p, source, sink) in process__source__sink_isNodeSink, (d, t) in dt} :
@@ -1904,19 +1914,20 @@ s.t. maxToSink {(p, source, sink) in process__source__sink_isNodeSink, (d, t) in
         * ( + p_entity_all_existing[p, d]
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
-	      )	* ptProcess[p,'availability',t]
+	      )	
+		  * ptProcess[p, 'availability', t]
 	)
   + ( if p in process_online_linear then
       + p_process_sink_coefficient[p, sink]
         * v_online_linear[p, d, t]
 		* p_entity_unitsize[p]
-    * ptProcess[p,'availability',t]
+        * ptProcess[p, 'availability', t]
     ) 
   + ( if p in process_online_integer then
       + p_process_sink_coefficient[p, sink]
         * v_online_integer[p, d, t]
 		* p_entity_unitsize[p]
-    * ptProcess[p,'availability',t]
+        * ptProcess[p, 'availability', t]
     ) 
 ;
 
@@ -1960,13 +1971,14 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt} :
         * ( + p_entity_all_existing[p, d]
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
-	      ) * ptProcess[p,'availability',t]
+	      ) 
+		  * ptProcess[p, 'availability', t]
 	)
   + ( if p in process_online_linear then
       + p_process_sink_coefficient[p, sink]
         * v_online_linear[p, d, t] 
 		* p_entity_unitsize[p]
-        * ptProcess[p,'availability',t]
+        * ptProcess[p, 'availability', t]
     )  
   + ( if p in process_online_integer then
       + p_process_sink_coefficient[p, sink]
@@ -1976,7 +1988,7 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt} :
 			- v_online_integer[p, d, t]   # Using binary online variable as a switch between directions
 		  )   
 		* p_entity_unitsize[p]
-        * ptProcess[p,'availability',t]
+        * ptProcess[p, 'availability', t]
     )  
 ;
 
@@ -2842,7 +2854,16 @@ param pdNodeInflow{n in node, d in period} := sum{(d, t) in dt} pdtNodeInflow[n,
 
 param potentialVREgen_dt{(p, n) in process_sink, (d, t) in dt_realize_dispatch:  p in process_VRE} :=
   + sum{(p, source, n, f, m) in process__source__sink__profile__profile_method: m = 'upper_limit'} 
-      + pt_profile[f, t] * entity_all_capacity[p, d];
+      + pt_profile[f, t] * entity_all_capacity[p, d]
+        * ptProcess[p, 'availability', t]
+        / (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+      + ( if (p, 'min_load_efficiency') in process__ct_method then 
+            ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
+              + (if p in process_online_integer then v_online_integer[p, d, t])
+            )
+            * ptProcess_section[p, t] * p_entity_unitsize[p]
+            * ptProcess[p, 'availability', t]
+        );
 
 param potentialVREgen{(p, n) in process_sink, d in d_realized_period : p in process_VRE} :=
   + sum{(p, source, n, f, m) in process__source__sink__profile__profile_method, (d, t) in dt_realize_dispatch : m = 'upper_limit'} 

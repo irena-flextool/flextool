@@ -589,7 +589,7 @@
         ],
         [
             "storage_nested_fix_method",
-            "no"
+            "fix_nothing"
         ],
         [
             "storage_nested_fix_method",
@@ -1313,8 +1313,8 @@
         [
             "node",
             "storage_nested_fix_method",
-            "no",
-            null,
+            "fix_nothing",
+            "storage_nested_fix_method",
             "Used in nested solve sequences. Set this storage as a long term storage, which end state is passed to the lower level solves as a target. *Fix_price* requires `storage_state_reference_price`"
         ],
         [
