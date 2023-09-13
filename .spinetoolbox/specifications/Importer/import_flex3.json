@@ -3648,7 +3648,8 @@
             "unit__outputNode__period": {
                 "0": "string",
                 "1": "string",
-                "2": "float"
+                "2": "float",
+                "3": "float"
             },
             "unit__inputNode__period": {
                 "0": "string",
@@ -3665,7 +3666,8 @@
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float"
+                "3": "float",
+                "4": "float"
             },
             "unit_capacity__period": {
                 "0": "string",
@@ -3698,11 +3700,19 @@
             "connection__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string"
+                "2": "string",
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float"
             },
             "connection__period": {
                 "0": "string",
-                "1": "string"
+                "1": "string",
+                "2": "float",
+                "3": "float",
+                "4": "float",
+                "5": "float"
             },
             "node_capacity__period": {
                 "0": "string",
@@ -3717,7 +3727,10 @@
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float"
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float"
             },
             "group_node__period": {
                 "0": "string",
@@ -3756,7 +3769,8 @@
             "node_state__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string"
+                "2": "string",
+                "3": "float"
             },
             "unit_online__period__t": {
                 "0": "string",
@@ -3807,7 +3821,8 @@
             "slack__nonsync_group__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string"
+                "2": "string",
+                "3": "float"
             },
             "slack__reserve__upDown__group__period__t": {
                 "0": "string",
@@ -3832,7 +3847,8 @@
                 "0": "string",
                 "1": "string",
                 "2": "string",
-                "3": "float"
+                "3": "float",
+                "4": "float"
             },
             "slack__inertia_group__period__t": {
                 "0": "string",
@@ -3887,14 +3903,16 @@
             "unit_cf__outputNode__period": {
                 "0": "string",
                 "1": "string",
-                "2": "float"
+                "2": "float",
+                "3": "float"
             },
             "connection_cf__period": {
                 "0": "string",
                 "1": "string",
                 "2": "float",
                 "3": "float",
-                "4": "float"
+                "4": "float",
+                "5": "string"
             },
             "group__process__node__period__t": {
                 "0": "string",
@@ -3932,7 +3950,8 @@
             "unit_curtailment__outputNode__period__t": {
                 "0": "string",
                 "1": "string",
-                "2": "string"
+                "2": "string",
+                "3": "float"
             },
             "annualized_costs__period": {
                 "0": "string",
@@ -3993,7 +4012,21 @@
             "unit_ramp__outputNode__dt": "float",
             "slack__inertia_group__period__t": "float",
             "process__period_co2": "float",
-            "group__process__node__period": "float"
+            "group__process__node__period": "float",
+            "unit_curtailment__outputNode__period__t": "float",
+            "group_node_VRE_share__period__t": "float",
+            "unit_curtailment_share__outputNode__period": "float",
+            "annualized_costs__period": "float",
+            "group__process__node__period__t": "float",
+            "costs_discounted": "float",
+            "connection_cf__period": "float",
+            "unit_cf__outputNode__period": "float",
+            "unit_cf__inputNode__period": "float",
+            "group_inertia_largest_flow__period__t": "float",
+            "unit_invest_marginal__period": "float",
+            "node_invest_marginal__period": "float",
+            "connection_invest_marginal__period": "float",
+            "unit_capacity__period": "float"
         },
         "table_row_types": {
             "unit__outputNode__period": {
