@@ -2490,7 +2490,7 @@ s.t. co2_max_period{(g, c, n, d) in group_commodity_node_period_co2_period : d i
 ;
 
 s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
-  + sum {(p, source, sink) in process_source_sink : (p, sink) in process__sink_nonSync && (g, sink) in group_node} # && (g, source) not in group_node}
+  + sum {(p, source, sink) in process_source_sink : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
     ( + v_flow[p, source, sink, d, t] 
 	    * p_entity_unitsize[p]  
 		* step_duration[d, t] )
@@ -3069,7 +3069,7 @@ for {i in 1..1 : p_model['solveFirst']}
   }
 for {g in groupOutput_node, s in solve_current, d in d_realized_period: sum{(g, n) in group_node} pdNodeInflow[n, d]}
   {
-    printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g\n', g, s, d 
+    printf '%s,%s,%s,%.8g,%.6f,%.6f,%.6f,%.6f\n', g, s, d 
        , sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d]
        , ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 	             r_process_source_sink_flow_d[p, source, n, d]  
@@ -3096,7 +3096,7 @@ for {i in 1..1 : p_model['solveFirst']}
   }
 for {g in groupOutput_node, s in solve_current, (d, t) in dt_realize_dispatch: sum{(g, n) in group_node} pdtNodeInflow[n, d, t]}
   {
-    printf '%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g\n', g, s, d, t
+    printf '%s,%s,%s,%s,%.8g,%.8g,%.6f,%.6f,%.6f,%.6f\n', g, s, d, t
      , ( - sum{(g, n) in group_node} pdtNodeInflow[n, d, t] )/100
      , sum{(g, n) in group_node} pdtNodeInflow[n, d, t] / complete_period_share_of_year[d]
      , ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
@@ -3123,7 +3123,7 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
     printf '\n%s,%s,%s', s, d, t >> fn_groupNode__dt_VRE_share;
 	for {g in groupOutput_node : sum{(g, n) in group_node} pdNodeInflow[n, d]}
-	  { printf ',%.5g',
+	  { printf ',%.6f',
 	      ( if sum{(g, n) in group_node} pdtNodeInflow[n, d, t] then
               ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 	                 r_process_source_sink_flow_dt[p, source, n, d, t]  
@@ -3492,7 +3492,7 @@ for {s in solve_current, d in d_realized_period}
   {
 	printf '\n%s,%s', s, d >> fn_unit__sinkNode__d_cf;
     for {(u, sink) in process_sink : u in process_unit}
-      { printf ',%.8g', ( if entity_all_capacity[u, d] 
+      { printf ',%.6f', ( if entity_all_capacity[u, d] 
 					      then r_process_sink_flow_d[u, sink, d] / complete_hours_in_period[d] / entity_all_capacity[u, d]
 						  else 0 ) >> fn_unit__sinkNode__d_cf; }
   } 
@@ -3510,7 +3510,7 @@ for {s in solve_current, d in d_realized_period}
   {
 	printf '\n%s,%s', s, d	 >> fn_unit__sourceNode__d_cf;
     for {(u, source) in process_source : u in process_unit}
-      { printf ',%.8g', ( if entity_all_capacity[u, d] 
+      { printf ',%.6f', ( if entity_all_capacity[u, d] 
 	                      then r_process_source_flow_d[u, source, d] / complete_hours_in_period[d] / entity_all_capacity[u, d]
  						  else 0 ) >> fn_unit__sourceNode__d_cf; }
   } 
@@ -3529,7 +3529,7 @@ for {s in solve_current, d in d_realized_period}
   {
 	printf '\n%s,%s', s, d >> fn_connection_cf__d;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
-	  { printf ',%.8g', sum{(d, t) in dt_realize_dispatch} ( if entity_all_capacity[c, d] 
+	  { printf ',%.6f', sum{(d, t) in dt_realize_dispatch} ( if entity_all_capacity[c, d] 
 	                                        then ( abs(r_connection_dt[c, d, t]) 
 	                                               / complete_hours_in_period[d] 
 											       / entity_all_capacity[c, d] )
@@ -3552,7 +3552,7 @@ for {s in solve_current, d in d_realized_period}
   {
 	printf '\n%s,%s', s, d >> fn_unit__sinkNode__d_curtailment;
     for {(u, sink) in process_sink : u in process_VRE}
-      { printf ',%.8g', ( if entity_all_capacity[u, d] 
+      { printf ',%.6f', ( if entity_all_capacity[u, d] 
 					      then ( potentialVREgen[u, sink, d] - r_process_sink_flow_d[u, sink, d] ) / potentialVREgen[u, sink, d]
 						  else 0 ) >> fn_unit__sinkNode__d_curtailment; }
   } 
