@@ -136,15 +136,6 @@ Video tutorial for Building a small test system can be watched <a href="https://
 <li><a href="#4th-step---add-a-network">4th step - add a network</a></li>
 <li><a href="#5th-step---add-a-reserve">5th step - add a reserve</a></li>
 <li><a href="#more-functionality">More functionality</a></li>
-<li><a href="#adding-a-storage-unit-battery">Adding a storage unit (battery)</a></li>
-<li><a href="#adding-battery-investment-capabilities">Adding battery investment capabilities</a></li>
-<li><a href="#minimum-load-example">Minimum load example</a></li>
-<li><a href="#adding-co2-emissions-and-costs">Adding CO2 emissions and costs</a></li>
-<li><a href="#full-year-model">Full year model</a></li>
-<li><a href="#a-system-with-coal-wind-network-battery-and-co2-over-a-full-year">A system with coal, wind, network, battery and CO2 over a full year</a></li>
-<li><a href="#representative-periods">Representative periods</a></li>
-<li><a href="#multi-year-model">Multi-year model</a></li>
-<li><a href="#discount-calculations">Discount calculations</a></li>
 </ul>
 <h2 id="building-a-small-test-system">Building a small test system</h2>
 <p>This tutorial can be used in couple of different ways - the best way depends on your familiarity with energy system modelling. </p>
@@ -208,6 +199,7 @@ Video tutorial for Building a small test system can be watched <a href="https://
 <h3 id="interlude-creating-a-scenario-and-running-the-model">Interlude - creating a scenario and running the model</h3>
 <p>Even though the model is very simple and will not do anything interesting, it can be executed. It is first necessary to create the scenario to be executed. Scenarios are created from <code>alternatives</code> in the Scenario tree widget of the Database Editor. In the figure below, a <code>scenario</code> called <em>base</em> is created that should contain <code>alternatives</code> <em>west</em> and <em>init</em> in order to have both a node and a model structure included in the model. The new <code>scenario</code> must also be <strong>committed</strong>, before it can be used. A new scenario should be added after each step in the tutorial process. </p>
 <p><img alt="Add scenario" src="../add_scenario.png" /></p>
+<p>Note that the order of the alternatives matter if there are conflicts between the alternatives. The alternatives lower down override the alternatives higher up on the list. For example if you would add a parameter <code>inflow</code> with a value -100 to the <em>west</em> node in the alternative <code>init</code>, it would use that instead of the previously set timeseries, because the <code>init</code> alternative is lower down in the alternative list of the scenario.</p>
 <p>Once the scenario has been committed to the database, it becomes available in the Spine Toolbox workflow. One can select scenarios to be executed from the arrow that leaves the <strong><em>Input data</em></strong> database. At this point, there will be only the <em>base</em> <code>scenario</code> available and should be selected. There is also a tool filter with <em>FlexTool3</em> pre-selected. This selection needs to be present when running scenarios (it is used to filter the <code>is_active</code> entities into the scenario).</p>
 <p><img alt="Select scenario" src="../select_scenario.png" /></p>
 <p>Next, we want to run three tools: <strong><em>Export_to_CSV</em></strong> (that will make input files suitable for FlexTool), <strong><em>FlexTool3</em></strong> (which is a Python script that calls the FlexTool model generator for each solve) and <strong><em>Import_results</em></strong> (which will take output files from FlexTool and drop their contents to the <strong><em>Results</em></strong> database with a particular <code>alternative</code> name). First, select the three tools (select with left click while ctrl is pressed or draw an area with ctrl pressed, see figure below). Then, press <strong><em>Execute selection</em></strong> from the menu bar. The three items should be executed and if all goes well, then green check marks appear on each of the tool once it has finished. You can explore the outputs of each item by selecting the item and looking at the <strong><em>Console</em></strong> widget window.</p>
