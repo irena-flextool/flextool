@@ -41,7 +41,7 @@ The browser interface of FlexTool also runs part of this same workflow
 (***Export_to_csv*** --> ***FlexTool*** --> ***Import_results***). The server takes a copy of the workflow (inside the user_projects) 
 folder and uses Spine Toolbox to execute the scenarios.
 
-More instructions for Spine Toolbox in https://spine-toolbox.readthedocs.io/en/latest/?badge=latest.
+More instructions for Spine Toolbox in [Toolbox User Guide](https://spine-toolbox.readthedocs.io/en/latest/?badge=latest).
 
 # Data structure in Spine databases
 
@@ -72,4 +72,4 @@ The database editor menu has options for how to display the data: table view, di
 
 ![Database editor](./database_editor.png)
 
-More on Spine Database editor in https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html.
+More on Spine Database editor in [Database Editor User Guide](https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html).
