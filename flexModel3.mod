@@ -254,6 +254,8 @@ set modelParam;
 set process__param dimen 2 within {process, processParam};
 set process__param__time dimen 3 within {process, processTimeParam, time};
 set process__param_t := setof {(p, param, t) in process__param__time} (p, param);
+set profile_param dimen 1 within {profile};
+set profile_param__time dimen 2 within {profile, time};
 
 set connection__param := {(p, param) in process__param : p in process_connection};
 set connection__param__time := { (p, param, t) in process__param__time : (p in process_connection)};
@@ -286,6 +288,7 @@ param pt_process_sink {(p, sink) in process_sink, sourceSinkTimeParam, time} def
 param p_process_source_coefficient {(p, source) in process_source} default 1;
 param p_process_sink_coefficient {(p, sink) in process_sink} default 1;
 
+param p_profile {profile};
 param pt_profile {profile, time};
 
 param p_reserve_upDown_group {reserve, upDown, group, reserveParam} default 0;
@@ -371,11 +374,13 @@ table data IN 'CSV' 'input/p_node_constraint_capacity_coefficient.csv' : node_ca
 table data IN 'CSV' 'input/p_node_constraint_state_coefficient.csv' : node_state_constraint <- [node, constraint];
 table data IN 'CSV' 'input/constraint__sense.csv' : constraint__sense <- [constraint, sense];
 table data IN 'CSV' 'input/p_process.csv' : process__param <- [process, processParam];
+table data IN 'CSV' 'input/p_profile.csv' : profile_param <- [profile];
 table data IN 'CSV' 'input/p_node.csv' : node__param <- [node, nodeParam];
 table data IN 'CSV' 'input/pd_node.csv' : node__param__period <- [node, nodeParam, period];
 table data IN 'CSV' 'solve_data/pt_node.csv' : node__param__time <- [node, nodeParam, time];
 table data IN 'CSV' 'input/pd_process.csv' : process__param__period <- [process, processParam, period];
 table data IN 'CSV' 'solve_data/pt_process.csv' : process__param__time <- [process, processParam, time];
+table data IN 'CSV' 'solve_data/pt_profile.csv' : profile_param__time <- [profile, time];
 table data IN 'CSV' 'input/p_group.csv' : group__param <- [group, groupParam];
 table data IN 'CSV' 'input/pd_group.csv' : group__param__period <- [group, groupParam, period];
 table data IN 'CSV' 'input/process__ct_method.csv' : process__ct_method_read <- [process,ct_method];
@@ -423,6 +428,7 @@ table data IN 'CSV' 'input/p_constraint_constant.csv' : [constraint], p_constrai
 table data IN 'CSV' 'input/p_process.csv' : [process, processParam], p_process;
 table data IN 'CSV' 'input/pd_process.csv' : [process, processParam, period], pd_process;
 table data IN 'CSV' 'solve_data/pt_process.csv' : [process, processParam, time], pt_process;
+table data IN 'CSV' 'input/p_profile.csv' : [profile], p_profile;
 table data IN 'CSV' 'solve_data/pt_profile.csv' : [profile, time], pt_profile;
 table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
 table data IN 'CSV' 'solve_data/pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
@@ -755,8 +761,15 @@ param ptProcess {p in process, param in processTimeParam, t in time_in_use} :=
 		  then pt_process[p, param, t]
 		  else if (p, param) in process__param
 		  then p_process[p, param]
-      else if param in processParam_def1
-      then 1
+          else if param in processParam_def1
+          then 1
+		  else 0;
+
+param ptProfile {p in profile, t in time_in_use} :=
+        + if (p, t) in profile_param__time
+		  then pt_profile[p, t]
+		  else if (p) in profile_param
+		  then p_profile[p]
 		  else 0;
 
 param p_entity_unitsize {e in entity} := 
@@ -1654,7 +1667,7 @@ s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__s
 		else 1
       )
   <=
-  + pt_profile[f, t]
+  + ptProfile[f, t]
     * ( + p_entity_all_existing[p, d]
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
@@ -1679,7 +1692,7 @@ s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__s
 		else 1
 	  )
   >=
-  + pt_profile[f, t]
+  + ptProfile[f, t]
     * ( + p_entity_all_existing[p, d]
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
@@ -1703,7 +1716,7 @@ s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink_
 			)
 	)
   =
-  + pt_profile[f, t]
+  + ptProfile[f, t]
     * ( + p_entity_all_existing[p, d]
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
@@ -1722,7 +1735,7 @@ s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink_
 s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_method, (d, t) in dt} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   <=
-  + pt_profile[f, t]
+  + ptProfile[f, t]
     * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
@@ -1733,7 +1746,7 @@ s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_
 s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_method, (d, t) in dt} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   >=
-  + pt_profile[f, t]
+  + ptProfile[f, t]
     * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
@@ -1744,7 +1757,7 @@ s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_
 s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, t) in dt} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
-  + pt_profile[f, t]
+  + ptProfile[f, t]
     * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
@@ -2162,7 +2175,7 @@ s.t. reserve_process_upward{(p, r, 'up', n, d, t) in prundt} :
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
           )
     	* ( if (sum{(p, prof, 'upper_limit') in process__profile__profile_method} 1) then
-	          ( + sum{(p, prof, 'upper_limit') in process__profile__profile_method} pt_profile[prof, t] )
+	          ( + sum{(p, prof, 'upper_limit') in process__profile__profile_method} ptProfile[prof, t] )
 	        else 1
 	      )
   )
@@ -2177,7 +2190,7 @@ s.t. reserve_process_downward{(p, r, 'down', n, d, t) in prundt} :
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
           ) * ( if (sum{(p, prof, 'lower_limit') in process__profile__profile_method} 1) then
-	              ( + sum{(p, prof, 'lower_limit') in process__profile__profile_method} pt_profile[prof, t] )
+	              ( + sum{(p, prof, 'lower_limit') in process__profile__profile_method} ptProfile[prof, t] )
 	          )
 	  )    
 ;
@@ -2525,7 +2538,7 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
 		   && (g, sink) in group_node
 		   && p in process_unit
 		} 
-    ( + pt_profile[f, t]
+    ( + ptProfile[f, t]
         * ( + p_entity_all_existing[p, d]
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
@@ -2854,7 +2867,7 @@ param pdNodeInflow{n in node, d in period} := sum{(d, t) in dt} pdtNodeInflow[n,
 
 param potentialVREgen_dt{(p, n) in process_sink, (d, t) in dt_realize_dispatch:  p in process_VRE} :=
   + sum{(p, source, n, f, m) in process__source__sink__profile__profile_method: m = 'upper_limit'} 
-      + pt_profile[f, t] * entity_all_capacity[p, d]
+      + ptProfile[f, t] * entity_all_capacity[p, d]
         * ptProcess[p, 'availability', t]
         / (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
       + ( if (p, 'min_load_efficiency') in process__ct_method then 
@@ -3923,7 +3936,7 @@ param r_node_ramproom_VRE_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt} :=
 			  	    then r_process_online_dt[u, d, t] * p_entity_unitsize[u]
 			  		else entity_all_capacity[u, d]
 		          )
-				* sum{(u, source, n, f, 'upper_limit') in process__source__sink__profile__profile_method} pt_profile[f, t]
+				* sum{(u, source, n, f, 'upper_limit') in process__source__sink__profile__profile_method} ptProfile[f, t]
 			  - r_process_source_sink_flow_dt[u, source, n, d, t]
 			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'up'}
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
@@ -3947,7 +3960,7 @@ param r_node_ramproom_VRE_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt} 
 			  	    then r_process_online_dt[u, d, t] * p_process[u, 'min_load'] * p_entity_unitsize[u]
 					else entity_all_capacity[u, d]
 		          )
-				* sum{(u, n, sink, f, 'upper_limit') in process__source__sink__profile__profile_method} pt_profile[f, t]
+				* sum{(u, n, sink, f, 'upper_limit') in process__source__sink__profile__profile_method} ptProfile[f, t]
 			  - r_process_source_sink_flow_dt[u, n, sink, d, t]
 			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]

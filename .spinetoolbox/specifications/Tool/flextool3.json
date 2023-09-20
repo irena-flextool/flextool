@@ -61,6 +61,7 @@
         "input/p_process_sink_coefficient.csv",
         "input/p_process_source.csv",
         "input/p_process_source_coefficient.csv",
+        "input/p_profile.csv",
         "input/p_reserve__upDown__group.csv",
         "input/pd_commodity.csv",
         "input/pd_group.csv",
