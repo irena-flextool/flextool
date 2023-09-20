@@ -5,7 +5,7 @@ The instructions for installing IRENA FlexTool are at [Interface overview](https
 This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the IRENA FlexTool web-interface, the instructions still apply, but the example figures in this tutorial will not be as helpful. IRENA FlexTool concepts are explained in more depth at [Model Parameters](https://irena-flextool.github.io/flextool/reference). 
 Video tutorial for Building a small test system can be watched [here](https://youtu.be/O94zHxYcS94).
 
-The Input_data and Results database tools might be complaining that they can't find databases 'input_data.sqlite' and 'Results.sqlite'. This is due to the fact that these are not included in the repository to avoid future data eraising with updates to the tool. Instead, in the flextool folder you can find databases 'input_data_template' and 'Results_template'. Make a copy of both and rename them 'input_data.sqlite' and 'Results.sqlite'. You can also change the path to the database that the tools are using by clicking them. This might be useful later, when having multiple input datasets.
+The Input_data and Results database tools might be complaining that they can't find databases 'input_data.sqlite' and 'Results.sqlite'. This is due to the fact that these are not included in the repository to avoid future data erasing with updates to the tool. Instead, in the flextool folder you can find databases 'input_data_template' and 'Results_template'. Make a copy of both and rename them 'input_data.sqlite' and 'Results.sqlite'. You can also change the path to the database that the tools are using by clicking them. This might be useful later, when having multiple input datasets.
 
 The small system to be built is also directly available in the FlexTool repository (***Init*** SQLite database) and can be opened with the Spine Toolbox database editor. The default workflow for IRENA FlexTool executes the scenarios from the ***Input data*** database (and not from the ***Init*** SQLite database). The ***Input data*** database is empty by default. Therefore, if you want to use directly the contents of the ***Init*** database (instead of building the small system step-by-step), you need to copy them to the ***Input data*** database before running the scenarios in this tutorial. To copy the data, you need to execute the ***Initialize*** workflow item: select the item, press ***Execute selection*** from the toolbar. It is not advised to run the whole workflow, (***Execute project***) since it will copy data from two sources: the Excel based input data file and the ***Init*** database and this will create two sets of data in the ***Input data*** database. 
 
@@ -46,8 +46,8 @@ You should have the FlexTool project open in the Spine Toolbox. Then, open the *
 The test system is built using `alternatives`. Alternative is a subset of the system than one can include to a `scenario` that is optimized by Flextool. For example when adding a wind plant, all the objects and relationships related to only the wind plant should be under their own alternative, so that the wind plant can be included or excluded form the `scenario` seamlessly.
 
 - Each step will add a new `alternative`, and the data it contains, on top of the previous ones. 
-- The first `alternative` will be called *west* to hold the data for the first `node`in the model.
-- The alternative is added in the 'Alternative/Scenario tree' widget of the 'Spine Database Editor', see figure below.
+- The first `alternative` will be called *west* to hold the data for the first `node` in the model.
+- The alternative is added in the 'Alternative tree' widget of the 'Spine Database Editor', see figure below.
 
 ![Add alternative](./add_alternative.png)
 
@@ -101,7 +101,7 @@ Even though the model is very simple and will not do anything interesting, it ca
 
 ![Add scenario](./add_scenario.png)
 
-Note that the order of the alternatives matter if there are conflicts between the alternatives. The alternatives lower down override the alternatives higher up on the list. For example if you would add a parameter `inflow` with a value -100 to the *west* node in the alternative `init`, it would use that instead of the previously set timeseries, because the `init` alternative is lower down in the alternative list of the scenario.
+Note that the order of the alternatives matters if there are conflicts between the alternatives. The alternatives lower down override the alternatives higher up on the list. For example if you would add a parameter `inflow` with a value -100 to the *west* node in the alternative `init`, it would use that instead of the previously set timeseries, because the `init` alternative is lower down in the alternative list of the scenario.
 
 Once the scenario has been committed to the database, it becomes available in the Spine Toolbox workflow. One can select scenarios to be executed from the arrow that leaves the ***Input data*** database. At this point, there will be only the *base* `scenario` available and should be selected. There is also a tool filter with *FlexTool3* pre-selected. This selection needs to be present when running scenarios (it is used to filter the `is_active` entities into the scenario).
 
@@ -220,7 +220,7 @@ Finally, if it does not exist yet, add a new object `UpDown', called *up* to def
 
 A relationship between *primary--up--electricity* in the `reserve__upDown__group` class allows to define the reserve parameters `reserve_method`, `reservation` (i.e. the amount of reserve) and `penalty_reserve` (i.e. the penalty cost in case of lack of reserve). In this case the reserve requirement will be a constant 10MW even though the `reserve_method` is *timeseries_only*. The other alternative is dynamic reserves where the model calculates the reserve requirement from generation and loads according to user defined factors (`increase_reserve_ratio`). 
 
-Parameters from the `reserve__upDown__unit__node` class should be used to define how different units can contribute to different reserves. Parameter `max_share` says how large share of the total capacity of the timestep (existing * efficiency* (profile)) of the unit can contribute to this reserve category (e.g. *coal_plant*, in this example, has ramping restrictions and can only provide 1% of it's capacity to this upward primary reserve.) Meanwhile, parameter `reliability` affects what portion of the reserved capacity actually contributes to the reserve (e.g. in this contrived example, *wind_plant* must have extra capacity of 20 MW to provide 10 MW of reserve).
+Parameters from the `reserve__upDown__unit__node` class should be used to define how different units can contribute to different reserves. Parameter `max_share` says how large share of the total capacity of the timestep (existing * efficiency * (profile)) of the unit can contribute to this reserve category (e.g. *coal_plant*, in this example, has ramping restrictions and can only provide 1% of its capacity to this upward primary reserve.) Meanwhile, parameter `reliability` affects what portion of the reserved capacity actually contributes to the reserve (e.g. in this contrived example, *wind_plant* must have extra capacity of 20 MW to provide 10 MW of reserve).
 
 Create the scenario, **commit**, execute and explore how the reserve requirements affect the model results.
 
