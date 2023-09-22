@@ -1191,6 +1191,21 @@ set process__sink_nonSync :=
 			|| ( (p, sink) in process_source && p in process_nonSync_connection )  
 	    };
 
+set process__group_inside_group_nonSync :=
+  {p in process, g in groupNonSync:
+  sum{source in node, sink in node: 
+  (p,source) in process_source && (g, source) in group_node 
+  && (p,sink) in process_sink && (g,sink) in group_node  
+  && source != sink } 1
+  }; 
+  #|| sum{(p,m) in process_method: m in method_2way_1var} 1
+
+param p_positive_inflow{n in node, (d,t) in dt: (n, 'no_inflow') not in node__inflow_method} := 
+  +(if pdtNodeInflow[n,d,t] >= 0 then pdtNodeInflow[n,d,t] else 0);
+
+param p_negative_inflow{n in node, (d,t) in dt} := 
+  +(if pdtNodeInflow[n,d,t] < 0 then pdtNodeInflow[n,d,t] else 0);
+
 param p_entity_existing_first_solve {e in entity, d in period} :=
   + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in process then p_process[e, 'existing'])
   + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in node then p_node[e, 'existing'])
@@ -1314,6 +1329,13 @@ check {n in nodeState, (d,t) in period__time_last:
    && (n, 'bind_within_timeblock') not in node__storage_binding_method}:
   p_node[n,'storage_state_reference_value'] <= ptNode[n, 'availability', t];
 
+printf 'Checking: transfer_method no_losses_no_variable_cost\n';
+printf 'is not allowed to a group with non-synchronous constraint\n';
+check {g in groupNonSync, (p,source,sink) in process_source_sink:
+  (((p,source) in process_source && (g,source) in group_node)
+  || ((p,sink) in process_sink && (g,sink) in group_node))
+  && (p,g) not in process__group_inside_group_nonSync}: 
+    sum{(p, m) in process_method : m in method_2way_1var} 1 < 1;
 
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
@@ -1984,7 +2006,7 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt} :
       + p_process_sink_coefficient[p, sink]
         * ( 
 		    + p_entity_existing_integer_count[p, d]
-            + v_invest[p, d]			
+          + (if d in period_invest then v_invest[p, d] else 0)			
 			- v_online_integer[p, d, t]   # Using binary online variable as a switch between directions
 		  )   
 		* p_entity_unitsize[p]
@@ -2490,17 +2512,18 @@ s.t. co2_max_period{(g, c, n, d) in group_commodity_node_period_co2_period : d i
 ;
 
 s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
-  + sum {(p, source, sink) in process_source_sink : (p, sink) in process__sink_nonSync && (g, sink) in group_node}
+  + sum {(p, source, sink) in process_source_sink : (p, sink) in process__sink_nonSync && (g, sink) in group_node && (p,g) not in process__group_inside_group_nonSync}
     ( + v_flow[p, source, sink, d, t] 
 	    * p_entity_unitsize[p]  
 		* step_duration[d, t] )
+  + sum {(g, n) in group_node} p_positive_inflow[n,d,t]
   - vq_non_synchronous[g, d, t] * group_capacity_for_scaling[g, d]
   <=
-  ( + sum {(p, source, sink) in process_source_sink_noEff : (p, source) in process_source && (g, source) in group_node && (g, sink) not in group_node} 
+  ( + sum {(p, source, sink) in process_source_sink_noEff : (g, source) in group_node  && (p,g) not in process__group_inside_group_nonSync} 
       ( + v_flow[p, source, sink, d, t] 
 		  * p_entity_unitsize[p] 
 	  ) * step_duration[d, t]
-    + sum {(p, source, sink) in process_source_sink_eff : (p, source) in process_source && (g, source) in group_node && (g, sink) in group_node}
+    + sum {(p, source, sink) in process_source_sink_eff: (g, source) in group_node}
       ( + v_flow[p, source, sink, d, t]
 	      * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
 	      * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, source] else 1)
@@ -2510,10 +2533,10 @@ s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
 	          )
 		      * ptProcess_section[p, t]
 	      )
-		- v_flow[p, source, sink, d, t]
+        -(if (p,g) in process__group_inside_group_nonSync then v_flow[p, source, sink, d, t] else 0)
 	  )	* p_entity_unitsize[p]
 		* step_duration[d, t]
-    + sum {(g, n) in group_node} -pdtNodeInflow[n, d, t]
+    + sum {(g, n) in group_node} -p_negative_inflow[n,d,t]
   ) * pdGroup[g, 'non_synchronous_limit', d]
 ;
 
@@ -2627,9 +2650,12 @@ param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alw
       + (if (p, source, sink) in process__source__toProfileProcess then 
 	      + v_flow[p, source, sink, d, t].val * p_entity_unitsize[p])
    )
-  + sum {(p, m) in process_method : m not in method_1var_per_way} (
+  + sum {(p, m) in process_method : m in method_nvar} (
       + v_flow[p, source, sink, d, t].val * p_entity_unitsize[p]
 	)
+  + sum {(p,m) in process_method: m in method_2way_1var && (p,source,sink) in process_source_toSink}(
+      + v_flow[p, source, sink, d, t].val * p_entity_unitsize[p]
+  )
 ;
 
 param r_process_source_sink_ramp_dtt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t, t_previous) in dtt} :=
@@ -3991,7 +4017,9 @@ param r_node_ramproom_connections_down_dtt{n in nodeBalance, (d, t, t_previous) 
 		  - sum{(u, n, sink) in process_source_sink_alwaysProcess : (u, n) in process_source && u in process_connection && u not in process_VRE && u not in process_isNodeSink_yes2way} ( 
               + p_process_source_coefficient[u, n]
                 * ( if u in process_online
-			  	    then (if u in process_online_integer then ( p_entity_existing_integer_count[u, d] + v_invest[u, d] - r_process_online_dt[u, d, t] )
+			  	    then (if u in process_online_integer then ( p_entity_existing_integer_count[u, d] 
+                  + (if d in period_invest then v_invest[u, d] else 0)
+                  - r_process_online_dt[u, d, t] )
                 else r_process_online_dt[u, d, t])
                * p_process[u, 'min_load'] * p_entity_unitsize[u]
 					else entity_all_capacity[u, d]
