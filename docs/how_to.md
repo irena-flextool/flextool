@@ -491,6 +491,8 @@ Then set which plants and connections are considered non-synchronous by adding p
 
 Here the (wind_plant|nodeA) relation has the `is_non_synchronous` parameter and battery connection `is_DC` parameter.
 
+A connection with `transfer_method`: *no_losses_no_variables* between a node in the group with non-synchronous limit and the outside world is not allowed as it is not possible to solve with a linear model. 
+
 If you want to see the individual flows in the results you can create separate `groups` for the flows and add `group_unit_node` relations to it. To produce the flow results, the groups need the parameter.
 
 - `output_results`: yes 
