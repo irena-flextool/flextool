@@ -20,6 +20,8 @@
         "input/commodity__node.csv",
         "input/constraint__sense.csv",
         "input/debug.csv",
+        "input/disable_optional_outputs.csv",
+        "input/enable_optional_outputs.csv",
         "input/entity.csv",
         "input/entity__invest_method.csv",
         "input/entity__lifetime_method.csv",

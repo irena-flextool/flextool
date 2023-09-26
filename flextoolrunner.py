@@ -1441,6 +1441,8 @@ def main():
         "group__process__node__period": [[],1],
         "unit__inputNode__period": [[],2],
         "unit__outputNode__period": [[],2],
+        "connection_to_first_node__period": [[],3],
+        "connection_to_second_node__period": [[],3],
         "connection__period": [[],3],
         "unit_cf__inputNode__period": [[],2],
         "unit_cf__outputNode__period": [[],2],
