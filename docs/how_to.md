@@ -6,6 +6,7 @@ Each example will either include an example database file that is located in the
 This section is divided into two parts: 
 
 Building parts of the model:
+
 - [How to create a PV, wind or run-of-river hydro power plant](#How-to-create-a-PV,-wind-or-run---of---river-hydro-power-plant)
 - [How to connect nodes in the same energy network](#How-to-connect-nodes-in-the-same-energy-network)
 - [How to set the demand in a node](#How-to-set-the-demand-in-a-node)
@@ -21,6 +22,7 @@ Building parts of the model:
 
 
 Setting different solves:
+
 - [How to run solves in a sequence (investment + dispatch)](#how-to-run-solves-in-a-sequence-investment--dispatch)
 - [How to create a multi-year model](#how-to-create-a-multi-year-model)
 - [How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model)
@@ -535,12 +537,14 @@ Note: The results are the share of curtailment in relation to the inflow (demand
 In this example, investment decisions are made using a five week sample of a year and then the dispatch is solved with the full year timeline using these investments. 
 
 To do this you need two solves:
+
 - Investment solve 
 - Dispatch solve
 
 Both solves should solve the *same* periods using *different* `timeblockSet` to represent these periods. This example has only one period p2020 describing a year. The investment solve uses a representative sample `timeblockSet` *5weeks* to do the investment decisions. These are then passed to the dispatch solve that uses complete timeline *fullYear*.
 
 Investment solve requires the parameters:
+
 - `Invest_periods`: Array of periods where investments can be made
 - `realised_invest_periods`: Array of periods that are output for investment decisions
 - `period_timeblockSet`: Uses the *5weeks* as the timeblock 
@@ -549,6 +553,7 @@ Note that the `realized_invest_periods` is used instead of `realized_periods`, b
 Additionally some of the units, connections or storages will need investment parameters (`invest_cost`, `lifetime`...) see [How to make investments (storage/unit)](#how-to-make-investments-storageunit)
 
 The dispatch solve requires the parameters:
+
 - `realized_periods`: Array of output periods
 - `period_timeblockSet`: Uses the *fullYear* as the timeblock
 
