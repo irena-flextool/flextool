@@ -129,7 +129,7 @@ this is by creating another Excel file that draws figures from the result Excel 
 <p>The browser interface of FlexTool also runs part of this same workflow 
 (<strong><em>Export_to_csv</em></strong> --&gt; <strong><em>FlexTool</em></strong> --&gt; <strong><em>Import_results</em></strong>). The server takes a copy of the workflow (inside the user_projects) 
 folder and uses Spine Toolbox to execute the scenarios.</p>
-<p>More instructions for Spine Toolbox in https://spine-toolbox.readthedocs.io/en/latest/?badge=latest.</p>
+<p>More instructions for Spine Toolbox in <a href="https://spine-toolbox.readthedocs.io/en/latest/?badge=latest">Toolbox User Guide</a>.</p>
 <h1 id="data-structure-in-spine-databases">Data structure in Spine databases</h1>
 <p>Spine databases use Entity-Attribute-Value with Classes and Relationships (EAV-CR). Entity classes define the categories of data. These can be one-dimensional object classes (e.g. <code>node</code> or <code>unit</code>) or multi-dimensional relationship classes formed from the object classes (e.g. <code>unit__node</code>). Spine Toolbox user can define these classes to suit their modelling needs. For FlexTool the entity classes have been pre-defined. Instead, FlexTool user needs to add the entity instances: objects and relationships that define the particular network structure to be modelled (e.g. <em>coal_plant</em> <code>unit</code> or <em>west</em> <code>node</code>). Furthermore, each entity class (object or relationship) can hold only parameters that have been defined for that particular class. Again, FlexTool user does not need to add the parameter types - the user should just add needed parameter values for the entities the user has created.</p>
 <p><img alt="EAV data structure" src="../EAV_CR.png" /></p>
@@ -150,7 +150,7 @@ the first <code>alternative</code>.</p>
 <p>Whenever data is modified, the data is staged in separate database tables (although not directly visible to user). The changes will be applied only once the user <code>commits</code> the changes and leaves a commit message to indicate what has been done. The <code>commit</code> can be done with ctrl-enter or from the database editor menu (triple bar at top-right).</p>
 <p>The database editor menu has options for how to display the data: table view, different pivot views and a graph view. It also contains a tool to delete data (<code>purge</code>) and decrease database size by removing unused allocations (<code>vacuum</code>). You can also bring back dock windows that have been closed by the user. <code>History</code> will show the history of data changes based on the commits made by the user.</p>
 <p><img alt="Database editor" src="../database_editor.png" /></p>
-<p>More on Spine Database editor in https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html.</p>
+<p>More on Spine Database editor in <a href="https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html">Database Editor User Guide</a>.</p>
               
             </div>
           </div><footer>
