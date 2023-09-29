@@ -3145,15 +3145,15 @@ for {g in groupOutput_node, s in solve_current, d in d_realized_period: sum{(g, 
        , sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d]
        , ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 	             r_process_source_sink_flow_d[p, source, n, d]  
-		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] ) * 100	   
-	   , ( + sum{(p, n) in process_sink : p in process_VRE} potentialVREgen[p, n, d]
+		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] ) * 100	   
+	   , ( + sum{(p, n) in process_sink : (g, n) in group_node && p in process_VRE} potentialVREgen[p, n, d]
 	       - sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 		         r_process_source_sink_flow_d[p, source, n, d] 
-		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] ) * 100
+		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] ) * 100
 	  , ( sum{(g, n) in group_node} r_penalty_nodeState_upDown_d[n, 'up', d] ) 
-	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] ) * 100
+	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] ) * 100
 	  , ( sum{(g, n) in group_node} r_penalty_nodeState_upDown_d[n, 'down', d] ) 
-	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] ) * 100
+	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] ) * 100
 	>> fn_groupNode__d;
   }
 
