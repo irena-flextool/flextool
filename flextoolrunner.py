@@ -28,6 +28,9 @@ class FlexToolRunner:
             datefmt='%Y-%m-%d %H:%M:%S',
         )
         translation = {39: None}
+        # delete highs.log from previous run
+        if os.path.exists("./HiGHS.log"):
+            os.remove("./HiGHS.log")
         # make a directory for model unit tests
         if not os.path.exists("./tests"):
             os.makedirs("./tests")
