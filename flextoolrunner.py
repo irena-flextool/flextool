@@ -700,7 +700,7 @@ class FlexToolRunner:
                 #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
                 with open('HiGHS.log','r') as inf_file:
                     inf_content = inf_file.read() 
-                    if 'Infeasible' in inf_content:
+                    if 'Model   status      : Infeasible' in inf_content:
                         logging.error(f"The model is infeasible. Check the constraints.")
                         exit(1)
             
@@ -1444,6 +1444,8 @@ def main():
         "group__process__node__period": [[],1],
         "unit__inputNode__period": [[],2],
         "unit__outputNode__period": [[],2],
+        "connection_to_first_node__period": [[],3],
+        "connection_to_second_node__period": [[],3],
         "connection__period": [[],3],
         "unit_cf__inputNode__period": [[],2],
         "unit_cf__outputNode__period": [[],2],

@@ -29,6 +29,9 @@ Setting different solves:
 - [How to use Nested Rolling window solves (investments and long-term storage)](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
 - [How to use CPLEX as the solver](#how-to-use-cplex-as-the-solver)
 
+General:
+-  [How to enable/disable outputs](#how-to-enabledisable-outputs)
+-  [How to make the Flextool run faster](#how-to-make-the-flextool-run-faster)
 
 ## How to create a PV, wind or run-of-river hydro power plant
 
@@ -781,7 +784,7 @@ The split sample investment run produces in this case similar results as the one
 
 Using CPLEX requires that you have installed the software, have a licence for it and have added it to PATH or to the environment where you are using the FlexTool, so that the tool can find the solver.
 
-CPLEX is used when the **solve** parameter *solver* is set to 'cplex'. The tool passes the built optimization model to the CPLEX solver and converts the solution file to a filetype suitalbe for CPLEX. The solver will produce two additional files to the work directory: 'cplex.log' and 'flexModel3_cplex.sol'. The former is the logfile of the solver and the latter contains the solution in the CPLEX format.
+CPLEX is used when the **solve** parameter *solver* is set to 'cplex'. The tool passes the built optimization model to the CPLEX solver and converts the solution file to a filetype suitable for CPLEX. The solver will produce two additional files to the work directory: 'cplex.log' and 'flexModel3_cplex.sol'. The former is the logfile of the solver and the latter contains the solution in the CPLEX format.
 
 The tool uses [Interactive Optimizer](https://www.ibm.com/docs/en/icos/12.8.0.0?topic=cplex-interactive-optimizer) to pass the problem to the solver. The default command used:
   
@@ -801,3 +804,54 @@ With these parameters, the command line call is:
 ```
 
 ![Cplex parameters](./CPLEX.PNG)
+
+
+## How to enable/disable outputs
+
+You have the option to add extra outputs that are not produced by default to reduce the time of importing results. This is done by adding these outputs to the `model` parameter `enable_optional_outputs`: Array. The allowed outputs to enable are:
+
+- *ramp_envelope* : Includes seven parameters that form the ramp room envelope (how much there is additional room to ramp in a give node). 
+- *node_balance_t* : Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. 
+- *connection_flow_one_direction* : Produces the connection flows separately for both directions.
+
+![Enable outputs](./enable_outputs.PNG)
+
+Similarly, you have the option to disable some of the outputs that you don't need to reduce the result importing time. This is done by adding these outputs to the `model` parameter `disable_optional_outputs`: Array. The allowed outputs to disable are:
+
+- *unit__node_flow_t* : The flows from units to the nodes for each timestep.
+- *connection__node__node_flow_t* : The flows between the nodes for each timestep.
+
+Note the double underscore (__) in these names.
+
+![Disable outputs](./disable_outputs.PNG)
+
+
+## How to make the Flextool run faster
+
+Here are some of the ways to make the Flextool run faster divided by how they affect the results:
+
+External changes:
+
+- Make sure that both the input database and Flextool are on the same drive. If the database is on an external drive, it will slow the process.
+- Close other programs that use lots of memory. Linear optimization solvers are memory intesive.
+- Use a computer good enough computer. Both CPU and Memory are used fully.
+
+Model changes (no effect on the results):
+
+- Disable outputs that you don't need. This will especially speed up the *Import_results*. See: [How to enable/disable outputs](#how-to-enabledisable-outputs)
+- Use CPLEX as the solver. This is a commercial solver and you will need a licence for it. See: [How to use CPLEX as the solver](#how-to-use-cplex-as-the-solver)
+
+
+Model changes (small effect on the results):
+
+- Get rid of integer variables. Mixed integer programming can increase the solving time manyfold compared to the linear. MIP parameters are:
+  - `transfer_method`: *exact*, change to *reqular*
+  - `startup_method`: *binary*, change to *linear*
+
+Model changes (possibly big effects on the results, need to understand how the results will change):
+
+- Use representative periods for investment decisions. See: [How to create a multi-year model](#how-to-create-a-multi-year-model)
+- Split the timeline into parts. The solving time increases exponentially with the model size. Multiple smaller solves are faster. In practice this can be done with Rolling window solve and Nested rolling solve. See:
+[How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model),
+[How to use Nested Rolling window solves (investments and long-term storage)](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
+- Aggregate data. Technological: Combine power plants that are using the same technology. Spatial: Combine nodes. Temporal: Use longer timesteps.
