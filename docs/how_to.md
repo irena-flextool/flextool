@@ -496,7 +496,7 @@ Then set which plants and connections are considered non-synchronous by adding p
 
 Here the (wind_plant|nodeA) relation has the `is_non_synchronous` parameter and battery connection `is_DC` parameter.
 
-A connection with `transfer_method`: *no_losses_no_variables* between a node in the group with non-synchronous limit and the outside world is not allowed as it is not possible to solve with a linear model. 
+A connection with `transfer_method`: *no_losses_no_variables* between a node included in a group with a non-synchronous limit and a node outside of the group is not allowed. The flow in this kind of a connection is presented with a single variable, which would not function correctly with the non-synchronous limit constraints (there is a non-linearity at zero that requires two variables). 
 
 If you want to see the individual flows in the results you can create separate `groups` for the flows and add `group_unit_node` relations to it. To produce the flow results, the groups need the parameter.
 
@@ -808,50 +808,49 @@ With these parameters, the command line call is:
 
 ## How to enable/disable outputs
 
-You have the option to add extra outputs that are not produced by default to reduce the time of importing results. This is done by adding these outputs to the `model` parameter `enable_optional_outputs`: Array. The allowed outputs to enable are:
+Some outputs need to be explicitly added in order to output them. This is to reduce the result processing time. Each optional output can be added to the `enable_optional_outputs` parameter array of the `model` object. The additional outputs are:
 
-- *ramp_envelope* : Includes seven parameters that form the ramp room envelope (how much there is additional room to ramp in a give node). 
+- *ramp_envelope* : Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node). 
 - *node_balance_t* : Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. 
-- *connection_flow_one_direction* : Produces the connection flows separately for both directions.
+- *connection_flow_separate* : Produces the connection flows separately for both directions.
 
 ![Enable outputs](./enable_outputs.PNG)
 
-Similarly, you have the option to disable some of the outputs that you don't need to reduce the result importing time. This is done by adding these outputs to the `model` parameter `disable_optional_outputs`: Array. The allowed outputs to disable are:
+Similarly, some outputs can be disables to reduce the result processing time. To do so, add the output name to the `disable_optional_outputs` parameter array of the `model` object.  The allowed outputs to disable are:
 
-- *unit__node_flow_t* : The flows from units to the nodes for each timestep.
-- *connection__node__node_flow_t* : The flows between the nodes for each timestep.
+- *unit_flow_t* : The flows from units to the nodes for each timestep.
+- *connection_flow_t* : The flows between the nodes for each timestep.
 
-Note the double underscore (__) in these names.
+These can be replaced by group outputs (e.g. all wind power plant outputs are aggregated into one).
 
 ![Disable outputs](./disable_outputs.PNG)
 
 
 ## How to make the Flextool run faster
 
-Here are some of the ways to make the Flextool run faster divided by how they affect the results:
+The list below contains potential ways to decrease the run-time of FlexTool models.
 
-External changes:
+External changes (results will remain the same):
 
-- Make sure that both the input database and Flextool are on the same drive. If the database is on an external drive, it will slow the process.
-- Close other programs that use lots of memory. Linear optimization solvers are memory intesive.
-- Use a computer good enough computer. Both CPU and Memory are used fully.
+- Keep both the input database and Flextool on the same drive. If the database is on a different drive, it can slow the process. Avoid network drives.
+- Try to ensure that there is sufficient memory available by closing other programs that use lot of memory. Linear optimization problems can require lot of memory.
+- Use as fast computer as available. Both faster processors and more processors can decrease computation time.
 
-Model changes (no effect on the results):
+Model changes (results will remain the same):
 
-- Disable outputs that you don't need. This will especially speed up the *Import_results*. See: [How to enable/disable outputs](#how-to-enabledisable-outputs)
-- Use CPLEX as the solver. This is a commercial solver and you will need a licence for it. See: [How to use CPLEX as the solver](#how-to-use-cplex-as-the-solver)
+- Disable outputs that you don't need. This will speed up the result processing. See: [How to enable/disable outputs](#how-to-enabledisable-outputs)
+- Especially with MIP problems, considering using a commercial solver like CPLEX (license required). See: [How to use CPLEX as the solver](#how-to-use-cplex-as-the-solver)
 
+Model changes (results will be affected):
 
-Model changes (small effect on the results):
-
-- Get rid of integer variables. Mixed integer programming can increase the solving time manyfold compared to the linear. MIP parameters are:
+- Get rid of integer variables. Mixed integer programming can increase the solving time manyfold compared to the linear version especially if commercial solver is not available. MIP parameters are:
   - `transfer_method`: *exact*, change to *reqular*
   - `startup_method`: *binary*, change to *linear*
 
-Model changes (possibly big effects on the results, need to understand how the results will change):
+Model changes (potentially large changes to the results --> need to understand how the particular analysis will be affected):
 
 - Use representative periods for investment decisions. See: [How to create a multi-year model](#how-to-create-a-multi-year-model)
-- Split the timeline into parts. The solving time increases exponentially with the model size. Multiple smaller solves are faster. In practice this can be done with Rolling window solve and Nested rolling solve. See:
+- Split the timeline into parts. The solving time increases exponentially with the model size. Multiple smaller solves can be faster. Splitting is best done with Rolling window solve and Nested rolling solve. See:
 [How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model),
 [How to use Nested Rolling window solves (investments and long-term storage)](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
 - Aggregate data. Technological: Combine power plants that are using the same technology. Spatial: Combine nodes. Temporal: Use longer timesteps.
