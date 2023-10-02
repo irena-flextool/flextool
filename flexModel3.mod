@@ -512,13 +512,17 @@ set process_source_toProcess :=
     { (p, source) in process_source, p2 in process 
 	    :  p = p2 
 	    && (p2, source) in process_source 
-	    && sum{(p, m) in process_method : m in method_indirect} 1
+	    && (    ( sum{(p, m) in process_method : m in method_indirect} 1 )
+		     || ( sum{(p, m) in process_method : m in method_direct} 1 && sum{(p, sink) in process_sink} 1 < 1 && not (p, source, p2) in process__source__toProfileProcess )
+		   )
 	};
 set process_process_toSink := 
     { p in process, (p2, sink) in process_sink
 	    :  p = p2 
 	    && (p, sink) in process_sink 
-	    && sum{(p, m) in process_method : m in method_indirect} 1
+	    && (    ( sum{(p, m) in process_method : m in method_indirect} 1 )
+		     || ( sum{(p, m) in process_method : m in method_direct} 1 && sum{(p, source) in process_source} 1 < 1 && not (p, p2, sink) in process__profileProcess__toSink )
+		   )
 	};
 set process_sink_toProcess := 
     { sink in node, p in process, p2 in process 
@@ -2634,7 +2638,7 @@ param entity_all_capacity{e in entity, d in period} :=
 param r_process_online_dt{p in process_online, (d, t) in dt} :=
   + (if p in process_online_linear then v_online_linear[p, d, t].val)
   + (if p in process_online_integer then v_online_integer[p, d, t].val);
-
+display process_source_sink_alwaysProcess, process_method, method_1var_per_way, process__profileProcess__toSink;
 param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
   + sum {(p, m) in process_method : m in method_1var_per_way}
     ( + sum {(p, source, sink2) in process_source_toSink} 
@@ -2661,6 +2665,10 @@ param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alw
       + (if (p, source, sink) in process__profileProcess__toSink then 
 	      + v_flow[p, source, sink, d, t].val * p_entity_unitsize[p])
       + (if (p, source, sink) in process__source__toProfileProcess then 
+	      + v_flow[p, source, sink, d, t].val * p_entity_unitsize[p])
+	  + (if (p, source, sink) in process_process_toSink then
+	      + v_flow[p, source, sink, d, t].val * p_entity_unitsize[p])
+	  + (if (p, source, sink) in process_source_toProcess then
 	      + v_flow[p, source, sink, d, t].val * p_entity_unitsize[p])
    )
   + sum {(p, m) in process_method : m in method_nvar} (
@@ -4238,9 +4246,9 @@ param w_unit_test := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_t
 display w_unit_test;
 
 #display {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } : v_reserve[p, r, ud, n, d, t].dual / p_entity_unitsize[p];
-#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_other_operational_cost_dt[p, d, t];
-#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
 #display {p in process_online, (d, t) in dt : (d, t) in test_dt} : r_process_online_dt[p, d, t];
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
@@ -4259,4 +4267,5 @@ display w_unit_test;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 #display {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in test_dt}: ptProcess_sink[p, sink, param, t];
 display v_invest, v_divest, solve_current;
+display process_process_toSink, process__profileProcess__toSink;
 end;
