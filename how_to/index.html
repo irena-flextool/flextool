@@ -541,7 +541,7 @@ The penalty should be always set as in some cases there is no other way to keep 
 <p><code>Connection_node_node</code>:
 - <code>is_DC</code>: yes </p>
 <p>Here the (wind_plant|nodeA) relation has the <code>is_non_synchronous</code> parameter and battery connection <code>is_DC</code> parameter.</p>
-<p>A connection with <code>transfer_method</code>: <em>no_losses_no_variables</em> between a node in the group with non-synchronous limit and the outside world is not allowed as it is not possible to solve with a linear model. </p>
+<p>A connection with <code>transfer_method</code>: <em>no_losses_no_variables</em> between a node included in a group with a non-synchronous limit and a node outside of the group is not allowed. The flow in this kind of a connection is presented with a single variable, which would not function correctly with the non-synchronous limit constraints (there is a non-linearity at zero that requires two variables). </p>
 <p>If you want to see the individual flows in the results you can create separate <code>groups</code> for the flows and add <code>group_unit_node</code> relations to it. To produce the flow results, the groups need the parameter.</p>
 <ul>
 <li><code>output_results</code>: yes </li>
@@ -786,43 +786,43 @@ Additionally some of the units, connections or storages will need investment par
 </code></pre>
 <p><img alt="Cplex parameters" src="../CPLEX.PNG" /></p>
 <h2 id="how-to-enabledisable-outputs">How to enable/disable outputs</h2>
-<p>You have the option to add extra outputs that are not produced by default to reduce the time of importing results. This is done by adding these outputs to the <code>model</code> parameter <code>enable_optional_outputs</code>: Array. The allowed outputs to enable are:</p>
+<p>Some outputs need to be explicitly added in order to output them. This is to reduce the result processing time. Each optional output can be added to the <code>enable_optional_outputs</code> parameter array of the <code>model</code> object. The additional outputs are:</p>
 <ul>
-<li><em>ramp_envelope</em> : Includes seven parameters that form the ramp room envelope (how much there is additional room to ramp in a give node). </li>
+<li><em>ramp_envelope</em> : Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node). </li>
 <li><em>node_balance_t</em> : Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. </li>
-<li><em>connection_flow_one_direction</em> : Produces the connection flows separately for both directions.</li>
+<li><em>connection_flow_separate</em> : Produces the connection flows separately for both directions.</li>
 </ul>
 <p><img alt="Enable outputs" src="../enable_outputs.PNG" /></p>
-<p>Similarly, you have the option to disable some of the outputs that you don't need to reduce the result importing time. This is done by adding these outputs to the <code>model</code> parameter <code>disable_optional_outputs</code>: Array. The allowed outputs to disable are:</p>
+<p>Similarly, some outputs can be disables to reduce the result processing time. To do so, add the output name to the <code>disable_optional_outputs</code> parameter array of the <code>model</code> object.  The allowed outputs to disable are:</p>
 <ul>
-<li><em>unit__node_flow_t</em> : The flows from units to the nodes for each timestep.</li>
-<li><em>connection__node__node_flow_t</em> : The flows between the nodes for each timestep.</li>
+<li><em>unit_flow_t</em> : The flows from units to the nodes for each timestep.</li>
+<li><em>connection_flow_t</em> : The flows between the nodes for each timestep.</li>
 </ul>
-<p>Note the double underscore (__) in these names.</p>
+<p>These can be replaced by group outputs (e.g. all wind power plant outputs are aggregated into one).</p>
 <p><img alt="Disable outputs" src="../disable_outputs.PNG" /></p>
 <h2 id="how-to-make-the-flextool-run-faster">How to make the Flextool run faster</h2>
-<p>Here are some of the ways to make the Flextool run faster divided by how they affect the results:</p>
-<p>External changes:</p>
+<p>The list below contains potential ways to decrease the run-time of FlexTool models.</p>
+<p>External changes (results will remain the same):</p>
 <ul>
-<li>Make sure that both the input database and Flextool are on the same drive. If the database is on an external drive, it will slow the process.</li>
-<li>Close other programs that use lots of memory. Linear optimization solvers are memory intesive.</li>
-<li>Use a computer good enough computer. Both CPU and Memory are used fully.</li>
+<li>Keep both the input database and Flextool on the same drive. If the database is on a different drive, it can slow the process. Avoid network drives.</li>
+<li>Try to ensure that there is sufficient memory available by closing other programs that use lot of memory. Linear optimization problems can require lot of memory.</li>
+<li>Use as fast computer as available. Both faster processors and more processors can decrease computation time.</li>
 </ul>
-<p>Model changes (no effect on the results):</p>
+<p>Model changes (results will remain the same):</p>
 <ul>
-<li>Disable outputs that you don't need. This will especially speed up the <em>Import_results</em>. See: <a href="#how-to-enabledisable-outputs">How to enable/disable outputs</a></li>
-<li>Use CPLEX as the solver. This is a commercial solver and you will need a licence for it. See: <a href="#how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</a></li>
+<li>Disable outputs that you don't need. This will speed up the result processing. See: <a href="#how-to-enabledisable-outputs">How to enable/disable outputs</a></li>
+<li>Especially with MIP problems, considering using a commercial solver like CPLEX (license required). See: <a href="#how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</a></li>
 </ul>
-<p>Model changes (small effect on the results):</p>
+<p>Model changes (results will be affected):</p>
 <ul>
-<li>Get rid of integer variables. Mixed integer programming can increase the solving time manyfold compared to the linear. MIP parameters are:</li>
+<li>Get rid of integer variables. Mixed integer programming can increase the solving time manyfold compared to the linear version especially if commercial solver is not available. MIP parameters are:</li>
 <li><code>transfer_method</code>: <em>exact</em>, change to <em>reqular</em></li>
 <li><code>startup_method</code>: <em>binary</em>, change to <em>linear</em></li>
 </ul>
-<p>Model changes (possibly big effects on the results, need to understand how the results will change):</p>
+<p>Model changes (potentially large changes to the results --&gt; need to understand how the particular analysis will be affected):</p>
 <ul>
 <li>Use representative periods for investment decisions. See: <a href="#how-to-create-a-multi-year-model">How to create a multi-year model</a></li>
-<li>Split the timeline into parts. The solving time increases exponentially with the model size. Multiple smaller solves are faster. In practice this can be done with Rolling window solve and Nested rolling solve. See:
+<li>Split the timeline into parts. The solving time increases exponentially with the model size. Multiple smaller solves can be faster. Splitting is best done with Rolling window solve and Nested rolling solve. See:
 <a href="#how-to-use-a-rolling-window-for-a-dispatch-model">How to use a rolling window for a dispatch model</a>,
 <a href="#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves (investments and long-term storage)</a></li>
 <li>Aggregate data. Technological: Combine power plants that are using the same technology. Spatial: Combine nodes. Temporal: Use longer timesteps.</li>
