@@ -104,6 +104,10 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</a>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#how-to-enabledisable-outputs">How to enable/disable outputs</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#how-to-make-the-flextool-run-faster">How to make the Flextool run faster</a>
+    </li>
     </ul>
                   </li>
               </ul>
@@ -166,6 +170,9 @@ Each example will either include an example database file that is located in the
 <li><a href="#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves (investments and long-term storage)</a></li>
 <li><a href="#how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</a></li>
 </ul>
+<p>General:
+-  <a href="#how-to-enabledisable-outputs">How to enable/disable outputs</a>
+-  <a href="#how-to-make-the-flextool-run-faster">How to make the Flextool run faster</a></p>
 <h2 id="how-to-create-a-pv-wind-or-run-of-river-hydro-power-plant">How to create a PV, wind or run-of-river hydro power plant</h2>
 <p><strong>(init.sqlite scenario: wind)</strong>
 <strong><em>init - west - wind</em></strong></p>
@@ -765,7 +772,7 @@ Additionally some of the units, connections or storages will need investment par
 <p>The split sample investment run produces in this case similar results as the one solve sample run. This is not always the case! Here the only difference between the periods was linearly increased demand.  </p>
 <h2 id="how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</h2>
 <p>Using CPLEX requires that you have installed the software, have a licence for it and have added it to PATH or to the environment where you are using the FlexTool, so that the tool can find the solver.</p>
-<p>CPLEX is used when the <strong>solve</strong> parameter <em>solver</em> is set to 'cplex'. The tool passes the built optimization model to the CPLEX solver and converts the solution file to a filetype suitalbe for CPLEX. The solver will produce two additional files to the work directory: 'cplex.log' and 'flexModel3_cplex.sol'. The former is the logfile of the solver and the latter contains the solution in the CPLEX format.</p>
+<p>CPLEX is used when the <strong>solve</strong> parameter <em>solver</em> is set to 'cplex'. The tool passes the built optimization model to the CPLEX solver and converts the solution file to a filetype suitable for CPLEX. The solver will produce two additional files to the work directory: 'cplex.log' and 'flexModel3_cplex.sol'. The former is the logfile of the solver and the latter contains the solution in the CPLEX format.</p>
 <p>The tool uses <a href="https://www.ibm.com/docs/en/icos/12.8.0.0?topic=cplex-interactive-optimizer">Interactive Optimizer</a> to pass the problem to the solver. The default command used:</p>
 <pre><code class="language-shell">cplex -c 'read flexModel3.mps' 'opt' 'write flexModel3_cplex.sol' 'quit'
 </code></pre>
@@ -778,6 +785,48 @@ Additionally some of the units, connections or storages will need investment par
 <pre><code class="language-shell">'solver_precommand' cplex -c 'read flexModel3.mps' 'solver_command1' 'solver_command2' ... 'solver_command_last' 'opt' 'write flexModel3_cplex.sol' 'quit'
 </code></pre>
 <p><img alt="Cplex parameters" src="../CPLEX.PNG" /></p>
+<h2 id="how-to-enabledisable-outputs">How to enable/disable outputs</h2>
+<p>You have the option to add extra outputs that are not produced by default to reduce the time of importing results. This is done by adding these outputs to the <code>model</code> parameter <code>enable_optional_outputs</code>: Array. The allowed outputs to enable are:</p>
+<ul>
+<li><em>ramp_envelope</em> : Includes seven parameters that form the ramp room envelope (how much there is additional room to ramp in a give node). </li>
+<li><em>node_balance_t</em> : Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. </li>
+<li><em>connection_flow_one_direction</em> : Produces the connection flows separately for both directions.</li>
+</ul>
+<p><img alt="Enable outputs" src="../enable_outputs.PNG" /></p>
+<p>Similarly, you have the option to disable some of the outputs that you don't need to reduce the result importing time. This is done by adding these outputs to the <code>model</code> parameter <code>disable_optional_outputs</code>: Array. The allowed outputs to disable are:</p>
+<ul>
+<li><em>unit__node_flow_t</em> : The flows from units to the nodes for each timestep.</li>
+<li><em>connection__node__node_flow_t</em> : The flows between the nodes for each timestep.</li>
+</ul>
+<p>Note the double underscore (__) in these names.</p>
+<p><img alt="Disable outputs" src="../disable_outputs.PNG" /></p>
+<h2 id="how-to-make-the-flextool-run-faster">How to make the Flextool run faster</h2>
+<p>Here are some of the ways to make the Flextool run faster divided by how they affect the results:</p>
+<p>External changes:</p>
+<ul>
+<li>Make sure that both the input database and Flextool are on the same drive. If the database is on an external drive, it will slow the process.</li>
+<li>Close other programs that use lots of memory. Linear optimization solvers are memory intesive.</li>
+<li>Use a computer good enough computer. Both CPU and Memory are used fully.</li>
+</ul>
+<p>Model changes (no effect on the results):</p>
+<ul>
+<li>Disable outputs that you don't need. This will especially speed up the <em>Import_results</em>. See: <a href="#how-to-enabledisable-outputs">How to enable/disable outputs</a></li>
+<li>Use CPLEX as the solver. This is a commercial solver and you will need a licence for it. See: <a href="#how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</a></li>
+</ul>
+<p>Model changes (small effect on the results):</p>
+<ul>
+<li>Get rid of integer variables. Mixed integer programming can increase the solving time manyfold compared to the linear. MIP parameters are:</li>
+<li><code>transfer_method</code>: <em>exact</em>, change to <em>reqular</em></li>
+<li><code>startup_method</code>: <em>binary</em>, change to <em>linear</em></li>
+</ul>
+<p>Model changes (possibly big effects on the results, need to understand how the results will change):</p>
+<ul>
+<li>Use representative periods for investment decisions. See: <a href="#how-to-create-a-multi-year-model">How to create a multi-year model</a></li>
+<li>Split the timeline into parts. The solving time increases exponentially with the model size. Multiple smaller solves are faster. In practice this can be done with Rolling window solve and Nested rolling solve. See:
+<a href="#how-to-use-a-rolling-window-for-a-dispatch-model">How to use a rolling window for a dispatch model</a>,
+<a href="#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves (investments and long-term storage)</a></li>
+<li>Aggregate data. Technological: Combine power plants that are using the same technology. Spatial: Combine nodes. Temporal: Use longer timesteps.</li>
+</ul>
               
             </div>
           </div><footer>
