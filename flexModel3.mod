@@ -3262,7 +3262,7 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
 	  }
   }
 
-param w_group := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity;
+param w_group := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_summary;
 display w_group;
 
 printf 'Write discount rates for realized periods...\n';
