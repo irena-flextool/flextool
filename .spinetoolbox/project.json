@@ -2,6 +2,9 @@
     "project": {
         "version": 11,
         "description": "",
+        "settings": {
+            "enable_execute_all": false
+        },
         "specifications": {
             "Importer": [
                 {
@@ -232,7 +235,13 @@
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input_data": {
-                            "scenario_filter": {},
+                            "scenario_filter": {
+                                "base": true,
+                                "coal": true,
+                                "network": true,
+                                "reserve": true,
+                                "wind": true
+                            },
                             "tool_filter": {
                                 "FlexTool3": true
                             }
@@ -275,10 +284,7 @@
                 ]
             }
         ],
-        "jumps": [],
-        "settings": {
-            "enable_execute_all": false
-        }
+        "jumps": []
     },
     "items": {
         "FlexTool3": {
@@ -289,7 +295,8 @@
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": [],
-            "kill_completed_processes": false
+            "kill_completed_processes": false,
+            "log_process_output": false
         },
         "Init": {
             "type": "Data Store",
@@ -434,10 +441,11 @@
                 },
                 {
                     "type": "resource",
-                    "arg": "<project>/default_result_plots.json"
+                    "arg": "<project>/plot_settings/single_dataset/default_result_plots.json"
                 }
             ],
-            "kill_completed_processes": false
+            "kill_completed_processes": false,
+            "log_process_output": false
         },
         "Plot_settings": {
             "type": "Data Connection",
@@ -448,7 +456,7 @@
                 {
                     "type": "path",
                     "relative": true,
-                    "path": "default_result_plots.json"
+                    "path": "plot_settings/single_dataset/default_result_plots.json"
                 }
             ],
             "db_references": []

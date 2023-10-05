@@ -1,0 +1,185 @@
+{
+  "plots": [
+    {
+      "dimensions": {
+        "separate_window": "scenario",
+        "x1": "X_flow_type",
+        "x2": "X_period",
+        "x3": "X_solve"
+      },
+      "plot_type": "bar",
+      "selection": {
+        "X_flow_type": [],
+        "X_period": [],
+        "X_solve": [],
+        "entity_class": [
+          "node"
+        ],
+        "entity_0": [],
+        "parameter": [
+          "balance"
+        ]
+      }
+    },
+    {
+      "dimensions": {
+        "separate_window": "scenario",
+        "x1": "X_time",
+        "x2": "X_period",
+        "x3": "X_solve"
+      },
+      "plot_type": "stacked line",
+      "selection": {
+        "X_period": [],
+        "X_solve": [],
+        "X_time": [],
+        "entity_class": [
+          "unit__node"
+        ],
+        "entity_0": [],
+        "entity_1": [],
+        "entity_2": [],
+        "parameter": [
+          "flow_t"
+        ]
+      }
+    },
+    {
+      "dimensions": {
+        "separate_window": "entity_0",
+        "x1": "X_solve",
+        "x2": "X_period",
+        "x3": null
+      },
+      "plot_type": "bar",
+      "selection": {
+        "X_period": [],
+        "X_solve": [],
+        "entity_class": [
+          "group"
+        ],
+        "entity_0": [],
+        "parameter": [
+          "sum flow"
+        ]
+      }
+    },
+    {
+      "dimensions": {
+        "separate_window": "scenario",
+        "x1": "X_solve",
+        "x2": "X_period",
+        "x3": null
+      },
+      "plot_type": "bar",
+      "selection": {
+        "X_capacity": [],
+        "X_capacity_type": [
+          "invested"
+        ],
+        "X_period": [],
+        "X_solve": [],
+        "entity_class": [
+          "unit",
+          "connection",
+          "node"
+        ],
+        "entity_0": [],
+        "parameter": [
+          "capacity"
+        ]
+      }
+    },
+    {
+      "dimensions": {
+        "separate_window": null,
+        "x1": "X_solve",
+        "x2": "X_period",
+        "x3": null
+      },
+      "plot_type": "stacked bar",
+      "selection": {
+        "X_cost_type": [],
+        "X_period": [],
+        "X_solve": [],
+        "entity_class": [
+          "model"
+        ],
+        "entity_0": [
+          "cost"
+        ],
+        "parameter": [
+          "cost_annualized"
+        ]
+      }
+    },
+    {
+      "dimensions": {
+        "separate_window": "scenario",
+        "x1": "X_time",
+        "x2": "X_period",
+        "x3": "X_solve"
+      },
+      "plot_type": "stacked line",
+      "selection": {
+        "X_cost_type": [],
+        "X_period": [],
+        "X_solve": [],
+        "X_time": [],
+        "entity_class": [
+          "model"
+        ],
+        "entity_0": [
+          "cost"
+        ],
+        "parameter": [
+          "cost_t"
+        ]
+      }
+    },
+    {
+      "dimensions": {
+        "separate_window": "scenario",
+        "x1": "X_time",
+        "x2": "X_period",
+        "x3": "X_solve"
+      },
+      "plot_type": "stacked line",
+      "selection": {
+        "X_period": [],
+        "X_solve": [],
+        "X_time": [],
+        "entity_class": [
+          "node"
+        ],
+        "entity_0": [],
+        "parameter": [
+          "state_t"
+        ]
+      }
+    },
+    {
+      "dimensions": {
+        "separate_window": "scenario",
+        "x1": "X_time",
+        "x2": "X_period",
+        "x3": "X_solve"
+      },
+      "plot_type": "stacked line",
+      "selection": {
+        "X_period": [],
+        "X_solve": [],
+        "X_time": [],
+        "entity_class": [
+          "unit__node"
+        ],
+        "entity_0": [],
+        "entity_1": ["west"],
+        "entity_2": [],
+        "parameter": [
+          "flow_t"
+        ]
+      }
+    }
+  ]
+}
