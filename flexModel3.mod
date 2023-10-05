@@ -1359,6 +1359,11 @@ check {g in groupNonSync, (p,source,sink) in process_source_sink:
   && (p,g) not in process__group_inside_group_nonSync}: 
     sum{(p, m) in process_method : m in method_2way_1var} 1 < 1;
 
+printf 'Checking: transfer_method no_losses_no_variable_cost\n';
+printf 'is not allowed to have other_operational_cost\n';
+check {(p,m) in process_method, t in time_in_use: m in method_2way_1var}: 
+  ptProcess[p, 'other_operational_cost', t] = 0;
+
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
 minimize total_cost:
