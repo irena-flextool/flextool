@@ -331,6 +331,9 @@ param costs_discounted {param_costs} default 0;
 set enable_optional_outputs;
 set disable_optional_outputs;
 
+set objectClass_paramName_default dimen 2;
+param default_value {objectClass_paramName_default};
+
 #########################
 # Read data
 #table data IN 'CSV' '.csv' :  <- [];
@@ -444,6 +447,8 @@ table data IN 'CSV' 'solve_data/p_years_represented.csv' : [period, years_from_s
 table data IN 'CSV' 'solve_data/p_years_represented.csv' : [period, years_from_solve], p_years_from_solve~p_years_from_solve;
 table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
 table data IN 'CSV' 'input/p_discount_rate.csv' : [model], p_discount_rate;
+table data IN 'CSV' 'input/default_values.csv' : objectClass_paramName_default <-[objectClass, paramName];
+table data IN 'CSV' 'input/default_values.csv' : [objectClass,paramName], default_value;
 # Parameters from the solve loop
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : [period, step], step_duration;
@@ -732,7 +737,6 @@ set process__source__sink__param_t :=
 
 param setup1 := gmtime() - datetime0;
 display setup1;
-
 set process_source_sink_param_t := {(p, source, sink) in process_source_sink_eff, param in processTimeParam : (p, param) in process__param_t};
 
 set process__source__sink__ramp_method :=
@@ -752,6 +756,8 @@ param ptNode {n in node, param in nodeTimeParam, t in complete_time_in_use} :=
       then p_node[n, param]
       else if param in nodeParam_def1
       then 1
+      else if ('node',param) in objectClass_paramName_default
+      then default_value['node', param]
       else 0;
 param ptNode_inflow {n in node, t in time} :=
         + if (n, 'inflow', t) in node__param__time

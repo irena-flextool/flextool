@@ -20,6 +20,7 @@
         "input/commodity__node.csv",
         "input/constraint__sense.csv",
         "input/debug.csv",
+        "input/default_values.csv",
         "input/disable_optional_outputs.csv",
         "input/enable_optional_outputs.csv",
         "input/entity.csv",
