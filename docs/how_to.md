@@ -27,11 +27,12 @@ Setting different solves:
 - [How to create a multi-year model](#how-to-create-a-multi-year-model)
 - [How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model)
 - [How to use Nested Rolling window solves (investments and long-term storage)](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
-- [How to use CPLEX as the solver](#how-to-use-cplex-as-the-solver)
 
 General:
--  [How to enable/disable outputs](#how-to-enabledisable-outputs)
--  [How to make the Flextool run faster](#how-to-make-the-flextool-run-faster)
+
+- [How to use CPLEX as the solver](#how-to-use-cplex-as-the-solver)
+- [How to enable/disable outputs](#how-to-enabledisable-outputs)
+- [How to make the Flextool run faster](#how-to-make-the-flextool-run-faster)
 
 ## How to create a PV, wind or run-of-river hydro power plant
 
