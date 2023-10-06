@@ -15,6 +15,7 @@ Building parts of the model:
 - [How to create combined heat and power (CHP)](#how-to-create-combined-heat-and-power-chp)
 - [How to create a hydro reservoir](#how-to-create-a-hydro-reservoir)
 - [How to create a hydro pump storage](#how-to-create-a-hydro-pump-storage)
+- [How to add a reserve](#how-to-add-a-reserve)
 - [How to add a minimum load, start-up and ramp](#how-to-add-a-minimum-load-start-up-and-ramp)
 - [How to add CO2 emissions, costs and limits](#how-to-add-co2-emissions-costs-and-limits)
 - [How to create a non-synchronous limit](#how-to-create-a-non-synchronous-limit)
@@ -417,6 +418,21 @@ The `constraint_flow_coefficient` for pump_input should therefore be (1/efficien
 
 ![Hydro pump parameters](./hydro_pump_parameters.PNG)
 ![Hydro pump relation](./hydro_pump_relations.PNG)
+
+### How to add a reserve
+**(init.sqlite: scenario network_coal_wind_reserve)**
+
+Reserve requirement is defined for a group of nodes as the reserve can be set to be dependent on the loads of the nodes (this tutorial uses a constant reserve). Therefore, the first step is to add a new `group` called *electricity* with *west*, *east* and *north* as its members using the `group__node` relationship class. Then, a new reserve category called *primary* is added to the `reserve` object class. 
+Finally, if it does not exist yet, add a new object `UpDown', called *up* to define the reserve mode.
+
+A relationship between *primary--up--electricity* in the `reserve__upDown__group` class allows to define the reserve parameters `reserve_method`, `reservation` (i.e. the amount of reserve) and `penalty_reserve` (i.e. the penalty cost in case of lack of reserve). In this case the reserve requirement will be a constant 10MW even though the `reserve_method` is *timeseries_only*. The other alternative is dynamic reserves where the model calculates the reserve requirement from generation and loads according to user defined factors (`increase_reserve_ratio`). 
+
+Parameters from the `reserve__upDown__unit__node` class should be used to define how different units can contribute to different reserves. Parameter `max_share` says how large share of the total capacity of the timestep (existing * efficiency * (profile)) of the unit can contribute to this reserve category (e.g. *coal_plant*, in this example, has ramping restrictions and can only provide 1% of its capacity to this upward primary reserve.) Meanwhile, parameter `reliability` affects what portion of the reserved capacity actually contributes to the reserve (e.g. in this contrived example, *wind_plant* must have extra capacity of 20 MW to provide 10 MW of reserve).
+
+Create the scenario, **commit**, execute and explore how the reserve requirements affect the model results.
+
+ ![Add a reserve](./reserves.png)
+
 
 ## How to add a minimum load, start-up and ramp
 **(ramp_and_start_up.sqlite)**
