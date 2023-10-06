@@ -565,13 +565,13 @@ The sequence of solves is defined by the `model` parameter `solves`. Here it is 
 
 Note that the picture has two `model`: *solves* parameters defined one for each alternative. Only the parameter from the *5weeks_only_invest* is used as the lower alternatives in the scenario tree override the values from the higher alternatives and only one model can be run.
 
-![Invest_and_dispatch](./Invest_and_dispatch.png)
+![Invest_and_dispatch](./Invest_and_dispatch.PNG)
 
 ## How to create a multi-year model
 
 A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. This means that all periods can use the same timeblockset *5weeks* from the same timeline *y2020*, but one can also make separate timelines for each year, if data is available for this. The `inflow` time series are scaled to match the value in `annual_flow` that is mapped for each period. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be a `discount_rate` parameter set for the `model` object *flexTool* if something else than the model default of 5% (0.05 value) is to be used.
 
-![Multi-year inflow](./multi_year_inflow.png)
+![Multi-year inflow](./multi_year_inflow.PNG)
 
 A multi-year model could be solved at one go (multi_year_one_solve) or by rolling through several solves (multi-year) where each solve has a foresight horizon and a realisation horizon. Next we will go through both options.
 
@@ -585,7 +585,7 @@ In this example, one solve is used for all the four periods. All the four period
 - `realized_periods` the periods that will be realized in this solve (outputs dispatch results for these periods).
 - `period_timeblockset` defines the set of representative 'periods' (timeblocks in FlexTool) to be used in each FlexTool `period`.
 
-![Multi-year inflow](./multi_year_one_solve.png)
+![Multi-year one solve](./multi_year_one_solve.PNG)
 
 ### Multi year with rolling solves 
 **(init.sqlite scenario: multi_year)**
