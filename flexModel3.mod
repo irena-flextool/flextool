@@ -2703,7 +2703,7 @@ param r_connection_dt{c in process_connection, (d, t) in dt} :=
   + sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_sink} r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
   - sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_source} r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
 ;
-param r_connection_to_sink_dt{c in process_connection, (d, t) in dt: 'connection_flow_one_direction' in enable_optional_outputs} :=
+param r_connection_to_sink_dt{c in process_connection, (d, t) in dt: 'connection_flow_separate' in enable_optional_outputs} :=
   + sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_sink}
     +(if r_process_source_sink_flow_dt[c, c, n, d, t] >= 0 then 
       r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
@@ -2713,7 +2713,7 @@ param r_connection_to_sink_dt{c in process_connection, (d, t) in dt: 'connection
       r_process_source_sink_flow_dt[c, c, n, d, t]* step_duration[d, t]
       else 0)
 ;
-param r_connection_to_source_dt{c in process_connection, (d, t) in dt: 'connection_flow_one_direction' in enable_optional_outputs} :=
+param r_connection_to_source_dt{c in process_connection, (d, t) in dt: 'connection_flow_separate' in enable_optional_outputs} :=
   - sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_sink}
     +(if r_process_source_sink_flow_dt[c, c, n, d, t] < 0 then 
       r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
@@ -2739,11 +2739,11 @@ param r_connection_d{c in process_connection, d in d_realized_period} :=
   + sum {(d, t) in dt_realize_dispatch} r_connection_dt[c, d, t]
 ;
 
-param r_connection_to_sink_d{c in process_connection, d in d_realized_period: 'connection_flow_one_direction' in enable_optional_outputs} :=
+param r_connection_to_sink_d{c in process_connection, d in d_realized_period: 'connection_flow_separate' in enable_optional_outputs} :=
   + sum {(d, t) in dt_realize_dispatch} r_connection_to_sink_dt[c, d, t]
 ;
 
-param r_connection_to_source_d{c in process_connection, d in d_realized_period: 'connection_flow_one_direction' in enable_optional_outputs} :=
+param r_connection_to_source_d{c in process_connection, d in d_realized_period: 'connection_flow_separate' in enable_optional_outputs} :=
   + sum {(d, t) in dt_realize_dispatch} r_connection_to_source_dt[c, d, t]
 ;
 
@@ -3571,7 +3571,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_connection_to_sink__d;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_sink__d;
   }
-for {s in solve_current, d in d_realized_period: 'connection_flow_one_direction' in enable_optional_outputs }
+for {s in solve_current, d in d_realized_period: 'connection_flow_separate' in enable_optional_outputs }
   {
 	printf '\n%s,%s', s, d >> fn_connection_to_sink__d;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3588,7 +3588,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_connection_to_sink__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_sink__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'connection_flow_one_direction' in enable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'connection_flow_separate' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_connection_to_sink__dt;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3605,7 +3605,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_connection_to_source__d;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_source__d;
   }
-for {s in solve_current, d in d_realized_period: 'connection_flow_one_direction' in enable_optional_outputs }
+for {s in solve_current, d in d_realized_period: 'connection_flow_separate' in enable_optional_outputs }
   {
 	printf '\n%s,%s', s, d >> fn_connection_to_source__d;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3622,7 +3622,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_connection_to_source__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_source__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'connection_flow_one_direction' in enable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'connection_flow_separate' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_connection_to_source__dt;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
