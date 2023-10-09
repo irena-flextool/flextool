@@ -142,7 +142,7 @@
             "VRE_share_t",
             null,
             null,
-            "[%] Share of VRE generation in the group of nodes (sum of 'upper_limit' flows into nodes divided by the sum of inflexible inflow (parameter 'inflow') into those nodes)."
+            "Share of VRE generation in the group of nodes (sum of 'upper_limit' flows into nodes divided by the sum of inflexible inflow (parameter 'inflow') into those nodes)."
         ],
         [
             "group",
@@ -354,7 +354,7 @@
             "flow_annualized",
             null,
             null,
-            null
+            "[MWh] annualized cumulative flow through the connection (left to right is positive)."
         ],
         [
             "connection__node__node",
@@ -362,6 +362,34 @@
             null,
             null,
             "[MWh] flow through the connection (left to right is positive)."
+        ],
+        [
+            "connection__node__node",
+            "flow_to_first_node_annualized",
+            null,
+            null,
+            "[MWh] annualized cumulative flow through the connection only to the left (first) node."
+        ],
+        [
+            "connection__node__node",
+            "flow_to_first_node_t",
+            null,
+            null,
+            "[MWh] flow through the connection to the left (first) node."
+        ],
+        [
+            "connection__node__node",
+            "flow_to_second_node_annualized",
+            null,
+            null,
+            "[MWh] annualized cumulative flow through the connection only to the right (second) node."
+        ],
+        [
+            "connection__node__node",
+            "flow_to_second_node_t",
+            null,
+            null,
+            "[MWh] flow through the connection to the right (second) node."
         ],
         [
             "connection__reserve__upDown__node",
@@ -396,14 +424,14 @@
             "curtailment_share",
             null,
             null,
-            null
+            "Share of curtailed production from potential production for periods"
         ],
         [
             "unit__node",
             "curtailment_t",
             null,
             null,
-            null
+            "[MWh] curtailed flow to the node"
         ],
         [
             "unit__node",
