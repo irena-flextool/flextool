@@ -3752,7 +3752,7 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit__sinkNode__dt_curtailment;
     for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_VRE}
-      { printf ',%.8g', potentialVREgen_dt[u, sink, d, t] - r_process_source_sink_flow_dt[u, source, sink, d, t] >> fn_unit__sinkNode__dt_curtailment; }
+      { printf ',%.6f', potentialVREgen_dt[u, sink, d, t] - r_process_source_sink_flow_dt[u, source, sink, d, t] >> fn_unit__sinkNode__dt_curtailment; }
   } 
   
 param w_curtailment := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf;
@@ -4193,7 +4193,7 @@ for {i in 1..1 : p_model['solveFirst']}
     printf '"units_down","+VRE_down","+connections_down"' >> fn_node_ramp__dtt; }  # Print the header on the first solve
 for {n in nodeBalance, s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'ramp_envelope' in enable_optional_outputs}
   {
-    printf '\n%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g'
+    printf '\n%s,%s,%s,%s,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f'
 		, n, s, d, t
 		, r_node_ramp_dtt[n, d, t, t_previous]
 		, r_node_ramproom_connections_up_dtt[n, d, t, t_previous]
