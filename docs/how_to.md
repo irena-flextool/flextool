@@ -15,6 +15,7 @@ Building parts of the model:
 - [How to create combined heat and power (CHP)](#how-to-create-combined-heat-and-power-chp)
 - [How to create a hydro reservoir](#how-to-create-a-hydro-reservoir)
 - [How to create a hydro pump storage](#how-to-create-a-hydro-pump-storage)
+- [How to add a reserve](#how-to-add-a-reserve)
 - [How to add a minimum load, start-up and ramp](#how-to-add-a-minimum-load-start-up-and-ramp)
 - [How to add CO2 emissions, costs and limits](#how-to-add-co2-emissions-costs-and-limits)
 - [How to create a non-synchronous limit](#how-to-create-a-non-synchronous-limit)
@@ -27,11 +28,12 @@ Setting different solves:
 - [How to create a multi-year model](#how-to-create-a-multi-year-model)
 - [How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model)
 - [How to use Nested Rolling window solves (investments and long-term storage)](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
-- [How to use CPLEX as the solver](#how-to-use-cplex-as-the-solver)
 
 General:
--  [How to enable/disable outputs](#how-to-enabledisable-outputs)
--  [How to make the Flextool run faster](#how-to-make-the-flextool-run-faster)
+
+- [How to use CPLEX as the solver](#how-to-use-cplex-as-the-solver)
+- [How to enable/disable outputs](#how-to-enabledisable-outputs)
+- [How to make the Flextool run faster](#how-to-make-the-flextool-run-faster)
 
 ## How to create a PV, wind or run-of-river hydro power plant
 
@@ -417,6 +419,19 @@ The `constraint_flow_coefficient` for pump_input should therefore be (1/efficien
 ![Hydro pump parameters](./hydro_pump_parameters.PNG)
 ![Hydro pump relation](./hydro_pump_relations.PNG)
 
+### How to add a reserve
+**(init.sqlite: scenario network_coal_wind_reserve)**
+
+In FlexTool, reserves are defined for a group of nodes. If there is a need to have a reserve requirement for a single node, it needs its own group. Therefore, when creating a reserve, the first step is to add a new `group` (e.g. *electricity*) with all member nodes (e.g. *west*, *east* and *north*) using the `group__node` relationship class. Then, a new reserve categories can be added (e.g. *primary*) to the `reserve` object class. 
+Finally, make sure there are *up* and *down* objects in the `UpDown' object class. These are hard-coded names in FlexTool and need to be used when creating reserves.
+
+Next, the reserve requirement will be defined. A relationship between in the `reserve__upDown__group` class (e.g. *primary--up--electricity*) allows to define the reserve parameters `reserve_method`, `reservation` (i.e. the amount of reserve) and `penalty_reserve` (i.e. the penalty cost in case of lack of reserve). For example, a constant of 10 MW could be used. Even though the name of the `reserve_method` is *timeseries_only*, it can also accept a constant value - it's an exogenous reserve requirement whereas the other two reserve methods are endogenous. Dynamic reserve method calculates the reserve requirement from generation and loads according to user defined factors (`increase_reserve_ratio`). Largest failure method will force enough reserve to cope with a failure of the chosen unit and connection flows.
+
+Parameters from the `reserve__upDown__unit__node` class should be used to define how different units can contribute to different reserves. Parameter `max_share` says how large share of the total capacity of the timestep (existing * efficiency * (profile)) of the unit can contribute to this reserve category (e.g. *coal_plant* may be limited by ramp constraint to provide only 1% of its capacity to an upward primary reserve.) Meanwhile, parameter `reliability` affects what portion of the reserved capacity actually contributes to the reserve (e.g. *wind_plant* may contribute only 80% of its generation to reserve due to uncertainty).
+
+ ![Add a reserve](./reserves.png)
+
+
 ## How to add a minimum load, start-up and ramp
 **(ramp_and_start_up.sqlite)**
 
@@ -564,13 +579,13 @@ The sequence of solves is defined by the `model` parameter `solves`. Here it is 
 
 Note that the picture has two `model`: *solves* parameters defined one for each alternative. Only the parameter from the *5weeks_only_invest* is used as the lower alternatives in the scenario tree override the values from the higher alternatives and only one model can be run.
 
-![Invest_and_dispatch](./Invest_and_dispatch.png)
+![Invest_and_dispatch](./Invest_and_dispatch.PNG)
 
 ## How to create a multi-year model
 
 A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. This means that all periods can use the same timeblockset *5weeks* from the same timeline *y2020*, but one can also make separate timelines for each year, if data is available for this. The `inflow` time series are scaled to match the value in `annual_flow` that is mapped for each period. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be a `discount_rate` parameter set for the `model` object *flexTool* if something else than the model default of 5% (0.05 value) is to be used.
 
-![Multi-year inflow](./multi_year_inflow.png)
+![Multi-year inflow](./multi_year_inflow.PNG)
 
 A multi-year model could be solved at one go (multi_year_one_solve) or by rolling through several solves (multi-year) where each solve has a foresight horizon and a realisation horizon. Next we will go through both options.
 
@@ -584,7 +599,7 @@ In this example, one solve is used for all the four periods. All the four period
 - `realized_periods` the periods that will be realized in this solve (outputs dispatch results for these periods).
 - `period_timeblockset` defines the set of representative 'periods' (timeblocks in FlexTool) to be used in each FlexTool `period`.
 
-![Multi-year inflow](./multi_year_one_solve.png)
+![Multi-year one solve](./multi_year_one_solve.PNG)
 
 ### Multi year with rolling solves 
 **(init.sqlite scenario: multi_year)**

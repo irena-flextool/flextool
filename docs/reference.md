@@ -43,7 +43,9 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
 
   - *solves*: sequence of solves in the model represented with an array of solve names.
   - *discount_offset_investment*: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.
-  - *discount_offset_operations*: [years] Offset from the period (often year) start to the payment of operational costs. 
+  - *discount_offset_operations*: [years] Offset from the period (often year) start to the payment of operational costs.
+  - *enable_optional_outputs*: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","node_balance_t","connection_flow_separate" 
+  - *disable_optional_outputs*: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t"
   
 - `solve`: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.
 
@@ -327,13 +329,27 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 
 ### Controlling outputs
 
-Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example all electricity nodes could be groupped for aggragated output.
+Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example it can be helpful to group all electricity nodes and show their aggregated output.
 
 - `output_results` - A flag to output aggregated results for the group members.
+
+Some of the outputs are not created by default. This is done to speed up the post-processing of results. The user can enable them by changing parameters of the the `model` entity:
+
+  - `enable_optional_outputs`: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","node_balance_t","connection_flow_separate"
+    - *ramp_envelope* : Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node). 
+    - *node_balance_t* : Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. 
+    - *connection_flow_separate* : Produces the connection flows separately for both directions.
+
+Additionally some of the default outputs can be disabled if user needs more speed and the outputs are not used.
+  
+  - `disable_optional_outputs`: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t"
+    - *unit_flow_t* : The flows from units to the nodes for each timestep.
+    - *connection_flow_t* : The flows between the nodes for each timestep.
 
 ## Reserves
 
 The user defines reserve categories through `reserve` object. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. 
+
 - Timeseries requires that the user provides a pre-defined time series for the amount of reserve to be procured in each time step. 
 - Large_failure requires that the user defines the energy flows that could be the largest failure in the system. The highest possible failure (flow multiplied by `large_failure_ratio`) in each timestep will then set the reserve requirement for that timestep. 
 - Dynamic means that there is a requirement based on user chosen energy flows - each participating flow is multipled by `increase_reserve_ratio` and then summed to form the reserve requirement. This can be useful for covering variability within timesteps. Also demand variability can be included through `increase_reserve_ratio` parameter in `reserve__upDown__group` relationship.
@@ -345,6 +361,7 @@ Reserve requirement is defined for groups of nodes. This means that multiple nod
 ### Reserve groups
 
 For `reserve__upDown__group` relationships:
+
 - `reserve_method` - Choice of reserve method (timeseries, large_failure, dynamic or their combination).
 - `reservation` - [MWh] Amount of reserve required. Constant or time.
 - `reserve_penalty` - [€/MWh] Penalty cost for not fulfilling the reserve requirement.
@@ -353,6 +370,7 @@ For `reserve__upDown__group` relationships:
 ### Reserve provision by units
 
 For `reserve__upDown__unit__node` relationships:
+
 - `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.
 - `max_share` - [factor] Maximum ratio for the transfer of reserve from the unit to the node. Constant.
 - `reliability` - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
@@ -362,6 +380,7 @@ For `reserve__upDown__unit__node` relationships:
 ### Reserve transfer by connections
 
 For `reserve__upDown__connection__node` relationships:
+
 - `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.
 - `max_share` - [factor] Maximum ratio for the transfer of reserve to this node. Constant.
 - `reliability` - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.

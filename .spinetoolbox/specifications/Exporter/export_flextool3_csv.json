@@ -5205,6 +5205,41 @@
             "always_export_header": true,
             "group_fn": "no_group",
             "use_fixed_table_name": true
+        },
+        "default_values": {
+            "type": "object_default_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "default_values"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": 0,
+                    "header": "objectClass"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 1,
+                    "filter_re": "^penalty_down$|^penalty_up$",
+                    "header": "paramName"
+                },
+                {
+                    "map_type": "ParameterDefaultValueType",
+                    "position": "hidden",
+                    "filter_re": "single_value"
+                },
+                {
+                    "map_type": "ParameterDefaultValue",
+                    "position": 2,
+                    "header": "default_value"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
         }
     }
 }

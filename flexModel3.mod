@@ -331,6 +331,9 @@ param costs_discounted {param_costs} default 0;
 set enable_optional_outputs;
 set disable_optional_outputs;
 
+set objectClass_paramName_default dimen 2;
+param default_value {objectClass_paramName_default};
+
 #########################
 # Read data
 #table data IN 'CSV' '.csv' :  <- [];
@@ -444,6 +447,8 @@ table data IN 'CSV' 'solve_data/p_years_represented.csv' : [period, years_from_s
 table data IN 'CSV' 'solve_data/p_years_represented.csv' : [period, years_from_solve], p_years_from_solve~p_years_from_solve;
 table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
 table data IN 'CSV' 'input/p_discount_rate.csv' : [model], p_discount_rate;
+table data IN 'CSV' 'input/default_values.csv' : objectClass_paramName_default <-[objectClass, paramName];
+table data IN 'CSV' 'input/default_values.csv' : [objectClass,paramName], default_value;
 # Parameters from the solve loop
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : [period, step], step_duration;
@@ -732,7 +737,6 @@ set process__source__sink__param_t :=
 
 param setup1 := gmtime() - datetime0;
 display setup1;
-
 set process_source_sink_param_t := {(p, source, sink) in process_source_sink_eff, param in processTimeParam : (p, param) in process__param_t};
 
 set process__source__sink__ramp_method :=
@@ -752,6 +756,8 @@ param ptNode {n in node, param in nodeTimeParam, t in complete_time_in_use} :=
       then p_node[n, param]
       else if param in nodeParam_def1
       then 1
+      else if ('node',param) in objectClass_paramName_default
+      then default_value['node', param]
       else 0;
 param ptNode_inflow {n in node, t in time} :=
         + if (n, 'inflow', t) in node__param__time
@@ -1358,6 +1364,11 @@ check {g in groupNonSync, (p,source,sink) in process_source_sink:
   || ((p,sink) in process_sink && (g,sink) in group_node))
   && (p,g) not in process__group_inside_group_nonSync}: 
     sum{(p, m) in process_method : m in method_2way_1var} 1 < 1;
+
+printf 'Checking: transfer_method no_losses_no_variable_cost\n';
+printf 'is not allowed to have other_operational_cost\n';
+check {(p,m) in process_method, t in time_in_use: m in method_2way_1var}: 
+  ptProcess[p, 'other_operational_cost', t] = 0;
 
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
@@ -2698,7 +2709,7 @@ param r_connection_dt{c in process_connection, (d, t) in dt} :=
   + sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_sink} r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
   - sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_source} r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
 ;
-param r_connection_to_sink_dt{c in process_connection, (d, t) in dt: 'connection_flow_one_direction' in enable_optional_outputs} :=
+param r_connection_to_sink_dt{c in process_connection, (d, t) in dt: 'connection_flow_separate' in enable_optional_outputs} :=
   + sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_sink}
     +(if r_process_source_sink_flow_dt[c, c, n, d, t] >= 0 then 
       r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
@@ -2708,7 +2719,7 @@ param r_connection_to_sink_dt{c in process_connection, (d, t) in dt: 'connection
       r_process_source_sink_flow_dt[c, c, n, d, t]* step_duration[d, t]
       else 0)
 ;
-param r_connection_to_source_dt{c in process_connection, (d, t) in dt: 'connection_flow_one_direction' in enable_optional_outputs} :=
+param r_connection_to_source_dt{c in process_connection, (d, t) in dt: 'connection_flow_separate' in enable_optional_outputs} :=
   - sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_sink}
     +(if r_process_source_sink_flow_dt[c, c, n, d, t] < 0 then 
       r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
@@ -2734,11 +2745,11 @@ param r_connection_d{c in process_connection, d in d_realized_period} :=
   + sum {(d, t) in dt_realize_dispatch} r_connection_dt[c, d, t]
 ;
 
-param r_connection_to_sink_d{c in process_connection, d in d_realized_period: 'connection_flow_one_direction' in enable_optional_outputs} :=
+param r_connection_to_sink_d{c in process_connection, d in d_realized_period: 'connection_flow_separate' in enable_optional_outputs} :=
   + sum {(d, t) in dt_realize_dispatch} r_connection_to_sink_dt[c, d, t]
 ;
 
-param r_connection_to_source_d{c in process_connection, d in d_realized_period: 'connection_flow_one_direction' in enable_optional_outputs} :=
+param r_connection_to_source_d{c in process_connection, d in d_realized_period: 'connection_flow_separate' in enable_optional_outputs} :=
   + sum {(d, t) in dt_realize_dispatch} r_connection_to_source_dt[c, d, t]
 ;
 
@@ -3143,9 +3154,9 @@ printf 'Write group results for nodes for realized periods...\n';
 param fn_groupNode__d symbolic := "output/group_node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf 'group,solve,period,"sum of annualized inflows [MWh]","VRE share [\% of annual inflow]",' > fn_groupNode__d;
-	printf '"curtailed VRE share, [\% of annual inflow]","upward slack [\% of annual inflow]",' >> fn_groupNode__d;
-	printf '"downward slack [\% of annual inflow]"\n' >> fn_groupNode__d;
+    printf 'group,solve,period,"sum of annualized inflows [MWh]","VRE share [of annual inflow]",' > fn_groupNode__d;
+	printf '"curtailed VRE share, [of annual inflow]","upward slack [of annual inflow]",' >> fn_groupNode__d;
+	printf '"downward slack [of annual inflow]"\n' >> fn_groupNode__d;
   }
 for {g in groupOutput_node, s in solve_current, d in d_realized_period: sum{(g, n) in group_node} pdNodeInflow[n, d]}
   {
@@ -3153,15 +3164,15 @@ for {g in groupOutput_node, s in solve_current, d in d_realized_period: sum{(g, 
        , sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d]
        , ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 	             r_process_source_sink_flow_d[p, source, n, d]  
-		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] ) * 100	   
+		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] )	   
 	   , ( + sum{(p, n) in process_sink : (g, n) in group_node && p in process_VRE} potentialVREgen[p, n, d]
 	       - sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 		         r_process_source_sink_flow_d[p, source, n, d] 
-		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] ) * 100
+		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] )
 	  , ( sum{(g, n) in group_node} r_penalty_nodeState_upDown_d[n, 'up', d] ) 
-	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] ) * 100
+	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] )
 	  , ( sum{(g, n) in group_node} r_penalty_nodeState_upDown_d[n, 'down', d] ) 
-	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] ) * 100
+	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] )
 	>> fn_groupNode__d;
   }
 
@@ -3170,14 +3181,14 @@ param fn_groupNode__dt symbolic := "output/group_node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
     printf 'group,solve,period,time,' > fn_groupNode__dt;
-	printf '"-100_pdtNodeInflow" ,"sum of annualized inflows [MWh]","VRE share [\% of annual inflow]",' >> fn_groupNode__dt;
-  printf '"curtailed VRE share, [\% of annual inflow]","upward slack [\% of annual inflow]",' >> fn_groupNode__dt;
-	printf '"downward slack [\% of annual inflow]"\n' >> fn_groupNode__dt;
+	printf '"pdtNodeInflow" ,"sum of annualized inflows [MWh]","VRE share [of annual inflow]",' >> fn_groupNode__dt;
+  printf '"curtailed VRE share, [of annual inflow]","upward slack [of annual inflow]",' >> fn_groupNode__dt;
+	printf '"downward slack [of annual inflow]"\n' >> fn_groupNode__dt;
   }
 for {g in groupOutput_node, s in solve_current, (d, t) in dt_realize_dispatch: sum{(g, n) in group_node} pdtNodeInflow[n, d, t]}
   {
     printf '%s,%s,%s,%s,%.8g,%.8g,%.6f,%.6f,%.6f,%.6f\n', g, s, d, t
-     , ( - sum{(g, n) in group_node} pdtNodeInflow[n, d, t] )/100
+     , ( - sum{(g, n) in group_node} pdtNodeInflow[n, d, t] )
      , sum{(g, n) in group_node} pdtNodeInflow[n, d, t] / complete_period_share_of_year[d]
      , ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
             r_process_source_sink_flow_dt[p, source, n, d, t]  
@@ -3207,7 +3218,7 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
 	      ( if sum{(g, n) in group_node} pdtNodeInflow[n, d, t] then
               ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 	                 r_process_source_sink_flow_dt[p, source, n, d, t]  
-		      ) / ( - sum{(g, n) in group_node} pdtNodeInflow[n, d, t] ) * 100
+		      ) / ( - sum{(g, n) in group_node} pdtNodeInflow[n, d, t] )
 		  
 		)
 	    >> fn_groupNode__dt_VRE_share;
@@ -3566,7 +3577,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_connection_to_sink__d;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_sink__d;
   }
-for {s in solve_current, d in d_realized_period: 'connection_flow_one_direction' in enable_optional_outputs }
+for {s in solve_current, d in d_realized_period: 'connection_flow_separate' in enable_optional_outputs }
   {
 	printf '\n%s,%s', s, d >> fn_connection_to_sink__d;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3583,7 +3594,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_connection_to_sink__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_sink__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'connection_flow_one_direction' in enable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'connection_flow_separate' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_connection_to_sink__dt;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3600,7 +3611,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_connection_to_source__d;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_source__d;
   }
-for {s in solve_current, d in d_realized_period: 'connection_flow_one_direction' in enable_optional_outputs }
+for {s in solve_current, d in d_realized_period: 'connection_flow_separate' in enable_optional_outputs }
   {
 	printf '\n%s,%s', s, d >> fn_connection_to_source__d;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3617,7 +3628,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_connection_to_source__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_source__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'connection_flow_one_direction' in enable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'connection_flow_separate' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_connection_to_source__dt;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
