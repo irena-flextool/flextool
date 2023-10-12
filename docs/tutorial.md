@@ -22,7 +22,6 @@ Remark: in case you had already populated the ***Input data*** database, you nee
   - [2nd step - add a coal unit](#2nd-step---add-a-coal-unit)
   - [3rd step - add a wind power plant](#3rd-step---add-a-wind-power-plant)
   - [4th step - add a network](#4th-step---add-a-network)
-  - [5th step - add a reserve](#5th-step---add-a-reserve)
 - [More functionality](#more-functionality)
 
 ## Building a small test system
