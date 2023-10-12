@@ -329,11 +329,11 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 
 ### Controlling outputs
 
-Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example all electricity nodes could be groupped for aggragated output.
+Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example it can be helpful to group all electricity nodes and show their aggregated output.
 
 - `output_results` - A flag to output aggregated results for the group members.
 
-Some of the outputs are not created by default. This is done to reduce the time used. The user can enable them by changing the `model` parameter:
+Some of the outputs are not created by default. This is done to speed up the post-processing of results. The user can enable them by changing parameters of the the `model` entity:
 
   - `enable_optional_outputs`: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","node_balance_t","connection_flow_separate"
     - *ramp_envelope* : Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node). 
