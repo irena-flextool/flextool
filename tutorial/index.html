@@ -72,6 +72,8 @@
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#4th-step-add-a-network">4th step - add a network</a>
     </li>
+    <li class="toctree-l3"><a class="reference internal" href="#5th-step-add-a-reserve">5th step - add a reserve</a>
+    </li>
     <li class="toctree-l3"><a class="reference internal" href="#more-functionality">More functionality</a>
     </li>
         </ul>
@@ -132,6 +134,7 @@ Video tutorial for Building a small test system can be watched <a href="https://
 <li><a href="#2nd-step---add-a-coal-unit">2nd step - add a coal unit</a></li>
 <li><a href="#3rd-step---add-a-wind-power-plant">3rd step - add a wind power plant</a></li>
 <li><a href="#4th-step---add-a-network">4th step - add a network</a></li>
+<li><a href="#5th-step---add-a-reserve">5th step - add a reserve</a></li>
 <li><a href="#more-functionality">More functionality</a></li>
 </ul>
 <h2 id="building-a-small-test-system">Building a small test system</h2>
@@ -162,7 +165,7 @@ Video tutorial for Building a small test system can be watched <a href="https://
 <em>west</em> node represents the demand in a part of the system.</p>
 <ul>
 <li>First add an <code>inflow</code> parameter with negative values to indicate negative inflow, i.e. demand. The <code>inflow</code> timeseries are given as a map-type parameter where the first column contains the names of the timesteps and the second column contains the inflow parameter value for that timestep. This is tedious to do by hand, so you can also copy-paste this from the init database.</li>
-<li>There are no electricity generating units and the demand cannot be met by ordinary means. The model will therefore use the upward slack variable and accept the <code>penalty_up</code> cost associated with it. This represents the cost of not fulfilling the demand. Also downward <code>penalty_down</code> is defined although the model is not using it at this stage. Here values of 9000 and 8000 are used respectively. By default the model uses the value 10 000 for these. Therefore, it is not mandatory to set them, but sometimes these values need to be changed, so understanding how they work is nessesary.</li>
+<li>There are no electricity generating units and the demand cannot be met by ordinary means. The model will therefore use the upward slack variable and accept the <code>penalty_up</code> cost associated with it. This represents the cost of not fulfilling the demand. Also downward <code>penalty_down</code> is defined although the model is not using it at this stage. Here values of 9000 and 8000 are used respectively.</li>
 <li>Penalties and slack variables are tools of linear optimization. They ensure that the problem is feasable at all timesteps even when the in-out-balance of the nodes is violated. If no real penalty values are known, one should just use large enough numbers, so that the system won't prefer penalty to energy production. In the results, you can see at which timesteps the penalties are used.</li>
 <li>The parameter <code>has_balance</code> is related to this and should be set to <em>yes</em>. It forces the node to have a balance on inflow and outflow. If the demand is not fulfilled, balance is forced by the slack variable that will "create" the energy with the penalty associated with it. </li>
 <li>The <em>west</em> <code>node</code> needs to have a parameter called <code>is_active</code> with value <em>yes</em>. This chooses the <em>west</em> <code>node</code> and all its parameters to be sent to the model. </li>
@@ -315,8 +318,16 @@ Remember to <strong>commit</strong>, execute and have a look at the results (the
 <p>It is also necessary to create the relationships <code>connection__node__node</code> for <em>east_north | east | north</em>, <em>west_north | west | north</em> and <em>west_east | west | east</em>.</p>
 <p>The <em>north</em> <code>node</code> has the lowest upward penalty, so the model will prefer to use that whenever the <em>coal</em> and <em>wind</em> units cannot meet all the demand. Sometimes the <code>existing</code> capacity of the new <code>connections</code> will not be sufficient to carry all the needed power, since both generators are producing to the <em>west</em> <code>node</code>. <strong>Commit</strong>, execute and explore.</p>
 <p><img alt="Add network" src="../add_network.png" /></p>
+<h3 id="5th-step-add-a-reserve">5th step - add a reserve</h3>
+<p>Create a new <code>alternative</code> reserve.</p>
+<p>Reserve requirement is defined for a group of nodes as the reserve can be set to be dependent on the loads of the nodes (this tutorial uses a constant reserve). Therefore, the first step is to add a new <code>group</code> called <em>electricity</em> with <em>west</em>, <em>east</em> and <em>north</em> as its members using the <code>group__node</code> relationship class. Then, a new reserve category called <em>primary</em> is added to the <code>reserve</code> object class. 
+Finally, if it does not exist yet, add a new object `UpDown', called <em>up</em> to define the reserve mode.</p>
+<p>A relationship between <em>primary--up--electricity</em> in the <code>reserve__upDown__group</code> class allows to define the reserve parameters <code>reserve_method</code>, <code>reservation</code> (i.e. the amount of reserve) and <code>penalty_reserve</code> (i.e. the penalty cost in case of lack of reserve). In this case the reserve requirement will be a constant 10MW even though the <code>reserve_method</code> is <em>timeseries_only</em>. The other alternative is dynamic reserves where the model calculates the reserve requirement from generation and loads according to user defined factors (<code>increase_reserve_ratio</code>). </p>
+<p>Parameters from the <code>reserve__upDown__unit__node</code> class should be used to define how different units can contribute to different reserves. Parameter <code>max_share</code> says how large share of the total capacity of the timestep (existing * efficiency * (profile)) of the unit can contribute to this reserve category (e.g. <em>coal_plant</em>, in this example, has ramping restrictions and can only provide 1% of its capacity to this upward primary reserve.) Meanwhile, parameter <code>reliability</code> affects what portion of the reserved capacity actually contributes to the reserve (e.g. in this contrived example, <em>wind_plant</em> must have extra capacity of 20 MW to provide 10 MW of reserve).</p>
+<p>Create the scenario, <strong>commit</strong>, execute and explore how the reserve requirements affect the model results.</p>
+<p><img alt="Add a reserve" src="../reserves.png" /></p>
 <h3 id="more-functionality">More functionality</h3>
-<p>Now you have learned how to create a small model. If you want to save it, make a copy of the <em>Input_data</em> database and name it something else for example Tutorial.sqlite. Remember that you can change which database is used as the <em>Input_data</em> by clicking the tool icon. In the same way, the <em>Results</em> database can be saved and changed.</p>
+<p>Now you have learned how to create a small model. If you want to save it, make a copy of the <em>Input_data</em> database and name it something else for example Tutorial.sqlite. Remember that you can change which database is used as the <em>Input_data</em> by clicking it. In the same way, the <em>Results</em> database can be saved and changed.</p>
 <p>More instructions on how to create individual parts of the model can be found in the <a href="https://irena-flextool.github.io/flextool/how_to">How to</a> section.</p>
 <p>You can also look and play with the ready scenarios from the init database. Purge <em>Input_data</em> and <em>Initialize</em> it to copy the init database to it. This can be done with the 'purge' tool from the Database Editor menu: in <code>purge</code>, click on both <em>Select entity and value items</em>, and <em>Select scenario items</em> and then purge. Then select the initialize tool and run it to copy the init.sqlite to the input_data.sqlite.</p>
               
