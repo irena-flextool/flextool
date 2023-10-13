@@ -1266,7 +1266,8 @@ class FlexToolRunner:
                 filepath = 'output/' + key + '__t.csv'
             else:
                 filepath = 'output/' + key + '.csv'
-                #get the relationship indicators from the start of the file
+            
+            #get the relationship indicators from the start of the file
             if group[1]>1:
                 relationship_start_df=pd.read_csv(filepath, header = 0, nrows=group[1]-1)
                 if method == "timewise":
@@ -1298,14 +1299,16 @@ class FlexToolRunner:
                     modified = timestep_df
             #combine with the solve name df
             combined = pd.merge(solve_first,modified)
+            for col in combined.select_dtypes(include=['float']).columns:
+                combined[col] = combined[col].apply(lambda x: round(x,6))
             #put the relationship indicators back to the start of the file
             if group[1]>1:
                 combined = pd.concat([relationship_start_df,combined])
 
             if arithmetic == "sum":
-                combined.to_csv('output/' + key + '.csv',index=False, float_format= "%.8f")
+                combined.to_csv('output/' + key + '.csv',index=False, float_format= "%.6g")
             else:
-                combined.to_csv('output/' + key + '_average.csv',index=False, float_format= "%.8f")
+                combined.to_csv('output/' + key + '_average.csv',index=False, float_format= "%.6g")
 
     def combine_result_tables(self, inputfile1, inputfile2, outputfile, combine_headers = None, move_column = []):
         input1 = pd.read_csv(inputfile1,header = 0)
@@ -1316,7 +1319,7 @@ class FlexToolRunner:
             name = combined.columns[column[0]]
             col = combined.pop(name)
             combined.insert(column[1],name,col)
-        combined.to_csv(outputfile, index= False, float_format= "%.8f")
+        combined.to_csv(outputfile, index= False, float_format= "%.6g")
     
     def divide_column(self,inputfile,div_col_ind,to_cols_ind, remove = True):
         df = pd.read_csv(inputfile,header = 0)
@@ -1326,7 +1329,44 @@ class FlexToolRunner:
             df[i]= df[i]/df[div_col]
         if remove:
             df = df.drop(div_col, axis = 1)
-        df.to_csv(inputfile, index= False,float_format= "%.8f")
+        df.to_csv(inputfile, index= False,float_format= "%.6g")
+    
+    def divide_group_with_another(self,inputfile, row_start_ind, from_col_ind, remove_cols_ind, remove = True):
+        #assumption is that the all the rows of the first group are before any of the second
+        #the postprocess groupping does this
+        
+        if row_start_ind != 1:
+            #the relationship information is removed so that the datatype would be float not str
+            relationship_start_df=pd.read_csv(inputfile, header = 0, nrows=row_start_ind-1)
+            df = pd.read_csv(inputfile,header = 0, skiprows=range(1,row_start_ind))
+        else:    
+            df = pd.read_csv(inputfile,header = 0)
+        from_col = df.columns[from_col_ind]
+        
+        rows = list(df.index)
+        group_len = int(len(rows)/2) #should always be divisable by 2
+        for row in rows: 
+            if row<group_len:
+                df.loc[row,from_col:] = df.loc[row,from_col:].div(df.iloc[row+group_len][from_col:])
+        #remove divider rows
+        remove_rows=[]
+        for row in rows:
+            if row>=group_len:
+                remove_rows.append(row)
+        if remove:
+            df = df.drop(remove_rows, axis = 0)
+        #remove indicator column
+        remove_cols = list(df.columns[remove_cols_ind])
+        for i in remove_cols:
+            df = df.drop(i, axis = 1)
+
+        for col in df.select_dtypes(include=['float']).columns:
+            df[col] = df[col].apply(lambda x: round(x,6))
+
+        #put the relationship back to the top
+        if row_start_ind != 1:
+            df = pd.concat([relationship_start_df,df])
+        df.to_csv(inputfile, index= False,float_format= "%.6g")
 
 def main():
     """
@@ -1439,9 +1479,11 @@ def main():
         if runner.solve_modes[complete_solve[solve]] == "rolling_window":
             post_process_results = True
     if post_process_results:
-        #[[group by], [relation dimensions]]
+        #[[group by], relation dimensions]
+        #sums the solves with same period
         period_only = {
         "group__process__node__period": [[],1],
+        "node__period": [["node"],1],
         "unit__inputNode__period": [[],2],
         "unit__outputNode__period": [[],2],
         "connection_to_first_node__period": [[],3],
@@ -1452,13 +1494,15 @@ def main():
         "connection_cf__period":[[],2],
         "process__period_co2": [["class","process"],1],
         "unit_startup__period": [[],1],
-        "unit_curtailment_share__outputNode__period": [[],2]
         }
+        #sums the timesteps of all solves in the period
+        #used when some other calculation is needed
         timewise_groupby = {
         "annualized_dispatch_costs__period": [[],1],
-        "node__period": [["node"],1],
-        "group_node__period": [["group"],1]
+        "group_node__period": [["group"],1],
+        "unit_curtailment_share__outputNode__period": [["type"],2]
         }
+        #average of all timesteps of all solves in the period
         timewise_average_groupby = {
         "process__reserve__upDown__node__period": [[],6],
         "unit_online__period": [[],1],
@@ -1469,10 +1513,12 @@ def main():
         runner.periodic_postprocess(timewise_average_groupby, method = "timewise", arithmetic= "average")
         runner.combine_result_tables("output/annualized_investment_costs__period.csv","output/annualized_dispatch_costs__period.csv", "output/annualized_costs__period.csv")
         runner.divide_column("output/group_node__period.csv",div_col_ind = 3, to_cols_ind=[5,6,7,8], remove = True)
+        runner.divide_group_with_another("output/unit_curtailment_share__outputNode__period.csv", row_start_ind= 2, from_col_ind = 3 ,remove_cols_ind = [0], remove = True)
         os.remove("output/annualized_dispatch_costs__period.csv")
     os.remove("output/annualized_dispatch_costs__period__t.csv")
     os.remove("output/annualized_investment_costs__period.csv")
     os.remove("output/group_node__period__t.csv")
+    os.remove("output/unit_curtailment_share__outputNode__period__t.csv")
     if len(runner.model_solve) > 1:
         logging.error(
             f'Trying to run more than one model - not supported. The results of the first model are retained.')
