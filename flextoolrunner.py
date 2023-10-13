@@ -1266,7 +1266,8 @@ class FlexToolRunner:
                 filepath = 'output/' + key + '__t.csv'
             else:
                 filepath = 'output/' + key + '.csv'
-                #get the relationship indicators from the start of the file
+            
+            #get the relationship indicators from the start of the file
             if group[1]>1:
                 relationship_start_df=pd.read_csv(filepath, header = 0, nrows=group[1]-1)
                 if method == "timewise":
@@ -1298,14 +1299,16 @@ class FlexToolRunner:
                     modified = timestep_df
             #combine with the solve name df
             combined = pd.merge(solve_first,modified)
+            for col in combined.select_dtypes(include=['float']).columns:
+                combined[col] = combined[col].apply(lambda x: round(x,6))
             #put the relationship indicators back to the start of the file
             if group[1]>1:
                 combined = pd.concat([relationship_start_df,combined])
 
             if arithmetic == "sum":
-                combined.to_csv('output/' + key + '.csv',index=False, float_format= "%.8f")
+                combined.to_csv('output/' + key + '.csv',index=False, float_format= "%.6g")
             else:
-                combined.to_csv('output/' + key + '_average.csv',index=False, float_format= "%.8f")
+                combined.to_csv('output/' + key + '_average.csv',index=False, float_format= "%.6g")
 
     def combine_result_tables(self, inputfile1, inputfile2, outputfile, combine_headers = None, move_column = []):
         input1 = pd.read_csv(inputfile1,header = 0)
@@ -1316,7 +1319,7 @@ class FlexToolRunner:
             name = combined.columns[column[0]]
             col = combined.pop(name)
             combined.insert(column[1],name,col)
-        combined.to_csv(outputfile, index= False, float_format= "%.8f")
+        combined.to_csv(outputfile, index= False, float_format= "%.6g")
     
     def divide_column(self,inputfile,div_col_ind,to_cols_ind, remove = True):
         df = pd.read_csv(inputfile,header = 0)
@@ -1326,7 +1329,7 @@ class FlexToolRunner:
             df[i]= df[i]/df[div_col]
         if remove:
             df = df.drop(div_col, axis = 1)
-        df.to_csv(inputfile, index= False,float_format= "%.8f")
+        df.to_csv(inputfile, index= False,float_format= "%.6g")
     
     def divide_group_with_another(self,inputfile, row_start_ind, from_col_ind, remove_cols_ind, remove = True):
         #assumption is that the all the rows of the first group are before any of the second
@@ -1357,10 +1360,13 @@ class FlexToolRunner:
         for i in remove_cols:
             df = df.drop(i, axis = 1)
 
+        for col in df.select_dtypes(include=['float']).columns:
+            df[col] = df[col].apply(lambda x: round(x,6))
+
         #put the relationship back to the top
         if row_start_ind != 1:
             df = pd.concat([relationship_start_df,df])
-        df.to_csv(inputfile, index= False,float_format= "%.8f")
+        df.to_csv(inputfile, index= False,float_format= "%.6g")
 
 def main():
     """
