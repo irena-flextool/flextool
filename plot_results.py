@@ -19,6 +19,7 @@ The structure of the JSON file is as follows:
       },
       "dimensions": {
         "separate_window": <item type>,
+        "list_by": <item type>,
         "x1": <item type>,
         "x2": <item type>,
         "x3": <item type>
@@ -50,6 +51,7 @@ It is possible to include other dimensions such as "cost_type" or "flow_type" in
 The entries in "dimensions" object accept one of the following <item type> values:
     null, object class name, "parameter", "scenario", "X_solve", "X_period", "X_cost_type", "X_flow_type" etc.
 separate_window: each item of this type will get its own plot window
+list_by: items of this type will be selectable in a list on the plot windows (not implemented yet)
 x1: which item to use as the x-axis; defaults to the last dimension, e.g. time for *_t parameters
 x2: regroups or categorises the x-axis by this item
 x3: minor x-axis regrouping item; works only if x2 is defined
