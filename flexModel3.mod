@@ -501,6 +501,7 @@ set process_ct_startup_fork_method :=
 	    && (p, m2) in process__startup_method
 		&& (p, m3) in process__fork_method
 	};
+display process__ct_method, process__ct_method_read;
 set process_method := setof {(p, m1, m2, m3, m) in process_ct_startup_fork_method} (p, m);
 set process__profileProcess__toSink__profile__profile_method :=
     { p in process, (p2, sink, f, fm) in process__node__profile__profile_method
@@ -1889,7 +1890,7 @@ s.t. constraint_greater_than {(c, 'greater_than') in constraint__sense, (d, t) i
   + p_constraint_constant[c]
 ;
 	
-s.t. process_constraint_less_than {(c, 'lesser_than') in constraint__sense, (d, t) in dt} :
+s.t. process_constraint_less_than {(c, 'less_than') in constraint__sense, (d, t) in dt} :
   + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_flow_constraint}
     ( + v_flow[source, source, p, d, t] * p_entity_unitsize[p]
 	      * p_process_node_constraint_flow_coefficient[p, source, c]
@@ -2654,7 +2655,7 @@ param entity_all_capacity{e in entity, d in period} :=
 param r_process_online_dt{p in process_online, (d, t) in dt} :=
   + (if p in process_online_linear then v_online_linear[p, d, t].val)
   + (if p in process_online_integer then v_online_integer[p, d, t].val);
-display process_source_sink_alwaysProcess, process_method, method_1var_per_way, process__profileProcess__toSink;
+
 param r_process_source_sink_flow_dt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
   + sum {(p, m) in process_method : m in method_1var_per_way}
     ( + sum {(p, source, sink2) in process_source_toSink} 
@@ -4381,9 +4382,9 @@ param w_unit_test := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_t
 display w_unit_test;
 
 #display {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } : v_reserve[p, r, ud, n, d, t].dual / p_entity_unitsize[p];
-display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
+#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_other_operational_cost_dt[p, d, t];
-display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
+#display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
 #display {p in process_online, (d, t) in dt : (d, t) in test_dt} : r_process_online_dt[p, d, t];
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
@@ -4394,7 +4395,7 @@ display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
-#display {n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d];
+#display {n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective;
 #display {(r, ud, g, r_m) in reserve__upDown__group__method_timeseries, (d, t) in dt : (d, t) in test_dt}: reserveBalance_timeseries_eq[r, ud, g, r_m, d, t].dual;
 #display {(p, source, sink) in process_source_sink, (d, t) in dt : (d, t) in test_dt && (p, sink) in process_sink}: maxToSink[p, source, sink, d, t].ub;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
@@ -4402,5 +4403,4 @@ display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 #display {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in test_dt}: ptProcess_sink[p, sink, param, t];
 display v_invest, v_divest, solve_current;
-display process_process_toSink, process__profileProcess__toSink;
 end;
