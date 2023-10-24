@@ -1044,7 +1044,8 @@ param ptProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in pr
 
 set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : ptProcess__source__sink__dt_varCost[p, source, sink, d, t]};
 set pssdt_varCost_eff := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && ptProcess_source[p, source, 'other_operational_cost', t]}
-						union {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && ptProcess_sink[p, sink, 'other_operational_cost', t]};
+	                 union {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && ptProcess_sink[p, sink, 'other_operational_cost', t]}
+                         union {(p, source, sink) in process_source_sink_eff, (d, t) in dt : ptProcess[p,'other_operational_cost', t]};
 set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d] || sum{(e, c) in process_capacity_constraint} 1 || sum{(e, c) in node_capacity_constraint} 1 };
 set ed_invest_period := {(e, d) in ed_invest : (e, 'invest_period') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method 
                                                || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
