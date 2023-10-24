@@ -20,7 +20,7 @@ def update_flextool(skip_git):
             print("Failed to get the new version.")
             exit(-1)
 
-    shutil.copy("./.spinetoolbox/project_temp.json", "./.spinetoolbox/project.json")
+    migrate_project("./.spinetoolbox/project_temp.json","./.spinetoolbox/project.json")
     os.remove("./.spinetoolbox/project_temp.json")
 
     from migrate_database import migrate_database
@@ -59,7 +59,38 @@ def update_flextool(skip_git):
     (num,log) = import_data(db, object_parameters = template["object_parameters"])
     (num,log) = import_data(db, relationship_parameters = template["relationship_parameters"])
     db.commit_session("Updated relationship_parameters, object parameters to the Results.sqlite")
+
+def migrate_project(old_path, new_path):
+    #purpose of this is to update some of the items that users should not need to modify
+    #done simply by copying from the git project.json
+    #should be replaced if major changes to project.json
     
+    #items that are copied
+    items = [
+        "Initialize",
+        "FlexTool3",
+        "Export_to_CSV",
+        "Import_results",
+        "Plot_results",
+        "Plot_settings"
+    ]
+
+    with open(old_path) as old_json:
+        old_dict = json.load(old_json)
+    with open(new_path) as new_json:
+        new_dict = json.load(new_json)
+    
+    for item in items:
+        if item in old_dict["items"].keys():
+            for param in old_dict["items"][item].keys():
+                if param != "x" and param != "y":
+                    old_dict["items"][item][param] = new_dict["items"][item][param]
+    
+    with open("./.spinetoolbox/project_temp2.json", "w") as outfile: 
+        json.dump(old_dict, outfile, indent=4)
+
+    shutil.copy("./.spinetoolbox/project_temp2.json", new_path)
+    os.remove("./.spinetoolbox/project_temp2.json")
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
