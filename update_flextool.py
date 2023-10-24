@@ -31,7 +31,7 @@ def update_flextool(skip_git):
         shutil.copy("Results_template.sqlite", "Results.sqlite")
 
     db_to_update = []
-    db_to_update.append("init.sqlite")
+    db_to_update.append("Init.sqlite")
     db_to_update.append("input_data_template.sqlite")
 
     # add the database used in the input_data tool
