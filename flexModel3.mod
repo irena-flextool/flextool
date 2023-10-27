@@ -1851,7 +1851,9 @@ s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in peri
    && (n, 'fix_start_end') not in node__storage_start_end_method
    && (n, 'bind_within_solve') not in node__storage_binding_method
    && (n, 'bind_within_period') not in node__storage_binding_method
-   && (n, 'bind_within_timeblock') not in node__storage_binding_method)} :
+   && (n, 'bind_within_timeblock') not in node__storage_binding_method
+   && (n, d, t) not in ndt_fix_storage_price
+   && (n, d, t) not in ndt_fix_storage_quantity)} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
   + p_node[n,'storage_state_reference_value']
