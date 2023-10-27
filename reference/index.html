@@ -212,8 +212,10 @@
 <p><em>solves</em>: sequence of solves in the model represented with an array of solve names.</p>
 </li>
 <li><em>discount_offset_investment</em>: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.</li>
+<li><em>discount_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs.</li>
+<li><em>enable_optional_outputs</em>: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","node_balance_t","connection_flow_separate" </li>
 <li>
-<p><em>discount_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs. </p>
+<p><em>disable_optional_outputs</em>: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t"</p>
 </li>
 <li>
 <p><code>solve</code>: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.</p>
@@ -492,37 +494,62 @@
 <li><code>co2_max_total</code> [tCO2] Maximum limit for emitted CO2 in the whole solve.</li>
 </ul>
 <h3 id="controlling-outputs">Controlling outputs</h3>
-<p>Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example all electricity nodes could be groupped for aggragated output.</p>
+<p>Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example it can be helpful to group all electricity nodes and show their aggregated output.</p>
 <ul>
 <li><code>output_results</code> - A flag to output aggregated results for the group members.</li>
 </ul>
+<p>Some of the outputs are not created by default. This is done to speed up the post-processing of results. The user can enable them by changing parameters of the the <code>model</code> entity:</p>
+<ul>
+<li><code>enable_optional_outputs</code>: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","node_balance_t","connection_flow_separate"<ul>
+<li><em>ramp_envelope</em> : Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node). </li>
+<li><em>node_balance_t</em> : Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. </li>
+<li><em>connection_flow_separate</em> : Produces the connection flows separately for both directions.</li>
+</ul>
+</li>
+</ul>
+<p>Additionally some of the default outputs can be disabled if user needs more speed and the outputs are not used.</p>
+<ul>
+<li><code>disable_optional_outputs</code>: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t"<ul>
+<li><em>unit_flow_t</em> : The flows from units to the nodes for each timestep.</li>
+<li><em>connection_flow_t</em> : The flows between the nodes for each timestep.</li>
+</ul>
+</li>
+</ul>
 <h2 id="reserves">Reserves</h2>
-<p>The user defines reserve categories through <code>reserve</code> object. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. 
-- Timeseries requires that the user provides a pre-defined time series for the amount of reserve to be procured in each time step. 
-- Large_failure requires that the user defines the energy flows that could be the largest failure in the system. The highest possible failure (flow multiplied by <code>large_failure_ratio</code>) in each timestep will then set the reserve requirement for that timestep. 
-- Dynamic means that there is a requirement based on user chosen energy flows - each participating flow is multipled by <code>increase_reserve_ratio</code> and then summed to form the reserve requirement. This can be useful for covering variability within timesteps. Also demand variability can be included through <code>increase_reserve_ratio</code> parameter in <code>reserve__upDown__group</code> relationship.</p>
+<p>The user defines reserve categories through <code>reserve</code> object. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. </p>
+<ul>
+<li>Timeseries requires that the user provides a pre-defined time series for the amount of reserve to be procured in each time step. </li>
+<li>Large_failure requires that the user defines the energy flows that could be the largest failure in the system. The highest possible failure (flow multiplied by <code>large_failure_ratio</code>) in each timestep will then set the reserve requirement for that timestep. </li>
+<li>Dynamic means that there is a requirement based on user chosen energy flows - each participating flow is multipled by <code>increase_reserve_ratio</code> and then summed to form the reserve requirement. This can be useful for covering variability within timesteps. Also demand variability can be included through <code>increase_reserve_ratio</code> parameter in <code>reserve__upDown__group</code> relationship.</li>
+</ul>
 <p>When the same reserve category (e.g. primary upward) has more than one of these (timeseries, large_failure and dynamic) in use, then the largest requirement will apply for that timestep. If they are separated into different reserves, then they need to be fulfilled separately.</p>
 <p>Reserve requirement is defined for groups of nodes. This means that multiple nodes can have a common reserve requirement (but it is also possible to make a group with only one node). One node can be in multiple groups and therefore subject to multiple overlapping reserve requirements. Only units can generate reserve, but connections can move reserve from one node to another (therefore, there is no impact if the nodes are in the same reserve group, but it can be useful to import reserve from outside the group).</p>
 <h3 id="reserve-groups">Reserve groups</h3>
-<p>For <code>reserve__upDown__group</code> relationships:
-- <code>reserve_method</code> - Choice of reserve method (timeseries, large_failure, dynamic or their combination).
-- <code>reservation</code> - [MWh] Amount of reserve required. Constant or time.
-- <code>reserve_penalty</code> - [€/MWh] Penalty cost for not fulfilling the reserve requirement.
-- <code>increase_reserve_ratio</code> - [factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.</p>
+<p>For <code>reserve__upDown__group</code> relationships:</p>
+<ul>
+<li><code>reserve_method</code> - Choice of reserve method (timeseries, large_failure, dynamic or their combination).</li>
+<li><code>reservation</code> - [MWh] Amount of reserve required. Constant or time.</li>
+<li><code>reserve_penalty</code> - [€/MWh] Penalty cost for not fulfilling the reserve requirement.</li>
+<li><code>increase_reserve_ratio</code> - [factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.</li>
+</ul>
 <h3 id="reserve-provision-by-units">Reserve provision by units</h3>
-<p>For <code>reserve__upDown__unit__node</code> relationships:
-- <code>is_active</code> - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.
-- <code>max_share</code> - [factor] Maximum ratio for the transfer of reserve from the unit to the node. Constant.
-- <code>reliability</code> - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
-- <code>increase_reserve_ratio</code> - [factor] The reserve requirement is increased by the flow between the unit and the node multiplied by this ratio. Constant.
-- <code>large_failure_ratio</code> - [factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.</p>
+<p>For <code>reserve__upDown__unit__node</code> relationships:</p>
+<ul>
+<li><code>is_active</code> - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.</li>
+<li><code>max_share</code> - [factor] Maximum ratio for the transfer of reserve from the unit to the node. Constant.</li>
+<li><code>reliability</code> - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.</li>
+<li><code>increase_reserve_ratio</code> - [factor] The reserve requirement is increased by the flow between the unit and the node multiplied by this ratio. Constant.</li>
+<li><code>large_failure_ratio</code> - [factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.</li>
+</ul>
 <h3 id="reserve-transfer-by-connections">Reserve transfer by connections</h3>
-<p>For <code>reserve__upDown__connection__node</code> relationships:
-- <code>is_active</code> - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.
-- <code>max_share</code> - [factor] Maximum ratio for the transfer of reserve to this node. Constant.
-- <code>reliability</code> - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
-- <code>increase_reserve_ratio</code> - [factor] The reserve is increased by generation from this unit multiplied this ratio. Constant.
-- <code>large_failure_ratio</code> - [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the connection (multiplied by this ratio). Constant.</p>
+<p>For <code>reserve__upDown__connection__node</code> relationships:</p>
+<ul>
+<li><code>is_active</code> - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.</li>
+<li><code>max_share</code> - [factor] Maximum ratio for the transfer of reserve to this node. Constant.</li>
+<li><code>reliability</code> - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.</li>
+<li><code>increase_reserve_ratio</code> - [factor] The reserve is increased by generation from this unit multiplied this ratio. Constant.</li>
+<li><code>large_failure_ratio</code> - [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the connection (multiplied by this ratio). Constant.</li>
+</ul>
 <h2 id="additional-objects-for-further-functionality">Additional objects for further functionality</h2>
 <ul>
 <li><code>constraint</code>: to create user defined constraints between flow, state, and capacity variables (for nodes, units and connections)</li>

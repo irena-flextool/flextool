@@ -79,6 +79,10 @@
     <li class="toctree-l2"><a class="reference internal" href="#how-to-create-a-hydro-reservoir">How to create a hydro reservoir</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#how-to-create-a-hydro-pump-storage">How to create a hydro pump storage</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#how-to-add-a-reserve">How to add a reserve</a>
+    </li>
+        </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#how-to-add-a-minimum-load-start-up-and-ramp">How to add a minimum load, start-up and ramp</a>
     </li>
@@ -157,6 +161,7 @@ Each example will either include an example database file that is located in the
 <li><a href="#how-to-create-combined-heat-and-power-chp">How to create combined heat and power (CHP)</a></li>
 <li><a href="#how-to-create-a-hydro-reservoir">How to create a hydro reservoir</a></li>
 <li><a href="#how-to-create-a-hydro-pump-storage">How to create a hydro pump storage</a></li>
+<li><a href="#how-to-add-a-reserve">How to add a reserve</a></li>
 <li><a href="#how-to-add-a-minimum-load-start-up-and-ramp">How to add a minimum load, start-up and ramp</a></li>
 <li><a href="#how-to-add-co2-emissions-costs-and-limits">How to add CO2 emissions, costs and limits</a></li>
 <li><a href="#how-to-create-a-non-synchronous-limit">How to create a non-synchronous limit</a></li>
@@ -168,11 +173,13 @@ Each example will either include an example database file that is located in the
 <li><a href="#how-to-create-a-multi-year-model">How to create a multi-year model</a></li>
 <li><a href="#how-to-use-a-rolling-window-for-a-dispatch-model">How to use a rolling window for a dispatch model</a></li>
 <li><a href="#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves (investments and long-term storage)</a></li>
-<li><a href="#how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</a></li>
 </ul>
-<p>General:
--  <a href="#how-to-enabledisable-outputs">How to enable/disable outputs</a>
--  <a href="#how-to-make-the-flextool-run-faster">How to make the Flextool run faster</a></p>
+<p>General:</p>
+<ul>
+<li><a href="#how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</a></li>
+<li><a href="#how-to-enabledisable-outputs">How to enable/disable outputs</a></li>
+<li><a href="#how-to-make-the-flextool-run-faster">How to make the Flextool run faster</a></li>
+</ul>
 <h2 id="how-to-create-a-pv-wind-or-run-of-river-hydro-power-plant">How to create a PV, wind or run-of-river hydro power plant</h2>
 <p><strong>(init.sqlite scenario: wind)</strong>
 <strong><em>init - west - wind</em></strong></p>
@@ -487,6 +494,13 @@ This means that here only half of the electricity used by the pump can be recove
 The <code>constraint_flow_coefficient</code> for pump_input should therefore be (1/efficiency)</p>
 <p><img alt="Hydro pump parameters" src="../hydro_pump_parameters.PNG" />
 <img alt="Hydro pump relation" src="../hydro_pump_relations.PNG" /></p>
+<h3 id="how-to-add-a-reserve">How to add a reserve</h3>
+<p><strong>(init.sqlite: scenario network_coal_wind_reserve)</strong></p>
+<p>In FlexTool, reserves are defined for a group of nodes. If there is a need to have a reserve requirement for a single node, it needs its own group. Therefore, when creating a reserve, the first step is to add a new <code>group</code> (e.g. <em>electricity</em>) with all member nodes (e.g. <em>west</em>, <em>east</em> and <em>north</em>) using the <code>group__node</code> relationship class. Then, a new reserve categories can be added (e.g. <em>primary</em>) to the <code>reserve</code> object class. 
+Finally, make sure there are <em>up</em> and <em>down</em> objects in the `UpDown' object class. These are hard-coded names in FlexTool and need to be used when creating reserves.</p>
+<p>Next, the reserve requirement will be defined. A relationship between in the <code>reserve__upDown__group</code> class (e.g. <em>primary--up--electricity</em>) allows to define the reserve parameters <code>reserve_method</code>, <code>reservation</code> (i.e. the amount of reserve) and <code>penalty_reserve</code> (i.e. the penalty cost in case of lack of reserve). For example, a constant of 10 MW could be used. Even though the name of the <code>reserve_method</code> is <em>timeseries_only</em>, it can also accept a constant value - it's an exogenous reserve requirement whereas the other two reserve methods are endogenous. Dynamic reserve method calculates the reserve requirement from generation and loads according to user defined factors (<code>increase_reserve_ratio</code>). Largest failure method will force enough reserve to cope with a failure of the chosen unit and connection flows.</p>
+<p>Parameters from the <code>reserve__upDown__unit__node</code> class should be used to define how different units can contribute to different reserves. Parameter <code>max_share</code> says how large share of the total capacity of the timestep (existing * efficiency * (profile)) of the unit can contribute to this reserve category (e.g. <em>coal_plant</em> may be limited by ramp constraint to provide only 1% of its capacity to an upward primary reserve.) Meanwhile, parameter <code>reliability</code> affects what portion of the reserved capacity actually contributes to the reserve (e.g. <em>wind_plant</em> may contribute only 80% of its generation to reserve due to uncertainty).</p>
+<p><img alt="Add a reserve" src="../reserves.png" /></p>
 <h2 id="how-to-add-a-minimum-load-start-up-and-ramp">How to add a minimum load, start-up and ramp</h2>
 <p><strong>(ramp_and_start_up.sqlite)</strong></p>
 <p>Some plants cannot vary their output freely, but have some cost and limits associated with it. In this example we will add the minimum load behaviour to a <em>coal_plant</em> <code>unit</code> and add the cost and limits for starting up and ramping the plant respectively.</p>
@@ -593,10 +607,10 @@ Additionally some of the units, connections or storages will need investment par
 </ul>
 <p>The sequence of solves is defined by the <code>model</code> parameter <code>solves</code>. Here it is an array where the first item is an investment_solve <em>5weeks_only_invest</em> and the second is the dispatch solve <em>y2020_fullYear_dispatch</em>. This is enough for the model to know to pass the investment decisions of the period to the period of the same name in the second solve.</p>
 <p>Note that the picture has two <code>model</code>: <em>solves</em> parameters defined one for each alternative. Only the parameter from the <em>5weeks_only_invest</em> is used as the lower alternatives in the scenario tree override the values from the higher alternatives and only one model can be run.</p>
-<p><img alt="Invest_and_dispatch" src="./Invest_and_dispatch.png" /></p>
+<p><img alt="Invest_and_dispatch" src="../Invest_and_dispatch.PNG" /></p>
 <h2 id="how-to-create-a-multi-year-model">How to create a multi-year model</h2>
 <p>A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the <em>west</em> <code>node</code>. This means that all periods can use the same timeblockset <em>5weeks</em> from the same timeline <em>y2020</em>, but one can also make separate timelines for each year, if data is available for this. The <code>inflow</code> time series are scaled to match the value in <code>annual_flow</code> that is mapped for each period. The model is using the <code>inflow_method</code> <em>scale_to_annual</em> in order to achieve this (default is <em>use_original</em> that would not perform scaling). There should also be a <code>discount_rate</code> parameter set for the <code>model</code> object <em>flexTool</em> if something else than the model default of 5% (0.05 value) is to be used.</p>
-<p><img alt="Multi-year inflow" src="./multi_year_inflow.png" /></p>
+<p><img alt="Multi-year inflow" src="../multi_year_inflow.PNG" /></p>
 <p>A multi-year model could be solved at one go (multi_year_one_solve) or by rolling through several solves (multi-year) where each solve has a foresight horizon and a realisation horizon. Next we will go through both options.</p>
 <h3 id="multi-year-with-one-solve">Multi year with one solve</h3>
 <p><strong>(init.sqlite scenario: multi_year_one_solve)</strong></p>
@@ -607,7 +621,7 @@ Additionally some of the units, connections or storages will need investment par
 <li><code>realized_periods</code> the periods that will be realized in this solve (outputs dispatch results for these periods).</li>
 <li><code>period_timeblockset</code> defines the set of representative 'periods' (timeblocks in FlexTool) to be used in each FlexTool <code>period</code>.</li>
 </ul>
-<p><img alt="Multi-year inflow" src="./multi_year_one_solve.png" /></p>
+<p><img alt="Multi-year one solve" src="../multi_year_one_solve.PNG" /></p>
 <h3 id="multi-year-with-rolling-solves">Multi year with rolling solves</h3>
 <p><strong>(init.sqlite scenario: multi_year)</strong></p>
 <p>If the solving time gets too big, there is an option to split the timeline into overlapping parts and solve them separately. This shortens the solving time as it increases exponentially as the model grows. Therefore, collection of smaller solves is faster. The drawback is that the accuracy will be affected if there are dependencies with a larger time interval than the split size. </p>
