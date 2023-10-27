@@ -750,6 +750,11 @@ Additionally some of the units, connections or storages will need investment par
 <li>Do not use <code>bind_within_period</code> if you are not using full periods or its multiples as the <code>rolling_jump</code> in the dispatch model, otherwise you might cause an infeasible problem. </li>
 <li>Do not use <code>bind_within_solve</code></li>
 </ul>
+<p>The recommended storage parameters with nested solves are:
+- <code>storage_start_end_method</code>: <em>fix_start</em>
+- <code>storage_solve_horizon_method</code>: <em>fix_quantity</em>
+- <code>storage_state_start</code> and <code>storage_state_reference_value</code>: use the same value</p>
+<p>This way the start and end states of the system are the same. Each end of the horizon (not the output) has that value as well, which keeps the model from emptying the storages at the end of the roll. In the dispatch solve, the fixed storage value from the storage solve overrides the horizon end value if a conflict exist. </p>
 <p>How to create the three lower information solve types for investment and storage solves discussed above?</p>
 <p>To create a lower resolution (longer timesteps) solve:</p>
 <ul>
