@@ -747,6 +747,13 @@ The other model parameters apply to *all* of the solves. Therefore, the consider
 - Do not use `bind_within_period` if you are not using full periods or its multiples as the `rolling_jump` in the dispatch model, otherwise you might cause an infeasible problem. 
 - Do not use `bind_within_solve`
 
+The recommended storage parameters with nested solves are:
+- `storage_start_end_method`: *fix_start*
+- `storage_solve_horizon_method`: *fix_quantity*
+- `storage_state_start` and `storage_state_reference_value`: use the same value
+
+This way the start and end states of the system are the same. Each end of the horizon (not the output) has that value as well, which keeps the model from emptying the storages at the end of the roll. In the dispatch solve, the fixed storage value from the storage solve overrides the horizon end value if a conflict exist. 
+
 How to create the three lower information solve types for investment and storage solves discussed above?
 
 To create a lower resolution (longer timesteps) solve:
