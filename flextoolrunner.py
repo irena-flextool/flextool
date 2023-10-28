@@ -1414,7 +1414,7 @@ def main():
         for solve_2 in real_solves:
             if solve_2 == solve:
                 break
-            for solve__period in (runner.realized_periods+runner.realized_invest_periods+runner.fix_storage_periods+runner.realized_invest_periods):
+            for solve__period in (runner.realized_periods+runner.invest_periods+runner.fix_storage_periods+runner.realized_invest_periods):
                 if solve__period[0] == solve_2:
                     this_solve = runner.solve_period_years_represented[solve_2]
                     for period in this_solve:
@@ -1424,7 +1424,7 @@ def main():
             if not any(period__year[0]== sublist[0] for sublist in solve_period_history[solve]):
                 solve_period_history[solve].append((period__year[0], period__year[1]))
         if not runner.solve_period_years_represented[solve]:
-            for solve__period in (runner.realized_periods+runner.realized_invest_periods+runner.fix_storage_periods):
+            for solve__period in (runner.realized_periods+runner.invest_periods+runner.realized_invest_periods+runner.fix_storage_periods):
                 if solve__period[0] == solve and not any(solve__period[1]== sublist[0] for sublist in solve_period_history[solve]):
                     solve_period_history[solve].append((solve__period[1], 1))
     
