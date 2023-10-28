@@ -916,7 +916,7 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 		  else if (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d] then
 		    + new_old_slope[n, d] * ptNode[n, 'inflow', t]
 			- new_old_section[n, d]
-		  else ptNode[n, 'inflow', t] * step_duration[d, t]
+		  else ptNode[n, 'inflow', t]
 		);
 
 param node_capacity_for_scaling{n in node, d in period} := ( if   sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
