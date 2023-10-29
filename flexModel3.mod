@@ -1507,11 +1507,15 @@ display w_total_cost;
 
 #Storage state fix quantity for timesteps
 s.t. node_balance_fix_quantity_eq_lower {(n, d, t) in ndt_fix_storage_quantity: (d, t) in dt  && (d,t) in period__time_last}:
-  + v_state[n,d,t]* p_entity_unitsize[n] = + p_fix_storage_quantity[n,d,t];
+  + v_state[n,d,t]* p_entity_unitsize[n] 
+  = 
+  + p_fix_storage_quantity[n,d,t];
 
 #Storage state fix price for timesteps
 s.t. node_balance_fix_price_eq_lower {(n, d, t) in ndt_fix_storage_price: (d, t) in dt && (d,t) in period__time_last}:
-  + v_state[n,d,t]* pdNode[n, 'storage_state_reference_price', d]* p_entity_unitsize[n] = + p_fix_storage_price[n,d,t];
+  + v_state[n,d,t]* pdNode[n, 'storage_state_reference_price', d]* p_entity_unitsize[n] 
+  = 
+  + p_fix_storage_price[n,d,t];
 
 # Energy balance in each node  
 s.t. nodeBalance_eq {n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
@@ -4392,6 +4396,7 @@ display w_unit_test;
 #display {p in process_online, (d, t) in dt : (d, t) in test_dt} : r_process_online_dt[p, d, t];
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: pdtNodeInflow[n, d, t];
+#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: ptNode[n, 'inflow', t];
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val * p_entity_unitsize[n];
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p];
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val * ptReserve_upDown_group[r, ud, ng, 'reservation', t];

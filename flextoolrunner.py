@@ -373,50 +373,37 @@ class FlexToolRunner:
                                     exit(-1)
                                 timelines.append(timeline)
 
-                        for timeline in timelines:
-                            new_timeline = self.timelines[timeline]    
-                            started = False
-                            last_timestamp = new_timeline[-1][0]
-                            last_timestep_length = float(new_timeline[-1][1])
-                            last = False
-                            while True:
-                                try:
-                                    datain = next(filereader)
-                                    if not started:
-                                        row = datain[0:time_index+1]
-                                        next_index = 1
+                        while True:
+                            try:
+                                datain = next(filereader)
+                                for timeline in timelines:
+                                    new_timeline = self.timelines[timeline]
+                                    #started = False
+                                    #last_timestamp = new_timeline[-1][0]
+                                    #last_timestep_length = float(new_timeline[-1][1])
+                                    #last = False
+                                    for timeline_row in new_timeline:
                                         values = []
-                                        started = True
-                                        values.append(float(datain[time_index+1]))
+                                        timeline_step_duration = int(float(timeline_row[1]))
+                                        while datain[time_index] != timeline_row[0]:
+                                            datain = next(filereader)
+                                        row = datain[0:time_index + 1]
+                                        if datain[time_index] == timeline_row[0]:
+                                            values.append(float(datain[time_index + 1]))
+                                            for i in range(timeline_step_duration - 1):
+                                                datain = next(filereader)
+                                                values.append(float(datain[time_index + 1]))
 
-                                    elif datain[time_index] == new_timeline[next_index][0]:
-                                        #write row
-                                        if timeseries_map[timeseries] == "average":
-                                            out_value = sum(values)/len(values)
-                                        else:
-                                            out_value = sum(values)
-                                        row.append(out_value)
-                                        filewriter.writerow(row)
+                                            if timeseries_map[timeseries] == "average":
+                                                out_value = round(sum(values) / len(values), 6)
+                                            else:
+                                                out_value = sum(values)
+                                            row.append(out_value)
+                                            filewriter.writerow(row)
+                            except Exception:
+                                break
 
-                                        #new start values
-                                        row = datain[0:time_index+1]
-                                        values = [float(datain[time_index+1])]
-                                        next_index += 1
-                                        if next_index > len(new_timeline)-1:
-                                            next_index = 0
-                                    else:
-                                        values.append(float(datain[time_index+1]))
-                                except StopIteration:
-                                    if started:
-                                        if timeseries_map[timeseries] == "average":
-                                            out_value = sum(values)/len(values)
-                                        else:
-                                            out_value = sum(values)
-                                        row.append(out_value)
-                                        filewriter.writerow(row)
-                                    break
-                    
- 
+
     def get_new_step_durations(self):
         """
         read the new step duration for each solve
@@ -1116,7 +1103,7 @@ class FlexToolRunner:
                     duration_counter += float(step[2])
                     last_index = [period,i]
                 else:
-                    if start == None or start == [period,step[0]]:
+                    if start == None or start == step[0]:
                         starts.append([period,i])
                         started = True
                         horizon_counter += float(step[2])
@@ -1211,7 +1198,7 @@ class FlexToolRunner:
             rolling_times = self.rolling_times[solve]
             if duration == -1:
                 duration = rolling_times[3]
-            roll_solves, roll_active_time_lists, roll_jump_lists, roll_realized_time_lists = self.create_rolling_solves(solve, full_active_time, rolling_times[1], rolling_times[2], start, duration)
+            roll_solves, roll_active_time_lists, roll_jump_lists, roll_realized_time_lists = self.create_rolling_solves(solve, full_active_time, rolling_times[1], rolling_times[2], rolling_times[0], duration)
             for i in roll_solves:
                 complete_solves[i] = solve    
             
