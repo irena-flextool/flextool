@@ -134,7 +134,7 @@ set processPeriodParam := fixed_cost interest_rate invest_cost salvage_value
 					lifetime other_operational_cost startup_cost
                     retire_forced retire_max_period retire_min_period;
 set processTimeParam := efficiency efficiency_at_min_load min_load other_operational_cost availability;
-set processParam_def1:= availability;
+set processParam_def1:= efficiency availability;
 set sourceSinkParam := efficiency, efficiency_at_min_load, min_load, coefficient, flow_unitsize, other_operational_cost, ramp_cost, ramp_speed_up, ramp_speed_down, inertia_constant;
 set sourceSinkTimeParam := efficiency, efficiency_at_min_load, min_load, other_operational_cost;
 set nodeParam := annual_flow, peak_inflow, existing, fixed_cost, inflow, interest_rate, invest_cost, salvage_value,
