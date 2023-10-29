@@ -50,8 +50,9 @@ class FlexToolRunner:
         self.solver_precommand = self.get_solver_precommand()
         self.solver_arguments = self.get_solver_arguments()
         self.contains_solves = self.get_contains_solves()
+        self.hole_multipliers = self.get_hole_multipliers()
         self.rolling_times = self.get_rolling_times()
-        self.new_step_durations=self.get_new_step_durations()
+        self.new_step_durations = self.get_new_step_durations()
         self.create_timeline_from_timestep_duration()
         self.first_of_solve = []
         self.last_of_solve = []
@@ -263,6 +264,24 @@ class FlexToolRunner:
                     break
         return contains_solves_dict
 
+    def get_hole_multipliers(self):
+        """
+        read in
+        the hole multipliers for each solve. return it as a dict of list of strings
+        :return:
+        """
+        with open('input/solve_hole_multiplier.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            hole_multipliers = defaultdict(list)
+            while True:
+                try:
+                    datain = next(filereader)
+                    hole_multipliers[datain[0]] = datain[1]
+                except StopIteration:
+                    break
+        return hole_multipliers
+
     def get_rolling_times(self):
         """
         read in
@@ -337,7 +356,8 @@ class FlexToolRunner:
 
     def create_averaged_timeseries(self,solve):
         timeseries_map={
-            'pt_node.csv': "sum",
+            'pt_node_inflow.csv': "sum",
+            'pt_node.csv': "average",
             'pt_process.csv': "average",
             'pt_profile.csv': "average",
             'pt_process_source.csv': "average",
@@ -603,6 +623,13 @@ class FlexToolRunner:
                     outfile.write(period__years[0] + ',y' + str(year_count) + ',' + str(year_count) + ','
                             + str(years_to_cover_within_year) + '\n')
                     year_count = year_count + years_to_cover_within_year
+
+    def write_hole_multiplier(self, solve, filename):
+        with open(filename, 'w') as holefile:
+            holefile.write("solve,p_hole_multiplier\n")
+            if self.hole_multipliers[solve]:
+                holefile.write(solve + "," + self.hole_multipliers[solve] + "\n")
+
 
     def write_period_years(self, years_represented, filename):
         """
@@ -1103,8 +1130,8 @@ class FlexToolRunner:
                     duration_counter += float(step[2])
                     last_index = [period,i]
                 else:
-                    if start == None or start == step[0]:
-                        starts.append([period,i])
+                    if start == None or (start == [period, step[0]]):
+                        starts.append([period, i])
                         started = True
                         horizon_counter += float(step[2])
                         jump_counter += float(step[2])
@@ -1198,7 +1225,7 @@ class FlexToolRunner:
             rolling_times = self.rolling_times[solve]
             if duration == -1:
                 duration = rolling_times[3]
-            roll_solves, roll_active_time_lists, roll_jump_lists, roll_realized_time_lists = self.create_rolling_solves(solve, full_active_time, rolling_times[1], rolling_times[2], rolling_times[0], duration)
+            roll_solves, roll_active_time_lists, roll_jump_lists, roll_realized_time_lists = self.create_rolling_solves(solve, full_active_time, rolling_times[1], rolling_times[2], start, duration)
             for i in roll_solves:
                 complete_solves[i] = solve    
             
@@ -1431,6 +1458,7 @@ def main():
         runner.write_years_represented(runner.solve_period_years_represented[complete_solve[solve]],'solve_data/p_years_represented.csv')
         runner.write_period_years(runner.solve_period_years_represented[complete_solve[solve]],'solve_data/p_discount_years.csv')
         runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
+        runner.write_hole_multiplier(solve, 'solve_data/solve_hole_multiplier.csv')
         runner.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
         runner.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
         runner.write_last_step(realized_time_lists[solve], 'solve_data/last_realized_timestep.csv')

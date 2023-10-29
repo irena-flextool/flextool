@@ -148,7 +148,7 @@ set nodePeriodParam := annual_flow, peak_inflow, fixed_cost, interest_rate, inve
                  invest_max_period, invest_min_period, lifetime,
                  retire_forced, retire_max_period, retire_min_period, virtual_unitsize,
 				 storage_state_reference_price;
-set nodeTimeParam := inflow, penalty_down, penalty_up, self_discharge_loss, availability;
+set nodeTimeParam := inflow, penalty_down, penalty_up, self_discharge_loss, availability, storage_state_reference_value;
 set nodeParam_def1 := availability;
 set reserveParam := can_provide reservation reliability penalty_reserve,
                     increase_reserve_ratio large_failure_ratio max_share;
@@ -192,7 +192,7 @@ set param_costs := "unit investment/retirement","connection investment/retiremen
 				   "downward reserve penalty";
 
 set test_t := t0001;
-set test_dt := (p2020, t0015) (p2020, t0016) (p2020, t0017);
+set test_dt := (23year, t000001) (23year, t000002) (23year, t026205);
 #set test_dt := (p2020, t0001) (p2020, t0004) (p2020, t0040);
 #set test_dt := (p2020, t2589) (p2020, t2590) (p2020, t2591);
 #set test_dt := (p2020, t0001) (p2020, t0009) (p2020, t0015) (p2020, t0020) (p2020, t0024);
