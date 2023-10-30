@@ -242,6 +242,10 @@ set ndt_fix_storage_price dimen 3 within  {node, period_solve, time};
 set ndt_fix_storage_quantity dimen 3 within  {node, period_solve, time};
 set n_fix_storage_quantity := setof{(n,d,t) in ndt_fix_storage_quantity}(n);
 set n_fix_storage_price := setof{(n,d,t) in ndt_fix_storage_price}(n);
+set dtt_timeline_matching dimen 3 within {period,time,time};
+set ndtt_fix_storage_quantity_mapped := setof{n in n_fix_storage_quantity, (d, t, t2) in dtt_timeline_matching} (n, d, t, t2);
+set ndtt_fix_storage_price_mapped := setof{n in n_fix_storage_price, (d, t, t2) in dtt_timeline_matching}(n, d, t, t2);
+
 param p_fix_storage_price {node, period_solve, time};
 param p_fix_storage_quantity {node, period_solve, time};
 param p_roll_continue_state {node};
@@ -475,6 +479,7 @@ table data IN 'CSV' 'solve_data/fix_storage_price.csv' : ndt_fix_storage_price <
 table data IN 'CSV' 'solve_data/fix_storage_price.csv' : [node, period, step], p_fix_storage_price;
 table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : ndt_fix_storage_quantity <- [node, period, step];
 table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : [node, period, step], p_fix_storage_quantity;
+table data IN 'CSV' 'solve_data/timeline_matching_map.csv' : dtt_timeline_matching <- [period, step, upper_step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : dt_complete <- [period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : [period, step], complete_step_duration;
 table data IN 'CSV' 'solve_data/p_roll_continue_state.csv' : [node], p_roll_continue_state;
@@ -1510,18 +1515,6 @@ minimize total_cost:
 param w_total_cost := gmtime() - datetime0 - setup1 - w_calc_slope - setup2;
 display w_total_cost;
 
-#Storage state fix quantity for timesteps
-s.t. node_balance_fix_quantity_eq_lower {(n, d, t) in ndt_fix_storage_quantity: (d, t) in dt  && (d,t) in period__time_last}:
-  + v_state[n,d,t]* p_entity_unitsize[n] 
-  = 
-  + p_fix_storage_quantity[n,d,t];
-
-#Storage state fix price for timesteps
-s.t. node_balance_fix_price_eq_lower {(n, d, t) in ndt_fix_storage_price: (d, t) in dt && (d,t) in period__time_last}:
-  + v_state[n,d,t]* pdNode[n, 'storage_state_reference_price', d]* p_entity_unitsize[n] 
-  = 
-  + p_fix_storage_price[n,d,t];
-
 # Energy balance in each node  
 s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
   + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] / p_hole_multiplier[c] )
@@ -1853,6 +1846,18 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
 	  )
 ;
 
+#Storage state fix quantity for timesteps
+s.t. node_balance_fix_quantity_eq_lower {(n, d, t, t2) in ndtt_fix_storage_quantity_mapped: (d, t) in dt  && (d,t) in period__time_last}:
+  + v_state[n,d,t]* p_entity_unitsize[n] 
+  = 
+  + p_fix_storage_quantity[n,d,t2];
+
+#Storage state fix price for timesteps
+s.t. node_balance_fix_price_eq_lower {(n, d, t, t2) in ndtt_fix_storage_price_mapped: (d, t) in dt && (d,t) in period__time_last}:
+  + v_state[n,d,t]* pdNode[n, 'storage_state_reference_price', d]* p_entity_unitsize[n] 
+  = 
+  + p_fix_storage_price[n,d,t2];
+
 s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in period__time_last
      : d in period_last
 	 && ((n, 'use_reference_value') in node__storage_solve_horizon_method 
@@ -1861,8 +1866,8 @@ s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in peri
    && (n, 'bind_within_solve') not in node__storage_binding_method
    && (n, 'bind_within_period') not in node__storage_binding_method
    && (n, 'bind_within_timeblock') not in node__storage_binding_method
-   && (n, d, t) not in ndt_fix_storage_price
-   && (n, d, t) not in ndt_fix_storage_quantity)} :
+   && sum{(n, d, t, t2) in ndtt_fix_storage_price_mapped} 1 = 0
+   && sum{(n, d, t, t2) in ndtt_fix_storage_quantity_mapped} 1 = 0)} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
   + ptNode[n,'storage_state_reference_value',t]

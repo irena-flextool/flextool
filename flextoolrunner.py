@@ -1089,6 +1089,65 @@ class FlexToolRunner:
                     for i in active_time:
                         realfile.write(period+","+i[0]+"\n")
 
+    def write_timeline_matching_map(self, lower_active_time_list, period__timeblocks_in_this_solve, timeblocks__timeline, timelines):
+        """
+        write the matching map for different level timelines, the fixed timestep might not exist in the lower timeline
+        gives csv: [period, timestep, upper_timestep]
+        """
+
+        #get full timeline
+        for period__timeblock in period__timeblocks_in_this_solve:
+            for timeline in timelines:
+                for timeblock_in_timeline, tt in timeblocks__timeline.items():
+                    if period__timeblock[1] == timeblock_in_timeline:
+                        if timeline == tt[0]:
+                            full_timeline = timelines[timeline]
+        all_timesteps = []
+        for i in full_timeline:
+            all_timesteps.append(i[0])
+
+        #get current fixed timesteps
+        upper_active_time_list = defaultdict(list)
+        with open("solve_data/fix_storage_quantity.csv", 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            while True:
+                try:
+                    datain = next(filereader)
+                    upper_active_time_list[datain[0]].append(datain[1])
+                except StopIteration:
+                    break
+        
+        with open("solve_data/fix_storage_price.csv", 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            while True:
+                try:
+                    datain = next(filereader)
+                    upper_active_time_list[datain[0]].append(datain[1])
+                except StopIteration:
+                    break
+
+        #match the period_last with the closest fixed timestep
+        matching_map = defaultdict()
+        for period, lower_active_time in list(lower_active_time_list.items()):
+            if period in upper_active_time_list.keys():
+                lower_period_last = lower_active_time[-1]
+                upper_active_time_period = upper_active_time_list[period]
+                position = all_timesteps.index(lower_period_last[0])
+                found = False
+                while position >= 0 and found == False:
+                    timestep = all_timesteps[position]
+                    if all_timesteps[position] in upper_active_time_period:
+                        found = True
+                    position -= 1
+                matching_map[(period,lower_period_last[0])] = timestep
+        
+        with open("solve_data/timeline_matching_map.csv", 'w') as realfile:
+            realfile.write("period,step,upper_step\n")
+            for period_timestep, upper_timestep in list(matching_map.items()):
+                print(period_timestep)
+                realfile.write(period_timestep[0]+","+period_timestep[1]+","+ upper_timestep+"\n")
 
     def create_rolling_solves(self, solve, full_active_time, jump, horizon, start = None, duration = -1):
         """
@@ -1464,7 +1523,12 @@ def main():
         runner.write_last_step(realized_time_lists[solve], 'solve_data/last_realized_timestep.csv')
         runner.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
         runner.write_fixed_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
-        #if timeline created from new step_duration, all timeseries have to be averaged for the new timestep
+        if complete_solve[solve] in list(runner.contains_solves.items())[1]:
+            runner.write_timeline_matching_map(active_time_lists[solve], runner.timeblocks_used_by_solves[complete_solve[solve]], runner.timeblocks__timeline, runner.timelines)
+        else:
+            with open("solve_data/timeline_matching_map.csv", 'w') as realfile:
+                realfile.write("period,step,upper_step\n")
+        #if timeline created from new step_duration, all timeseries have to be averaged or summed for the new timestep
         runner.create_averaged_timeseries(complete_solve[solve])
         if solve in runner.first_of_solve:
             first_of_nested_level = True
