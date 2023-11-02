@@ -38,6 +38,7 @@ class FlexToolRunner:
         self.timelines = self.get_timelines()
         self.model_solve = self.get_solves()
         self.solve_modes = self.get_solve_modes("solve_mode")
+        self.solve_first_flag = {}
         self.roll_counter = self.make_roll_counter()
         self.highs_presolve = self.get_solve_modes("highs_presolve")
         self.highs_method = self.get_solve_modes("highs_method")
@@ -1278,6 +1279,10 @@ class FlexToolRunner:
             contains_solve = None
         if solve not in self.solve_modes.keys():
             self.solve_modes[solve] = "single_solve"
+        if solve not in self.solve_first_flag.keys():
+            self.solve_first_flag[solve] = 1
+        if contains_solve not in self.solve_first_flag.keys():
+            self.solve_first_flag[contains_solve] = 1
 
         if self.solve_modes[solve] == "rolling_window":
             #rolling_times: 0:start, 1:jump, 2:horizon, 3:duration
@@ -1286,13 +1291,15 @@ class FlexToolRunner:
                 duration = rolling_times[3]
             roll_solves, roll_active_time_lists, roll_jump_lists, roll_realized_time_lists = self.create_rolling_solves(solve, full_active_time, rolling_times[1], rolling_times[2], start, duration)
             for i in roll_solves:
-                complete_solves[i] = solve    
-            
+                complete_solves[i] = solve
+
             active_time_lists.update(roll_active_time_lists)
             jump_lists.update(roll_jump_lists)
             realized_time_lists.update(roll_realized_time_lists)
             fix_storage_time_lists.update(roll_realized_time_lists)
-            self.first_of_solve.append(roll_solves[0])
+            if self.solve_first_flag[solve]:
+                self.first_of_solve.append(roll_solves[0])
+                self.solve_first_flag[solve] = 0
             self.last_of_solve.append(roll_solves[-1])
 
             if contains_solve != None:
@@ -1319,7 +1326,9 @@ class FlexToolRunner:
             jump_lists[solve] = jumps
             realized_time_lists[solve]=full_active_time
             fix_storage_time_lists[solve] = full_active_time
-            self.first_of_solve.append(solve)
+            if self.solve_first_flag[solve]:
+                self.first_of_solve.append(solve)
+                self.solve_first_flag = False
             self.last_of_solve.append(solve)
 
             if contains_solve != None:
@@ -1523,7 +1532,7 @@ def main():
         runner.write_last_step(realized_time_lists[solve], 'solve_data/last_realized_timestep.csv')
         runner.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
         runner.write_fixed_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
-        if complete_solve[solve] in list(runner.contains_solves.items())[1]:
+        if complete_solve[solve] in list(runner.contains_solves.items())[0][1]:
             runner.write_timeline_matching_map(active_time_lists[solve], runner.timeblocks_used_by_solves[complete_solve[solve]], runner.timeblocks__timeline, runner.timelines)
         else:
             with open("solve_data/timeline_matching_map.csv", 'w') as realfile:

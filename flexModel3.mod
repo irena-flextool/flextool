@@ -3025,11 +3025,13 @@ for {(n,'fix_price') in node__storage_nested_fix_method, (d, t) in dt : (d, t) i
 
 printf 'Write node state last timestep ..\n';
 param fn_p_roll_continue_state symbolic := "solve_data/p_roll_continue_state.csv";
-printf 'node,p_roll_continue_state\n' > fn_p_roll_continue_state;
-for {n in nodeState, (d, t) in dt_realize_dispatch : (d, t) in realized_period__time_last}
+for {s in solve_current : substr(s, 1, 3) = "dis"}
+  { printf 'node,p_roll_continue_state\n' > fn_p_roll_continue_state; }
+for {s in solve_current, n in nodeState, (d, t) in dt_realize_dispatch : (d, t) in realized_period__time_last && substr(s, 1, 3) = "dis"}
   {
-    printf '%s,%.8g\n', n, v_state[n, d, t].val* p_entity_unitsize[n]  >> fn_p_roll_continue_state;
+    printf '%s,%.8g\n', n, v_state[n, d, t].val * p_entity_unitsize[n]  >> fn_p_roll_continue_state;
   }
+
 
 printf 'Write unit capacity results...\n';
 param fn_unit_capacity symbolic := "output/unit_capacity__period.csv";
@@ -4423,4 +4425,5 @@ display w_unit_test;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 #display {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in test_dt}: ptProcess_sink[p, sink, param, t];
 display v_invest, v_divest, solve_current;
+display period__time_last, period__time_first, node_balance_fix_quantity_eq_lower, storage_state_end, storage_state_roll_continue, storage_state_solve_horizon_reference_value, storage_state_start, p_hole_multiplier, solve_current;
 end;
