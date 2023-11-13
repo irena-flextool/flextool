@@ -4026,6 +4026,36 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
       }
   }
 
+printf 'Write node upward slack over time..\n';
+param fn_node_upward_slack__dt symbolic := "output/slack__upward__node_state__period__t.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period,time' > fn_node_upward_slack__dt;
+    for {n in nodeBalance}
+      { printf ',%s', n >> fn_node_upward_slack__dt; }
+  }
+for {s in solve_current, (d, t) in dt_realize_dispatch}
+  { printf '\n%s,%s,%s', s, d, t >> fn_node_upward_slack__dt;
+    for {n in nodeBalance} 
+      {
+	    printf ',%.8g', vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d]  >> fn_node_upward_slack__dt;
+      }
+  }
+
+printf 'Write node downward slack over time..\n';
+param fn_node_downward_slack__dt symbolic := "output/slack__downward__node_state__period__t.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period,time' > fn_node_downward_slack__dt;
+    for {n in nodeBalance}
+      { printf ',%s', n >> fn_node_downward_slack__dt; }
+  }
+for {s in solve_current, (d, t) in dt_realize_dispatch}
+  { printf '\n%s,%s,%s', s, d, t >> fn_node_downward_slack__dt;
+    for {n in nodeBalance} 
+      {
+	    printf ',%.8g', vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d]  >> fn_node_downward_slack__dt;
+      }
+  }
+
 printf 'Write reserve prices over time...\n';
 param fn_group_reserve_price__dt symbolic := "output/reserve_price__upDown__group__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
