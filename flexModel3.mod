@@ -3008,6 +3008,9 @@ param fn_fix_quantity_nodeState__dt symbolic := "solve_data/fix_storage_quantity
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'period,step,node,p_fix_storage_quantity\n' > fn_fix_quantity_nodeState__dt;
   }
+for {(d,t) in dt_fix_storage_timesteps : (d,t) in period__time_first} #clear also after before each time values are outputted, to avoid duplicates
+  { printf 'period,step,node,p_fix_storage_quantity\n' > fn_fix_quantity_nodeState__dt;
+  }
 for {(n,'fix_quantity') in node__storage_nested_fix_method, (d, t) in dt : (d, t) in dt_fix_storage_timesteps}
   {
     printf '%s,%s,%s,%.8g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]>> fn_fix_quantity_nodeState__dt;
@@ -3016,6 +3019,9 @@ for {(n,'fix_quantity') in node__storage_nested_fix_method, (d, t) in dt : (d, t
 printf 'Write node state price for fixed timesteps ..\n';
 param fn_fix_price_nodeState__dt symbolic := "solve_data/fix_storage_price.csv";
 for {i in 1..1 : p_model['solveFirst']}
+  { printf 'period,step,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
+  }
+for {(d,t) in dt_fix_storage_timesteps : (d,t) in period__time_first} #clear also after before each time values are outputted, to avoid duplicates
   { printf 'period,step,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
   }
 for {(n,'fix_price') in node__storage_nested_fix_method, (d, t) in dt : (d, t) in dt_fix_storage_timesteps}
