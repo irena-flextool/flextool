@@ -1106,8 +1106,73 @@ class FlexToolRunner:
                 if (solve,period) in self.fix_storage_periods:
                     for i in active_time:
                         realfile.write(period+","+i[0]+"\n")
+    
+    #these exist to connect timesteps from two different timelines or aggregated versions of one
+    def connect_two_timelines(self,period,first_solve,second_solve):
+        first_period_timeblocks = self.timeblocks_used_by_solves[first_solve]
+        second_period_timeblocks = self.timeblocks_used_by_solves[second_solve]
+        for period_timeblock in first_period_timeblocks:
+            if period_timeblock[0] == period:
+                first_timeblock = period_timeblock[1]
+        for period_timeblock in second_period_timeblocks:
+            if period_timeblock[0] == period:
+                second_timeblock = period_timeblock[1]
 
-    def write_timeline_matching_map(self, upper_active_time_list, lower_active_time_list, period__timeblocks_in_this_solve, timeblocks__timeline, timelines):
+        first_timeline = self.timeblocks__timeline[first_timeblock][0]
+        second_timeline = self.timeblocks__timeline[second_timeblock][0]
+
+        first_timeline_duration_from_start = OrderedDict()
+        second_timeline_duration_from_start = OrderedDict()
+        counter = 0
+        for timestep in self.timelines[first_timeline]:
+            first_timeline_duration_from_start[timestep[0]] = counter
+            counter += float(timestep[1])
+        counter = 0
+        for timestep in self.timelines[second_timeline]:
+            second_timeline_duration_from_start[timestep[0]] = counter
+            counter += float(timestep[1])
+    
+        return first_timeline_duration_from_start,second_timeline_duration_from_start
+
+    def find_previous_timestep(self, from_active_time_list, period_timestamp, this_solve, from_solve):
+        
+        this_timeline_duration_from_start, from_timeline_duration_from_start = self.connect_two_timelines(period_timestamp[0],this_solve,from_solve)
+
+        from_start = this_timeline_duration_from_start[period_timestamp[1]]
+        last_timestep = from_active_time_list[period_timestamp[0]][0][0]
+        previous_timestep = from_active_time_list[period_timestamp[0]][-1][0] #last is the default, as the last timestep can be shorter and cause issues
+        for timestep in from_active_time_list[period_timestamp[0]]:
+            if from_timeline_duration_from_start[timestep[0]] > from_start:
+                previous_timestep = last_timestep 
+                break
+            last_timestep = timestep[0]
+        return previous_timestep
+
+    def find_next_timestep(self, from_active_time_list, period_timestamp, this_solve, from_solve):
+
+        this_timeline_duration_from_start, from_timeline_duration_from_start = self.connect_two_timelines(period_timestamp[0],this_solve,from_solve)
+
+        from_start = this_timeline_duration_from_start[period_timestamp[1]]
+        next_timestep = from_active_time_list[period_timestamp[0]][-1][0] #last is the default, as the last timestep can be shorter and cause issues
+        for timestep in from_active_time_list[period_timestamp[0]]:
+            if from_timeline_duration_from_start[timestep[0]] >= from_start:
+                next_timestep = timestep[0]
+                break
+        return next_timestep
+
+    def write_timeline_matching_map(self, upper_active_time_list, lower_active_time_list, upper_solve, lower_solve):
+        matching_map = OrderedDict()
+        for period, lower_active_time in lower_active_time_list.items():
+            period_last = (period, lower_active_time[-1][0])
+            previous_timestep = self.find_previous_timestep(upper_active_time_list, period_last, lower_solve, upper_solve)
+            matching_map[period_last] = previous_timestep
+
+        with open("solve_data/timeline_matching_map.csv", 'w') as realfile:
+            realfile.write("period,step,upper_step\n")
+            for period_timestep, upper_timestep in list(matching_map.items()):
+                realfile.write(period_timestep[0]+","+period_timestep[1]+","+ upper_timestep+"\n")
+
+    def write_timeline_matching_map_old(self, upper_active_time_list, lower_active_time_list, period__timeblocks_in_this_solve, timeblocks__timeline, timelines):
         """
         write the matching map for different level timelines, the fixed timestep might not exist in the lower timeline
         gives csv: [period, timestep, upper_timestep]
@@ -1147,7 +1212,7 @@ class FlexToolRunner:
             for period_timestep, upper_timestep in list(matching_map.items()):
                 realfile.write(period_timestep[0]+","+period_timestep[1]+","+ upper_timestep+"\n")
 
-    def create_rolling_solves(self, solve, full_active_time, jump, horizon, start = None, duration = -1):
+    def create_rolling_solves(self, solve, full_active_time_list, jump, horizon, start = None, duration = -1):
         """
         splits the solve to overlapping sequence of solves "rolls" 
         """
@@ -1165,7 +1230,7 @@ class FlexToolRunner:
         ended = False
 
         # search for the start, end and horizon time indexes
-        for period, active_time in list(full_active_time.items()):
+        for period, active_time in list(full_active_time_list.items()):
             for i, step in enumerate(active_time):
                 if not ended:
                     if started:
@@ -1211,32 +1276,32 @@ class FlexToolRunner:
             self.roll_counter[solve]+=1
             solves.append(solve_name) 
             if roll_start[0]==horizons[index][0]: #if the whole roll is in the same period
-                active[roll_start[0]] = full_active_time[roll_start[0]][roll_start[1]:horizons[index][1]+1]
+                active[roll_start[0]] = full_active_time_list[roll_start[0]][roll_start[1]:horizons[index][1]+1]
             else:
                 started = False
-                for period, active_time in list(full_active_time.items()):
+                for period, active_time in list(full_active_time_list.items()):
                     if started:
                         if period == horizons[index][0]:
-                            active[period] = full_active_time[period][0:horizons[index][1]+1]
+                            active[period] = full_active_time_list[period][0:horizons[index][1]+1]
                             break
                         else:
-                            active[period] = full_active_time[period]
+                            active[period] = full_active_time_list[period]
                     elif period == roll_start[0]:
-                        active[roll_start[0]] = full_active_time[period][roll_start[1]:]
+                        active[roll_start[0]] = full_active_time_list[period][roll_start[1]:]
                         started = True
             if roll_start[0]==jumps[index][0]:
-                realized[roll_start[0]] = full_active_time[roll_start[0]][roll_start[1]:jumps[index][1]+1]
+                realized[roll_start[0]] = full_active_time_list[roll_start[0]][roll_start[1]:jumps[index][1]+1]
             else:
                 started = False
-                for period, active_time in list(full_active_time.items()):
+                for period, active_time in list(full_active_time_list.items()):
                     if started:
                         if period == jumps[index][0]:
-                            realized[period] = full_active_time[period][0:jumps[index][1]+1]
+                            realized[period] = full_active_time_list[period][0:jumps[index][1]+1]
                             break
                         else:
-                            realized[period] = full_active_time[period]
+                            realized[period] = full_active_time_list[period]
                     elif period == roll_start[0]:
-                        realized[period] = full_active_time[period][roll_start[1]:]
+                        realized[period] = full_active_time_list[period][roll_start[1]:]
                         started = True
             jump= self.make_step_jump(active)
             active_time_lists[solve_name] = active
@@ -1244,22 +1309,22 @@ class FlexToolRunner:
             jump_lists[solve_name] = jump
         return solves, active_time_lists, jump_lists, realized_time_lists
 
-    def define_solve(self, solve, parent_roll = None, realized = [], start = None, duration = -1):
+    def define_solve(self, solve, parent_solve__roll = None, realized = [], start = None, duration = -1):
         complete_solves= OrderedDict() #complete_solve is for rolling, so that the rolls inherit the parameters of the whole solve
         active_time_lists= OrderedDict()    
         jump_lists = OrderedDict()
         realized_time_lists = OrderedDict()
         fix_storage_time_lists = OrderedDict()
-        full_active_time = OrderedDict()
+        full_active_time_list = OrderedDict()
         parent_roll_lists = OrderedDict()
         solves=[]
 
         #check that the lower level solves have periods only from of upper_level realizations
-        full_active_time_own = self.get_active_time(solve, self.timeblocks_used_by_solves, self.timeblocks,self.timelines, self.timeblocks__timeline)
+        full_active_time_list_own = self.get_active_time(solve, self.timeblocks_used_by_solves, self.timeblocks,self.timelines, self.timeblocks__timeline)
         if len(realized) != 0:
-            for key, item in list(full_active_time_own.items()):
+            for key, item in list(full_active_time_list_own.items()):
                 if key in realized :
-                    full_active_time[key] = item
+                    full_active_time_list[key] = item
             for period in realized:
                 if (solve,period) not in self.fix_storage_periods and (solve,period) not in self.realized_periods and (solve,period) not in self.realized_invest_periods:
                     realized.remove(period)
@@ -1267,7 +1332,7 @@ class FlexToolRunner:
             for solve_period in set().union(self.realized_periods, self.realized_invest_periods,self.fix_storage_periods):
                 if solve == solve_period[0]:
                     realized.append(solve_period[1])
-            full_active_time = full_active_time_own
+            full_active_time_list = full_active_time_list_own
 
         if solve in self.contains_solves.keys():
             contains_solve = self.contains_solves[solve]
@@ -1281,10 +1346,15 @@ class FlexToolRunner:
             rolling_times = self.rolling_times[solve]
             if duration == -1:
                 duration = rolling_times[2]
-            roll_solves, roll_active_time_lists, roll_jump_lists, roll_realized_time_lists = self.create_rolling_solves(solve, full_active_time, rolling_times[0], rolling_times[1], start, duration)
+            period_start_timestep = start
+            if start != None:
+                start_timestep = self.find_next_timestep(full_active_time_list_own, start, parent_solve__roll[0], solve) # if the timestep is not in the lower timeline
+                period_start_timestep = [start[0],start_timestep]
+            
+            roll_solves, roll_active_time_lists, roll_jump_lists, roll_realized_time_lists = self.create_rolling_solves(solve, full_active_time_list, rolling_times[0], rolling_times[1], period_start_timestep, duration)
             for i in roll_solves:
                 complete_solves[i] = solve
-                parent_roll_lists[i] = parent_roll
+                parent_roll_lists[i] = parent_solve__roll[1]
 
             active_time_lists.update(roll_active_time_lists)
             jump_lists.update(roll_jump_lists)
@@ -1296,14 +1366,14 @@ class FlexToolRunner:
             if contains_solve != None:
                 for index, roll in enumerate(roll_solves):
                     solves.append(roll)
-                    #creating the start time for the rolling. This is the first [period, timestamp] of the active time of the parent roll
+                    #creating the start time for the rolling. This is next timestep of the roll timeline from the first [period, timestamp] of the active time of the parent roll
                     if index != 0:
                         start = [list(roll_active_time_lists[roll].items())[0][0],list(roll_active_time_lists[roll].items())[0][1][0][0]]
                     else:
                         start = None
                     #upper_jump = lower_duration 
                     duration = rolling_times[0]
-                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, roll, realized, start, duration)
+                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, [solve, roll], realized, start, duration)
                     solves += inner_solves
                     complete_solves.update(inner_complete_solve)
                     parent_roll_lists.update(inner_parent_roll_lists)
@@ -1315,18 +1385,18 @@ class FlexToolRunner:
                 solves += roll_solves
         else:
             solves.append(solve)
-            parent_roll_lists[solve] = parent_roll
+            parent_roll_lists[solve] = parent_solve__roll[1]
             complete_solves[solve]= solve #complete_solve is for rolling, so that the rolls inherit the parameters of the solve. If not rolling, the solve is its own complete solve
-            active_time_lists[solve] = full_active_time
-            jumps = self.make_step_jump(full_active_time)
+            active_time_lists[solve] = full_active_time_list
+            jumps = self.make_step_jump(full_active_time_list)
             jump_lists[solve] = jumps
-            realized_time_lists[solve]=full_active_time
-            fix_storage_time_lists[solve] = full_active_time
+            realized_time_lists[solve]=full_active_time_list
+            fix_storage_time_lists[solve] = full_active_time_list
             self.first_of_solve.append(solve)
             self.last_of_solve.append(solve)
 
             if contains_solve != None:
-                inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, solve, realized)
+                inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, [solve, solve], realized)
                 solves += inner_solves
                 complete_solves.update(inner_complete_solve)
                 parent_roll_lists.update(inner_parent_roll_lists)
@@ -1474,7 +1544,7 @@ def main():
         sys.exit(-1)
     
     for solve in solves:
-        solve_solves, solve_complete_solve, solve_active_time_lists, solve_jump_lists, solve_realized_time_lists, solve_fix_storage_timesteps, solve_parent_roll = runner.define_solve(solve, None, [])
+        solve_solves, solve_complete_solve, solve_active_time_lists, solve_jump_lists, solve_realized_time_lists, solve_fix_storage_timesteps, solve_parent_roll = runner.define_solve(solve, [None,None], [])
         all_solves += solve_solves
         complete_solve.update(solve_complete_solve)
         parent_roll.update(solve_parent_roll)
@@ -1536,7 +1606,7 @@ def main():
         else:
             storage_fix_values_exist = False
         if storage_fix_values_exist:
-            runner.write_timeline_matching_map(active_time_lists[parent_roll[solve]], active_time_lists[solve], runner.timeblocks_used_by_solves[complete_solve[solve]], runner.timeblocks__timeline, runner.timelines)
+            runner.write_timeline_matching_map(active_time_lists[parent_roll[solve]], active_time_lists[solve], complete_solve[parent_roll[solve]], complete_solve[solve])
         else:
             with open("solve_data/timeline_matching_map.csv", 'w') as realfile:
                 realfile.write("period,step,upper_step\n")

@@ -1847,13 +1847,13 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
 ;
 
 #Storage state fix quantity for timesteps
-s.t. node_balance_fix_quantity_eq_lower {(n, d, t, t2) in ndtt_fix_storage_quantity_mapped: (d, t) in dt  && (d,t) in period__time_last}:
+s.t. node_balance_fix_quantity_eq_lower {(n, d, t, t2) in ndtt_fix_storage_quantity_mapped: (d,t) in period__time_last && d in period_last}:
   + v_state[n,d,t]* p_entity_unitsize[n] 
   = 
   + p_fix_storage_quantity[n,d,t2];
 
 #Storage state fix price for timesteps
-s.t. node_balance_fix_price_eq_lower {(n, d, t, t2) in ndtt_fix_storage_price_mapped: (d, t) in dt && (d,t) in period__time_last}:
+s.t. node_balance_fix_price_eq_lower {(n, d, t, t2) in ndtt_fix_storage_price_mapped: (d,t) in period__time_last && d in period_last}:
   + v_state[n,d,t]* pdNode[n, 'storage_state_reference_price', d]* p_entity_unitsize[n] 
   = 
   + p_fix_storage_price[n,d,t2];
