@@ -301,14 +301,10 @@ class FlexToolRunner:
                     break
         rolling_times=defaultdict(list)
         for solve, data in list(rolling_parameters.items()):
-            start = None
             horizon = 0
             jump = 0
             duration = -1
             for param_value in data:
-                if "rolling_start_time" == param_value[0]:
-                    #timestamp
-                    start = param_value[1]
                 if "rolling_duration" in param_value[0]:
                     duration = float(param_value[1])
                 if "rolling_solve_horizon" in param_value[0]:
@@ -319,7 +315,7 @@ class FlexToolRunner:
             if self.solve_modes[solve] == 'rolling_window' and (horizon == 0 or jump == 0):
                 logging.error("When using rolling_window solve mode, rolling_solve_horizon and rolling_solve_jump must defined and not be 0")
                 exit(-1)
-            rolling_times[solve] = [start,jump,horizon,duration]
+            rolling_times[solve] = [jump,horizon,duration]
 
         return rolling_times
 
@@ -1198,7 +1194,7 @@ class FlexToolRunner:
                             duration_counter += float(step[2])
                             last_index=[period,i]
         if started == False:
-            logging.error("The given rolling_start_time timestamp is not in the timeline. If aggregating with timeblockSet -- new_stepduration, check that this timestamp will be in the aggragated timeline")
+            logging.error("Start point not found")
             exit(-1)
         # if there is start of the roll but not end, the end is the last index of the active time
         diff = len(starts)-len(horizons)
@@ -1281,13 +1277,11 @@ class FlexToolRunner:
             self.solve_modes[solve] = "single_solve"
 
         if self.solve_modes[solve] == "rolling_window":
-            #rolling_times: 0:start, 1:jump, 2:horizon, 3:duration
+            #rolling_times: 0:jump, 1:horizon, 2:duration
             rolling_times = self.rolling_times[solve]
-            if start == None and rolling_times[0] != None: # not given by upper solve
-                start = [list(full_active_time.keys())[0], rolling_times[0]]
             if duration == -1:
-                duration = rolling_times[3]
-            roll_solves, roll_active_time_lists, roll_jump_lists, roll_realized_time_lists = self.create_rolling_solves(solve, full_active_time, rolling_times[1], rolling_times[2], start, duration)
+                duration = rolling_times[2]
+            roll_solves, roll_active_time_lists, roll_jump_lists, roll_realized_time_lists = self.create_rolling_solves(solve, full_active_time, rolling_times[0], rolling_times[1], start, duration)
             for i in roll_solves:
                 complete_solves[i] = solve
                 parent_roll_lists[i] = parent_roll
@@ -1308,7 +1302,7 @@ class FlexToolRunner:
                     else:
                         start = None
                     #upper_jump = lower_duration 
-                    duration = rolling_times[1]
+                    duration = rolling_times[0]
                     inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, roll, realized, start, duration)
                     solves += inner_solves
                     complete_solves.update(inner_complete_solve)
