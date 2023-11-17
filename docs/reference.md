@@ -44,7 +44,7 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
   - *solves*: sequence of solves in the model represented with an array of solve names.
   - *discount_offset_investment*: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.
   - *discount_offset_operations*: [years] Offset from the period (often year) start to the payment of operational costs.
-  - *enable_optional_outputs*: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","node_balance_t","connection_flow_separate" 
+  - *enable_optional_outputs*: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","unit__node_ramp_t","node_balance_t","connection_flow_separate" 
   - *disable_optional_outputs*: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t"
   
 - `solve`: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.

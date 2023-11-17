@@ -3791,7 +3791,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit_ramp__sinkNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', sink >> fn_unit_ramp__sinkNode__dt;
   }
-for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'unit__node_ramp_t' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sinkNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit}
@@ -3806,7 +3806,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit_ramp__sourceNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', source >> fn_unit_ramp__sourceNode__dt;
   }
-for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'unit__node_ramp_t' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sourceNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}

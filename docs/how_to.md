@@ -833,6 +833,7 @@ With these parameters, the command line call is:
 Some outputs need to be explicitly added in order to output them. This is to reduce the result processing time. Each optional output can be added to the `enable_optional_outputs` parameter array of the `model` object. The additional outputs are:
 
 - *ramp_envelope* : Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node). 
+- *unit__node_ramp_t*: Produces the ramp for individual units for all timesteps.
 - *node_balance_t* : Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. 
 - *connection_flow_separate* : Produces the connection flows separately for both directions.
 
