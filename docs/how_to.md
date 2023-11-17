@@ -650,9 +650,8 @@ However, this would be tedious if there are many solves. In a rolling window mod
 
 - `rolling_jump`: sets the interval for the length of each 'jump' the model takes forward in reach roll. It is then both the interval of roll starting points and the length of the output for each roll. The `rolling_jump` must be smaller than the `rolling_horizon`. In the previous example the `rolling_jump` would be 2 months (1440 hours).
 
-In addition, the user has the possibility to use the other parameters to set the time interval where the rolling happens:
+In addition, the user has the possibility set the time interval where the rolling happens:
 
-- `rolling_start_time`: Optional (timestamp), can be used to set a different starting point for the rolling than the first timestep (default).
 - `rolling_duration`: Optional (hours), the length of combined rolls. In the example, it could be set to 8640 hours which would divide evenly, or 8760 hours which means that the last roll will be shorter than the others. It is nicer to use `rolling_jump` that is divisable with the `rolling_duration` to keep rolls even. If `rolling_duration` is not set, it defaults to rolling through the whole timeline.
 
 When using rolling window solve, you are solving the model with less information. Therefore, the results will be less optimal since the model will not have the full information at once. It is therefore important to know how this could affect the results and what things to consider when implementing a rolling window model. It will have an impact on time dependant parts of the model: for example, storages or cumulative flow constraints. If the model can see only a few months to the future, it can't see how much energy needs to be stored after that. 
@@ -667,7 +666,6 @@ To set a dispatch rolling window model you need to set the object `solve` parame
 - `rolling_jump`: Hours, the desired length of the solve interval
 - `rolling_horizon`: Hours, the desired length of each roll solve
 - `rolling_duration`: (Optional) Hours, the length of the combined outputs. If not set, the whole timeline is used.
-- `rolling_start`: (Optional) Hours, the starting timestep the whole solve, if not wanting to start from the beginning 
 
 Considerations on the rolling times:
 
@@ -735,7 +733,6 @@ In addition, the rolling dispatch solve should be created as in the *How to use 
 - `rolling_jump`: Hours, the desired length of the solve interval
 - `rolling_horizon`: Hours, the desired length of each roll solve
 - `rolling_duration`: (Optional) Hours, the length of the combined outputs. If not set, the whole timeline is used.
-- `rolling_start`: (Optional) Hours, the starting timestep the whole solve, if not wanting to start from the beginning 
 - `realized_periods`: Array of periods that are realized
 
 The other model parameters apply to *all* of the solves. Therefore, the considerations of the storage value binding that were discussed in the [How to use a rolling window for a dispatch model](#How-to-use-a-rolling-window-for-a-dispatch-model) should be taken into account here as well.
@@ -764,6 +761,9 @@ To create a lower resolution (longer timesteps) solve:
 
 The model will create a new timeline for this solve with the `new_stepduration`. All the timestep map data like `inflow` or `profile` will be either summed or averaged for the new timeline. Again, the `new_stepduration` should be multiple of the old step duration. If the `block_duration` is not a multiple of the `new_stepduration` the last timestep will be shorter than the rest.
 ![New step duration](./new_stepduration.PNG)
+
+Note that if the last timestep of the dispatch horizon is not in the storage solve timeline, it will use the last available timestep to fix the storage. This can happen at the end of the timeline when the dispatch solve with a lower step size can fit an extra step after the last time step of the storage solve.
+Other reason might be that both dispatch and storage solves are aggregated with the `new_stepduration`. In that case, it is usually best to use values for the `new_stepduration` that are dividable.  
 
 To create a sample solve with representative periods:
 
