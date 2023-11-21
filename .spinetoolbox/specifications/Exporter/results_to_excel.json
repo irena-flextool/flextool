@@ -1055,7 +1055,11 @@
                 {
                     "map_type": "RelationshipClass",
                     "position": "hidden",
-                    "filter_re": "^unit__node$"
+                    "filter_re": "^unit__node__group$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
                 },
                 {
                     "map_type": "RelationshipClassObjectClass",
@@ -1088,8 +1092,12 @@
                     "position": -2
                 },
                 {
-                    "map_type": "Alternative",
+                    "map_type": "RelationshipObject",
                     "position": -3
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": -4
                 },
                 {
                     "map_type": "ParameterValueType",

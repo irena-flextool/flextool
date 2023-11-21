@@ -353,7 +353,7 @@
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "unit__node"
+                                "value": "unit__node__group"
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
@@ -364,6 +364,11 @@
                                 "map_type": "RelationshipClassObjectClass",
                                 "position": "hidden",
                                 "value": "node"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "group"
                             },
                             {
                                 "map_type": "Relationship",
@@ -378,6 +383,11 @@
                             {
                                 "map_type": "RelationshipObject",
                                 "position": -2,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -3,
                                 "import_objects": true
                             },
                             {
@@ -514,7 +524,7 @@
                             {
                                 "map_type": "RelationshipClass",
                                 "position": "hidden",
-                                "value": "unit__node"
+                                "value": "unit__node__group"
                             },
                             {
                                 "map_type": "RelationshipClassObjectClass",
@@ -525,6 +535,11 @@
                                 "map_type": "RelationshipClassObjectClass",
                                 "position": "hidden",
                                 "value": "node"
+                            },
+                            {
+                                "map_type": "RelationshipClassObjectClass",
+                                "position": "hidden",
+                                "value": "group"
                             },
                             {
                                 "map_type": "Relationship",
@@ -539,6 +554,11 @@
                             {
                                 "map_type": "RelationshipObject",
                                 "position": -2,
+                                "import_objects": true
+                            },
+                            {
+                                "map_type": "RelationshipObject",
+                                "position": -3,
                                 "import_objects": true
                             },
                             {
@@ -4069,7 +4089,9 @@
                 "1": "string",
                 "2": "string",
                 "3": "float",
-                "4": "float"
+                "4": "float",
+                "5": "float",
+                "6": "float"
             },
             "unit_capacity__period": {
                 "0": "string",
@@ -4466,7 +4488,8 @@
             },
             "unit__outputNode__period__t": {
                 "1": "string",
-                "0": "string"
+                "0": "string",
+                "2": "string"
             },
             "connection__period": {
                 "1": "string",
@@ -4474,7 +4497,8 @@
             },
             "unit__inputNode__period__t": {
                 "1": "string",
-                "0": "string"
+                "0": "string",
+                "2": "string"
             },
             "process__reserve__upDown__node__period__t": {
                 "1": "string",

@@ -186,6 +186,8 @@ set storage_solve_horizon_method := free use_reference_value use_reference_price
 set storage_nested_fix_method := no fix_quantity fix_price;
 set reserve_method := no_reserve timeseries_only dynamic_only both;
 
+set unnamed_group:= unnamed_group;
+
 set param_costs := "unit investment/retirement","connection investment/retirement","storage investment/retirement",
                    "fixed cost of existing assets",commodity,CO2,"variable cost",starts,"upward penalty","downward penalty",
 				   "inertia penalty","non-synchronous penalty","capacity margin penalty","upward reserve penalty",

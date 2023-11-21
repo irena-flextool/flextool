@@ -83,6 +83,9 @@ set groupParam;
 set groupPeriodParam;
 set groupTimeParam within groupParam;
 
+set enable_optional_outputs;
+set disable_optional_outputs;
+
 set reserve__upDown__group__method dimen 4;
 set reserve__upDown__group := setof {(r, ud, g, m) in reserve__upDown__group__method : m <> 'no_reserve'} (r, ud, g);
 set reserve 'r - Categories for the reservation of capacity_existing' := setof {(r, ud, ng, r_m) in reserve__upDown__group__method} (r);
@@ -187,6 +190,16 @@ set groupOutput_process 'output groups with process members' :=
     {g in groupOutput : sum{(g, p, n) in group_process_node} 1};
 set groupOutput_node 'output groups with node members' :=
     {g in groupOutput : sum{(g, n) in group_node} 1 };
+
+set groupOutputNodeFlows 'groups that will output flow results' within group;
+set groupOutputNodeFlows_node 'output flow groups with node members' :=
+    {g in groupOutputNodeFlows : sum{(g, n) in group_node} 1 };
+set unnamed_group;
+set groupOutputNodeFlows_node_with_unnamed:= (if 'unnamed_group' in disable_optional_outputs then groupOutputNodeFlows_node else groupOutputNodeFlows_node union unnamed_group);
+set nodes_not_in_output_group := {n in node: sum{(g, n) in group_node: g in groupOutputNodeFlows } 1 = 0};
+set unnamed_group_node:= {g in unnamed_group, n in nodes_not_in_output_group};
+set group_node_with_unnamed:= group_node union unnamed_group_node;
+
 set process_unit 'processes that are unit' within process;
 set process_connection 'processes that are connections' within process;
 set process__ct_method_read dimen 2 within {process, ct_method};
@@ -334,9 +347,6 @@ param scale_the_state;
 set param_costs dimen 1;
 param costs_discounted {param_costs} default 0;
 
-set enable_optional_outputs;
-set disable_optional_outputs;
-
 set objectClass_paramName_default dimen 2;
 param default_value {objectClass_paramName_default};
 
@@ -356,6 +366,7 @@ table data IN 'CSV' 'input/groupInertia.csv' : groupInertia <- [groupInertia];
 table data IN 'CSV' 'input/groupNonSync.csv' : groupNonSync <- [groupNonSync];
 table data IN 'CSV' 'input/groupCapacityMargin.csv' : groupCapacityMargin <- [groupCapacityMargin];
 table data IN 'CSV' 'input/groupOutput.csv' : groupOutput <- [groupOutput];
+table data IN 'CSV' 'input/groupOutputNodeFlows.csv' : groupOutputNodeFlows <- [groupOutputNodeFlows];
 table data IN 'CSV' 'input/process.csv': process <- [process];
 table data IN 'CSV' 'input/profile.csv': profile <- [profile];
 table data IN 'CSV' 'solve_data/p_years_represented.csv': year <- [years_from_solve];
@@ -3514,14 +3525,16 @@ param fn_unit__sinkNode__dt symbolic := "output/unit__outputNode__period__t.csv"
 for {i in 1..1 : p_model['solveFirst']}
   {
     printf 'solve,period,time' > fn_unit__sinkNode__dt;  # Print the header on the first solve
-	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', u >> fn_unit__sinkNode__dt;
+	for {g in groupOutputNodeFlows_node_with_unnamed, (u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit && (g,sink) in group_node_with_unnamed} printf ',%s', u >> fn_unit__sinkNode__dt;
 	printf '\n,,' >> fn_unit__sinkNode__dt;
-	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', sink >> fn_unit__sinkNode__dt;
+	for { g in groupOutputNodeFlows_node_with_unnamed, (u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit && (g,sink) in group_node_with_unnamed} printf ',%s', sink >> fn_unit__sinkNode__dt;
+  printf '\n,,' >> fn_unit__sinkNode__dt;
+  for { g in groupOutputNodeFlows_node_with_unnamed, (u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit && (g,sink) in group_node_with_unnamed} printf ',%s', g >> fn_unit__sinkNode__dt;
   }
 for {s in solve_current, (d, t) in dt_realize_dispatch: 'unit__node_flow_t' not in disable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit__sinkNode__dt;
-    for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit}
+    for {g in groupOutputNodeFlows_node_with_unnamed, (u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit && (g,sink) in group_node_with_unnamed}
       { printf ',%.8g', r_process_source_sink_flow_dt[u, source, sink, d, t] >> fn_unit__sinkNode__dt; }
   } 
 
@@ -3546,14 +3559,16 @@ param fn_unit__sourceNode__dt symbolic := "output/unit__inputNode__period__t.csv
 for {i in 1..1 : p_model['solveFirst']}
   {
     printf 'solve,period,time' > fn_unit__sourceNode__dt;  # Print the header on the first solve
-	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', u >> fn_unit__sourceNode__dt;
+	for {g in groupOutputNodeFlows_node_with_unnamed, (u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit && (g,source) in group_node_with_unnamed} printf ',%s', u >> fn_unit__sourceNode__dt;
 	printf '\n,,' >> fn_unit__sourceNode__dt;
-	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', source >> fn_unit__sourceNode__dt;
+	for {g in groupOutputNodeFlows_node_with_unnamed, (u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit && (g,source) in group_node_with_unnamed} printf ',%s', source >> fn_unit__sourceNode__dt;
+  printf '\n,,' >> fn_unit__sourceNode__dt;
+  for {g in groupOutputNodeFlows_node_with_unnamed, (u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit && (g,source) in group_node_with_unnamed} printf ',%s', g >> fn_unit__sourceNode__dt;
   }
 for {s in solve_current, (d, t) in dt_realize_dispatch: 'unit__node_flow_t' not in disable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit__sourceNode__dt;
-    for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}
+    for {g in groupOutputNodeFlows_node_with_unnamed, (u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit && (g,source) in group_node_with_unnamed}
       { printf ',%.8g', -r_process_source_sink_flow_dt[u, source, sink, d, t] >> fn_unit__sourceNode__dt; }
   } 
 
@@ -4404,6 +4419,9 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 param w_unit_test := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv - w_ramp_room - w_inertia - w_slacks;
 display w_unit_test;
 
+display  nodes_not_in_output_group;
+display  unnamed_group_node;
+display  group_node_with_unnamed;
 #display {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } : v_reserve[p, r, ud, n, d, t].dual / p_entity_unitsize[p];
 #display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process_source_sink_flow_dt[p, source, sink, d, t];
 #display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_other_operational_cost_dt[p, d, t];
