@@ -14,7 +14,8 @@ def migrate_database(database_path):
                      add_rolling_window,
                      add_drop_down,
                      add_optional_outputs,
-                     add_default_value]
+                     add_default_value,
+                     add_rolling_start_remove]
 
     if not os.path.exists(database_path) or not database_path.endswith(".sqlite"):
         print("No sqlite file at " + database_path)
@@ -125,6 +126,21 @@ def add_default_value(db):
     (num,log) = import_data(db, object_parameters = template["object_parameters"])
 
     db.commit_session("Added optional outputs object parameters and parameter value lists")
+
+    return 0
+
+def add_rolling_start_remove(db):
+    
+    #get template JSON. This can be the master or old template if conflicting migrations in between
+    with open ('./version/flextool_template_rolling_start_remove.json') as json_file:
+        template = json.load(json_file)
+
+    #With objective parameters, no duplicates are created. These will replace the old ones or create new. There will always be imports.
+    (num,log) = import_data(db, object_parameters = template["object_parameters"])
+
+    #Add parameter_value_lists. Note that object_parameter import and value_list import work differently. Former replaces all, latter adds what is missing.
+    (num,log) = import_data(db, parameter_value_lists = template["parameter_value_lists"])
+    db.commit_session("Added lifetime_method object parameters and parameter value lists")
 
     return 0
 

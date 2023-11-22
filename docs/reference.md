@@ -61,7 +61,6 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
   - *solve_mode*: a single solve or a set of rolling optimisation windows solved in a sequence 
   - Rolling window parameters:
 
-    - *rolling_start_time*: (Optional) Timestamp from the timeline that is linked to the timeblockSet used. Starting point of the rolling. If this is not stated, it is assumed to be the first timestep
     - *rolling_solve_jump*: Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Also the output interval. This should be smaller than the horizon
     - *rolling_solve_horizon*: Hours, (Required if rolling_window solve). The length of the horizon of the roll. How long into the future the roll sees. For an individual roll, horizon is the solve length and jump is the output length.
     - *rolling_duration*: Hours, (Optional). Duration of rolling, if not stated, assumed to be the whole timeline of the solve
@@ -129,8 +128,8 @@ Input data is set with the following parameters:
 - `invest_min_period` - [MWh] Minimum storage investment for each period. Period.
 - `invest_forced` - [MWh] Storage capacity that must be invested in a given period. Investment cost will be included in the cost results even though the model does not have an investment variable. Constant or period.
 - `fixed_cost` - [CUR/kWh] Annual fixed cost for storage. Constant or period.
-- `penalty_up` - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time.
-- `penalty_down` - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time.
+- `penalty_up` - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time. Default value is 10 000, but this can be changed from the database.
+- `penalty_down` - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time. Default value is 10 000, but this can be changed from the database.
 - `virtual_unitsize` - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.
 - `self_discharge_loss` - [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.
 - `availablity` - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.
