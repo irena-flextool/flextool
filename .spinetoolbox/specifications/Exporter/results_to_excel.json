@@ -367,7 +367,7 @@
                 },
                 {
                     "map_type": "Alternative",
-                    "position": -1
+                    "position": 0
                 },
                 {
                     "map_type": "ParameterValueType",
@@ -380,7 +380,7 @@
                 },
                 {
                     "map_type": "ParameterValueIndex",
-                    "position": 0
+                    "position": 1
                 },
                 {
                     "map_type": "IndexName",
@@ -388,7 +388,7 @@
                 },
                 {
                     "map_type": "ParameterValueIndex",
-                    "position": 1
+                    "position": 2
                 },
                 {
                     "map_type": "ExpandedValue",
@@ -406,7 +406,7 @@
                 {
                     "map_type": "FixedValue",
                     "position": "table_name",
-                    "value": "group_flow_node"
+                    "value": "group_flow_node_t"
                 },
                 {
                     "map_type": "ObjectClass",
@@ -1011,106 +1011,12 @@
                 },
                 {
                     "map_type": "Alternative",
-                    "position": -3
+                    "position": 0
                 },
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
                     "filter_re": "2d_map"
-                },
-                {
-                    "map_type": "IndexName",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": 0
-                },
-                {
-                    "map_type": "IndexName",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": 1
-                },
-                {
-                    "map_type": "ExpandedValue",
-                    "position": 6
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "group_fn": "no_group",
-            "use_fixed_table_name": true
-        },
-        "Unit__node__flow_sdt": {
-            "type": "relationship_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "unit__node_flow_t"
-                },
-                {
-                    "map_type": "RelationshipClass",
-                    "position": "hidden",
-                    "filter_re": "^unit__node__group$"
-                },
-                {
-                    "map_type": "RelationshipClassObjectClass",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "RelationshipClassObjectClass",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "RelationshipClassObjectClass",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "^flow_t$"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Relationship",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "RelationshipObject",
-                    "position": -1
-                },
-                {
-                    "map_type": "RelationshipObject",
-                    "position": -2
-                },
-                {
-                    "map_type": "RelationshipObject",
-                    "position": -3
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": -4
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden",
-                    "filter_re": "3d_map"
-                },
-                {
-                    "map_type": "IndexName",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": 0
                 },
                 {
                     "map_type": "IndexName",
@@ -2266,6 +2172,100 @@
                 {
                     "map_type": "ExpandedValue",
                     "position": 5
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "Group__unit__node__flow_sdt": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "group__unit__node_flow_t"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^unit__node__group$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^flow_t$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": -3
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": -4
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": -2
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": -1
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "3d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 0
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 1
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 6
                 }
             ],
             "enabled": true,
