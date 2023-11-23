@@ -44,8 +44,8 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
   - *solves*: sequence of solves in the model represented with an array of solve names.
   - *discount_offset_investment*: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.
   - *discount_offset_operations*: [years] Offset from the period (often year) start to the payment of operational costs.
-  - *enable_optional_outputs*: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","node_balance_t","connection_flow_separate" 
-  - *disable_optional_outputs*: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t"
+  - *enable_optional_outputs*: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","unit__node_ramp_t","node_balance_t","connection_flow_separate" 
+  - *disable_optional_outputs*: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t","unnamed_group"
   
 - `solve`: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.
 
@@ -331,19 +331,22 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example it can be helpful to group all electricity nodes and show their aggregated output.
 
 - `output_results` - A flag to output aggregated results for the group members.
+- `output_node_flows` - A flag to add the group name to the unit node flows.
 
 Some of the outputs are not created by default. This is done to speed up the post-processing of results. The user can enable them by changing parameters of the the `model` entity:
 
   - `enable_optional_outputs`: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","node_balance_t","connection_flow_separate"
-    - *ramp_envelope* : Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node). 
+    - *ramp_envelope* : Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node).
+    - *unit__node_ramp_t* : Produces the ramps of individual units for all timesteps.
     - *node_balance_t* : Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. 
     - *connection_flow_separate* : Produces the connection flows separately for both directions.
 
 Additionally some of the default outputs can be disabled if user needs more speed and the outputs are not used.
   
-  - `disable_optional_outputs`: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t"
+  - `disable_optional_outputs`: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t", "unnamed_group"
     - *unit_flow_t* : The flows from units to the nodes for each timestep.
     - *connection_flow_t* : The flows between the nodes for each timestep.
+    - *unnamed_group* : Disables the unit__node__group flows that are not to/from a node in a group. 
 
 ## Reserves
 
