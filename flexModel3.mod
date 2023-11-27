@@ -3244,9 +3244,9 @@ for {g in groupOutput_node, s in solve_current, d in d_realized_period: sum{(g, 
 	       - sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 		         r_process_source_sink_flow_d[p, source, n, d] 
 		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] )
-	  , ( sum{(g, n) in group_node} r_penalty_nodeState_upDown_d[n, 'up', d] ) 
+	  , ( sum{(g, n) in group_node : n in nodeBalance} r_penalty_nodeState_upDown_d[n, 'up', d] ) 
 	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] )
-	  , ( sum{(g, n) in group_node} r_penalty_nodeState_upDown_d[n, 'down', d] ) 
+	  , ( sum{(g, n) in group_node : n in nodeBalance} r_penalty_nodeState_upDown_d[n, 'down', d] ) 
 	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] )
 	>> fn_groupNode__d;
   }
@@ -3272,8 +3272,8 @@ for {g in groupOutput_node, s in solve_current, (d, t) in dt_realize_dispatch: s
 	       - sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 		         r_process_source_sink_flow_dt[p, source, n, d, t] 
 		 ) 
-	   , ( sum{(g, n) in group_node} r_costPenalty_nodeState_upDown_dt[n, 'up', d, t] / ptNode[n, 'penalty_up', t]) 
-	   , ( sum{(g, n) in group_node} r_costPenalty_nodeState_upDown_dt[n, 'down', d, t] / ptNode[n, 'penalty_down', t] ) 
+	   , ( sum{(g, n) in group_node : n in nodeBalance} r_costPenalty_nodeState_upDown_dt[n, 'up', d, t] / ptNode[n, 'penalty_up', t]) 
+	   , ( sum{(g, n) in group_node : n in nodeBalance} r_costPenalty_nodeState_upDown_dt[n, 'down', d, t] / ptNode[n, 'penalty_down', t] ) 
 	>> fn_groupNode__dt;
   }
 

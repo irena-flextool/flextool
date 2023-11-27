@@ -892,7 +892,7 @@ class FlexToolRunner:
                                                                         timelines[timeline][index + block_step][1]))
                                                 break
         if len(active_time.keys()) == 0:
-            logging.error(current_solve + " could not connect to timeline. Check that object solve has period_timeblockSet [Map], objects timeblockSet [Map] and timeline [Map] are defined and that relation timeblockSet_timeline exists")
+            logging.error(current_solve + " could not connect to a timeline. Check that object solve has period_timeblockSet [Map], correct realized_periods [Array], objects timeblockSet [Map] and timeline [Map] are defined and that relation timeblockSet_timeline exists")
             exit(-1)
         return active_time
 
