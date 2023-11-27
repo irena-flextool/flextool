@@ -862,7 +862,7 @@
         [
             "constraint",
             "constant",
-            null,
+            0,
             null,
             "A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation."
         ],
@@ -1107,7 +1107,7 @@
         [
             "model",
             "version",
-            7.0,
+            9.0,
             null,
             "Contains database version information."
         ],
