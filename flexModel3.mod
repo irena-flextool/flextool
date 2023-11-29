@@ -317,7 +317,7 @@ param p_process {process, processParam} default 0;
 param pd_process {process, processPeriodParam, periodAll} default 0;
 param pt_process {process, processTimeParam, time} default 0;
 
-param p_constraint_constant {constraint};
+param p_constraint_constant {constraint} default 0;
 param p_process_node_constraint_flow_coefficient {process, node, constraint};
 param p_process_constraint_capacity_coefficient {process, constraint};
 param p_node_constraint_capacity_coefficient {node, constraint};
