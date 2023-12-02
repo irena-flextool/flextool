@@ -32,7 +32,8 @@ def migrate_database(database_path):
     6: [add_new_parameters(db, './version/flextool_template_default_value.json')],
     7: [add_new_parameters(db, './version/flextool_template_rolling_start_remove.json')],
     8: [add_new_parameters(db, './version/flextool_template_output_node_flows.json')],
-    9: [add_new_parameters(db, './version/flextool_template_constant_default.json')]
+    9: [add_new_parameters(db, './version/flextool_template_constant_default.json')],
+    10: [add_new_parameters(db, './version/flextool_template_constant_default.json')]
     }
 
     next_version = int(version) + 1

@@ -1,0 +1,46 @@
+{
+    "object_classes": [
+    ],
+    "relationship_classes": [
+    ],
+    "parameter_value_lists": [
+    ],
+    "object_parameters": [
+        [
+            "model",
+            "version",
+            10.0,
+            null,
+            "Contains database version information."
+        ],
+        [
+            "node",
+            "storage_binding_method",
+            "bind_forward_only",
+            "storage_binding_methods",
+            "Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over any holes in the used timeline, but will not bind end to the start. Meanwhile 'bind_between_timeblocks' will bind the storage end state at the end of the timeblock to the beginning of the timeblock. 'bind_within_period', 'bind_within_solve' and bind_within_model' will act similarly but over increasingly longer time span. Separate parameters (e.g. 'storage_state_start') can force bindings. By default, storage start state is bound to 0."
+        ],
+        [
+            "node",
+            "storage_start_end_method",
+            "fix_start",
+            "storage_start_end_methods",
+            "Choice whether the start and end states of storage are fixed in the beginning and end of the whole model timeline (not between solves). Uses 'storage_state_start' and 'storage_state_end'. Options: 'fix_nothing', 'fix_start', 'fix_end', 'fix_start_end'. By default, storage start state is bound to 0 to avoid creation of free energy."
+        ],
+        [
+            "node",
+            "storage_state_start",
+            0,
+            null,
+            "[0-1] Relative state of storage at the beginning of the first model solve (irrespective of when the model starts). Constant."
+        ]
+    ],
+    "tools": [
+    ],
+    "features": [
+    ],
+    "tool_features": [
+    ],
+    "tool_feature_methods": [
+    ]
+}
