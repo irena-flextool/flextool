@@ -186,6 +186,14 @@ set storage_solve_horizon_method := free use_reference_value use_reference_price
 set storage_nested_fix_method := no fix_quantity fix_price;
 set reserve_method := no_reserve timeseries_only dynamic_only both;
 
+set def_optional_outputs :=
+  (output_unit__node_flow_t, yes)
+  (output_connection__node__node_flow_t, yes)
+  (output_node_balance_t, yes)
+  (output_unit__node_ramp_t, no)
+  (output_ramp_envelope, no)
+  (output_connection_flow_separate, no);
+
 set unnamed_group:= unnamed_group;
 
 set param_costs := "unit investment/retirement","connection investment/retirement","storage investment/retirement",

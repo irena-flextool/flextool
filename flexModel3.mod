@@ -83,8 +83,11 @@ set groupParam;
 set groupPeriodParam;
 set groupTimeParam within groupParam;
 
-set enable_optional_outputs;
-set disable_optional_outputs;
+set def_optional_outputs dimen 2;
+set optional_outputs dimen 2;
+set optional_yes:= setof{(output,value) in optional_outputs: value == 'yes'}(output);
+set def_optional_yes := setof{(output,value) in def_optional_outputs: value == 'yes' && (output,'no') not in optional_outputs}(output);
+set enable_optional_outputs := optional_yes union def_optional_yes;
 
 set reserve__upDown__group__method dimen 4;
 set reserve__upDown__group := setof {(r, ud, g, m) in reserve__upDown__group__method : m <> 'no_reserve'} (r, ud, g);
@@ -195,7 +198,7 @@ set groupOutputNodeFlows 'groups that will output flow results' within group;
 set groupOutputNodeFlows_node 'output flow groups with node members' :=
     {g in groupOutputNodeFlows : sum{(g, n) in group_node} 1 };
 set unnamed_group;
-set groupOutputNodeFlows_node_with_unnamed:= (if 'unnamed_group' in disable_optional_outputs then groupOutputNodeFlows_node else groupOutputNodeFlows_node union unnamed_group);
+set groupOutputNodeFlows_node_with_unnamed:= groupOutputNodeFlows_node union unnamed_group;
 set nodes_not_in_output_group := {n in node: sum{(g, n) in group_node: g in groupOutputNodeFlows } 1 = 0};
 set unnamed_group_node:= {g in unnamed_group, n in nodes_not_in_output_group};
 set group_node_with_unnamed:= group_node union unnamed_group_node;
@@ -370,8 +373,7 @@ table data IN 'CSV' 'input/groupOutputNodeFlows.csv' : groupOutputNodeFlows <- [
 table data IN 'CSV' 'input/process.csv': process <- [process];
 table data IN 'CSV' 'input/profile.csv': profile <- [profile];
 table data IN 'CSV' 'solve_data/p_years_represented.csv': year <- [years_from_solve];
-table data IN 'CSV' 'input/enable_optional_outputs.csv': enable_optional_outputs <- [output];
-table data IN 'CSV' 'input/disable_optional_outputs.csv': disable_optional_outputs <- [output];
+table data IN 'CSV' 'input/optional_outputs.csv': optional_outputs <- [output, value];
 
 # Single dimension membership sets
 table data IN 'CSV' 'input/process_connection.csv': process_connection <- [process_connection];
@@ -2778,7 +2780,7 @@ param r_connection_dt{c in process_connection, (d, t) in dt} :=
   + sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_sink} r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
   - sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_source} r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
 ;
-param r_connection_to_sink_dt{c in process_connection, (d, t) in dt: 'connection_flow_separate' in enable_optional_outputs} :=
+param r_connection_to_sink_dt{c in process_connection, (d, t) in dt: 'output_connection_flow_separate' in enable_optional_outputs} :=
   + sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_sink}
     +(if r_process_source_sink_flow_dt[c, c, n, d, t] >= 0 then 
       r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
@@ -2788,7 +2790,7 @@ param r_connection_to_sink_dt{c in process_connection, (d, t) in dt: 'connection
       r_process_source_sink_flow_dt[c, c, n, d, t]* step_duration[d, t]
       else 0)
 ;
-param r_connection_to_source_dt{c in process_connection, (d, t) in dt: 'connection_flow_separate' in enable_optional_outputs} :=
+param r_connection_to_source_dt{c in process_connection, (d, t) in dt: 'output_connection_flow_separate' in enable_optional_outputs} :=
   - sum{(c, c, n) in process_source_sink_alwaysProcess : (c, n) in process_sink}
     +(if r_process_source_sink_flow_dt[c, c, n, d, t] < 0 then 
       r_process_source_sink_flow_dt[c, c, n, d, t] * step_duration[d, t]
@@ -2814,11 +2816,11 @@ param r_connection_d{c in process_connection, d in d_realized_period} :=
   + sum {(d, t) in dt_realize_dispatch} r_connection_dt[c, d, t]
 ;
 
-param r_connection_to_sink_d{c in process_connection, d in d_realized_period: 'connection_flow_separate' in enable_optional_outputs} :=
+param r_connection_to_sink_d{c in process_connection, d in d_realized_period: 'output_connection_flow_separate' in enable_optional_outputs} :=
   + sum {(d, t) in dt_realize_dispatch} r_connection_to_sink_dt[c, d, t]
 ;
 
-param r_connection_to_source_d{c in process_connection, d in d_realized_period: 'connection_flow_separate' in enable_optional_outputs} :=
+param r_connection_to_source_d{c in process_connection, d in d_realized_period: 'output_connection_flow_separate' in enable_optional_outputs} :=
   + sum {(d, t) in dt_realize_dispatch} r_connection_to_source_dt[c, d, t]
 ;
 
@@ -3571,7 +3573,7 @@ for {i in 1..1 : p_model['solveFirst']}
   printf '\n,,' >> fn_unit__sinkNode__dt;
   for { g in groupOutputNodeFlows_node_with_unnamed, (u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit && (g,sink) in group_node_with_unnamed} printf ',%s', g >> fn_unit__sinkNode__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'unit__node_flow_t' not in disable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_unit__node_flow_t' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit__sinkNode__dt;
     for {g in groupOutputNodeFlows_node_with_unnamed, (u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit && (g,sink) in group_node_with_unnamed}
@@ -3605,7 +3607,7 @@ for {i in 1..1 : p_model['solveFirst']}
   printf '\n,,' >> fn_unit__sourceNode__dt;
   for {g in groupOutputNodeFlows_node_with_unnamed, (u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit && (g,source) in group_node_with_unnamed} printf ',%s', g >> fn_unit__sourceNode__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'unit__node_flow_t' not in disable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_unit__node_flow_t' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit__sourceNode__dt;
     for {g in groupOutputNodeFlows_node_with_unnamed, (u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit && (g,source) in group_node_with_unnamed}
@@ -3639,7 +3641,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_connection__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'connection__node__node_flow_t' not in disable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_connection__node__node_flow_t' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_connection__dt;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3656,7 +3658,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_connection_to_sink__d;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_sink__d;
   }
-for {s in solve_current, d in d_realized_period: 'connection_flow_separate' in enable_optional_outputs }
+for {s in solve_current, d in d_realized_period: 'output_connection_flow_separate' in enable_optional_outputs }
   {
 	printf '\n%s,%s', s, d >> fn_connection_to_sink__d;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3673,7 +3675,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_connection_to_sink__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_sink__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'connection_flow_separate' in enable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_connection_flow_separate' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_connection_to_sink__dt;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3690,7 +3692,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_connection_to_source__d;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_source__d;
   }
-for {s in solve_current, d in d_realized_period: 'connection_flow_separate' in enable_optional_outputs }
+for {s in solve_current, d in d_realized_period: 'output_connection_flow_separate' in enable_optional_outputs }
   {
 	printf '\n%s,%s', s, d >> fn_connection_to_source__d;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3707,7 +3709,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_connection_to_source__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_source__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'connection_flow_separate' in enable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_connection_flow_separate' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_connection_to_source__dt;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3846,7 +3848,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit_ramp__sinkNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', sink >> fn_unit_ramp__sinkNode__dt;
   }
-for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'unit__node_ramp_t' in enable_optional_outputs}
+for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'output_unit__node_ramp_t' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sinkNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit}
@@ -3861,7 +3863,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit_ramp__sourceNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', source >> fn_unit_ramp__sourceNode__dt;
   }
-for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'unit__node_ramp_t' in enable_optional_outputs}
+for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'output_unit__node_ramp_t' in enable_optional_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sourceNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}
@@ -4009,7 +4011,7 @@ param fn_node__dt symbolic := "output/node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,time,inflow,"from units","from connections","to units","to connections",' > fn_node__dt;
     printf '"state change","self discharge","upward slack","downward slack"\n' >> fn_node__dt; }  # Print the header on the first solve
-for {n in node, s in solve_current, (d, t) in dt_realize_dispatch: 'node_balance_t' in enable_optional_outputs}
+for {n in node, s in solve_current, (d, t) in dt_realize_dispatch: 'output_node_balance_t' in enable_optional_outputs}
   {
     printf '%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
 		, n, s, d, t
@@ -4172,7 +4174,7 @@ for {s in solve_current, d in d_realize_invest}
 param w_marginal_inv := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node;
 display w_marginal_inv;
 
-param r_node_ramproom_units_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'ramp_envelope' in enable_optional_outputs} := 
+param r_node_ramproom_units_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} := 
           + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
               + p_process_sink_coefficient[u, n]
                 * ( if u in process_online 
@@ -4189,7 +4191,7 @@ param r_node_ramproom_units_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);
 
-param r_node_ramproom_units_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'ramp_envelope' in enable_optional_outputs} := 
+param r_node_ramproom_units_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} := 
           - sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
 			  + r_process_source_sink_flow_dt[u, source, n, d, t]
 			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
@@ -4206,7 +4208,7 @@ param r_node_ramproom_units_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);  
 
-param r_node_ramproom_VRE_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'ramp_envelope' in enable_optional_outputs} := 
+param r_node_ramproom_VRE_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} := 
           + r_node_ramproom_units_up_dtt[n, d, t, t_previous]
 		  + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
               + p_process_sink_coefficient[u, n]
@@ -4225,7 +4227,7 @@ param r_node_ramproom_VRE_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'r
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);
 
-param r_node_ramproom_VRE_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'ramp_envelope' in enable_optional_outputs} := 
+param r_node_ramproom_VRE_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} := 
           + r_node_ramproom_units_down_dtt[n, d, t, t_previous]
           - sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
 			  + r_process_source_sink_flow_dt[u, source, n, d, t]
@@ -4244,7 +4246,7 @@ param r_node_ramproom_VRE_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);  
 
-param r_node_ramproom_connections_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'ramp_envelope' in enable_optional_outputs} :=  
+param r_node_ramproom_connections_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} :=  
           + r_node_ramproom_VRE_up_dtt[n, d, t, t_previous]
           + sum{(u, source, n) in process_source_sink_alwaysProcess : (u, n) in process_sink && u in process_connection && u not in process_VRE} ( 
               + p_process_sink_coefficient[u, n]
@@ -4262,7 +4264,7 @@ param r_node_ramproom_connections_up_dtt{n in nodeBalance, (d, t, t_previous) in
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);
 
-param r_node_ramproom_connections_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'ramp_envelope' in enable_optional_outputs} := 
+param r_node_ramproom_connections_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} := 
           + r_node_ramproom_VRE_down_dtt[n, d, t, t_previous]
           - sum{(u, source, n) in process_source_sink_alwaysProcess : (u, n) in process_sink && u in process_connection && u not in process_VRE && u not in process_sinkIsNode_2way1var} ( 
 			  + r_process_source_sink_flow_dt[u, source, n, d, t]
@@ -4300,7 +4302,7 @@ param fn_node_ramp__dtt symbolic := "output/node_ramp__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,time,"ramp","+connections_up","+VRE_up","units_up",' > fn_node_ramp__dtt;
     printf '"units_down","+VRE_down","+connections_down"' >> fn_node_ramp__dtt; }  # Print the header on the first solve
-for {n in nodeBalance, s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'ramp_envelope' in enable_optional_outputs}
+for {n in nodeBalance, s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'output_ramp_envelope' in enable_optional_outputs}
   {
     printf '\n%s,%s,%s,%s,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f'
 		, n, s, d, t
