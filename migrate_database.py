@@ -81,7 +81,7 @@ def add_new_parameters(db, filepath):
 
     #With objective parameters, no duplicates are created. These will replace the old ones or create new. There will always be imports.
     (num,log) = import_data(db, object_parameters = template["object_parameters"])
-    print(filepath)
+
     db.commit_session("Added output node flows")
 
     return 0
@@ -109,8 +109,32 @@ def change_optional_output_type(db, filepath):
 
     add_new_parameters(db, filepath)
 
+    for param in paramset_enable:
+        for output_name in param[1]:
+            if output_name == 'ramp_envelope':
+                parameter_name = 'output_ramp_envelope'
+            elif output_name == 'unit__node_ramp_t':
+                parameter_name = 'output_unit__node_ramp_t'
+            elif output_name == 'connection_flow_separate' or output_name == 'connection_flow_one_direction':
+                parameter_name = 'output_connection_flow_separate'
+            else:
+                parameter_name = 'invalid'
+            if parameter_name != 'invalid':
+                new_output = [(param[0][0], param[0][1], parameter_name, "yes", param[0][2])]
+                (num,log) = import_data(db, object_parameter_values = new_output)
+    for param in paramset_disable:
+        for output_name in param[1]:
+            if output_name == 'unit_flow_t' or output_name == 'unit__node_flow_t':
+                parameter_name = 'output_unit__node_flow_t'
+            elif output_name == 'connection_flow_t' or output_name == 'connection__node__node_flow_t':
+                parameter_name = 'output_connection__node__node_flow_t'
+            else:
+                parameter_name = 'invalid'
+            if parameter_name != 'invalid':
+                new_output = [(param[0][0], param[0][1], parameter_name, "no", param[0][2])]
+                (num,log) = import_data(db, object_parameter_values = new_output)
     
-    db.remove_items(**{'parameter_definition': [enable_parameter_definition.id]})
+    db.remove_items(**{'parameter_definition': [enable_parameter_definition.id,disable_parameter_definition.id]})
     db.commit_session("Changed optional outputs")
 
 if __name__ == '__main__':
