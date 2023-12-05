@@ -830,23 +830,16 @@ With these parameters, the command line call is:
 
 ## How to enable/disable outputs
 
-Some outputs need to be explicitly added in order to output them. This is to reduce the result processing time. Each optional output can be added to the `enable_optional_outputs` parameter array of the `model` object. The additional outputs are:
+Some of the outputs are optional and some of them are not produced by default. Removing outputs speeds up the post-processing of results. The user can enable/disable them by changing parameters of the the `model` entity:
 
-- *ramp_envelope* : Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node). 
-- *unit__node_ramp_t*: Produces the ramp for individual units for all timesteps.
-- *node_balance_t* : Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. 
-- *connection_flow_separate* : Produces the connection flows separately for both directions.
+- `output_node_balance_t`: Default: yes. Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. 
+- `output_connection__node__node_flow_t`: Default: yes. The flows between the nodes for each timestep.
+- `output_unit__node_flow_t`: Default, yes. The flows from units to the nodes for each timestep.
+- `output_ramp_envelope`: Default, no. Includes seven parameters that form the ramp room envelope. How much there is additional ramping capability in a given node. (Parameter node_ramp_t)
+- `output_connection_flow_separate`: Default, no. Produces the connection flows separately for both directions.
+- `output_unit__node_ramp_t`: Default, no. Produces the ramps of individual units for all timesteps.
 
-![Enable outputs](./enable_outputs.PNG)
-
-Similarly, some outputs can be disables to reduce the result processing time. To do so, add the output name to the `disable_optional_outputs` parameter array of the `model` object.  The allowed outputs to disable are:
-
-- *unit_flow_t* : The flows from units to the nodes for each timestep.
-- *connection_flow_t* : The flows between the nodes for each timestep.
-
-These can be replaced by group outputs (e.g. all wind power plant outputs are aggregated into one).
-
-![Disable outputs](./disable_outputs.PNG)
+![Optional outputs](./optional_outputs.PNG)
 
 
 ## How to make the Flextool run faster
