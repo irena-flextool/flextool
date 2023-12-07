@@ -333,20 +333,14 @@ Some results are output for groups of nodes. This means that instead of getting 
 - `output_results` - A flag to output aggregated results for the group members.
 - `output_node_flows` - A flag to add the group name to the unit node flows.
 
-Some of the outputs are not created by default. This is done to speed up the post-processing of results. The user can enable them by changing parameters of the the `model` entity:
+Some of the outputs are optional. They can be removed to speed up the post-processing of results. The user can enable/disable them by changing parameters of the the `model` entity:
 
-  - `enable_optional_outputs`: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","node_balance_t","connection_flow_separate"
-    - *ramp_envelope* : Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node).
-    - *unit__node_ramp_t* : Produces the ramps of individual units for all timesteps.
-    - *node_balance_t* : Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. 
-    - *connection_flow_separate* : Produces the connection flows separately for both directions.
-
-Additionally some of the default outputs can be disabled if user needs more speed and the outputs are not used.
-  
-  - `disable_optional_outputs`: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t", "unnamed_group"
-    - *unit_flow_t* : The flows from units to the nodes for each timestep.
-    - *connection_flow_t* : The flows between the nodes for each timestep.
-    - *unnamed_group* : Disables the unit__node__group flows that are not to/from a node in a group. 
+- `output_node_balance_t`: Default: yes. Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. 
+- `output_connection__node__node_flow_t`: Default: yes. The flows between the nodes for each timestep.
+- `output_unit__node_flow_t`: Default, yes. The flows from units to the nodes for each timestep.
+- `output_ramp_envelope`: Default, no. Includes seven parameters that form the ramp room envelope. How much there is additional ramping capability in a given node. (Parameter node_ramp_t)
+- `output_connection_flow_separate`: Default, no. Produces the connection flows separately for both directions.
+- `output_unit__node_ramp_t`: Default, no. Produces the ramps of individual units for all timesteps.
 
 ## Reserves
 

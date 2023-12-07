@@ -4,8 +4,6 @@ import os
 import sys
 from spinedb_api import import_data, DatabaseMapping, from_database
 
-
-
 def migrate_database(database_path):
 
     if not os.path.exists(database_path) or not database_path.endswith(".sqlite"):
@@ -22,27 +20,38 @@ def migrate_database(database_path):
     else:
         version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
-    update_function_map = {
-    0: [add_version(db)],
-    1: [add_new_parameters(db, './version/flextool_template_v2.json')],
-    2: [add_new_parameters(db, './version/flextool_template_rolling_window.json')],
-    3: [add_new_parameters(db, './version/flextool_template_lifetime_method.json')],
-    4: [add_new_parameters(db, './version/flextool_template_drop_down.json')], 
-    5: [add_new_parameters(db, './version/flextool_template_optional_outputs.json')],
-    6: [add_new_parameters(db, './version/flextool_template_default_value.json')],
-    7: [add_new_parameters(db, './version/flextool_template_rolling_start_remove.json')],
-    8: [add_new_parameters(db, './version/flextool_template_output_node_flows.json')],
-    9: [add_new_parameters(db, './version/flextool_template_constant_default.json')],
-    10: [add_new_parameters(db, './version/flextool_template_constant_default.json')]
-    }
-
     next_version = int(version) + 1
-    new_version = len(update_function_map.keys()) - 1
+    new_version = 11
 
     while next_version <= new_version:
-        for func in update_function_map[next_version]:
-            func
+        if next_version == 0:
+            add_version(db)
+        elif next_version == 1:
+            add_new_parameters(db, './version/flextool_template_v2.json')
+        elif next_version == 2:
+            add_new_parameters(db, './version/flextool_template_rolling_window.json')
+        elif next_version == 3:
+            add_new_parameters(db, './version/flextool_template_lifetime_method.json')
+        elif next_version == 4:
+            add_new_parameters(db, './version/flextool_template_drop_down.json')
+        elif next_version == 5:
+            add_new_parameters(db, './version/flextool_template_optional_outputs.json')
+        elif next_version == 6:
+            add_new_parameters(db, './version/flextool_template_default_value.json')
+        elif next_version == 7:
+            add_new_parameters(db, './version/flextool_template_rolling_start_remove.json')
+        elif next_version == 8:
+            add_new_parameters(db, './version/flextool_template_output_node_flows.json')
+        elif next_version == 9:
+            add_new_parameters(db, './version/flextool_template_constant_default.json')
+        elif next_version == 10:
+            add_new_parameters(db, './version/flextool_template_storage_binding_defaults.json')
+        elif next_version == 11:
+            change_optional_output_type(db,'./version/flextool_template_default_optional_output.json' )
+        else:
+            print("Version invalid")
         next_version += 1 
+
     if version < new_version:
         version_up = [["model", "version", new_version, None, "Contains database version information."]]
         (num,log) = import_data(db, object_parameters = version_up)
@@ -76,6 +85,57 @@ def add_new_parameters(db, filepath):
     db.commit_session("Added output node flows")
 
     return 0
+
+def change_optional_output_type(db, filepath):
+
+    sq= db.entity_parameter_value_sq
+    sq_def = db.object_parameter_definition_sq
+    enable_parameter_query = db.query(sq).filter(sq.c.object_class_name == "model").filter(sq.c.parameter_name == "enable_optional_outputs").all()
+    disable_parameter_query = db.query(sq).filter(sq.c.object_class_name == "model").filter(sq.c.parameter_name == "disable_optional_outputs").all()
+    enable_parameter_definition =  db.query(sq_def).filter(sq_def.c.object_class_name == "model").filter(sq_def.c.parameter_name == "enable_optional_outputs").one_or_none()
+    disable_parameter_definition =  db.query(sq_def).filter(sq_def.c.object_class_name == "model").filter(sq_def.c.parameter_name == "disable_optional_outputs").one_or_none()
+
+    paramset_enable = []
+    paramset_disable = []
+    for param in enable_parameter_query:
+        enable_optional_outputs = from_database(param._asdict()['value'].decode(), "array").values
+        meta = [param.entity_class_name, param.entity_name, param.alternative_name]
+        paramset_enable.append((meta,enable_optional_outputs))
+
+    for param in disable_parameter_query:
+        disable_optional_outputs = from_database(param._asdict()['value'].decode(), "array").values
+        meta = [param.entity_class_name, param.entity_name, param.alternative_name]
+        paramset_disable.append((meta,disable_optional_outputs))
+
+    add_new_parameters(db, filepath)
+
+    for param in paramset_enable:
+        for output_name in param[1]:
+            if output_name == 'ramp_envelope':
+                parameter_name = 'output_ramp_envelope'
+            elif output_name == 'unit__node_ramp_t':
+                parameter_name = 'output_unit__node_ramp_t'
+            elif output_name == 'connection_flow_separate' or output_name == 'connection_flow_one_direction':
+                parameter_name = 'output_connection_flow_separate'
+            else:
+                parameter_name = 'invalid'
+            if parameter_name != 'invalid':
+                new_output = [(param[0][0], param[0][1], parameter_name, "yes", param[0][2])]
+                (num,log) = import_data(db, object_parameter_values = new_output)
+    for param in paramset_disable:
+        for output_name in param[1]:
+            if output_name == 'unit_flow_t' or output_name == 'unit__node_flow_t':
+                parameter_name = 'output_unit__node_flow_t'
+            elif output_name == 'connection_flow_t' or output_name == 'connection__node__node_flow_t':
+                parameter_name = 'output_connection__node__node_flow_t'
+            else:
+                parameter_name = 'invalid'
+            if parameter_name != 'invalid':
+                new_output = [(param[0][0], param[0][1], parameter_name, "no", param[0][2])]
+                (num,log) = import_data(db, object_parameter_values = new_output)
+    
+    db.remove_items(**{'parameter_definition': [enable_parameter_definition.id,disable_parameter_definition.id]})
+    db.commit_session("Changed optional outputs")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
