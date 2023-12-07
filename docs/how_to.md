@@ -830,7 +830,7 @@ With these parameters, the command line call is:
 
 ## How to enable/disable outputs
 
-Some of the outputs are optional and some of them are not produced by default. Removing outputs speeds up the post-processing of results. The user can enable/disable them by changing parameters of the the `model` entity:
+Some of the outputs are optional. Some of these optional outputs are output by default while some are not (see below). Removing outputs speeds up the post-processing of results. The user can enable/disable them by changing the following parameters of the `model` entity:
 
 - `output_node_balance_t`: Default: yes. Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. 
 - `output_connection__node__node_flow_t`: Default: yes. The flows between the nodes for each timestep.
