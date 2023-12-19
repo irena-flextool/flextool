@@ -21,7 +21,7 @@ def migrate_database(database_path):
         version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
     next_version = int(version) + 1
-    new_version = 11
+    new_version = 12
 
     while next_version <= new_version:
         if next_version == 0:
@@ -47,7 +47,12 @@ def migrate_database(database_path):
         elif next_version == 10:
             add_new_parameters(db, './version/flextool_template_storage_binding_defaults.json')
         elif next_version == 11:
-            change_optional_output_type(db,'./version/flextool_template_default_optional_output.json' )
+            change_optional_output_type(db,'./version/flextool_template_default_optional_output.json')
+        elif next_version == 12:
+            new_parameters = [["group", "output_aggregate_flows", None, "output_node_flows", "Used with group_unit_node or group_connection_node to combine the flows when producing the output_node_flows of a node group."],
+                              ["group", "output_node_flows", None, "output_node_flows" ,"Creates the timewise flow output for this node group (group_flow_t)"]]
+            add_parameters_manual(db,new_parameters)
+            remove_parameters_manual(db,[["solve","rolling_start_time"]])
         else:
             print("Version invalid")
         next_version += 1 
@@ -67,6 +72,25 @@ def add_version(db):
     (num,log) = import_data(db, object_parameters = version_up)
     db.commit_session("Added version parameter")
 
+    return 0
+
+def remove_parameters_manual(db,obj_param_names):
+    sq_def = db.object_parameter_definition_sq
+    id_list = []
+    for name_list in obj_param_names:
+        object_name = name_list[0]
+        parameter_name = name_list[1]
+        param = db.query(sq_def).filter(sq_def.c.object_class_name == object_name).filter(sq_def.c.parameter_name == parameter_name).one_or_none()
+        if param != None:
+            id_list.append(param.id)
+
+    db.remove_items(**{'parameter_definition': id_list})
+    db.commit_session("Removed parameters")
+    return 0
+
+def add_parameters_manual(db,new_parameters):
+    (num,log) = import_data(db, object_parameters = new_parameters)
+    db.commit_session("Added new parameters")
     return 0
 
 def add_new_parameters(db, filepath):
@@ -136,6 +160,10 @@ def change_optional_output_type(db, filepath):
     
     db.remove_items(**{'parameter_definition': [enable_parameter_definition.id,disable_parameter_definition.id]})
     db.commit_session("Changed optional outputs")
+
+def add_group_flow_output(db):
+    sq= db.entity_parameter_value_sq
+    sq_def = db.object_parameter_definition_sq
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

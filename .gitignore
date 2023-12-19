@@ -2,6 +2,7 @@
 FlexTool2D_data.sqlite
 Results.sqlite
 Input_data.sqlite
+input_data_template.sqlite
 paramNotWritten.dat
 .spinetoolbox/local/
 .spinetoolbox/items/flextool/output/

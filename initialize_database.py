@@ -20,6 +20,9 @@ def initialize_database(database_name="new_database.sqlite"):
     print("Initialized")
     new_db.commit_session("Initialized")
 
+    from migrate_database import migrate_database
+
+    migrate_database(database_name)
 
 
 
