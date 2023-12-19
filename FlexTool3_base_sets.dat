@@ -194,8 +194,6 @@ set def_optional_outputs :=
   (output_ramp_envelope, no)
   (output_connection_flow_separate, no);
 
-set unnamed_group:= unnamed_group;
-
 set param_costs := "unit investment/retirement","connection investment/retirement","storage investment/retirement",
                    "fixed cost of existing assets",commodity,CO2,"variable cost",starts,"upward penalty","downward penalty",
 				   "inertia penalty","non-synchronous penalty","capacity margin penalty","upward reserve penalty",

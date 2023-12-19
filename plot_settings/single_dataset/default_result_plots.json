@@ -28,13 +28,13 @@
         "x2": "X_period",
         "x3": "X_solve"
       },
-      "plot_type": "stacked line",
+      "plot_type": "line",
       "selection": {
         "X_period": [],
         "X_solve": [],
         "X_time": [],
         "entity_class": [
-          "unit__node__group"
+          "group"
         ],
         "entity_0": [],
         "entity_1": [],
@@ -174,7 +174,7 @@
           "unit__node"
         ],
         "entity_0": [],
-        "entity_1": ["west"],
+        "entity_1": [],
         "entity_2": [],
         "parameter": [
           "flow_t"
