@@ -856,7 +856,7 @@ Some of the outputs are optional. Some of these optional outputs are output by d
 - `output_node_balance_t`: Default: yes. Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. 
 - `output_connection__node__node_flow_t`: Default: yes. The flows between the nodes for each timestep.
 - `output_unit__node_flow_t`: Default, yes. The flows from units to the nodes for each timestep.
-- `output_ramp_envelope`: Default, no. Includes seven parameters that form the ramp room envelope. How much there is additional ramping capability in a given node. (Parameter node_ramp_t)
+- `output_ramp_envelope`: Default, no. Includes seven parameters that form the ramp room envelope. Shows the actual ramp as well as different levels of available ramping  capability in a given node - for both directions, upward and downward. The first level includes ramproom in all the units, except VRE. The second level adds ramping room in VRE units (typically only downward, unless they have been curtailed. Finally, the last level adds potential ramping capability in the connections, which reflects only the ramproom in the connections themselves - the units/nodes behind the connection may or may not have capability to provide that ramp. (Parameter node_ramp_t)
 - `output_connection_flow_separate`: Default, no. Produces the connection flows separately for both directions.
 - `output_unit__node_ramp_t`: Default, no. Produces the ramps of individual units for all timesteps.
 
