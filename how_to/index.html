@@ -844,6 +844,7 @@ Other reason might be that both dispatch and storage solves are aggregated with 
 <p>Model changes (results will remain the same):</p>
 <ul>
 <li>Disable outputs that you don't need. This will speed up the result processing. See: <a href="#how-to-enabledisable-outputs">How to enable/disable outputs</a></li>
+<li>When using HiGHS solver: in your solve's parameters, you can set highs_presolve = on, and highs_parallel = on to speed up the optimisation. However, it can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.</li>
 <li>Especially with MIP problems, considering using a commercial solver like CPLEX (license required). See: <a href="#how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</a></li>
 </ul>
 <p>Model changes (results will be affected):</p>
