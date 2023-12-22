@@ -44,8 +44,6 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
   - *solves*: sequence of solves in the model represented with an array of solve names.
   - *discount_offset_investment*: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.
   - *discount_offset_operations*: [years] Offset from the period (often year) start to the payment of operational costs.
-  - *enable_optional_outputs*: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","unit__node_ramp_t","node_balance_t","connection_flow_separate" 
-  - *disable_optional_outputs*: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t","unnamed_group"
   
 - `solve`: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.
 
@@ -331,7 +329,8 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example it can be helpful to group all electricity nodes and show their aggregated output.
 
 - `output_results` - A flag to output aggregated results for the group members.
-- `output_node_flows` - A flag to add the group name to the unit node flows.
+- `output_node_flows` - A flag to create a timewise result of the flows in and out of the group of nodes
+- `output_aggregate_flows` - A flag that to sum the process (group_unit_node / group_process_node) flows of this group in the result table created by `output_node_flows` to different group of nodes (group_node)
 
 Some of the outputs are optional. They can be removed to speed up the post-processing of results. The user can enable/disable them by changing parameters of the the `model` entity:
 

@@ -420,7 +420,7 @@ The `constraint_flow_coefficient` for pump_input should therefore be (1/efficien
 ![Hydro pump parameters](./hydro_pump_parameters.PNG)
 ![Hydro pump relation](./hydro_pump_relations.PNG)
 
-### How to add a reserve
+## How to add a reserve
 **(init.sqlite: scenario network_coal_wind_reserve)**
 
 In FlexTool, reserves are defined for a group of nodes. If there is a need to have a reserve requirement for a single node, it needs its own group. Therefore, when creating a reserve, the first step is to add a new `group` (e.g. *electricity*) with all member nodes (e.g. *west*, *east* and *north*) using the `group__node` relationship class. Then, a new reserve categories can be added (e.g. *primary*) to the `reserve` object class. 
@@ -846,8 +846,23 @@ The second aspect, aggregating flows into one, is achieved by:
 
 All flows that are part of a group that has `output_aggregate_flows` set to **yes** will then be output only as part of the aggregate in the `group` **flow_t**. In all other outputs, they will remain independent.
 
-![Output aggregate flows](./output_flows.png)
+In the how to database (**aggregate_output.sqlite**) exist a system where the aggregated results of the nodeA and nodeB are created. Both of the nodes have a wind plant and nodeA has a coal plant. The demand is divided to the electricity, heat and irrigiation needs. This means that 
+besides internal demand (inflow) both the nodes output to the heat node and nodeA outputs to the irrigation node. Additionally the nodes are connected to each other and the node_country_y1. The nodeA is connected to the node_country_x1 and nodeB is connected to the node_country_x2. 
 
+We are only interested in the nodeA and nodeB so a group *focus_nodes* is created and the nodes are added to it with group_node relationship. To simplify the results the two wind plants results are aggregated as one. Same applies to the heat pumps. This is done by creating the groups *wind_aggregated* and *heat_aggregated*. The units are added with group_unit_node relationship. 
+
+Note that here the node has to be either nodeA or nodeB, not the heat node! The group_unit_node is tied to the node group with the node information. The group_unit_node can include other units but only the ones that are have a node that is inside the *focus_nodes* group are included in the result table.
+
+Connections are simplified by creating groups *connections_country_x* and *connections_country_y* and adding the relevant connections with group_connection_node relationship. Again the node has to be either nodeA or nodeB to be included in the results.
+
+![Output aggregate flows graph](./output_flows_graph.PNG)
+
+The *focus_nodes* group needs the parameter `output_node_flows`: *yes* and the unit and conneection groups need the parameter `output_aggregate_flows`: *yes*. 
+![Output aggregate flows](./output_flows_input.PNG)
+
+The resulting table has the flows to the *focus_nodes* group from units and connections. Additionally, the internal losses of the group is calculated. These are the flows between the nodes of the group and the storage losses. Here the losses come from the connection between nodeA and nodeB. Additionally the possible slacks to balance the nodes are included.
+
+![Output aggregate flows result](./output_flows_result.png)
 
 ## How to enable/disable outputs
 
