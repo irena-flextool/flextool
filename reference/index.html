@@ -212,10 +212,8 @@
 <p><em>solves</em>: sequence of solves in the model represented with an array of solve names.</p>
 </li>
 <li><em>discount_offset_investment</em>: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.</li>
-<li><em>discount_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs.</li>
-<li><em>enable_optional_outputs</em>: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","unit__node_ramp_t","node_balance_t","connection_flow_separate" </li>
 <li>
-<p><em>disable_optional_outputs</em>: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t","unnamed_group"</p>
+<p><em>discount_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs.</p>
 </li>
 <li>
 <p><code>solve</code>: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.</p>
@@ -496,7 +494,8 @@
 <p>Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example it can be helpful to group all electricity nodes and show their aggregated output.</p>
 <ul>
 <li><code>output_results</code> - A flag to output aggregated results for the group members.</li>
-<li><code>output_node_flows</code> - A flag to add the group name to the unit node flows.</li>
+<li><code>output_node_flows</code> - A flag to create a timewise result of the flows in and out of the group of nodes</li>
+<li><code>output_aggregate_flows</code> - A flag that to sum the process (group_unit_node / group_process_node) flows of this group in the result table created by <code>output_node_flows</code> to different group of nodes (group_node)</li>
 </ul>
 <p>Some of the outputs are optional. They can be removed to speed up the post-processing of results. The user can enable/disable them by changing parameters of the the <code>model</code> entity:</p>
 <ul>

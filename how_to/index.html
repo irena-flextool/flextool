@@ -79,10 +79,8 @@
     <li class="toctree-l2"><a class="reference internal" href="#how-to-create-a-hydro-reservoir">How to create a hydro reservoir</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#how-to-create-a-hydro-pump-storage">How to create a hydro pump storage</a>
-        <ul>
-    <li class="toctree-l3"><a class="reference internal" href="#how-to-add-a-reserve">How to add a reserve</a>
     </li>
-        </ul>
+    <li class="toctree-l2"><a class="reference internal" href="#how-to-add-a-reserve">How to add a reserve</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#how-to-add-a-minimum-load-start-up-and-ramp">How to add a minimum load, start-up and ramp</a>
     </li>
@@ -497,7 +495,7 @@ This means that here only half of the electricity used by the pump can be recove
 The <code>constraint_flow_coefficient</code> for pump_input should therefore be (1/efficiency)</p>
 <p><img alt="Hydro pump parameters" src="../hydro_pump_parameters.PNG" />
 <img alt="Hydro pump relation" src="../hydro_pump_relations.PNG" /></p>
-<h3 id="how-to-add-a-reserve">How to add a reserve</h3>
+<h2 id="how-to-add-a-reserve">How to add a reserve</h2>
 <p><strong>(init.sqlite: scenario network_coal_wind_reserve)</strong></p>
 <p>In FlexTool, reserves are defined for a group of nodes. If there is a need to have a reserve requirement for a single node, it needs its own group. Therefore, when creating a reserve, the first step is to add a new <code>group</code> (e.g. <em>electricity</em>) with all member nodes (e.g. <em>west</em>, <em>east</em> and <em>north</em>) using the <code>group__node</code> relationship class. Then, a new reserve categories can be added (e.g. <em>primary</em>) to the <code>reserve</code> object class. 
 Finally, make sure there are <em>up</em> and <em>down</em> objects in the `UpDown' object class. These are hard-coded names in FlexTool and need to be used when creating reserves.</p>
@@ -820,8 +818,17 @@ Other reason might be that both dispatch and storage solves are aggregated with 
 <li>set the group's parameter <strong>output_aggregate_flows</strong> to <em>yes</em></li>
 <li>assigning all flows that should be part of the group (using <code>group__unit__node</code> or <code>group__connection__node</code>, e.g. <em>all_VRE__wind1__west</em>)</li>
 </ul>
-<p>All flows that are part of a group that has <code>output_aggregate_flows</code> set to <strong>yes</strong> will then be output only as part of the aggregate in the <code>group</code> <strong>flow_t</strong>. In all other outputs, they will remain independent.</p>
-<p><img alt="Output aggregate flows" src="../output_flows.png" /></p>
+<p>All flows that are part of a group that has <strong>output_aggregate_flows</strong> set to <em>yes</em> will then be output only as part of the aggregate in the <code>group</code> <strong>flow_t</strong>. In all other outputs, they will remain independent.</p>
+<p>"How to database" (<strong>aggregate_output.sqlite</strong>) aggregates results for the <em>nodeA</em> and <em>nodeB</em>. Both of the nodes have a wind power plant and nodeA has a coal power plant. The demand is divided to the electricity, heat and irrigiation needs. This means that, 
+besides an internal demand (<strong>inflow</strong>), both nodes output to the heat node while <em>node</em>A also outputs to the irrigation node. Additionally the nodes are connected to each other and the <em>node_country_y1</em>. The <em>nodeA</em> is connected to the <em>node_country_x1</em> and <em>nodeB</em> is connected to the <em>node_country_x2</em>. </p>
+<p>For the sake of the example, we are only interested in the <em>nodeA</em> and <em>nodeB</em>. Therefore, <code>group</code> <em>focus_nodes</em> is created and the nodes are added to it with <code>group__node</code> relationships. To simplify the results, the flows from the two wind plants are aggregated as one. Same applies to the heat pumps. This is done by creating the <code>group</code>s <em>wind_aggregated</em> and <em>heat_aggregated</em>. The flows are added to the group with the <code>group_unit_node</code> relationship. </p>
+<p>Note that here the <code>node</code> has to be either <em>nodeA</em> or <em>nodeB</em>, not the heat node! E.g. the nodes from the <em>wind_aggregated</em> <code>group_unit_node</code> are tied to the nodes from the <em>focus_nodes</em> <code>group_node</code> only when they share same nodes (e.g. <em>wind_aggregated__wind_plant_1__nodeA</em> and <em>focus_nodes__nodeA</em> have <em>nodeA</em> in common). The <code>group_unit_node</code> can include other flows but only the ones that are have a node that is inside the <em>focus_nodes</em> group are included in the result table under the <em>focus_nodes</em> group.</p>
+<p>Connections are simplified by creating groups <em>connections_country_x</em> and <em>connections_country_y</em> and adding the relevant connections with <code>group_connection_node</code> relationship. Again the <code>node</code> has to be either <em>nodeA</em> or <em>nodeB</em> to be included in the results.</p>
+<p><img alt="Output aggregate flows graph" src="../output_flows_graph.PNG" /></p>
+<p>The <em>focus_nodes</em> group needs the parameter <code>output_node_flows</code>: <em>yes</em> and the unit and connection groups need the parameter <code>output_aggregate_flows</code>: <em>yes</em>. </p>
+<p><img alt="Output aggregate flows" src="../output_flows_input.PNG" /></p>
+<p>The resulting table has the flows to the <em>focus_nodes</em> group from units and connections. Additionally, the internal losses of the group are calculated. These are the flows between the nodes of the group and the storage losses. Here the losses come from the connection between nodeA and nodeB. Additionally the possible slacks to balance the nodes are included.</p>
+<p><img alt="Output aggregate flows result" src="../output_flows_result.png" /></p>
 <h2 id="how-to-enabledisable-outputs">How to enable/disable outputs</h2>
 <p>Some of the outputs are optional. Some of these optional outputs are output by default while some are not (see below). Removing outputs speeds up the post-processing of results. The user can enable/disable them by changing the following parameters of the <code>model</code> entity:</p>
 <ul>
