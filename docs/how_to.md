@@ -844,23 +844,24 @@ The second aspect, aggregating flows into one, is achieved by:
 - set the group's parameter **output_aggregate_flows** to *yes*
 - assigning all flows that should be part of the group (using `group__unit__node` or `group__connection__node`, e.g. *all_VRE__wind1__west*)
 
-All flows that are part of a group that has `output_aggregate_flows` set to **yes** will then be output only as part of the aggregate in the `group` **flow_t**. In all other outputs, they will remain independent.
+All flows that are part of a group that has **output_aggregate_flows** set to *yes* will then be output only as part of the aggregate in the `group` **flow_t**. In all other outputs, they will remain independent.
 
-In the how to database (**aggregate_output.sqlite**) exist a system where the aggregated results of the nodeA and nodeB are created. Both of the nodes have a wind plant and nodeA has a coal plant. The demand is divided to the electricity, heat and irrigiation needs. This means that 
-besides internal demand (inflow) both the nodes output to the heat node and nodeA outputs to the irrigation node. Additionally the nodes are connected to each other and the node_country_y1. The nodeA is connected to the node_country_x1 and nodeB is connected to the node_country_x2. 
+"How to database" (**aggregate_output.sqlite**) aggregates results for the *nodeA* and *nodeB*. Both of the nodes have a wind power plant and nodeA has a coal power plant. The demand is divided to the electricity, heat and irrigiation needs. This means that, 
+besides an internal demand (**inflow**), both nodes output to the heat node while *node*A also outputs to the irrigation node. Additionally the nodes are connected to each other and the *node_country_y1*. The *nodeA* is connected to the *node_country_x1* and *nodeB* is connected to the *node_country_x2*. 
 
-We are only interested in the nodeA and nodeB so a group *focus_nodes* is created and the nodes are added to it with group_node relationship. To simplify the results the two wind plants results are aggregated as one. Same applies to the heat pumps. This is done by creating the groups *wind_aggregated* and *heat_aggregated*. The units are added with group_unit_node relationship. 
+For the sake of the example, we are only interested in the *nodeA* and *nodeB*. Therefore, `group` *focus_nodes* is created and the nodes are added to it with `group__node` relationships. To simplify the results, the flows from the two wind plants are aggregated as one. Same applies to the heat pumps. This is done by creating the `group`s *wind_aggregated* and *heat_aggregated*. The flows are added to the group with the `group_unit_node` relationship. 
 
-Note that here the node has to be either nodeA or nodeB, not the heat node! The group_unit_node is tied to the node group with the node information. The group_unit_node can include other units but only the ones that are have a node that is inside the *focus_nodes* group are included in the result table.
+Note that here the `node` has to be either *nodeA* or *nodeB*, not the heat node! E.g. the nodes from the *wind_aggregated* `group_unit_node` are tied to the nodes from the *focus_nodes* `group_node` only when they share same nodes (e.g. *wind_aggregated__wind_plant_1__nodeA* and *focus_nodes__nodeA* have *nodeA* in common). The `group_unit_node` can include other flows but only the ones that are have a node that is inside the *focus_nodes* group are included in the result table under the *focus_nodes* group.
 
-Connections are simplified by creating groups *connections_country_x* and *connections_country_y* and adding the relevant connections with group_connection_node relationship. Again the node has to be either nodeA or nodeB to be included in the results.
+Connections are simplified by creating groups *connections_country_x* and *connections_country_y* and adding the relevant connections with `group_connection_node` relationship. Again the `node` has to be either *nodeA* or *nodeB* to be included in the results.
 
 ![Output aggregate flows graph](./output_flows_graph.PNG)
 
-The *focus_nodes* group needs the parameter `output_node_flows`: *yes* and the unit and conneection groups need the parameter `output_aggregate_flows`: *yes*. 
+The *focus_nodes* group needs the parameter `output_node_flows`: *yes* and the unit and connection groups need the parameter `output_aggregate_flows`: *yes*. 
+
 ![Output aggregate flows](./output_flows_input.PNG)
 
-The resulting table has the flows to the *focus_nodes* group from units and connections. Additionally, the internal losses of the group is calculated. These are the flows between the nodes of the group and the storage losses. Here the losses come from the connection between nodeA and nodeB. Additionally the possible slacks to balance the nodes are included.
+The resulting table has the flows to the *focus_nodes* group from units and connections. Additionally, the internal losses of the group are calculated. These are the flows between the nodes of the group and the storage losses. Here the losses come from the connection between nodeA and nodeB. Additionally the possible slacks to balance the nodes are included.
 
 ![Output aggregate flows result](./output_flows_result.png)
 
