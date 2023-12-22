@@ -3866,7 +3866,7 @@ for {i in 1..1 : p_model['solveFirst']}
         printf ',connections,units,storages,downward,%s', g >> fn_group_flows__dt;
 	  }
   }
-for {s in solve_current, (d, t) in dt}
+for {s in solve_current, (d, t) in dt_realize_dispatch}
   {
     printf '\n%s,%s,%s', s, d, t >> fn_group_flows__dt;
 	for {g in groupOutputNodeFlows}
