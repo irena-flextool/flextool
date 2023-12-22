@@ -24,14 +24,18 @@ def update_flextool(skip_git):
     os.remove("./.spinetoolbox/project_temp.json")
 
     from migrate_database import migrate_database
+    from initialize_database import initialize_database
 
     if not os.path.exists("Input_data.sqlite"):
-        shutil.copy("input_data_template.sqlite", "Input_data.sqlite")
+        initialize_database("Input_data.sqlite")
+    if not os.path.exists("input_data_template.sqlite"):
+        initialize_database("input_data_template.sqlite")
     if not os.path.exists("Results.sqlite"):
         shutil.copy("Results_template.sqlite", "Results.sqlite")
 
     db_to_update = []
     db_to_update.append("Init.sqlite")
+    db_to_update.append("Input_data.sqlite")
     db_to_update.append("input_data_template.sqlite")
 
     # add the database used in the input_data tool

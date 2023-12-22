@@ -32,6 +32,7 @@ Setting different solves:
 General:
 
 - [How to use CPLEX as the solver](#how-to-use-cplex-as-the-solver)
+- [How to create aggregate outputs](#how-to-create-aggregate-outputs)
 - [How to enable/disable outputs](#how-to-enabledisable-outputs)
 - [How to make the Flextool run faster](#how-to-make-the-flextool-run-faster)
 
@@ -827,6 +828,26 @@ With these parameters, the command line call is:
 
 ![Cplex parameters](./CPLEX.PNG)
 
+## How to create aggregate outputs
+
+It is often desirable to output results that focus on particular aspects of the model. For example, it can be useful to output all flows going in and out of all electricity nodes without the corresponding flows for other energy carriers (e.g. fuels used to produce the electricity). And if the model is large, some of those flows could be aggregated (summed). 
+
+The first aspect, choosing a group of nodes for which to output results for, is achieved by:
+
+- creating or re-using a `group` (e.g. *electricity*)
+- set the group's parameter **output_node_flows** to *yes*
+- assigning all the relevant nodes to the group (using `group__node`, e.g. *electricity__west*)
+
+The second aspect, aggregating flows into one, is achieved by:
+
+- creating or re-using a `group` (e.g. *all_VRE*)
+- set the group's parameter **output_aggregate_flows** to *yes*
+- assigning all flows that should be part of the group (using `group__unit__node` or `group__connection__node`, e.g. *all_VRE__wind1__west*)
+
+All flows that are part of a group that has `output_aggregate_flows` set to **yes** will then be output only as part of the aggregate in the `group` **flow_t**. In all other outputs, they will remain independent.
+
+![Output aggregate flows](./output_flows.png)
+
 
 ## How to enable/disable outputs
 
@@ -835,7 +856,7 @@ Some of the outputs are optional. Some of these optional outputs are output by d
 - `output_node_balance_t`: Default: yes. Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. 
 - `output_connection__node__node_flow_t`: Default: yes. The flows between the nodes for each timestep.
 - `output_unit__node_flow_t`: Default, yes. The flows from units to the nodes for each timestep.
-- `output_ramp_envelope`: Default, no. Includes seven parameters that form the ramp room envelope. How much there is additional ramping capability in a given node. (Parameter node_ramp_t)
+- `output_ramp_envelope`: Default, no. Includes seven parameters that form the ramp room envelope. Shows the actual ramp as well as different levels of available ramping  capability in a given node - for both directions, upward and downward. The first level includes ramproom in all the units, except VRE. The second level adds ramping room in VRE units (typically only downward, unless they have been curtailed. Finally, the last level adds potential ramping capability in the connections, which reflects only the ramproom in the connections themselves - the units/nodes behind the connection may or may not have capability to provide that ramp. (Parameter node_ramp_t)
 - `output_connection_flow_separate`: Default, no. Produces the connection flows separately for both directions.
 - `output_unit__node_ramp_t`: Default, no. Produces the ramps of individual units for all timesteps.
 
