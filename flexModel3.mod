@@ -1264,11 +1264,13 @@ set group_output__process__unit__to_node_not_in_aggregate :=
     {g in groupOutputNodeFlows, (p, source, sink) in process_source_sink_alwaysProcess 
 	                             : p in process_unit 
 								 && (g, sink) in group_node 
+								 && (g, p) not in group_output__process_fully_inside
 								 && not sum{(ga, p, sink) in group_process_node : ga in groupOutputAggregateFlows} 1};
 set group_output__process__node__to_unit_not_in_aggregate :=
     {g in groupOutputNodeFlows, (p, source, sink) in process_source_sink_alwaysProcess 
 	                             : p in process_unit 
 								 && (g, source) in group_node 
+								 && (g, p) not in group_output__process_fully_inside
 								 && not sum{(ga, p, source) in group_process_node : ga in groupOutputAggregateFlows} 1};
 set group_output__group_aggregate__process__unit__to_node :=
     {g in groupOutputNodeFlows, ga in groupOutputAggregateFlows, (p, source, sink) in process_source_sink_alwaysProcess 
@@ -4669,7 +4671,7 @@ param w_unit_test := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_t
 display w_unit_test;
 
 #display {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } : v_reserve[p, r, ud, n, d, t].dual / p_entity_unitsize[p];
-display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process__source__sink_Flow__dt[p, source, sink, d, t];
+#display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process__source__sink_Flow__dt[p, source, sink, d, t];
 #display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_other_operational_cost_dt[p, d, t];
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].val;
 #display {(p, source, sink, d, t) in peedt : (d, t) in test_dt}: v_flow[p, source, sink, d, t].ub;
@@ -4692,5 +4694,5 @@ display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : 
 #display {(p, m) in process_method, (d, t) in dt : (d, t) in test_dt && m in method_indirect} conversion_indirect[p, m, d, t].ub;
 #display {(p, source, sink, f, m) in process__source__sink__profile__profile_method, (d, t) in dt : (d, t) in test_dt && m = 'lower_limit'}: profile_flow_lower_limit[p, source, sink, f, d, t].dual;
 #display {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in test_dt}: ptProcess_sink[p, sink, param, t];
-display v_invest, v_divest, solve_current, total_cost, process_source_sink_alwaysProcess, groupOutputAggregateFlows;
+display v_invest, v_divest, solve_current, total_cost;
 end;
