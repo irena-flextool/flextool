@@ -108,6 +108,8 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</a>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#how-to-create-aggregate-outputs">How to create aggregate outputs</a>
+    </li>
     <li class="toctree-l2"><a class="reference internal" href="#how-to-enabledisable-outputs">How to enable/disable outputs</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#how-to-make-the-flextool-run-faster">How to make the Flextool run faster</a>
@@ -177,6 +179,7 @@ Each example will either include an example database file that is located in the
 <p>General:</p>
 <ul>
 <li><a href="#how-to-use-cplex-as-the-solver">How to use CPLEX as the solver</a></li>
+<li><a href="#how-to-create-aggregate-outputs">How to create aggregate outputs</a></li>
 <li><a href="#how-to-enabledisable-outputs">How to enable/disable outputs</a></li>
 <li><a href="#how-to-make-the-flextool-run-faster">How to make the Flextool run faster</a></li>
 </ul>
@@ -662,21 +665,19 @@ Additionally some of the units, connections or storages will need investment par
 <p><code>rolling_jump</code>: sets the interval for the length of each 'jump' the model takes forward in reach roll. It is then both the interval of roll starting points and the length of the output for each roll. The <code>rolling_jump</code> must be smaller than the <code>rolling_horizon</code>. In the previous example the <code>rolling_jump</code> would be 2 months (1440 hours).</p>
 </li>
 </ul>
-<p>In addition, the user has the possibility to use the other parameters to set the time interval where the rolling happens:</p>
+<p>In addition, the user can set the duration for how long the model will roll:</p>
 <ul>
-<li><code>rolling_start_time</code>: Optional (timestamp), can be used to set a different starting point for the rolling than the first timestep (default).</li>
 <li><code>rolling_duration</code>: Optional (hours), the length of combined rolls. In the example, it could be set to 8640 hours which would divide evenly, or 8760 hours which means that the last roll will be shorter than the others. It is nicer to use <code>rolling_jump</code> that is divisable with the <code>rolling_duration</code> to keep rolls even. If <code>rolling_duration</code> is not set, it defaults to rolling through the whole timeline.</li>
 </ul>
 <p>When using rolling window solve, you are solving the model with less information. Therefore, the results will be less optimal since the model will not have the full information at once. It is therefore important to know how this could affect the results and what things to consider when implementing a rolling window model. It will have an impact on time dependant parts of the model: for example, storages or cumulative flow constraints. If the model can see only a few months to the future, it can't see how much energy needs to be stored after that. </p>
 <p>Investments should not be used with this free rolling solve (<code>solve_mode</code>: <em>rolling_window</em>) as investments should only be done at the start of the periods. <em>Both the long-term storage and the investments can be taken into account with nested rolling solves that have a separate how-to</em>.</p>
-<p>Short term storages also are operated less optimally in a rolling window model. This is not necessarily a real problem, since perfect foresight linear optimization models are 'too optimal'. They don't reflect the forecast errors present in real life. So, a rolling window model might operate a bit more <em>realistically</em> than a <em>single_solve</em> model. A <em>single_solve</em> model can consider things happening far in the future when setting the storage level at present, even though in reality that information is not available. So, the total cost of a <em>rolling_window</em> model should always be higher than the total cost from a complete <em>single_solve</em> model that has perfect information.</p>
+<p>Short term storages also are operated less optimally in a rolling window model. There is a positive side to this as well, since perfect foresight linear optimization models are 'too optimal'. They don't reflect the forecast errors present in real life. So, a rolling window model might operate a bit more <em>realistically</em> than a <em>single_solve</em> model. A <em>single_solve</em> model can consider things happening far in the future when setting the storage level at present, even though in reality that information is not available. So, the total cost of a <em>rolling_window</em> model should always be higher than the total cost from a complete <em>single_solve</em> model that has perfect information.</p>
 <p>To set a dispatch rolling window model you need to set the object <code>solve</code> parameters:</p>
 <ul>
 <li><code>solve_mode</code>: <em>rolling_window</em></li>
 <li><code>rolling_jump</code>: Hours, the desired length of the solve interval</li>
 <li><code>rolling_horizon</code>: Hours, the desired length of each roll solve</li>
 <li><code>rolling_duration</code>: (Optional) Hours, the length of the combined outputs. If not set, the whole timeline is used.</li>
-<li><code>rolling_start</code>: (Optional) Hours, the starting timestep the whole solve, if not wanting to start from the beginning </li>
 </ul>
 <p>Considerations on the rolling times:</p>
 <ul>
@@ -693,11 +694,11 @@ Additionally some of the units, connections or storages will need investment par
 <li><code>bind_within_solve</code> binds the start state to the end state of each <em>roll</em> not the start and end of the whole model timeline. Use with caution (and probably best not to use together with <code>storage_solve_horizon_method</code> <em>use_reference_value</em>).</li>
 </ul>
 <h2 id="how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves (investments and long-term storage)</h2>
-<p>The basic rolling solve can have problems in dealing with long term storage and with investments. If the model only sees a few weeks to the future, it really can't see how much energy should be stored in long term storages. Problems with investments can also be rampant: What if the first roll is really windy, so it would invest too much on wind which wouldn't produce enough energy in later rolls and then it would need to invest again to something else. How can it consider lifetimes? If the option of retiring is allowed, it might retire something that is needed for later rolls. </p>
+<p>The basic rolling solve can have problems in dealing with long term storage and with investments. If the model only sees a few weeks to the future, it really can't see how much energy should be stored in long term storages. Problems with investments can also be serious: If the first roll is really windy, the model would overinvest in wind power that is not profitable in the later rolls. Similarly, if the model is allowed to retire capacity, it might retire something that is actually needed in the later rolls. </p>
 <p>Nested solve sequences can first solve the investments and long-term storage levels and pass them to the dispatch solve. Both storage solve and dispatch solve can be rolling solves. The dispatch solves can then send the end storage values to the investment and long-term storage solves as start values to reduce the error of these solves.</p>
 <p>When to use nested solves?</p>
 <ul>
-<li>Dispatch model is takes too long to solve, but simple rolling window solve would not represent the long-term storages correctly. (Nesting without the investment solve)</li>
+<li>Dispatch model is taking too long to solve, but simple rolling window solve would not represent the long-term storages correctly. (Nesting without the investment solve)</li>
 <li>Investment model takes too long to solve, even with manual rolling <a href="#How-to-create-a-multi-year-model">How to create a multi-year model</a>. With nesting you can have smaller rolls for dispatch solve than the investment solve. (Nesting without the storage solve)</li>
 <li>Investment model takes too long and you have long term storages to consider. (Three level nesting, graph below)</li>
 </ul>
@@ -738,7 +739,6 @@ Additionally some of the units, connections or storages will need investment par
 <li><code>rolling_jump</code>: Hours, the desired length of the solve interval</li>
 <li><code>rolling_horizon</code>: Hours, the desired length of each roll solve</li>
 <li><code>rolling_duration</code>: (Optional) Hours, the length of the combined outputs. If not set, the whole timeline is used.</li>
-<li><code>rolling_start</code>: (Optional) Hours, the starting timestep the whole solve, if not wanting to start from the beginning </li>
 <li><code>realized_periods</code>: Array of periods that are realized</li>
 </ul>
 <p>The other model parameters apply to <em>all</em> of the solves. Therefore, the considerations of the storage value binding that were discussed in the <a href="#How-to-use-a-rolling-window-for-a-dispatch-model">How to use a rolling window for a dispatch model</a> should be taken into account here as well.</p>
@@ -764,6 +764,8 @@ Additionally some of the units, connections or storages will need investment par
 </ul>
 <p>The model will create a new timeline for this solve with the <code>new_stepduration</code>. All the timestep map data like <code>inflow</code> or <code>profile</code> will be either summed or averaged for the new timeline. Again, the <code>new_stepduration</code> should be multiple of the old step duration. If the <code>block_duration</code> is not a multiple of the <code>new_stepduration</code> the last timestep will be shorter than the rest.
 <img alt="New step duration" src="../new_stepduration.PNG" /></p>
+<p>Note that if the last timestep of the dispatch horizon is not in the storage solve timeline, it will use the last available timestep to fix the storage. This can happen at the end of the timeline when the dispatch solve with a lower step size can fit an extra step after the last time step of the storage solve.
+Other reason might be that both dispatch and storage solves are aggregated with the <code>new_stepduration</code>. In that case, it is usually best to use values for the <code>new_stepduration</code> that are dividable.  </p>
 <p>To create a sample solve with representative periods:</p>
 <p>The tutorial contains an example of representaive periods under alternative <em>5weeks</em> where the year is represented with five sample weeks. It is done with the <code>timeblockSet</code> parameter <code>block_duration</code> where instead of choosing the whole timeline by setting the first timestep and the duration of whole timeline, you choose multiple starting points with smaller durations. The example for the <em>5weeks</em> is below.</p>
 <p><img alt="New step duration" src="../5weeks.PNG" /></p>
@@ -804,21 +806,33 @@ Additionally some of the units, connections or storages will need investment par
 <pre><code class="language-shell">'solver_precommand' cplex -c 'read flexModel3.mps' 'solver_command1' 'solver_command2' ... 'solver_command_last' 'opt' 'write flexModel3_cplex.sol' 'quit'
 </code></pre>
 <p><img alt="Cplex parameters" src="../CPLEX.PNG" /></p>
+<h2 id="how-to-create-aggregate-outputs">How to create aggregate outputs</h2>
+<p>It is often desirable to output results that focus on particular aspects of the model. For example, it can be useful to output all flows going in and out of all electricity nodes without the corresponding flows for other energy carriers (e.g. fuels used to produce the electricity). And if the model is large, some of those flows could be aggregated (summed). </p>
+<p>The first aspect, choosing a group of nodes for which to output results for, is achieved by:</p>
+<ul>
+<li>creating or re-using a <code>group</code> (e.g. <em>electricity</em>)</li>
+<li>set the group's parameter <strong>output_node_flows</strong> to <em>yes</em></li>
+<li>assigning all the relevant nodes to the group (using <code>group__node</code>, e.g. <em>electricity__west</em>)</li>
+</ul>
+<p>The second aspect, aggregating flows into one, is achieved by:</p>
+<ul>
+<li>creating or re-using a <code>group</code> (e.g. <em>all_VRE</em>)</li>
+<li>set the group's parameter <strong>output_aggregate_flows</strong> to <em>yes</em></li>
+<li>assigning all flows that should be part of the group (using <code>group__unit__node</code> or <code>group__connection__node</code>, e.g. <em>all_VRE__wind1__west</em>)</li>
+</ul>
+<p>All flows that are part of a group that has <code>output_aggregate_flows</code> set to <strong>yes</strong> will then be output only as part of the aggregate in the <code>group</code> <strong>flow_t</strong>. In all other outputs, they will remain independent.</p>
+<p><img alt="Output aggregate flows" src="../output_flows.png" /></p>
 <h2 id="how-to-enabledisable-outputs">How to enable/disable outputs</h2>
-<p>Some outputs need to be explicitly added in order to output them. This is to reduce the result processing time. Each optional output can be added to the <code>enable_optional_outputs</code> parameter array of the <code>model</code> object. The additional outputs are:</p>
+<p>Some of the outputs are optional. Some of these optional outputs are output by default while some are not (see below). Removing outputs speeds up the post-processing of results. The user can enable/disable them by changing the following parameters of the <code>model</code> entity:</p>
 <ul>
-<li><em>ramp_envelope</em> : Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node). </li>
-<li><em>node_balance_t</em> : Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. </li>
-<li><em>connection_flow_separate</em> : Produces the connection flows separately for both directions.</li>
+<li><code>output_node_balance_t</code>: Default: yes. Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. </li>
+<li><code>output_connection__node__node_flow_t</code>: Default: yes. The flows between the nodes for each timestep.</li>
+<li><code>output_unit__node_flow_t</code>: Default, yes. The flows from units to the nodes for each timestep.</li>
+<li><code>output_ramp_envelope</code>: Default, no. Includes seven parameters that form the ramp room envelope. Shows the actual ramp as well as different levels of available ramping  capability in a given node - for both directions, upward and downward. The first level includes ramproom in all the units, except VRE. The second level adds ramping room in VRE units (typically only downward, unless they have been curtailed. Finally, the last level adds potential ramping capability in the connections, which reflects only the ramproom in the connections themselves - the units/nodes behind the connection may or may not have capability to provide that ramp. (Parameter node_ramp_t)</li>
+<li><code>output_connection_flow_separate</code>: Default, no. Produces the connection flows separately for both directions.</li>
+<li><code>output_unit__node_ramp_t</code>: Default, no. Produces the ramps of individual units for all timesteps.</li>
 </ul>
-<p><img alt="Enable outputs" src="../enable_outputs.PNG" /></p>
-<p>Similarly, some outputs can be disables to reduce the result processing time. To do so, add the output name to the <code>disable_optional_outputs</code> parameter array of the <code>model</code> object.  The allowed outputs to disable are:</p>
-<ul>
-<li><em>unit_flow_t</em> : The flows from units to the nodes for each timestep.</li>
-<li><em>connection_flow_t</em> : The flows between the nodes for each timestep.</li>
-</ul>
-<p>These can be replaced by group outputs (e.g. all wind power plant outputs are aggregated into one).</p>
-<p><img alt="Disable outputs" src="../disable_outputs.PNG" /></p>
+<p><img alt="Optional outputs" src="../optional_outputs.PNG" /></p>
 <h2 id="how-to-make-the-flextool-run-faster">How to make the Flextool run faster</h2>
 <p>The list below contains potential ways to decrease the run-time of FlexTool models.</p>
 <p>External changes (results will remain the same):</p>

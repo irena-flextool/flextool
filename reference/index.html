@@ -213,9 +213,9 @@
 </li>
 <li><em>discount_offset_investment</em>: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.</li>
 <li><em>discount_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs.</li>
-<li><em>enable_optional_outputs</em>: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","node_balance_t","connection_flow_separate" </li>
+<li><em>enable_optional_outputs</em>: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","unit__node_ramp_t","node_balance_t","connection_flow_separate" </li>
 <li>
-<p><em>disable_optional_outputs</em>: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t"</p>
+<p><em>disable_optional_outputs</em>: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t","unnamed_group"</p>
 </li>
 <li>
 <p><code>solve</code>: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.</p>
@@ -235,7 +235,6 @@
 <li>
 <p>Rolling window parameters:</p>
 <ul>
-<li><em>rolling_start_time</em>: (Optional) Timestamp from the timeline that is linked to the timeblockSet used. Starting point of the rolling. If this is not stated, it is assumed to be the first timestep</li>
 <li><em>rolling_solve_jump</em>: Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Also the output interval. This should be smaller than the horizon</li>
 <li><em>rolling_solve_horizon</em>: Hours, (Required if rolling_window solve). The length of the horizon of the roll. How long into the future the roll sees. For an individual roll, horizon is the solve length and jump is the output length.</li>
 <li><em>rolling_duration</em>: Hours, (Optional). Duration of rolling, if not stated, assumed to be the whole timeline of the solve</li>
@@ -316,8 +315,8 @@
 <li><code>invest_min_period</code> - [MWh] Minimum storage investment for each period. Period.</li>
 <li><code>invest_forced</code> - [MWh] Storage capacity that must be invested in a given period. Investment cost will be included in the cost results even though the model does not have an investment variable. Constant or period.</li>
 <li><code>fixed_cost</code> - [CUR/kWh] Annual fixed cost for storage. Constant or period.</li>
-<li><code>penalty_up</code> - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time.</li>
-<li><code>penalty_down</code> - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time.</li>
+<li><code>penalty_up</code> - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time. Default value is 10 000, but this can be changed from the database.</li>
+<li><code>penalty_down</code> - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time. Default value is 10 000, but this can be changed from the database.</li>
 <li><code>virtual_unitsize</code> - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.</li>
 <li><code>self_discharge_loss</code> - [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.</li>
 <li><code>availablity</code> - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.</li>
@@ -497,23 +496,16 @@
 <p>Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example it can be helpful to group all electricity nodes and show their aggregated output.</p>
 <ul>
 <li><code>output_results</code> - A flag to output aggregated results for the group members.</li>
+<li><code>output_node_flows</code> - A flag to add the group name to the unit node flows.</li>
 </ul>
-<p>Some of the outputs are not created by default. This is done to speed up the post-processing of results. The user can enable them by changing parameters of the the <code>model</code> entity:</p>
+<p>Some of the outputs are optional. They can be removed to speed up the post-processing of results. The user can enable/disable them by changing parameters of the the <code>model</code> entity:</p>
 <ul>
-<li><code>enable_optional_outputs</code>: [Array], Produces additional outputs. Allowed outputs: "ramp_envelope","node_balance_t","connection_flow_separate"<ul>
-<li><em>ramp_envelope</em> : Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node). </li>
-<li><em>node_balance_t</em> : Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. </li>
-<li><em>connection_flow_separate</em> : Produces the connection flows separately for both directions.</li>
-</ul>
-</li>
-</ul>
-<p>Additionally some of the default outputs can be disabled if user needs more speed and the outputs are not used.</p>
-<ul>
-<li><code>disable_optional_outputs</code>: [Array], Disable some of the default outputs to reduce the time used. Allowed outputs to be disabled: "unit__node_flow_t","connection__node__node_flow_t"<ul>
-<li><em>unit_flow_t</em> : The flows from units to the nodes for each timestep.</li>
-<li><em>connection_flow_t</em> : The flows between the nodes for each timestep.</li>
-</ul>
-</li>
+<li><code>output_node_balance_t</code>: Default: yes. Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model. </li>
+<li><code>output_connection__node__node_flow_t</code>: Default: yes. The flows between the nodes for each timestep.</li>
+<li><code>output_unit__node_flow_t</code>: Default, yes. The flows from units to the nodes for each timestep.</li>
+<li><code>output_ramp_envelope</code>: Default, no. Includes seven parameters that form the ramp room envelope. How much there is additional ramping capability in a given node. (Parameter node_ramp_t)</li>
+<li><code>output_connection_flow_separate</code>: Default, no. Produces the connection flows separately for both directions.</li>
+<li><code>output_unit__node_ramp_t</code>: Default, no. Produces the ramps of individual units for all timesteps.</li>
 </ul>
 <h2 id="reserves">Reserves</h2>
 <p>The user defines reserve categories through <code>reserve</code> object. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. </p>
