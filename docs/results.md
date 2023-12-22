@@ -16,22 +16,22 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
 
 ## Costs
 
-- `model` object `cost` parameter - [CUR] includes annualized total cost as well as annualized costs divided into 
-  - *unit investment/retirement* - [CUR] cost of investing in unit capacity or benefits from salvaging unit capacity
-  - *connection investment/retirement* - [CUR] cost of investing in connection capacity or benefits from salvaging connection capacity
-  - *storage investment/retirement* - [CUR] cost of investing in storage capacity or benefits from salvaging storage capacity
-  - *commodity* - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value)
-  - *CO2* - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content
-  - *variable cost* - [CUR] other variable operation and maintenance costs
-  - *starts* - [CUR] start up costs
-  - *upward penalty* - [CUR] cost of involuntary demand reduction
-  - *downward penalty* - [CUR] cost of involuntary demand increase
-  - *inertia penalty* - [CUR] cost of not meeting the inertia constraint
-  - *non-synchronous penalty* - [CUR] cost of not meeting the non-synchronous constraint
-  - *capacity margin penalty* - [CUR] cost of not meeting the capacity margin constraint
-  - *upward reserve penalty* - [CUR] cost of not meeting the upward reserve constraint
-  - *downward reserve penalty* - [CUR] cost of not meeting the downward reserve constraint
-- `model` object `cost_t` parameter - [CUR] similar as above but costs given for each timestep (no investment/retirement costs)
+- `model` object `cost` parameter - M[CUR] (millions of user chosen currency) includes annualized total cost as well as annualized costs divided into 
+  - *unit investment/retirement* - M[CUR] cost of investing in unit capacity or benefits from salvaging unit capacity
+  - *connection investment/retirement* - M[CUR] cost of investing in connection capacity or benefits from salvaging connection capacity
+  - *storage investment/retirement* - M[CUR] cost of investing in storage capacity or benefits from salvaging storage capacity
+  - *commodity* - M[CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value)
+  - *CO2* - M[CUR] cost of CO2 emissions caused by unit using commodities with CO2 content
+  - *variable cost* - M[CUR] other variable operation and maintenance costs
+  - *starts* - M[CUR] start up costs
+  - *upward penalty* - M[CUR] cost of involuntary demand reduction
+  - *downward penalty* - M[CUR] cost of involuntary demand increase
+  - *inertia penalty* - M[CUR] cost of not meeting the inertia constraint
+  - *non-synchronous penalty* - M[CUR] cost of not meeting the non-synchronous constraint
+  - *capacity margin penalty* - M[CUR] cost of not meeting the capacity margin constraint
+  - *upward reserve penalty* - M[CUR] cost of not meeting the upward reserve constraint
+  - *downward reserve penalty* - M[CUR] cost of not meeting the downward reserve constraint
+- `model` object `cost_t` parameter - M[CUR] similar as above but costs given for each timestep (no investment/retirement costs)
 
 ## Prices
 
@@ -84,7 +84,7 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
 
 ## CO2 emissions
 
-- `unit` object `co2` parameter - [tCO2] how many tons of CO2 the unit has generated (by using commodity with CO2 content) or removed
+- `unit` object `co2` parameter - [tCO2] how many million tons of CO2 the unit has generated (by using commodity with CO2 content) or removed
 
 ## Reserves
 
