@@ -3210,6 +3210,45 @@
                         ]
                     }
                 }
+            ],
+            "optional_outputs": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "model",
+                                "read_start_row": 2
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": "hidden",
+                                "value": "from_template"
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValue",
+                                "position": 2
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -3255,7 +3294,8 @@
             "node_constraint_c",
             "unit_constraint_c",
             "connection_constraint_c",
-            "rolling_parameters"
+            "rolling_parameters",
+            "optional_outputs"
         ],
         "table_options": {
             "solve_sequence": {
@@ -3326,7 +3366,8 @@
             "node_constraint_c": {},
             "unit_constraint_c": {},
             "connection_constraint_c": {},
-            "rolling_parameters": {}
+            "rolling_parameters": {},
+            "optional_outputs": {}
         },
         "table_types": {
             "solve_sequence": {
@@ -3923,8 +3964,13 @@
                 "13": "float",
                 "14": "float",
                 "15": "float",
-                "16": "float",
-                "17": "float"
+                "16": "float"
+            },
+            "optional_outputs": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string"
             }
         },
         "table_default_column_type": {
@@ -3960,7 +4006,8 @@
             "node_constraint_c": "float",
             "unit_constraint_c": "float",
             "connection_constraint_c": "float",
-            "solve_sequence": "string"
+            "solve_sequence": "string",
+            "optional_outputs": "string"
         },
         "table_row_types": {
             "solve_sequence": {
