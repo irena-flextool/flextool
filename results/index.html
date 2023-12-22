@@ -142,22 +142,22 @@
 </ul>
 <h2 id="costs">Costs</h2>
 <ul>
-<li><code>model</code> object <code>cost</code> parameter - [CUR] includes annualized total cost as well as annualized costs divided into </li>
-<li><em>unit investment/retirement</em> - [CUR] cost of investing in unit capacity or benefits from salvaging unit capacity</li>
-<li><em>connection investment/retirement</em> - [CUR] cost of investing in connection capacity or benefits from salvaging connection capacity</li>
-<li><em>storage investment/retirement</em> - [CUR] cost of investing in storage capacity or benefits from salvaging storage capacity</li>
-<li><em>commodity</em> - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value)</li>
-<li><em>CO2</em> - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content</li>
-<li><em>variable cost</em> - [CUR] other variable operation and maintenance costs</li>
-<li><em>starts</em> - [CUR] start up costs</li>
-<li><em>upward penalty</em> - [CUR] cost of involuntary demand reduction</li>
-<li><em>downward penalty</em> - [CUR] cost of involuntary demand increase</li>
-<li><em>inertia penalty</em> - [CUR] cost of not meeting the inertia constraint</li>
-<li><em>non-synchronous penalty</em> - [CUR] cost of not meeting the non-synchronous constraint</li>
-<li><em>capacity margin penalty</em> - [CUR] cost of not meeting the capacity margin constraint</li>
-<li><em>upward reserve penalty</em> - [CUR] cost of not meeting the upward reserve constraint</li>
-<li><em>downward reserve penalty</em> - [CUR] cost of not meeting the downward reserve constraint</li>
-<li><code>model</code> object <code>cost_t</code> parameter - [CUR] similar as above but costs given for each timestep (no investment/retirement costs)</li>
+<li><code>model</code> object <code>cost</code> parameter - M[CUR] (millions of user chosen currency) includes annualized total cost as well as annualized costs divided into </li>
+<li><em>unit investment/retirement</em> - M[CUR] cost of investing in unit capacity or benefits from salvaging unit capacity</li>
+<li><em>connection investment/retirement</em> - M[CUR] cost of investing in connection capacity or benefits from salvaging connection capacity</li>
+<li><em>storage investment/retirement</em> - M[CUR] cost of investing in storage capacity or benefits from salvaging storage capacity</li>
+<li><em>commodity</em> - M[CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value)</li>
+<li><em>CO2</em> - M[CUR] cost of CO2 emissions caused by unit using commodities with CO2 content</li>
+<li><em>variable cost</em> - M[CUR] other variable operation and maintenance costs</li>
+<li><em>starts</em> - M[CUR] start up costs</li>
+<li><em>upward penalty</em> - M[CUR] cost of involuntary demand reduction</li>
+<li><em>downward penalty</em> - M[CUR] cost of involuntary demand increase</li>
+<li><em>inertia penalty</em> - M[CUR] cost of not meeting the inertia constraint</li>
+<li><em>non-synchronous penalty</em> - M[CUR] cost of not meeting the non-synchronous constraint</li>
+<li><em>capacity margin penalty</em> - M[CUR] cost of not meeting the capacity margin constraint</li>
+<li><em>upward reserve penalty</em> - M[CUR] cost of not meeting the upward reserve constraint</li>
+<li><em>downward reserve penalty</em> - M[CUR] cost of not meeting the downward reserve constraint</li>
+<li><code>model</code> object <code>cost_t</code> parameter - M[CUR] similar as above but costs given for each timestep (no investment/retirement costs)</li>
 </ul>
 <h2 id="prices">Prices</h2>
 <ul>
@@ -210,7 +210,7 @@
 </ul>
 <h2 id="co2-emissions">CO2 emissions</h2>
 <ul>
-<li><code>unit</code> object <code>co2</code> parameter - [tCO2] how many tons of CO2 the unit has generated (by using commodity with CO2 content) or removed</li>
+<li><code>unit</code> object <code>co2</code> parameter - [tCO2] how many million tons of CO2 the unit has generated (by using commodity with CO2 content) or removed</li>
 </ul>
 <h2 id="reserves">Reserves</h2>
 <ul>
