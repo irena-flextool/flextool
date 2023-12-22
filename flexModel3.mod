@@ -3412,6 +3412,25 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
 	  }
   }
 
+printf 'Write CO2 results for groups for realized periods...\n';
+param fn_groupNode__d_CO2 symbolic := "output/group_process_CO2__period.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { 
+    printf 'solve,period,time' > fn_groupNode__d_CO2;
+	for {g in groupOutput : sum{(p, c, n) in process__commodity__node_co2 : (g, p) in group_process} 1}
+	  { printf ',%s', g >> fn_groupNode__d_CO2; }
+  }
+for {s in solve_current, d in d_realized_period}
+  {
+    printf '\n%s,%s', s, d >> fn_groupNode__d_CO2;
+	for {g in groupOutput : sum{(p, c, n) in process__commodity__node_co2 : (g, p) in group_process} 1}
+	  { printf ',%.6f',
+	      sum{(p, c, n) in process__commodity__node_co2 : (g, p) in group_process}
+		      r_process_emissions_co2_d[p, c, n, d]
+		>> fn_groupNode__d_CO2;
+	  }
+  }
+
 printf 'Write results for groups for realized periods...\n';
 param fn_groupProcessNode__d symbolic := "output/group__process__node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
