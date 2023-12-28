@@ -4,8 +4,15 @@ site_description: IRENA FlexTool is an energy and power systems model for unders
 site_author: Juha Kiviluoma, VTT Technical Centre of Finland
 copyright: IRENA
 
-theme: readthedocs
-
+theme:
+  name: material
+  logo: irena_flextool_favicon.png
+  favicon: irena_flextool_favicon.png
+  features:
+    - content.code.copy
+    - navigation.expand
+ 
+    
 extra_javascript:
   - https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML
   - assets/mathjaxhelper.js
@@ -18,9 +25,8 @@ markdown_extensions:
 docs_dir: 'docs'
 
 nav:
-  - Introduction: 
-    - 'Introduction': index.md
-  - Getting started: 
+  - Introduction: index.md
+  - 'Installing and updating':
     - 'Overview of the interfaces to Flextool': interface_overview.md
     - 'Installing IRENA FlexTool - SpineToolbox': install_toolbox.md
     - 'Installing IRENA FlexTool - Web interface': install_web_interface.md
@@ -29,7 +35,8 @@ nav:
     - 'Model parameters': reference.md
     - 'Model outputs': results.md
     - 'How to': how_to.md
-  - Interfaces:
+  - User interfaces:
     - 'Toolbox interface': spine_toolbox.md
+    - 'Spine data editor' : spine_database.md
     - 'Browser interface': browser_interface.md
  

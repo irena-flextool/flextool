@@ -236,11 +236,49 @@
                     "known_filters": {
                         "db_url@Input_data": {
                             "scenario_filter": {
-                                "base": true,
-                                "coal": true,
-                                "network": true,
-                                "reserve": true,
-                                "wind": true
+                                "5weeks_invest_fullYear_dispatch_coal_wind": false,
+                                "all": false,
+                                "base": false,
+                                "capacity_margin": false,
+                                "coal": false,
+                                "coal_chp": false,
+                                "coal_co2": false,
+                                "coal_min_load": false,
+                                "coal_min_load_MIP_wind": false,
+                                "coal_min_load_wind": false,
+                                "coal_ramp_limit": false,
+                                "coal_retire": false,
+                                "coal_wind_ev": false,
+                                "coal_wind_inertia": false,
+                                "dr_decrease_demand": false,
+                                "dr_increase_demand": false,
+                                "dr_shift_demand": false,
+                                "fullYear": false,
+                                "fusion": false,
+                                "multi_fullYear_battery": false,
+                                "multi_fullYear_battery_nested_24h_invest_one_solve": false,
+                                "multi_fullYear_battery_nested_multi_invest": false,
+                                "multi_fullYear_battery_nested_sample_invest_one_solve": false,
+                                "multi_year": false,
+                                "multi_year_one_solve": false,
+                                "multi_year_one_solve_battery": false,
+                                "multi_year_one_solve_co2_limit": false,
+                                "network_coal_wind": false,
+                                "network_coal_wind_battery_co2_fullYear_availability": false,
+                                "network_coal_wind_battery_dr_increase_fusion": true,
+                                "network_coal_wind_capacity_margin": false,
+                                "network_coal_wind_reserve": false,
+                                "network_coal_wind_reserve_co2_capacity_margin": false,
+                                "network_coal_wind_reserve_n_1": false,
+                                "network_wind_coal_battery_fullYear_invest": false,
+                                "scale_to_peak_flow": false,
+                                "water_pump": false,
+                                "wind": false,
+                                "wind_battery": false,
+                                "wind_battery_invest": false,
+                                "wind_battery_invest_lifetime_choice": false,
+                                "wind_battery_invest_lifetime_renew": false,
+                                "wind_battery_invest_lifetime_renew_4solve": false
                             },
                             "tool_filter": {
                                 "FlexTool3": true
@@ -293,7 +331,7 @@
             "x": 71.01140335411533,
             "y": -8.906879167446874,
             "specification": "FlexTool3",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": [],
             "kill_completed_processes": false,
             "log_process_output": false
@@ -311,7 +349,8 @@
                     "type": "path",
                     "relative": true,
                     "path": "Init.sqlite"
-                }
+                },
+                "schema": ""
             }
         },
         "Input_data": {
@@ -327,7 +366,8 @@
                     "type": "path",
                     "relative": true,
                     "path": "Input_data.sqlite"
-                }
+                },
+                "schema": ""
             }
         },
         "Initialize": {
@@ -409,7 +449,8 @@
                     "type": "path",
                     "relative": true,
                     "path": "Results.sqlite"
-                }
+                },
+                "schema": ""
             }
         },
         "To_Excel": {
