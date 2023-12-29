@@ -21,7 +21,7 @@ def migrate_database(database_path):
         version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
     next_version = int(version) + 1
-    new_version = 12
+    new_version = 13
 
     while next_version <= new_version:
         if next_version == 0:
@@ -53,6 +53,13 @@ def migrate_database(database_path):
                               ["group", "output_node_flows", None, "output_node_flows" ,"Creates the timewise flow output for this node group (group_flow_t)"]]
             add_parameters_manual(db,new_parameters)
             remove_parameters_manual(db,[["solve","rolling_start_time"]])
+        elif next_version == 13:
+            new_value_list = [["load_share_type","equal"],["load_share_type","inflow_weighted"],["load_share_type","no"]]
+            new_parameters = [["group", "share_loss_of_load", "no", "load_share_type", "Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted"]]
+            #value list needs to be added first
+            add_value_list_manual(db,new_value_list)
+            add_parameters_manual(db,new_parameters)
+            remove_parameters_manual(db,[["node","storate_state_end"]])
         else:
             print("Version invalid")
         next_version += 1 
@@ -91,6 +98,11 @@ def remove_parameters_manual(db,obj_param_names):
 def add_parameters_manual(db,new_parameters):
     (num,log) = import_data(db, object_parameters = new_parameters)
     db.commit_session("Added new parameters")
+    return 0
+
+def add_value_list_manual(db, new_value_lists):
+    (num,log) = import_data(db,parameter_value_lists = new_value_lists)
+    db.commit_session("Added new parameter value lists")
     return 0
 
 def add_new_parameters(db, filepath):

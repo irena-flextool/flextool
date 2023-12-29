@@ -193,11 +193,13 @@ set groupOutput_process 'output groups with process members' :=
     {g in groupOutput : sum{(g, p, n) in group_process_node} 1};
 set groupOutput_node 'output groups with node members' :=
     {g in groupOutput : sum{(g, n) in group_node} 1 };
-
 set groupOutputNodeFlows 'groups that will output flow results' within group;
 set groupOutputNodeFlows_node 'output flow groups with node members' :=
     {g in groupOutputNodeFlows : sum{(g, n) in group_node} 1 };
 set groupOutputAggregateFlows 'groups that aggregate flows' within group;
+
+set group__loss_share_type dimen 2;
+set group_loss_share 'group that share the loss of load (upward penalty)' := setof {(g, loss_share_type) in group__loss_share_type} (g);
 
 set process_unit 'processes that are unit' within process;
 set process_connection 'processes that are connections' within process;
@@ -383,6 +385,7 @@ table data IN 'CSV' 'input/entity__invest_method.csv' : entity__invest_method <-
 table data IN 'CSV' 'input/group__invest_method.csv' : group__invest_method <- [group,invest_method];
 table data IN 'CSV' 'input/entity__lifetime_method.csv' : entity__lifetime_method_read <- [entity,lifetime_method];
 table data IN 'CSV' 'input/group__co2_method.csv' : group__co2_method <- [group,co2_method];
+table data IN 'CSV' 'input/group__loss_share_type.csv' : group__loss_share_type <- [group,loss_share_type];
 table data IN 'CSV' 'input/node__inflow_method.csv' : node__inflow_method_read <- [node,inflow_method];
 table data IN 'CSV' 'input/node__storage_binding_method.csv' : node__storage_binding_method_read <- [node,storage_binding_method];
 table data IN 'CSV' 'input/node__storage_start_end_method.csv' : node__storage_start_end_method <- [node,storage_start_end_method];
@@ -1367,6 +1370,10 @@ param p_entity_max_units {e in entity, d in period} :=
 set process_VRE := {p in process_unit : not (sum{(p, source) in process_source} 1)
                                         && (sum{(p, n, prof, m) in process__node__profile__profile_method : m = 'upper_limit'} 1)};
 
+param p_state_slack_share{(g,n) in group_node, (d,t) in dt: g in group_loss_share} :=
+  if (g,'inflow_weighted') in group__loss_share_type then pdtNodeInflow[n,d,t] / (sum{(g,ng) in group_node} pdtNodeInflow[ng,d,t])
+  else (if (g,'equal') in group__loss_share_type then 1 / (sum{(g,ng) in group_node} 1) else 0);
+
 param d_obj default 0;
 param d_flow {(p, source, sink, d, t) in peedt} default 0;
 param d_flow_1_or_2_variable {(p, source, sink, d, t) in peedt} default 0;
@@ -1394,6 +1401,7 @@ var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0, <= 1;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0, <= 1;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
 var vq_capacity_margin {g in groupCapacityMargin, d in period_invest} >= 0, <= ceil((pdGroup[g, 'capacity_margin', d] + group_capacity_for_scaling[g, d]) / group_capacity_for_scaling[g, d]);
+var vq_state_up_group {g in group_loss_share, (d,t) in dt} >= 0;
 
 #########################
 ## Data checks 
@@ -1464,6 +1472,10 @@ printf 'Checking: transfer_method no_losses_no_variable_cost\n';
 printf 'is not allowed to have other_operational_cost\n';
 check {(p,m) in process_method, t in time_in_use: m in method_2way_1var}: 
   ptProcess[p, 'other_operational_cost', t] = 0;
+
+printf 'Checking: node in max one loss of load sharing group\n';
+check {n in node}:
+  sum{(g,n) in group_node: g in group_loss_share} 1 < 2;
 
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
@@ -2771,6 +2783,10 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
 	)
   + pdGroup[g, 'capacity_margin', d]
 ;
+
+s.t. group_loss_share_constraint{(g,n) in group_node, (d,t) in dt: g in group_loss_share && n in nodeBalance}:
+  + vq_state_up[n,d,t]  * node_capacity_for_scaling[n, d] =  + p_state_slack_share[g,n,d,t] * vq_state_up_group[g,d,t] * group_capacity_for_scaling[g,d];
+
 param rest := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect;
 display rest;
 

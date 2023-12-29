@@ -237,6 +237,7 @@
                         "db_url@Input_data": {
                             "scenario_filter": {
                                 "5weeks_invest_fullYear_dispatch_coal_wind": false,
+                                "aggregate_outputs_network_coal_wind_chp": false,
                                 "all": false,
                                 "base": false,
                                 "capacity_margin": false,
@@ -256,7 +257,7 @@
                                 "fullYear": false,
                                 "fusion": false,
                                 "multi_fullYear_battery": false,
-                                "multi_fullYear_battery_nested_24h_invest_one_solve": false,
+                                "multi_fullYear_battery_nested_24h_invest_one_solve": true,
                                 "multi_fullYear_battery_nested_multi_invest": false,
                                 "multi_fullYear_battery_nested_sample_invest_one_solve": false,
                                 "multi_year": false,
@@ -264,8 +265,7 @@
                                 "multi_year_one_solve_battery": false,
                                 "multi_year_one_solve_co2_limit": false,
                                 "network_coal_wind": false,
-                                "network_coal_wind_battery_co2_fullYear_availability": false,
-                                "network_coal_wind_battery_dr_increase_fusion": true,
+                                "network_coal_wind_battery_co2_fullYear_availability": true,
                                 "network_coal_wind_capacity_margin": false,
                                 "network_coal_wind_reserve": false,
                                 "network_coal_wind_reserve_co2_capacity_margin": false,
@@ -275,7 +275,7 @@
                                 "water_pump": false,
                                 "wind": false,
                                 "wind_battery": false,
-                                "wind_battery_invest": false,
+                                "wind_battery_invest": true,
                                 "wind_battery_invest_lifetime_choice": false,
                                 "wind_battery_invest_lifetime_renew": false,
                                 "wind_battery_invest_lifetime_renew_4solve": false
@@ -331,7 +331,7 @@
             "x": 71.01140335411533,
             "y": -8.906879167446874,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": [],
             "kill_completed_processes": false,
             "log_process_output": false

@@ -1413,49 +1413,49 @@ class FlexToolRunner:
                 filepath = 'output/' + key + '__t.csv'
             else:
                 filepath = 'output/' + key + '.csv'
-            
-            #get the relationship indicators from the start of the file
-            if group[1]>1:
-                relationship_start_df=pd.read_csv(filepath, header = 0, nrows=group[1]-1)
+            if os.path.exists(filepath):
+                #get the relationship indicators from the start of the file
+                if group[1]>1:
+                    relationship_start_df=pd.read_csv(filepath, header = 0, nrows=group[1]-1)
+                    if method == "timewise":
+                        relationship_start_df.drop(["time"],axis = 1, inplace=True)
+                    timestep_df = pd.read_csv(filepath,header = 0,skiprows=range(1,group[1]))
+                else:
+                    timestep_df = pd.read_csv(filepath,header = 0)
                 if method == "timewise":
-                    relationship_start_df.drop(["time"],axis = 1, inplace=True)
-                timestep_df = pd.read_csv(filepath,header = 0,skiprows=range(1,group[1]))
-            else:
-                timestep_df = pd.read_csv(filepath,header = 0)
-            if method == "timewise":
-                timestep_df.drop(["time"],axis = 1, inplace=True)
-            
-            #create a df with only group,solve,period cols, where the solve is the first of the group,period combo
-            solve_period = timestep_df.filter(items= group[0] +["solve","period"])
-            solve_first = solve_period.groupby(group[0] +["period"]).first().reset_index()
-            cols = list(solve_first.columns)
-            a,b = cols.index('period'),cols.index('solve')
-            cols[a], cols[b] = cols[b], cols[a]
-            solve_first= solve_first[cols]
-            
-            #group_by with group and period, sum numeric columns, other columns are removed
-            if arithmetic == "sum":
-                if not timestep_df.empty:
-                    modified= timestep_df.groupby(group[0]+["period"],group_keys=False).sum(numeric_only=True).reset_index()
+                    timestep_df.drop(["time"],axis = 1, inplace=True)
+                
+                #create a df with only group,solve,period cols, where the solve is the first of the group,period combo
+                solve_period = timestep_df.filter(items= group[0] +["solve","period"])
+                solve_first = solve_period.groupby(group[0] +["period"]).first().reset_index()
+                cols = list(solve_first.columns)
+                a,b = cols.index('period'),cols.index('solve')
+                cols[a], cols[b] = cols[b], cols[a]
+                solve_first= solve_first[cols]
+                
+                #group_by with group and period, sum numeric columns, other columns are removed
+                if arithmetic == "sum":
+                    if not timestep_df.empty:
+                        modified= timestep_df.groupby(group[0]+["period"],group_keys=False).sum(numeric_only=True).reset_index()
+                    else:
+                        modified = timestep_df
                 else:
-                    modified = timestep_df
-            else:
-                if not timestep_df.empty:
-                    modified = timestep_df.groupby(group[0]+["period"],group_keys=False).mean(numeric_only=True).reset_index()
-                else:
-                    modified = timestep_df
-            #combine with the solve name df
-            combined = pd.merge(solve_first,modified)
-            for col in combined.select_dtypes(include=['float']).columns:
-                combined[col] = combined[col].apply(lambda x: round(x,6))
-            #put the relationship indicators back to the start of the file
-            if group[1]>1:
-                combined = pd.concat([relationship_start_df,combined])
+                    if not timestep_df.empty:
+                        modified = timestep_df.groupby(group[0]+["period"],group_keys=False).mean(numeric_only=True).reset_index()
+                    else:
+                        modified = timestep_df
+                #combine with the solve name df
+                combined = pd.merge(solve_first,modified)
+                for col in combined.select_dtypes(include=['float']).columns:
+                    combined[col] = combined[col].apply(lambda x: round(x,6))
+                #put the relationship indicators back to the start of the file
+                if group[1]>1:
+                    combined = pd.concat([relationship_start_df,combined])
 
-            if arithmetic == "sum":
-                combined.to_csv('output/' + key + '.csv',index=False, float_format= "%.6g")
-            else:
-                combined.to_csv('output/' + key + '_average.csv',index=False, float_format= "%.6g")
+                if arithmetic == "sum":
+                    combined.to_csv('output/' + key + '.csv',index=False, float_format= "%.6g")
+                else:
+                    combined.to_csv('output/' + key + '_average.csv',index=False, float_format= "%.6g")
 
     def combine_result_tables(self, inputfile1, inputfile2, outputfile, combine_headers = None, move_column = []):
         input1 = pd.read_csv(inputfile1,header = 0)
