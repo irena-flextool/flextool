@@ -92,7 +92,8 @@ def migrate_project(old_path, new_path):
 
     if ("Open_summary" not in old_dict["items"].keys()) and ("Open_summary" in new_dict["items"].keys()):
         old_dict["items"]["Open_summary"] = new_dict["items"]["Open_summary"]
-        old_dict["connections"].append({"name": "from FlexTool3 to Open_summary", "from": ["FlexTool3","bottom"],"to": ["Open_summary","right"]})
+        old_dict["project"]["connections"].append({"name": "from FlexTool3 to Open_summary", "from": ["FlexTool3","bottom"],"to": ["Open_summary","right"]})
+        old_dict["project"]["specifications"]["Tool"].append({"type": "path","relative": True,"path": ".spinetoolbox/specifications/Tool/open_summary.json"})
 
     
     with open("./.spinetoolbox/project_temp2.json", "w") as outfile: 
