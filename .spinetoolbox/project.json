@@ -40,6 +40,11 @@
                     "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Tool/plot.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/open_summary.json"
                 }
             ]
         },
@@ -241,7 +246,7 @@
                                 "all": false,
                                 "base": false,
                                 "capacity_margin": false,
-                                "coal": false,
+                                "coal": true,
                                 "coal_chp": false,
                                 "coal_co2": false,
                                 "coal_min_load": false,
@@ -257,7 +262,7 @@
                                 "fullYear": false,
                                 "fusion": false,
                                 "multi_fullYear_battery": false,
-                                "multi_fullYear_battery_nested_24h_invest_one_solve": true,
+                                "multi_fullYear_battery_nested_24h_invest_one_solve": false,
                                 "multi_fullYear_battery_nested_multi_invest": false,
                                 "multi_fullYear_battery_nested_sample_invest_one_solve": false,
                                 "multi_year": false,
@@ -265,7 +270,7 @@
                                 "multi_year_one_solve_battery": false,
                                 "multi_year_one_solve_co2_limit": false,
                                 "network_coal_wind": false,
-                                "network_coal_wind_battery_co2_fullYear_availability": true,
+                                "network_coal_wind_battery_co2_fullYear_availability": false,
                                 "network_coal_wind_capacity_margin": false,
                                 "network_coal_wind_reserve": false,
                                 "network_coal_wind_reserve_co2_capacity_margin": false,
@@ -275,7 +280,7 @@
                                 "water_pump": false,
                                 "wind": false,
                                 "wind_battery": false,
-                                "wind_battery_invest": true,
+                                "wind_battery_invest": false,
                                 "wind_battery_invest_lifetime_choice": false,
                                 "wind_battery_invest_lifetime_renew": false,
                                 "wind_battery_invest_lifetime_renew_4solve": false
@@ -319,6 +324,17 @@
                 "to": [
                     "Plot_results",
                     "bottom"
+                ]
+            },
+            {
+                "name": "from FlexTool3 to Open_summary",
+                "from": [
+                    "FlexTool3",
+                    "bottom"
+                ],
+                "to": [
+                    "Open_summary",
+                    "right"
                 ]
             }
         ],
@@ -501,6 +517,17 @@
                 }
             ],
             "db_references": []
+        },
+        "Open_summary": {
+            "type": "Tool",
+            "description": "",
+            "x": -5.07288351089505,
+            "y": 109.574283835333,
+            "specification": "open_summary",
+            "execute_in_work": true,
+            "cmd_line_args": [],
+            "kill_completed_processes": false,
+            "log_process_output": false
         }
     }
 }

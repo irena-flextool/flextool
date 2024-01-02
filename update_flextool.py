@@ -76,7 +76,7 @@ def migrate_project(old_path, new_path):
         "Export_to_CSV",
         "Import_results",
         "Plot_results",
-        "Plot_settings"
+        "Plot_settings",
     ]
 
     with open(old_path) as old_json:
@@ -89,6 +89,11 @@ def migrate_project(old_path, new_path):
             for param in old_dict["items"][item].keys():
                 if param != "x" and param != "y":
                     old_dict["items"][item][param] = new_dict["items"][item][param]
+
+    if ("Open_summary" not in old_dict["items"].keys()) and ("Open_summary" in new_dict["items"].keys()):
+        old_dict["items"]["Open_summary"] = new_dict["items"]["Open_summary"]
+        old_dict["connections"].append({"name": "from FlexTool3 to Open_summary", "from": ["FlexTool3","bottom"],"to": ["Open_summary","right"]})
+
     
     with open("./.spinetoolbox/project_temp2.json", "w") as outfile: 
         json.dump(old_dict, outfile, indent=4)
