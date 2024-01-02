@@ -3268,7 +3268,7 @@ param fn_summary symbolic := "output/summary_solve.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf '"Diagnostic results from all solves. Output at (UTC): %s"', time2str(gmtime(), "%FT%TZ") > fn_summary; }
 for {s in solve_current} { printf '\n\n"Solve",%s\n', s >> fn_summary; }
-printf '"Total cost obj. function (M CUR)",%.12g,"Minimized total system cost as ', (total_cost.val / 1000000) >> fn_summary;
+printf '"Total cost obj. function (M CUR)",%.12g,"Minimized total system cost as ', (total_cost.val / scale_the_objective / 1000000) >> fn_summary;
 printf 'given by the solver (includes all penalty costs)"\n' >> fn_summary;
 printf '"Total cost (calculated) full horizon (M CUR)",%.12g,', sum{d in period_in_use} 
            ( + r_costOper_and_penalty_d[d] * p_discount_factor_operations_yearly[d] / period_share_of_year[d] 

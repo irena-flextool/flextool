@@ -316,6 +316,7 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 - `has_capacity_margin` - A flag whether the group of nodes has a capacity margin constraint in the investment mode.
 - `capacity_margin` - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode. Constant or period.
 - `penalty_capacity_margin` - [CUR/MWh] Penalty for violating the capacity margin constraint. Constant or period.
+- `share_loss_of_load` - Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted
 
 ### CO2 costs and limits
 
