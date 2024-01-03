@@ -1662,7 +1662,7 @@ def main():
         "connection__period": [[],3],
         "unit_cf__inputNode__period": [[],2],
         "unit_cf__outputNode__period": [[],2],
-        "connection_cf__period":[[],2],
+        "connection_cf__period":[[],3],
         "process__period_co2": [["class","process"],1],
         "unit_startup__period": [[],1],
         }

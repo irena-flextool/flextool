@@ -342,6 +342,10 @@ Some of the outputs are optional. They can be removed to speed up the post-proce
 - `output_connection_flow_separate`: Default, no. Produces the connection flows separately for both directions.
 - `output_unit__node_ramp_t`: Default, no. Produces the ramps of individual units for all timesteps.
 
+Additionally a model level option to exclude all node, connection and unit level outputs and only leave group and model level results. This will significantly increase the speed of importing data to the result database.
+
+- model: `exclude_entity_outputs`: Default, no. Excludes results on node, unit and connection level, but preserves group level results
+
 ## Reserves
 
 The user defines reserve categories through `reserve` object. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. 

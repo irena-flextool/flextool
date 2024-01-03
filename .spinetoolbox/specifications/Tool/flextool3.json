@@ -24,6 +24,7 @@
         "input/entity.csv",
         "input/entity__invest_method.csv",
         "input/entity__lifetime_method.csv",
+        "input/exclude_entity_outputs.csv",
         "input/group.csv",
         "input/groupCapacityMargin.csv",
         "input/groupInertia.csv",

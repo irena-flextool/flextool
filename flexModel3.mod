@@ -83,6 +83,7 @@ set groupParam;
 set groupPeriodParam;
 set groupTimeParam within groupParam;
 
+set exclude_entity_outputs;
 set def_optional_outputs dimen 2;
 set optional_outputs dimen 2;
 set optional_yes:= setof{(output,value) in optional_outputs: value == 'yes'}(output);
@@ -373,6 +374,7 @@ table data IN 'CSV' 'input/process.csv': process <- [process];
 table data IN 'CSV' 'input/profile.csv': profile <- [profile];
 table data IN 'CSV' 'solve_data/p_years_represented.csv': year <- [years_from_solve];
 table data IN 'CSV' 'input/optional_outputs.csv': optional_outputs <- [output, value];
+table data IN 'CSV' 'input/exclude_entity_outputs.csv': exclude_entity_outputs <- [value];
 
 # Single dimension membership sets
 table data IN 'CSV' 'input/process_connection.csv': process_connection <- [process_connection];
@@ -3220,7 +3222,7 @@ printf 'Write unit capacity results...\n';
 param fn_unit_capacity symbolic := "output/unit_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'unit,solve,period,existing,invested,divested,total\n' > fn_unit_capacity; }  # Clear the file on the first solve
-for {s in solve_current, p in process_unit, d in d_realize_invest}
+for {s in solve_current, p in process_unit, d in d_realize_invest: 'yes' not in exclude_entity_outputs}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
 	        p_entity_all_existing[p, d], 
@@ -3236,7 +3238,7 @@ printf 'Write connection capacity results...\n';
 param fn_connection_capacity symbolic := "output/connection_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'connection,solve,period,existing,invested,divested,total\n' > fn_connection_capacity; }  # Clear the file on the first solve
-for {s in solve_current, p in process_connection, d in d_realize_invest}
+for {s in solve_current, p in process_connection, d in d_realize_invest: 'yes' not in exclude_entity_outputs}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
 	        p_entity_all_existing[p, d],
@@ -3250,7 +3252,7 @@ printf 'Write node/storage capacity results...\n';
 param fn_node_capacity symbolic := "output/node_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,existing,invested,divested,total\n' > fn_node_capacity; }  # Clear the file on the first solve
-for {s in solve_current, e in nodeState, d in d_realize_invest}
+for {s in solve_current, e in nodeState, d in d_realize_invest: 'yes' not in exclude_entity_outputs}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', e, s, d, 
 	        p_entity_all_existing[e, d],
@@ -3700,7 +3702,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_unit__sinkNode__d;
 	for {(u, sink) in process_sink : u in process_unit} printf ',%s', sink >> fn_unit__sinkNode__d;
   }
-for {s in solve_current, d in d_realized_period}
+for {s in solve_current, d in d_realized_period: 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s', s, d >> fn_unit__sinkNode__d;
     for {(u, sink) in process_sink : u in process_unit}
@@ -3716,7 +3718,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit__sinkNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', sink >> fn_unit__sinkNode__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_unit__node_flow_t' in enable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_unit__node_flow_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit__sinkNode__dt;
     for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit}
@@ -3732,10 +3734,10 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_unit__sourceNode__d;
 	for {(u, source) in process_source : u in process_unit} printf ',%s', source >> fn_unit__sourceNode__d;
   }
-for {s in solve_current, d in d_realized_period}
+for {s in solve_current, d in d_realized_period: 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s', s, d >> fn_unit__sourceNode__d;
-    for {(u, source) in process_source : u in process_unit}
+    for {(u, source) in process_source : u in process_unit && 'yes' not in exclude_entity_outputs}
       { printf ',%.8g', -r_process_source_flow_d[u, source, d] / complete_period_share_of_year[d] >> fn_unit__sourceNode__d; }
   } 
 
@@ -3748,7 +3750,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit__sourceNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', source >> fn_unit__sourceNode__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_unit__node_flow_t' in enable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_unit__node_flow_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit__sourceNode__dt;
     for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}
@@ -3765,7 +3767,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_connection__d;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection__d;
   }
-for {s in solve_current, d in d_realized_period}
+for {s in solve_current, d in d_realized_period: 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s', s, d >> fn_connection__d;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3782,7 +3784,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_connection__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_connection__node__node_flow_t' in enable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_connection__node__node_flow_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_connection__dt;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -3799,7 +3801,7 @@ for {i in 1..1 : p_model['solveFirst'] && 'output_connection_flow_separate' in e
 	printf '\n,' >> fn_connection_to_right_node__d;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_right_node__d;
   }
-for {s in solve_current, d in d_realized_period: 'output_connection_flow_separate' in enable_optional_outputs }
+for {s in solve_current, d in d_realized_period: 'output_connection_flow_separate' in enable_optional_outputs && 'yes' not in exclude_entity_outputs }
   {
 	printf '\n%s,%s', s, d >> fn_connection_to_right_node__d;
     for {c in process_connection}
@@ -3816,7 +3818,7 @@ for {i in 1..1 : p_model['solveFirst'] && 'output_connection_flow_separate' in e
 	printf '\n,,' >> fn_connection_to_right_node__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_right_node__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch : 'output_connection_flow_separate' in enable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch : 'output_connection_flow_separate' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_connection_to_right_node__dt;
     for {c in process_connection}
@@ -3833,7 +3835,7 @@ for {i in 1..1 : p_model['solveFirst'] && 'output_connection_flow_separate' in e
 	printf '\n,' >> fn_connection_to_left_node__d;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', input >> fn_connection_to_left_node__d;
   }
-for {s in solve_current, d in d_realized_period: 'output_connection_flow_separate' in enable_optional_outputs }
+for {s in solve_current, d in d_realized_period: 'output_connection_flow_separate' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s', s, d >> fn_connection_to_left_node__d;
     for {c in process_connection}
@@ -3850,7 +3852,7 @@ for {i in 1..1 : p_model['solveFirst'] && 'output_connection_flow_separate' in e
 	printf '\n,,' >> fn_connection_to_left_node__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', input >> fn_connection_to_left_node__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_connection_flow_separate' in enable_optional_outputs}
+for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_connection_flow_separate' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_connection_to_left_node__dt;
     for {c in process_connection}
@@ -3942,7 +3944,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_unit__sinkNode__d_cf;
 	for {(u, sink) in process_sink : u in process_unit} printf ',%s', sink >> fn_unit__sinkNode__d_cf;
   }
-for {s in solve_current, d in d_realized_period}
+for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s', s, d >> fn_unit__sinkNode__d_cf;
     for {(u, sink) in process_sink : u in process_unit}
@@ -3960,7 +3962,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_unit__sourceNode__d_cf;
 	for {(u, source) in process_source : u in process_unit} printf ',%s', source >> fn_unit__sourceNode__d_cf;
   }
-for {s in solve_current, d in d_realized_period}
+for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s', s, d	 >> fn_unit__sourceNode__d_cf;
     for {(u, source) in process_source : u in process_unit}
@@ -3979,7 +3981,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_connection_cf__d;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_cf__d;
   }
-for {s in solve_current, d in d_realized_period}
+for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s', s, d >> fn_connection_cf__d;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
@@ -4002,7 +4004,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_unit__sinkNode__d_curtailment;
 	for {(u, sink) in process_sink : u in process_VRE} printf ',%s', sink >> fn_unit__sinkNode__d_curtailment;
   }
-for {s in solve_current, d in d_realized_period}
+for {s in solve_current, d in d_realized_period: 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s', s, d >> fn_unit__sinkNode__d_curtailment;
     for {(u, sink) in process_sink : u in process_VRE}
@@ -4019,7 +4021,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,,' >> fn_unit__sinkNode__share__dt_curtailment;
 	for {(u, sink) in process_sink : u in process_VRE} printf ',%s', sink >> fn_unit__sinkNode__share__dt_curtailment;
   }
-for {s in solve_current, d in d_realized_period}
+for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_outputs}
   {
     for {(d,t) in dt_realize_dispatch }
     {
@@ -4043,7 +4045,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit__sinkNode__dt_curtailment;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_VRE} printf ',%s', sink >> fn_unit__sinkNode__dt_curtailment;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch : 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit__sinkNode__dt_curtailment;
     for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_VRE}
@@ -4062,7 +4064,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit_ramp__sinkNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', sink >> fn_unit_ramp__sinkNode__dt;
   }
-for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'output_unit__node_ramp_t' in enable_optional_outputs}
+for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'output_unit__node_ramp_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sinkNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit}
@@ -4077,7 +4079,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit_ramp__sourceNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', source >> fn_unit_ramp__sourceNode__dt;
   }
-for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'output_unit__node_ramp_t' in enable_optional_outputs}
+for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'output_unit__node_ramp_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sourceNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}
@@ -4103,7 +4105,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_process__reserve__upDown__node__dt;
     for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', n >> fn_process__reserve__upDown__node__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch : 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s,%s', s, d, t >> fn_process__reserve__upDown__node__dt;
 	for {(p, r, ud, n) in process_reserve_upDown_node_active}
@@ -4126,7 +4128,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,' >> fn_process__reserve__upDown__node__d;
     for  {(p, r, ud, n) in process_reserve_upDown_node_active} printf ',%s', n >> fn_process__reserve__upDown__node__d;
   }
-for {s in solve_current, d in d_realized_period}
+for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_outputs}
   {
 	printf '\n%s,%s', s, d >> fn_process__reserve__upDown__node__d;
 	for {(p, r, ud, n) in process_reserve_upDown_node_active}
@@ -4143,7 +4145,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {p in process_unit  : p in process_online}
       { printf ',%s', p >> fn_unit_online__dt; }
   }  # Print the header on the first solve
-for {s in solve_current, (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch : 'yes' not in exclude_entity_outputs}
   {
     printf '\n%s,%s,%s', s, d, t >> fn_unit_online__dt;
 	for {p in process_unit : p in process_online}
@@ -4159,7 +4161,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {p in process_unit  : p in process_online}
       { printf ',%s', p >> fn_unit_online__d; }
   }  # Print the header on the first solve
-for {s in solve_current, d in d_realized_period}
+for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_outputs}
   {
     printf '\n%s,%s', s, d >> fn_unit_online__d;
 	for {p in process_unit : p in process_online}
@@ -4175,7 +4177,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {p in process_unit  : p in process_online}
       { printf ',%s', p >> fn_unit_startup__d; }
   }  # Print the header on the first solve
-for {s in solve_current, d in d_realized_period}
+for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_outputs}
   {
     printf '\n%s,%s', s, d >> fn_unit_startup__d;
 	for {p in process_unit : p in process_online}
@@ -4192,7 +4194,7 @@ param fn_node__d symbolic := "output/node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,inflow,"from units","from connections","to units","to connections",' > fn_node__d;
     printf '"state change","self discharge","upward slack","downward slack"\n' >> fn_node__d; }  # Print the header on the first solve
-for {n in node, s in solve_current, d in d_realized_period}
+for {n in node, s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_outputs}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
 		, n, s, d
@@ -4212,7 +4214,7 @@ printf 'Write process CO2 results for periods...\n';
 param fn_process_co2__d symbolic := "output/process__period_co2.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'class,process,solve,period,"CO2 [Mt/a]"\n' > fn_process_co2__d; }  # Print the header on the first solve 
-for {p in process_co2, s in solve_current, d in d_realized_period}
+for {p in process_co2, s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_outputs}
   {
     printf '%s,%s,%s,%s,%.8g\n'
 		, (if p in process_unit then "unit" else "connection"), p, s, d
@@ -4225,7 +4227,7 @@ param fn_node__dt symbolic := "output/node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,time,inflow,"from units","from connections","to units","to connections",' > fn_node__dt;
     printf '"state change","self discharge","upward slack","downward slack"\n' >> fn_node__dt; }  # Print the header on the first solve
-for {n in node, s in solve_current, (d, t) in dt_realize_dispatch: 'output_node_balance_t' in enable_optional_outputs}
+for {n in node, s in solve_current, (d, t) in dt_realize_dispatch: 'output_node_balance_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
   {
     printf '%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
 		, n, s, d, t
@@ -4249,7 +4251,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {n in nodeBalance}
       { printf ',%s', n >> fn_nodal_prices__dt; }
   }
-for {s in solve_current, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in dt_realize_dispatch && 'yes' not in exclude_entity_outputs}
   {
     printf '\n%s,%s,%s', s, d, t >> fn_nodal_prices__dt;
     for {c in solve_current, n in nodeBalance}
@@ -4265,7 +4267,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {n in nodeState}
       { printf ',%s', n >> fn_nodeState__dt; }
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch : 'yes' not in exclude_entity_outputs}
   { printf '\n%s,%s,%s', s, d, t >> fn_nodeState__dt;
     for {n in nodeState} 
       {
@@ -4280,7 +4282,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {n in nodeBalance}
       { printf ',%s', n >> fn_node_upward_slack__dt; }
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch : 'yes' not in exclude_entity_outputs}
   { printf '\n%s,%s,%s', s, d, t >> fn_node_upward_slack__dt;
     for {n in nodeBalance} 
       {
@@ -4295,7 +4297,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {n in nodeBalance}
       { printf ',%s', n >> fn_node_downward_slack__dt; }
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch}
+for {s in solve_current, (d, t) in dt_realize_dispatch : 'yes' not in exclude_entity_outputs}
   { printf '\n%s,%s,%s', s, d, t >> fn_node_downward_slack__dt;
     for {n in nodeBalance} 
       {
@@ -4349,7 +4351,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {e in entityInvest : e in process_unit}
 	  { printf ',%s', e >> fn_unit_invested_marginal; }
   }
-for {s in solve_current, d in d_realize_invest}
+for {s in solve_current, d in d_realize_invest : 'yes' not in exclude_entity_outputs}
   { printf '\n%s,%s', s, d >> fn_unit_invested_marginal;
     for {e in entityInvest : e in process_unit} 
       {
@@ -4363,7 +4365,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {e in entityInvest : e in process_connection}
 	  { printf ',%s', e >> fn_connection_invested_marginal; }
   }
-for {s in solve_current, d in d_realize_invest}
+for {s in solve_current, d in d_realize_invest : 'yes' not in exclude_entity_outputs}
   { printf '\n%s,%s', s, d >> fn_connection_invested_marginal;
     for {e in entityInvest : e in process_connection} 
       {
@@ -4377,7 +4379,7 @@ for {i in 1..1 : p_model['solveFirst']}
     for {e in entityInvest : e in node}
 	  { printf ',%s', e >> fn_node_invested_marginal; }
   }
-for {s in solve_current, d in d_realize_invest}
+for {s in solve_current, d in d_realize_invest : 'yes' not in exclude_entity_outputs}
   { printf '\n%s,%s', s, d >> fn_node_invested_marginal;
     for {e in entityInvest : e in node} 
       {
@@ -4516,7 +4518,7 @@ param fn_node_ramp__dtt symbolic := "output/node_ramp__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,time,"ramp","+connections_up","+VRE_up","units_up",' > fn_node_ramp__dtt;
     printf '"units_down","+VRE_down","+connections_down"' >> fn_node_ramp__dtt; }  # Print the header on the first solve
-for {n in nodeBalance, s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'output_ramp_envelope' in enable_optional_outputs}
+for {n in nodeBalance, s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'output_ramp_envelope' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
   {
     printf '\n%s,%s,%s,%s,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f'
 		, n, s, d, t

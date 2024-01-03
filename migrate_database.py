@@ -21,7 +21,7 @@ def migrate_database(database_path):
         version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
     next_version = int(version) + 1
-    new_version = 13
+    new_version = 14
 
     while next_version <= new_version:
         if next_version == 0:
@@ -60,6 +60,10 @@ def migrate_database(database_path):
             add_value_list_manual(db,new_value_list)
             add_parameters_manual(db,new_parameters)
             remove_parameters_manual(db,[["node","storate_state_end"]])
+        elif next_version == 14:
+            new_parameters = [["model","exclude_entity_outputs", "yes", "optional_output", "Excludes results on node, unit and connection level, but preserves group level results"]]
+            remove_parameters_manual(db, [["model","results"]])
+            add_parameters_manual(db, new_parameters)
         else:
             print("Version invalid")
         next_version += 1 
