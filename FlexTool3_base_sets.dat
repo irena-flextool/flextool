@@ -152,6 +152,7 @@ set nodeTimeParam := inflow, penalty_down, penalty_up, self_discharge_loss, avai
 set nodeParam_def1 := availability;
 set reserveParam := can_provide reservation reliability penalty_reserve,
                     increase_reserve_ratio large_failure_ratio max_share;
+set reserveParam_def1 := reliability;
 set reserveTimeParam := reservation;
 set invest_method := not_allowed, invest_no_limit, invest_period, invest_total, invest_period_total, 
                   retire_no_limit, retire_period, retire_total, retire_period_total, 

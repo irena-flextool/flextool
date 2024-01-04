@@ -78,6 +78,7 @@ set processTimeParam within processParam;
 set sourceSinkParam;
 set sourceSinkTimeParam within sourceSinkParam;
 set reserveParam;
+set reserveParam_def1 within reserveParam;
 set reserveTimeParam within reserveParam;
 set groupParam;
 set groupPeriodParam;
@@ -313,7 +314,8 @@ param pt_profile {profile, time};
 
 param p_reserve_upDown_group {reserve, upDown, group, reserveParam} default 0;
 param pt_reserve_upDown_group {reserve, upDown, group, reserveTimeParam, time};
-param p_process_reserve_upDown_node {process, reserve, upDown, node, reserveParam} default 0;
+param reserveParam_defaults{rp in reserveParam}:= (if rp in reserveParam_def1 then 1 else 0);
+param p_process_reserve_upDown_node {p in process, r in reserve, ud in upDown, n in node, rp in reserveParam} default reserveParam_defaults[rp];
 
 param p_process {process, processParam} default 0;
 param pd_process {process, processPeriodParam, periodAll} default 0;
