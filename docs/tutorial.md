@@ -5,17 +5,26 @@ The instructions for installing IRENA FlexTool are at [Interface overview](https
 This user guide will build a small system step-by-step. It assumes you will be using Spine Toolbox as the front-end. If you are using the IRENA FlexTool web-interface, the instructions still apply, but the example figures in this tutorial will not be as helpful. IRENA FlexTool concepts are explained in more depth at [Model Parameters](https://irena-flextool.github.io/flextool/reference). 
 Video tutorial for Building a small test system can be watched [here](https://youtu.be/O94zHxYcS94).
 
-The Input_data and Results database tools might be complaining that they can't find databases 'input_data.sqlite' and 'Results.sqlite'. This is due to the fact that these are not included in the repository to avoid future data erasing with updates to the tool. Instead, in the flextool folder you can find databases 'input_data_template' and 'Results_template'. Make a copy of both and rename them 'input_data.sqlite' and 'Results.sqlite'. You can also change the path to the database that the tools are using by clicking them. This might be useful later, when having multiple input datasets.
+This tutorial can be used in couple of different ways - the best way depends on your familiarity with energy system modelling. 
 
-The small system to be built is also directly available in the FlexTool repository (***Init*** SQLite database) and can be opened with the Spine Toolbox database editor. The default workflow for IRENA FlexTool executes the scenarios from the ***Input data*** database (and not from the ***Init*** SQLite database). The ***Input data*** database is empty by default. Therefore, if you want to use directly the contents of the ***Init*** database (instead of building the small system step-by-step), you need to copy them to the ***Input data*** database before running the scenarios in this tutorial. To copy the data, you need to execute the ***Initialize*** workflow item: select the item, press ***Execute selection*** from the toolbar. It is not advised to run the whole workflow, (***Execute project***) since it will copy data from two sources: the Excel based input data file and the ***Init*** database and this will create two sets of data in the ***Input data*** database. 
+First, **all users who are not familiar with the way FlexTool manages data using Spine Toolbox functionalities**, should read the [page on Spine Toolbox workflow](https://irena-flextool.github.io/flextool/spine_toolbox)
 
-More information on how to set-up and use the Spine Toolbox front-end in [Toolbox interface](https://irena-flextool.github.io/flextool/spine_toolbox). 
+**If you are new to energy system modelling**, it is probably best to try to build the test system yourself while following the tutorial. This will take time and you will have to look up many data items from the ***Init*** database, but it will also force you to learn the concepts. You can also copy-paste data from the ***Init*** database to the ***Input data*** database when writing the data becomes too tedious. Before you start, it can be a good idea to to check the [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference) from the beginning of the FlexTool reference page to get an initial understanding of the concepts that will then grow as you learn more. 
 
-If not done already, in the flextool folder make a copy of the Results_template.sqlite and rename it Results.sqlite.
+**If you have experience in using other types of energy system models** - or perhaps older versions of FlexTool - it can be sufficient to follow the tutorial while also browsing the ***Init*** database using the database editor. Finding the entity classes, entities, and parameter values in the actual database will assist in the learning process. The concept [reference](https://irena-flextool.github.io/flextool/reference) page can also be useful.
+
+Finally, **if you are a really experienced modeller**, it can be enough to check the reference section starting from [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference). 
+
+
+## Building a small test system
+
+The system contains three demand nodes, connections between them, a coal plant and a wind plant to provide the energy to the time varying demand. The system is run over a 48 hour timeline. 
+
+![System graph](./tutorial_fig.png)
+
+The small system to be built is also directly available in the FlexTool repository (***Init*** SQLite database) and can be opened with the Spine Toolbox database editor. The default workflow for IRENA FlexTool executes the scenarios from the ***Input data*** database (and not from the ***Init*** SQLite database). The ***Input data*** database is empty by default. Therefore, if you want to use directly the contents of the ***Init*** database (instead of building the small system step-by-step), you need to copy them to the ***Input data*** database before running the scenarios in this tutorial. To copy the data, you need to execute the ***Initialize*** workflow item: select the item, press ***Execute selection*** from the toolbar.
 
 Remark: in case you had already populated the ***Input data*** database, you need to delete the data before importing from ***Init*** SQLite database. This can be done with the 'purge' tool from the Database Editor menu: in `purge`, click on both *Select entity and value items*, and *Select scenario items* and then purge.
-
-
 
 - [Building a small test system](#building-a-small-test-system)
   - [1st step - a node with no units](#1st-step---a-node-with-no-units)
@@ -24,23 +33,16 @@ Remark: in case you had already populated the ***Input data*** database, you nee
   - [4th step - add a network](#4th-step---add-a-network)
 - [More functionality](#more-functionality)
 
-## Building a small test system
+### Choosing the database
 
-This tutorial can be used in couple of different ways - the best way depends on your familiarity with energy system modelling. 
+You should have the FlexTool project open in the Spine Toolbox. For this tutorial a database *time_settings_only.sqlite* is provided in the Flextool folder. As the name suggests, it includes the basic time settings needed for running the tool. If you want to know how it is done or how to make your own time settings go to [How-to-create-basic-time-settings](https://irena-flextool.github.io/flextool/how_to#how-to-create-basic-time-settings). How to -section includes simple examples on specific parts of the system. You can explore it after the tutorial.
 
-First, **all users who are not familiar with the way FlexTool manages data using Spine Toolbox functionalities**, should read the [page on Spine Toolbox workflow](https://irena-flextool.github.io/flextool/spine_toolbox)
-
-**If you are new to energy system modelling**, it is probably best to try to build the test system yourself while following the tutorial. This will take time and you will have to look up many data items from the ***Init*** database, but it will also force you to learn the concepts. You can also copy-paste data from the ***Init*** database to the ***Input data*** database when writing the data becomes too tedious. Before you start, it can be a good idea to to check the [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference) from the beginning of the FlexTool reference page to get an initial understanding of the concepts that will then grow as you learn more. 
-
-If you have already run the whole workflow, then the ***Input_data*** database will be populated and you will need to delete the data before starting to build from scratch. This can be done with the 'purge' tool from the Database Editor menu: in `purge`, click on both *Select entity and value items*, and *Select scenario items* and then purge.
-
-**If you have experience in using other types of energy system models** - or perhaps older versions of FlexTool - it can be sufficient to follow the tutorial while also browsing the ***Init*** database using the database editor. Finding the entity classes, entities, and parameter values in the actual database will assist in the learning process. The concept [reference](https://irena-flextool.github.io/flextool/reference) page can also be useful.
-
-Finally, **if you are a really experienced modeller**, it can be enough to check the reference section starting from [Essential objects for defining a power/energy system](https://irena-flextool.github.io/flextool/reference). 
+First make a copy of the database and name it *tutorial.sqlite*. (In the future a new project should be started by copying *time_settings_only.sqlite* or the empty database *input_data_template.sqlite*). Then choose it to be the Input_data:
+![Choose a database](./choosing_database.png)
 
 ### 1st step - a node with no units
 
-You should have the FlexTool project open in the Spine Toolbox. Then, open the ***Input data*** database by double-clicking it in the Spine Toolbox workflow.
+Open the ***Input data*** database by double-clicking it in the Spine Toolbox workflow.
 
 The test system is built using `alternatives`. Alternative is a subset of the system than one can include to a `scenario` that is optimized by Flextool. For example when adding a wind plant, all the objects and relationships related to only the wind plant should be under their own alternative, so that the wind plant can be included or excluded form the `scenario` seamlessly.
 
@@ -71,38 +73,19 @@ Then, add parameter data to the newly minted *west* `node`:
 
 ![First_node](./west_node.png)
 
-The model will also need parameters that define the model structure for time related issues. FlexTool time structure offers a lot of flexibility, but it is also bit complex to learn at first. At this stage not everything needs to be understood - the time structures will be explained in more detail later. 
-
-First, make a new `alternative` called *init* to keep all the model structure related data separate from the data on physical objects. All parameter data that will be added next should go into the *init* `alternative`.
-
-Then, to get the model to run, you need to create the following objects and relationships:
-
-- `timeline` object called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains, in the first column, the name of each timestep (e.g. *t0001* or *2022-01-01-01*) and, in the second column, the length of the timestep in hours (e.g. *1.0*). The timestep names in the previously given `inflow` time series must match these timestep names - and any other timestep names in later time series.
-- `timeblockset` object called *2day* with a map-type parameter `block_duration` to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps (e.g. *t0001* and *48.0*). The timeline is larger than the 48, but this way the solver uses only the first 48h.
-- `timeblockset` *2day* and `timeline` *y2020* need to have `timeblockset__timeline` relationship *2day*, *y2020*. From the `relationship tree` right-click on the `timeblockset__timeline` relationship class to 'Add relationships...'.
-- `solve` object called *y2020_2day_dispatch*
-
-  - with a map-type parameter `period_timeblockSet` to define the timeblockset to be used by each period (in this example: `period` *p2020* in the first column of the map links to the `timeblockset` object *2day* in the second column of the map)
-  - with an array-type parameter `realized_periods` to define the periods that are realised from the `solve` named by the object (in this example: first column of the array is the index number *1* and the second column contains the period to be realized in the results: *p2020*)
-  - with a parameter `solve_mode`, to be set to *single_solve*.
-
-- Finally, the `model` object needs to be created. It must contain the sequence of solves. In this case *flexTool* `model` object contains just one solve *y2020_2day_dispatch* inside the array-type parameter.
-
-Be careful when choosing datatypes! Maps need to be maps not arrays. (In the future, an update is coming to toolbox to make this easier.) 
-
-The new objects, relationships and parameters have now been staged. Even though it looks like they are in the database, they really are not - they need to be **committed** first. This can be done from the menu of the Database Editor (there is a *commit* command) or by pressing *ctrl-enter*. One should write an informative commit message about the changes that have been made. All commits, and the data they have affected, can be seen later from the *history* menu item.
-
-![Time_parameters](./first_model.png)
+The new objects and parameters have now been staged. Even though it looks like they are in the database, they really are not - they need to be **committed** first. This can be done from the menu of the Database Editor (there is a *commit* command) or by pressing *ctrl-enter*. One should write an informative commit message about the changes that have been made. All commits, and the data they have affected, can be seen later from the *history* menu item.
 
 ### Interlude - creating a scenario and running the model
 
-Even though the model is very simple and will not do anything interesting, it can be executed. It is first necessary to create the scenario to be executed. Scenarios are created from `alternatives` in the Scenario tree widget of the Database Editor. In the figure below, a `scenario` called *base* is created that should contain `alternatives` *west* and *init* in order to have both a node and a model structure included in the model. The new `scenario` must also be **committed**, before it can be used. A new scenario should be added after each step in the tutorial process. 
+Even though the model is very simple and will not do anything interesting, it can be executed. It is first necessary to create the scenario to be executed. Scenarios are created from `alternatives` in the Scenario tree widget of the Database Editor. In the figure below, a `scenario` called *Test-scenario* is created that should contain `alternatives` *west*, *init* and *init_2day-test* in order to have both a node and a model structure included in the model. The new `scenario` must also be **committed**, before it can be used. A new scenario should be added after each step in the tutorial process. 
 
 ![Add scenario](./add_scenario.png)
 
-Note that the order of the alternatives matters if there are conflicts between the alternatives. The alternatives lower down override the alternatives higher up on the list. For example if you would add a parameter `inflow` with a value -100 to the *west* node in the alternative `init`, it would use that instead of the previously set timeseries, because the `init` alternative is lower down in the alternative list of the scenario.
+Note that the order of the alternatives matters if there are conflicts between the alternatives. The alternatives lower down override the alternatives higher up on the list. In this example the *init* alternative has a full-year timeblock, but because the *init_2day-test* is lower in the scenario tree, the tool uses its `model`-*flextool*: solves parameter which points to the solve to be included in the model (*2day-dispatch*) and only it will be solved.
 
-Once the scenario has been committed to the database, it becomes available in the Spine Toolbox workflow. One can select scenarios to be executed from the arrow that leaves the ***Input data*** database. At this point, there will be only the *base* `scenario` available and should be selected. There is also a tool filter with *FlexTool3* pre-selected. This selection needs to be present when running scenarios (it is used to filter the `is_active` entities into the scenario).
+Same logic will apply if you would add a parameter `inflow` with a value -100 to the *west* node in the alternative `init`. The model would use that instead of the previously set timeseries, because the `init` alternative is lower down in the alternative list of the scenario.
+
+Once the scenario has been committed to the database, it becomes available in the Spine Toolbox workflow. One can select scenarios to be executed from the arrow that leaves the ***Input data*** database. At this point, there will be only the *Test-scenario* available and should be selected. There is also a tool filter with *FlexTool3* pre-selected. This selection needs to be present when running scenarios (it is used to filter the `is_active` entities into the scenario).
 
 ![Select scenario](./select_scenario.png)
 
@@ -111,9 +94,10 @@ Next, we want to run three tools: ***Export_to_CSV*** (that will make input file
 ![Choose workflow items](./choose_workflow_items.png) 
 ![Executed selected items](./execute_selected.png)
 
-If the ***Results*** database has an error: database not found. Go to the Flextool folder, make a copy of the *Results_template.sqlite* to the same folder and name it *Results.sqlite*. After this run the ***Import_results*** tool again.
 
-It is now possible to explore model results for the *base* `scenario` using either the ***Results*** database or the Excel file that can be exported by executing the ***To_Excel*** exporter tool. When doing that, no scenarios should be selected so that the tool will create one Excel file with data from all the alternatives that are in the results database (which will make more sense once there are more scenario results). The generated Excel file can be found by selecting the ***To_Excel*** tool and clicking on the folder icon on top-right of the ***Link properties*** widget window.
+It is now possible to explore model results for the *Test-scenario* using either the ***Results*** database or the Excel file that can be exported by executing the ***To_Excel*** exporter tool. When doing that, no scenarios should be selected so that the tool will create one Excel file with data from all the alternatives that are in the results database (which will make more sense once there are more scenario results). The generated Excel file can be found by selecting the ***To_Excel*** tool and clicking on the folder icon on top-right of the ***Link properties*** widget window.
+
+By running the `Open_summary` tool, a quick summary csv file will open. This supports only runs with one scenario.
 
 ### 2nd step - add a coal unit
 
@@ -144,7 +128,7 @@ In the second step, a coal unit is added.
 
 ![Add unit](./add_unit.png)
 
-To see how the results change due to the coal power plant, make a new scenario *coal* that has the `alternatives` *init*, *west* and *coal*. Run the ***Export_to_CSV***, ***FlexTool3*** and ***Import_results*** to get the results to the ***Results*** database. If you start to get too many result `alternatives` in the ***Results*** database (e.g. if you happen to run the same scenario multiple times), you can delete old ones by removing the unwanted `alternatives` (right-click on the `alternative`) and then **committing** the database.
+To see how the results change due to the coal power plant, make a new scenario *coal* that has the `alternatives` *init*, *init_2day-test*, *west* and *coal*. Run the ***Export_to_CSV***, ***FlexTool3*** and ***Import_results*** to get the results to the ***Results*** database. If you start to get too many result `alternatives` in the ***Results*** database (e.g. if you happen to run the same scenario multiple times), you can delete old ones by removing the unwanted `alternatives` (right-click on the `alternative`) and then **committing** the database.
 
 ### Interlude - visualizing the system in a graph
 In Spine Toolbox, it is possible to visualize your system in a graph, which will show all objects, and the relationships between them.
@@ -172,7 +156,7 @@ Next, a wind power plant is added.
 - *wind_plant* needs the following parameters (all set for the *wind* alternative):
 
   - `conversion_method` to choose a method for the conversion process (in this case *constant_efficiency*)
-  - `efficiency` for *wind_plant* should be set to 1
+  - `efficiency` for *wind_plant* should be set to 1.
   - `existing` capacity can be set to 1000 MW
   - `is_active` set to *yes* to include the *wind_plant* in the model
 
@@ -213,8 +197,8 @@ The *north* `node` has the lowest upward penalty, so the model will prefer to us
 
 ### More functionality
 
-Now you have learned how to create a small model. If you want to save it, make a copy of the *Input_data* database and name it something else for example Tutorial.sqlite. Remember that you can change which database is used as the *Input_data* by clicking the tool icon. In the same way, the *Results* database can be saved and changed.
+Now you have learned how to create a small model. Remember that you can change which database is used as the *Input_data* by clicking the tool icon. You can make a copy of the *Results* database if you want to keep them. The database can also be purged from previous results with the 'purge' tool from the Database Editor menu: in `purge`, click on both *Select entity and value items*, and *Select scenario items* and then purge. Purging by itself will not reduce the file size, you will have to `Vacuum` it to do this.
 
 More instructions on how to create individual parts of the model can be found in the [How to](https://irena-flextool.github.io/flextool/how_to) section.
 
-You can also look and play with the ready scenarios from the init database. Purge *Input_data* and *Initialize* it to copy the init database to it. This can be done with the 'purge' tool from the Database Editor menu: in `purge`, click on both *Select entity and value items*, and *Select scenario items* and then purge. Then select the initialize tool and run it to copy the init.sqlite to the input_data.sqlite.
+You can also look and play with the ready scenarios from the init database. Purge *Input_data* and *Initialize* it to copy the init database to it. Purging is done the same way as above: This can be done with the 'purge' tool from the Database Editor menu: in `purge`, click on both *Select entity and value items*, and *Select scenario items* and then purge. Then select the initialize tool and run it to copy the init.sqlite to the input_data.sqlite.

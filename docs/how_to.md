@@ -7,6 +7,7 @@ This section is divided into two parts:
 
 Building parts of the model:
 
+- [How to create basic time settings](#how-to-create-basic-time-settings)
 - [How to create a PV, wind or run-of-river hydro power plant](#How-to-create-a-PV,-wind-or-run---of---river-hydro-power-plant)
 - [How to connect nodes in the same energy network](#How-to-connect-nodes-in-the-same-energy-network)
 - [How to set the demand in a node](#How-to-set-the-demand-in-a-node)
@@ -35,6 +36,33 @@ General:
 - [How to create aggregate outputs](#how-to-create-aggregate-outputs)
 - [How to enable/disable outputs](#how-to-enabledisable-outputs)
 - [How to make the Flextool run faster](#how-to-make-the-flextool-run-faster)
+
+## How to create basic time settings
+**(time_settings_only.sqlite)**
+
+Here we show how to make basic timesettings needed for running the flextool. Three different timelines are made:full year, 48h timeline and a timeline with five week long slices of the year. To be able to choose which of these are used in a given scenario, three alternatives are created: init, init_2day-test, init_5week-invest. 
+
+The names of these alternatives give hints on where to use these timelines. Even when you are building a large model with a long timeline, it is better to use a short 48 hour timeline for testing purposes when building the model. Using five week length slices ie. "a representative period" in an investment model is a method to reduce the model size and solving times. More about that in [How to run solves in a sequence (investment + dispatch)](#how-to-run-solves-in-a-sequence-investment--dispatch)
+
+![Time_settings](./time_settings.png)
+
+First you need to create the following objects and relationships:
+
+- `timeline` object called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains, in the first column, the name of each timestep (e.g. *t0001* or *2022-01-01-01*) and, in the second column, the length of the timestep in hours (e.g. *1.0*). The timestep names here must match the timestep names in other time series like `inflow` or `profile`. Here all of the three options use the same full year timeline ie. timesteps from t0001 to t8760 with the step size of one hour.
+- `timeblockset` objects called *full-year*, *2day* and *5week*. Each of them need a map-type parameter `block_duration` to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps: (*t0001*, *8760*) for the *full-year* and (*t4001* and *48.0*) for the 48h. The timeline is larger than the 48 hours, but this way the solver uses 48 hours specified. The *5week* needs five starting points
+*t2521*, *t4538*, *t5041*, *t7057* and *t8233* with all having the length of *168.0*
+- `timeblockset` needs to be connected to the timeline. This is done by adding the `timeblockset__timeline` relationships (*full-year*| *y2020*), (*2day*| *y2020*), (*5weeks*| *y2020*). From the `relationship tree` right-click on the `timeblockset__timeline` relationship class to 'Add relationships...'.
+- `solve` objects called *full-year-dispatch*, *2day-dispatch* and *5week-invest*
+
+  - with a map-type parameter `period_timeblockSet` to define the timeblockset to be used by each period. Here each of the three use their `timeblokSet` to describe the same period *p2020*. The first column of the map has the period: *p2020* and the second column the `timeblockSet`: *full-year*, *2day* or *5week*
+  - with an array-type parameter `realized_periods` to define the periods that are realised from the `solve` named by the object (in this example: first column of the array is the index number *0* and the second column contains the period to be realized in the results: *p2020*)
+  - with a parameter `solve_mode`, to be set to *single_solve*.
+
+- Finally, the `model` object needs to be created here *flextool*. It must contain the sequence of solves as an array. In this case the object contains just one solve *full-year-dispatch*, *2day-dispatch* or *5week-invest* inside the array-type parameter.
+
+Be careful when choosing datatypes! Maps need to be maps not arrays. (In the future, an update is coming to toolbox to make this easier.) 
+
+![Time_parameters](./first_model.png)
 
 ## How to create a PV, wind or run-of-river hydro power plant
 

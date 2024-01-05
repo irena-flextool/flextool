@@ -37,6 +37,7 @@ def update_flextool(skip_git):
     db_to_update.append("Init.sqlite")
     db_to_update.append("Input_data.sqlite")
     db_to_update.append("input_data_template.sqlite")
+    db_to_update.append("time_settings_only.sqlite")
 
     # add the database used in the input_data tool
     with open("./.spinetoolbox/project.json") as json_file:

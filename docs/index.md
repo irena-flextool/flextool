@@ -15,3 +15,11 @@ IRENA FlexTool is an energy systems optimisation model developed for power and e
 - How-to section has examples on how to add specific features to a model: [How to](https://irena-flextool.github.io/flextool/how_to)
 - More advanced users can find the model parameter descriptions useful: [Model parameters](https://irena-flextool.github.io/flextool/reference)
 - Finally, result parameters are documented here: [Model results](https://irena-flextool.github.io/flextool/results)
+
+# Monthly user support calls
+
+The time for the open online Teams meeting is every last Monday of month at 12-13 UTC. (Notice that time is according to UTC and in places where day-light saving time is applied, the time of the meeting may change between winter/summer) Each 1 h session starts with a ~15 min presentation on simple IRENA FlexTool demos or tutorials, followed by 45 min Q&A session
+
+[Teams link](https://teams.microsoft.com/l/meetup-join/19%3ameeting_MmIzZWMxYzktODMzNi00ODdjLWJlM2MtYzQ0Y2U4NDlhNTAz%40thread.v2/0?context=%7b%22Tid%22%3a%2268d6b592-5008-43b5-9b04-23bec4e86cf7%22%2c%22Oid%22%3a%226510eb43-ff7f-4f42-93ca-0302a115cd48%22%7d)
+
+Please contact nelli.putkonen@vtt.fi for an Outlook calendar invitation
