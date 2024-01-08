@@ -3121,11 +3121,9 @@ param r_group_output__group_aggregate_Group_to_unit__dt{(g, ga) in group_output_
 
 param r_group_output__group_aggregate_Connection__dt{(g, ga) in group_output__group_aggregate_Connection, (d, t) in dt_realize_dispatch} :=
   + sum{(g, ga, c, source, sink) in group_output__group_aggregate__process__connection__to_node}
-    ( + r_process__source__sink_Flow__dt[c, c, sink, d, t] 
-	  - r_process__source__sink_Flow__dt[c, sink, c, d, t])
+    ( + r_process__source__sink_Flow__dt[c, c, sink, d, t])
   + sum{(g, ga, c, source, sink) in group_output__group_aggregate__process__node__to_connection}
-    ( + r_process__source__sink_Flow__dt[c, c, source, d, t]
-	  - r_process__source__sink_Flow__dt[c, source, c, d, t]);
+    ( - r_process__source__sink_Flow__dt[c, source, c, d, t]);
 
 param r_group_output_Internal_connection_losses__dt{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch}:=
   + sum{(c, source, sink) in process_source_sink_alwaysProcess : c in process_connection && (c, source) in process_source && (g, c) in group_output__process_fully_inside}
