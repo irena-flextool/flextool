@@ -23,3 +23,16 @@ The time for the open online Teams meeting is every last Monday of month at 12-1
 [Teams link](https://teams.microsoft.com/l/meetup-join/19%3ameeting_MmIzZWMxYzktODMzNi00ODdjLWJlM2MtYzQ0Y2U4NDlhNTAz%40thread.v2/0?context=%7b%22Tid%22%3a%2268d6b592-5008-43b5-9b04-23bec4e86cf7%22%2c%22Oid%22%3a%226510eb43-ff7f-4f42-93ca-0302a115cd48%22%7d)
 
 Please contact nelli.putkonen@vtt.fi for an Outlook calendar invitation
+
+
+# Theory
+
+Theory slides on how the flextool works on conseptual level can be found below (and in the repository: docs/theory_slides):
+
+[1: Energy planning and types of modelling approaches](./theory_slides/Session1_Energy_planning_and_types_of_modelling_approaches.pdf)
+
+[2: Modelling tools process and IRENA Flextool approach](./theory_slides/Session2_Modelling_tools_process_and_IRENA_FlexTool_approach.pdf)
+
+[3: IRENA Flextool in practice](./theory_slides/Session3_IRENA_FlexTool_in_practice.pdf)
+
+[4: Examples of studies done with IRENA Flextool approach](./theory_slides/Examples_of_studies_done_with_IRENA_FlexTool_approach.pdf)
