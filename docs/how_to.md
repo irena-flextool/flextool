@@ -433,7 +433,7 @@ We still have to make the unit to consume electricity even though it does not af
 - `sense`: equal
 - `constant`: 0.0
 
-And setting parameters for `unit_outputNode` and `unit_inputNode`:
+And setting parameters for `unit_inputNode`:
 
 - (hydro_pump | nodeA) `constraint_flow_coefficient` Map: plant_storage_nodeA_split , 2
 - (hydro_pump | pump_storage) `constraint_flow_coefficient` Map: plant_storage_nodeA_split , -1
