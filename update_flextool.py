@@ -3,7 +3,10 @@ import json
 import os
 import subprocess
 import shutil
-from spinedb_api import import_data, DatabaseMapping
+try: 
+    from spinedb_api import import_data, DatabaseMapping
+except ModuleNotFoundError:
+    exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
 
 
 def update_flextool(skip_git):
