@@ -1477,7 +1477,7 @@ printf 'is not allowed to have other_operational_cost\n';
 check {(p,m) in process_method, t in time_in_use: m in method_2way_1var}: 
   ptProcess[p, 'other_operational_cost', t] = 0;
 
-printf 'Checking: node in max one loss of load sharing group\n';
+printf 'Checking: node not in more than one loss of load sharing group\n';
 check {n in node}:
   sum{(g,n) in group_node: g in group_loss_share} 1 < 2;
 
@@ -2789,7 +2789,9 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
 ;
 
 s.t. group_loss_share_constraint{(g,n) in group_node, (d,t) in dt: g in group_loss_share && n in nodeBalance}:
-  + vq_state_up[n,d,t]  * node_capacity_for_scaling[n, d] =  + p_state_slack_share[g,n,d,t] * vq_state_up_group[g,d,t] * group_capacity_for_scaling[g,d];
+  + vq_state_up[n,d,t]  * node_capacity_for_scaling[n, d] 
+  =  
+  + p_state_slack_share[g,n,d,t] * vq_state_up_group[g,d,t] * group_capacity_for_scaling[g,d];
 
 param rest := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect;
 display rest;

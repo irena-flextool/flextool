@@ -16,18 +16,18 @@ IRENA FlexTool is an energy systems optimisation model developed for power and e
 - More advanced users can find the model parameter descriptions useful: [Model parameters](https://irena-flextool.github.io/flextool/reference)
 - Finally, result parameters are documented here: [Model results](https://irena-flextool.github.io/flextool/results)
 
-# Monthly user support calls
+# Monthly user support telcos
 
-The time for the open online Teams meeting is every last Monday of month at 12-13 UTC. (Notice that time is according to UTC and in places where day-light saving time is applied, the time of the meeting may change between winter/summer) Each 1 h session starts with a ~15 min presentation on simple IRENA FlexTool demos or tutorials, followed by 45 min Q&A session
+The monthly user support telco is held on the last Monday of each month at 12-13 UTC (skipping December and July). (Notice that time is according to UTC and in places where day-light saving time is applied, the time of the meeting may change between winter/summer) Each 1 h session starts with a ~15 min presentation on simple IRENA FlexTool demos or tutorials, followed by 45 min Q&A session
 
 [Teams link](https://teams.microsoft.com/l/meetup-join/19%3ameeting_MmIzZWMxYzktODMzNi00ODdjLWJlM2MtYzQ0Y2U4NDlhNTAz%40thread.v2/0?context=%7b%22Tid%22%3a%2268d6b592-5008-43b5-9b04-23bec4e86cf7%22%2c%22Oid%22%3a%226510eb43-ff7f-4f42-93ca-0302a115cd48%22%7d)
 
 Please contact nelli.putkonen@vtt.fi for an Outlook calendar invitation
 
 
-# Theory
+# Background for the FlexTool modelling approach
 
-Theory slides on how the flextool works on conseptual level can be found below (and in the repository: docs/theory_slides):
+The theory slides below give some background how FlexTool is formulated. There are also examples that show some ways how FlexTool can be used (including examples from other similar models). The slides were made for training in the OASES project (funded by LEAP-RE, project no: 963530, co-funding from European Commission and national funding agencies). The files can also be found in the folder docs/theory_slides.
 
 [1: Energy planning and types of modelling approaches](./theory_slides/Session1_Energy_planning_and_types_of_modelling_approaches.pdf)
 
