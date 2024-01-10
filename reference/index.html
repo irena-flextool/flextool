@@ -1617,6 +1617,7 @@
 <li><code>has_capacity_margin</code> - A flag whether the group of nodes has a capacity margin constraint in the investment mode.</li>
 <li><code>capacity_margin</code> - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode. Constant or period.</li>
 <li><code>penalty_capacity_margin</code> - [CUR/MWh] Penalty for violating the capacity margin constraint. Constant or period.</li>
+<li><code>share_loss_of_load</code> - Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted</li>
 </ul>
 <h3 id="co2-costs-and-limits">CO2 costs and limits</h3>
 <ul>
@@ -1640,6 +1641,10 @@
 <li><code>output_ramp_envelope</code>: Default, no. Includes seven parameters that form the ramp room envelope. How much there is additional ramping capability in a given node. (Parameter node_ramp_t)</li>
 <li><code>output_connection_flow_separate</code>: Default, no. Produces the connection flows separately for both directions.</li>
 <li><code>output_unit__node_ramp_t</code>: Default, no. Produces the ramps of individual units for all timesteps.</li>
+</ul>
+<p>Additionally a model level option to exclude all node, connection and unit level outputs and only leave group and model level results. This will significantly increase the speed of importing data to the result database.</p>
+<ul>
+<li>model: <code>exclude_entity_outputs</code>: Default, no. Excludes results on node, unit and connection level, but preserves group level results</li>
 </ul>
 <h2 id="reserves">Reserves</h2>
 <p>The user defines reserve categories through <code>reserve</code> object. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. </p>

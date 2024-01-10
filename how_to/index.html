@@ -494,6 +494,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#how-to-create-basic-temporal-structures-for-your-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      How to create basic temporal structures for your model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-to-create-a-pv-wind-or-run-of-river-hydro-power-plant" class="md-nav__link">
     <span class="md-ellipsis">
       How to create a PV, wind or run-of-river hydro power plant
@@ -858,6 +867,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#how-to-create-basic-temporal-structures-for-your-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      How to create basic temporal structures for your model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-to-create-a-pv-wind-or-run-of-river-hydro-power-plant" class="md-nav__link">
     <span class="md-ellipsis">
       How to create a PV, wind or run-of-river hydro power plant
@@ -1094,6 +1112,7 @@ Each example will either include an example database file that is located in the
 <p>This section is divided into two parts: </p>
 <p>Building parts of the model:</p>
 <ul>
+<li><a href="#how-to-create-basic-temporal-structures-for-your-model">How to create basic temporal structures for your model</a></li>
 <li><a href="#How-to-create-a-PV,-wind-or-run---of---river-hydro-power-plant">How to create a PV, wind or run-of-river hydro power plant</a></li>
 <li><a href="#How-to-connect-nodes-in-the-same-energy-network">How to connect nodes in the same energy network</a></li>
 <li><a href="#How-to-set-the-demand-in-a-node">How to set the demand in a node</a></li>
@@ -1122,6 +1141,33 @@ Each example will either include an example database file that is located in the
 <li><a href="#how-to-enabledisable-outputs">How to enable/disable outputs</a></li>
 <li><a href="#how-to-make-the-flextool-run-faster">How to make the Flextool run faster</a></li>
 </ul>
+<h2 id="how-to-create-basic-temporal-structures-for-your-model">How to create basic temporal structures for your model</h2>
+<p><strong>(time_settings_only.sqlite)</strong></p>
+<p>FlexTool allows to build models for different kinds of purposes and has therefore a flexible temporal structure, which requires some learning at first. To get you started, this how-to creates three different timelines: a full year, a 48h timeline and a timeline with five one-week periods to represent a full year. To be able to choose which of these are used in a given scenario, three alternatives are created: init, init_2day-test, init_5week-invest. </p>
+<p>The names of these alternatives hint at the intended use of each timeline. Even when you are building a large model with a long timeline, it is better to use a short 48 hour timeline for testing purposes when building the model. Using five one-week periods, i.e. "a representative periods", in an investment model is a method to reduce the model size and consequently solve time. More about that in <a href="#how-to-run-solves-in-a-sequence-investment--dispatch">How to run solves in a sequence (investment + dispatch)</a></p>
+<p><img alt="Time_settings" src="../time_settings.png" /></p>
+<p>To define a temporal structure for a model instance, you need to create the following objects and relationships:</p>
+<ul>
+<li><code>timeline</code> object called <em>y2020</em> with a map-type parameter <code>timestep_duration</code> that defines the timeline the time series data in the model will need to use. It contains, in the first column, the name of each timestep (e.g. <em>t0001</em> or <em>2022-01-01-01</em>) and, in the second column, the length of the timestep in hours (e.g. <em>1.0</em>). The timestep names here must match the timestep names in other time series like <code>inflow</code> or <code>profile</code>. Here all of the three options use the same full year timeline i.e. timesteps from t0001 to t8760 with a step size of one hour.</li>
+<li><code>timeblockset</code> objects called <em>full-year</em>, <em>2day</em> and <em>5week</em>. Each of them need a map-type parameter <code>block_duration</code> to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps: (<em>t0001</em>, <em>8760</em>) for the <em>full-year</em> and (<em>t4001</em> and <em>48.0</em>) for the 48h. The timeline is larger than the 48 hours, but this way the solver uses 48 hours specified. The <em>5week</em> needs five starting points
+<em>t2521</em>, <em>t4538</em>, <em>t5041</em>, <em>t7057</em> and <em>t8233</em> with all having the length of <em>168.0</em></li>
+<li><code>timeblockset</code> needs to be connected to the timeline. This is done by adding the <code>timeblockset__timeline</code> relationships (<em>full-year</em>| <em>y2020</em>), (<em>2day</em>| <em>y2020</em>), (<em>5weeks</em>| <em>y2020</em>). From the <code>relationship tree</code> right-click on the <code>timeblockset__timeline</code> relationship class to 'Add relationships...'.</li>
+<li>
+<p><code>solve</code> objects called <em>full-year-dispatch</em>, <em>2day-dispatch</em> and <em>5week-invest</em>. In addition, they need the following parameters:</p>
+</li>
+<li>
+<p>a map-type parameter <code>period_timeblockSet</code> to define the timeblockset to be used by each period. Here each of the three use their <code>timeblockSet</code> to describe the same period <em>p2020</em>. The first column of the map has the period: <em>p2020</em> and the second column the <code>timeblockSet</code>: <em>full-year</em>, <em>2day</em> or <em>5week</em></p>
+</li>
+<li>an array-type parameter <code>realized_periods</code> to define the periods that are realised from the <code>solve</code> named by the object (the first column of an array is an index number starting with <em>0</em>, the second column contains the period to be realized in the results: <em>p2020</em> for all the solves here)</li>
+<li>
+<p>a parameter <code>solve_mode</code>, to be set to <em>single_solve</em> in these examples</p>
+</li>
+<li>
+<p>Finally, a <code>model</code> object will define the solves to be included in a one model instance. They are defined in the array parameter <code>solves</code>. For these examples, the model name is <em>flextool</em> and for each <code>solve</code> the name of the <code>solve</code> should be given in the <code>solves</code> array (distinguished by the alternative): <em>full-year-dispatch</em>, <em>2day-dispatch</em> or <em>5week-invest</em>.</p>
+</li>
+</ul>
+<p>Be careful when choosing datatypes! Maps need to be maps not arrays. (In the future, an update is coming to toolbox to ensure compliance.) </p>
+<p><img alt="Time_parameters" src="../first_model.png" /></p>
 <h2 id="how-to-create-a-pv-wind-or-run-of-river-hydro-power-plant">How to create a PV, wind or run-of-river hydro power plant</h2>
 <p><strong>(init.sqlite scenario: wind)</strong>
 <strong><em>init - west - wind</em></strong></p>
@@ -1424,7 +1470,7 @@ First to prevent the energy from the demand node from increasing the water flow,
 <li><code>sense</code>: equal</li>
 <li><code>constant</code>: 0.0</li>
 </ul>
-<p>And setting parameters for <code>unit_outputNode</code> and <code>unit_inputNode</code>:</p>
+<p>And setting parameters for <code>unit_inputNode</code>:</p>
 <ul>
 <li>(hydro_pump | nodeA) <code>constraint_flow_coefficient</code> Map: plant_storage_nodeA_split , 2</li>
 <li>(hydro_pump | pump_storage) <code>constraint_flow_coefficient</code> Map: plant_storage_nodeA_split , -1</li>
