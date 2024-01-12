@@ -240,51 +240,7 @@
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input_data": {
-                            "scenario_filter": {
-                                "5weeks_invest_fullYear_dispatch_coal_wind": false,
-                                "aggregate_outputs_network_coal_wind_chp": false,
-                                "all": false,
-                                "base": false,
-                                "capacity_margin": false,
-                                "coal": true,
-                                "coal_chp": false,
-                                "coal_co2": false,
-                                "coal_min_load": false,
-                                "coal_min_load_MIP_wind": false,
-                                "coal_min_load_wind": false,
-                                "coal_ramp_limit": false,
-                                "coal_retire": false,
-                                "coal_wind_ev": false,
-                                "coal_wind_inertia": false,
-                                "dr_decrease_demand": false,
-                                "dr_increase_demand": false,
-                                "dr_shift_demand": false,
-                                "fullYear": false,
-                                "fusion": false,
-                                "multi_fullYear_battery": false,
-                                "multi_fullYear_battery_nested_24h_invest_one_solve": false,
-                                "multi_fullYear_battery_nested_multi_invest": false,
-                                "multi_fullYear_battery_nested_sample_invest_one_solve": false,
-                                "multi_year": false,
-                                "multi_year_one_solve": false,
-                                "multi_year_one_solve_battery": false,
-                                "multi_year_one_solve_co2_limit": false,
-                                "network_coal_wind": false,
-                                "network_coal_wind_battery_co2_fullYear_availability": false,
-                                "network_coal_wind_capacity_margin": false,
-                                "network_coal_wind_reserve": false,
-                                "network_coal_wind_reserve_co2_capacity_margin": false,
-                                "network_coal_wind_reserve_n_1": false,
-                                "network_wind_coal_battery_fullYear_invest": false,
-                                "scale_to_peak_flow": false,
-                                "water_pump": false,
-                                "wind": false,
-                                "wind_battery": false,
-                                "wind_battery_invest": false,
-                                "wind_battery_invest_lifetime_choice": false,
-                                "wind_battery_invest_lifetime_renew": false,
-                                "wind_battery_invest_lifetime_renew_4solve": false
-                            },
+                            "scenario_filter": {},
                             "tool_filter": {
                                 "FlexTool3": true
                             }
@@ -344,8 +300,8 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 71.01140335411533,
-            "y": -8.906879167446874,
+            "x": 71.01140335411534,
+            "y": -9.924071551144998,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": [],
@@ -425,8 +381,8 @@
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -41.3213497380914,
-            "y": -12.037646788155186,
+            "x": -41.321349738091385,
+            "y": -13.05483917185331,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -440,8 +396,8 @@
         "Import_results": {
             "type": "Importer",
             "description": "",
-            "x": 192.72938894272858,
-            "y": -31.742524971130265,
+            "x": 192.7293889427286,
+            "y": -33.77690973852652,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "on_conflict": "replace",
@@ -455,7 +411,7 @@
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 319.0952320842816,
+            "x": 318.0780397005835,
             "y": -24.117942437479527,
             "url": {
                 "dialect": "sqlite",

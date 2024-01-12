@@ -2853,6 +2853,8 @@ param r_process__source__sink_Flow__dt{(p, source, sink) in process_source_sink_
       + v_flow[p, source, sink, d, t].val * p_entity_unitsize[p]
   )
 ;
+param r_process__source__sink_Flow__d{(p, source, sink) in process_source_sink_alwaysProcess, d in d_realized_period}:=
+  + sum{(d, t) in dt_realize_dispatch} r_process__source__sink_Flow__dt[p, source, sink, d, t];
 
 param r_process_source_sink_ramp_dtt{(p, source, sink) in process_source_sink_alwaysProcess, (d, t, t_previous) in dtt} :=
   + r_process__source__sink_Flow__dt[p, source, sink, d, t]
@@ -2882,6 +2884,8 @@ param r_group_output__connection_Not_in_aggregate__dt{(g, c) in group_output__co
   + sum{(g, c, n, c) in group_output__process__node__to_connection_Not_in_aggregate}
       - r_process__source__sink_Flow__dt[c, n, c, d, t]
 ;
+param r_group_output__connection_Not_in_aggregate__d{(g, c) in group_output__connection_Not_in_aggregate, d in d_realized_period}:=
+  + sum{(d, t) in dt_realize_dispatch} r_group_output__connection_Not_in_aggregate__dt[g, c, d, t];
 
 param r_process_source_sink_flow_d{(p, source, sink) in process_source_sink_alwaysProcess, d in d_realized_period} :=
   + sum {(d, t) in dt_realize_dispatch} ( r_process__source__sink_Flow__dt [p, source, sink, d, t] * step_duration[d, t] )
@@ -3116,18 +3120,24 @@ param potentialVREgen{(p, n) in process_sink, d in d_realized_period : p in proc
 param r_group_output__group_aggregate_Unit_to_group__dt{(g, ga) in group_output__group_aggregate_Unit_to_group, (d, t) in dt_realize_dispatch} :=
   + sum{(g, ga, u, source, sink) in group_output__group_aggregate__process__unit__to_node}  
       + r_process__source__sink_Flow__dt[u, source, sink, d, t];
+param r_group_output__group_aggregate_Unit_to_group__d{(g, ga) in group_output__group_aggregate_Unit_to_group, d in d_realized_period} :=
+  + sum{(d, t) in dt_realize_dispatch} r_group_output__group_aggregate_Unit_to_group__dt[g, ga, d, t];
 
 param r_group_output__group_aggregate_Group_to_unit__dt{(g, ga) in group_output__group_aggregate_Group_to_unit, (d, t) in dt_realize_dispatch} :=
   + sum{(g, ga, u, source, sink) in group_output__group_aggregate__process__node__to_unit}  
       - r_process__source__sink_Flow__dt[u, source, sink, d, t];
+param r_group_output__group_aggregate_Group_to_unit__d{(g, ga) in group_output__group_aggregate_Group_to_unit, d in d_realized_period} :=
+  + sum{(d, t) in dt_realize_dispatch} r_group_output__group_aggregate_Group_to_unit__dt[g, ga, d, t];
 
 param r_group_output__group_aggregate_Connection__dt{(g, ga) in group_output__group_aggregate_Connection, (d, t) in dt_realize_dispatch} :=
   + sum{(g, ga, c, source, sink) in group_output__group_aggregate__process__connection__to_node}
     ( + r_process__source__sink_Flow__dt[c, c, sink, d, t])
   + sum{(g, ga, c, source, sink) in group_output__group_aggregate__process__node__to_connection}
     ( - r_process__source__sink_Flow__dt[c, source, c, d, t]);
+param r_group_output__group_aggregate_Connection__d{(g, ga) in group_output__group_aggregate_Connection, d in d_realized_period} :=
+  + sum{(d, t) in dt_realize_dispatch} r_group_output__group_aggregate_Connection__dt[g, ga, d, t];
 
-param r_group_output_Internal_connection_losses__dt{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch}:=
+param r_group_output_Internal_connection_losses__dt{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch} :=
   + sum{(c, source, sink) in process_source_sink_alwaysProcess : c in process_connection && (c, source) in process_source && (g, c) in group_output__process_fully_inside}
       + r_process__source__sink_Flow__dt[c, source, sink, d, t]
   - sum{(c, source, sink) in process_source_sink_alwaysProcess : c in process_connection && (c, sink) in process_sink && (g, c) in group_output__process_fully_inside}
@@ -3136,30 +3146,42 @@ param r_group_output_Internal_connection_losses__dt{g in groupOutputNodeFlows, (
       + r_process__source__sink_Flow__dt[c, source, sink, d, t]
   - sum{(c, source, sink) in process_source_sink_alwaysProcess : c in process_connection && (c, sink) in process_source && (g, c) in group_output__process_fully_inside}
       + r_process__source__sink_Flow__dt[c, source, sink, d, t];
+param r_group_output_Internal_connection_losses__d{g in groupOutputNodeFlows, d in d_realized_period} :=
+  + sum{(d, t) in dt_realize_dispatch} r_group_output_Internal_connection_losses__dt[g, d, t];
 
-param r_group_output_Internal_unit_losses{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch}:=
+param r_group_output_Internal_unit_losses__dt{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch} :=
   + sum{(u, source, sink) in process_source_sink_alwaysProcess:
     u in process_unit && (g, u) in group_output__process_fully_inside && (g,source) in group_node}
     + r_process__source__sink_Flow__dt[u, source, sink, d, t] 
   - sum{(u, source, sink) in process_source_sink_alwaysProcess:
     u in process_unit && (g, u) in group_output__process_fully_inside && (g,sink) in group_node}
     + r_process__source__sink_Flow__dt[u, source, sink, d, t];
+param r_group_output_Internal_unit_losses__d{g in groupOutputNodeFlows, d in d_realized_period} :=
+  + sum{(d, t) in dt_realize_dispatch} r_group_output_Internal_unit_losses__dt[g, d, t];
 
-param r_group_node_inflow{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch}:=
+param r_group_node_inflow__dt{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch} :=
   + sum{(g,n) in group_node}
     +pdtNodeInflow[n, d, t];
+param r_group_node_inflow__d{g in groupOutputNodeFlows, d in d_realized_period} :=
+  + sum{(d, t) in dt_realize_dispatch} r_group_node_inflow__dt[g, d, t];
     
-param r_group_node_state_losses{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch}:=
+param r_group_node_state_losses__dt{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch} :=
   + sum{n in nodeState: (g,n) in group_node}
     +r_selfDischargeLoss_dt[n, d, t];
+param r_group_node_state_losses__d{g in groupOutputNodeFlows, d in d_realized_period}:=
+  + sum{(d, t) in dt_realize_dispatch} r_group_node_state_losses__dt[g, d, t];
 
-param r_group_node_up_penalties{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch}:=
+param r_group_node_up_penalties__dt{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch} :=
   + sum{n in nodeBalance: (g,n) in group_node}
     +vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d] * step_duration[d, t] ;  
+param r_group_node_up_penalties__d{g in groupOutputNodeFlows, d in d_realized_period}:=
+  + sum{(d, t) in dt_realize_dispatch} r_group_node_up_penalties__dt[g, d, t];
 
-param r_group_node_down_penalties{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch}:=
+param r_group_node_down_penalties__dt{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch} :=
   + sum{n in nodeBalance: (g,n) in group_node}
     -vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d] * step_duration[d, t] ;  
+param r_group_node_down_penalties__d{g in groupOutputNodeFlows, d in d_realized_period} :=
+  + sum{(d, t) in dt_realize_dispatch} r_group_node_down_penalties__dt[g, d, t];
 
 param fn_entity_period_existing_capacity symbolic := "solve_data/p_entity_period_existing_capacity.csv";
 printf 'entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n' > fn_entity_period_existing_capacity;
@@ -3432,11 +3454,11 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
 	  }
   }
 
-printf 'Write CO2 results for groups for realized periods...\n';
+printf 'Write annualized CO2 Mt results for groups for realized periods...\n';
 param fn_groupNode__d_CO2 symbolic := "output/group_process_CO2__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf 'solve,period,time' > fn_groupNode__d_CO2;
+    printf 'solve,period' > fn_groupNode__d_CO2;
 	for {g in groupOutput : sum{(p, c, n) in process__commodity__node_co2 : (g, p) in group_process} 1}
 	  { printf ',%s', g >> fn_groupNode__d_CO2; }
   }
@@ -3446,7 +3468,7 @@ for {s in solve_current, d in d_realized_period}
 	for {g in groupOutput : sum{(p, c, n) in process__commodity__node_co2 : (g, p) in group_process} 1}
 	  { printf ',%.6f',
 	      sum{(p, c, n) in process__commodity__node_co2 : (g, p) in group_process}
-		      r_process_emissions_co2_d[p, c, n, d]
+		      r_process_emissions_co2_d[p, c, n, d] / 1000000 / complete_period_share_of_year[d]
 		>> fn_groupNode__d_CO2;
 	  }
   }
@@ -3910,7 +3932,7 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
     printf '\n%s,%s,%s', s, d, t >> fn_group_flows__dt;
 	for {g in groupOutputNodeFlows}
 	  {
-        printf ',%.8g', + r_group_node_up_penalties[g, d, t] >> fn_group_flows__dt;
+        printf ',%.8g', + r_group_node_up_penalties__dt[g, d, t] >> fn_group_flows__dt;
 		for{(g, ga) in group_output__group_aggregate_Unit_to_group}
 			printf ',%.8g', + r_group_output__group_aggregate_Unit_to_group__dt[g, ga, d, t] >> fn_group_flows__dt;
 		for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate}
@@ -3927,10 +3949,83 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
             printf ',%.8g', - r_process__source__sink_Flow__dt[u, source, sink, d, t] >> fn_group_flows__dt;
         printf ',%.8g,%.8g,%.8g,%.8g,%.8g', 
 		  - r_group_output_Internal_connection_losses__dt[g, d, t],
-          - r_group_output_Internal_unit_losses[g, d, t],
-          - r_group_node_state_losses[g, d, t],
-          + r_group_node_down_penalties[g, d, t],
-          + r_group_node_inflow[g, d, t] >> fn_group_flows__dt;
+          - r_group_output_Internal_unit_losses__dt[g, d, t],
+          - r_group_node_state_losses__dt[g, d, t],
+          + r_group_node_down_penalties__dt[g, d, t],
+          + r_group_node_inflow__dt[g, d, t] >> fn_group_flows__dt;
+      } 
+  }
+
+printf 'Write annualized group_output flows for periods...\n';
+param fn_group_flows__d symbolic := "output/group_flows__period.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  {
+    printf 'solve,period' > fn_group_flows__d;  # Print the header on the first solve
+	for{g in groupOutputNodeFlows}
+	  {
+        printf ',%s', g >> fn_group_flows__d;
+        for{(g, ga) in group_output__group_aggregate_Unit_to_group} { printf ',%s', g >> fn_group_flows__d;}
+	    for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate} { printf ',%s', g >> fn_group_flows__d;}
+        for{(g, ga) in group_output__group_aggregate_Connection} {printf ',%s', g >> fn_group_flows__d;}
+        for{(g, c) in group_output__connection_Not_in_aggregate} {printf ',%s', g >> fn_group_flows__d;}
+        for{(g, n) in group_node: n in nodeState} {printf ',%s', g >> fn_group_flows__d;}
+        for{(g, ga) in group_output__group_aggregate_Group_to_unit} {printf ',%s', g >> fn_group_flows__d;}
+        for{(g, u, source, sink) in group_output__process__node__to_unit_not_in_aggregate} {printf ',%s', g >> fn_group_flows__d;}
+        printf ',%s,%s,%s,%s,%s', g, g, g, g, g >> fn_group_flows__d;
+	  }
+	printf '\n,' >> fn_group_flows__d;
+	for{g in groupOutputNodeFlows}
+	  {
+        printf ',slack' >> fn_group_flows__d;
+        for{(g, ga) in group_output__group_aggregate_Unit_to_group} { printf ',unit_aggregate' >> fn_group_flows__d;}
+	    for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate} { printf ',unit' >> fn_group_flows__d;}
+        for{(g, ga) in group_output__group_aggregate_Connection} {printf ',connection' >> fn_group_flows__d;}
+        for{(g, c) in group_output__connection_Not_in_aggregate} {printf ',connection' >> fn_group_flows__d;}
+        for{(g, n) in group_node: n in nodeState} {printf ',storage_flow' >> fn_group_flows__d;}
+        for{(g, ga) in group_output__group_aggregate_Group_to_unit} {printf ',unit_aggregate' >> fn_group_flows__d;}
+        for{(g, u, source, sink) in group_output__process__node__to_unit_not_in_aggregate} {printf ',unit' >> fn_group_flows__d;}
+        printf ',internal_losses,internal_losses,internal_losses,slack,inflow' >> fn_group_flows__d;
+	  }
+	printf '\n,' >> fn_group_flows__d;
+	for{g in groupOutputNodeFlows}
+	  {
+        printf ',upward' >> fn_group_flows__d;
+        for{(g, ga) in group_output__group_aggregate_Unit_to_group} { printf ',%s', ga >> fn_group_flows__d;}
+	    for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate} { printf ',%s', u >> fn_group_flows__d;}
+        for{(g, ga) in group_output__group_aggregate_Connection} {printf ',%s', ga >> fn_group_flows__d;}
+        for{(g, c) in group_output__connection_Not_in_aggregate} {printf ',%s', c >> fn_group_flows__d;}
+        for{(g, n) in group_node: n in nodeState} {printf ',%s', g >> fn_group_flows__d;}
+        for{(g, ga) in group_output__group_aggregate_Group_to_unit} {printf ',%s', ga >> fn_group_flows__d;}
+        for{(g, u, source, sink) in group_output__process__node__to_unit_not_in_aggregate} {printf ',%s', u >> fn_group_flows__d;}
+        printf ',connections,units,storages,downward,%s', g >> fn_group_flows__d;
+	  }
+  }
+for {s in solve_current, d in d_realized_period}
+  {
+    printf '\n%s,%s', s, d >> fn_group_flows__d;
+	for {g in groupOutputNodeFlows}
+	  {
+        printf ',%.8g', + r_group_node_up_penalties__d[g, d] >> fn_group_flows__d;
+		for{(g, ga) in group_output__group_aggregate_Unit_to_group}
+			printf ',%.8g', + r_group_output__group_aggregate_Unit_to_group__d[g, ga, d] >> fn_group_flows__d;
+		for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate}
+		    printf ',%.8g', + r_process__source__sink_Flow__d[u, source, sink, d] >> fn_group_flows__d;
+	    for{(g, ga) in group_output__group_aggregate_Connection}
+            printf ',%.8g', + r_group_output__group_aggregate_Connection__d[g, ga, d] >> fn_group_flows__d;
+        for{(g, c) in group_output__connection_Not_in_aggregate}
+            printf ',%.8g', + r_group_output__connection_Not_in_aggregate__d[g, c, d] >> fn_group_flows__d;
+        for{(g, n) in group_node: n in nodeState}
+            printf ',%.8g', - r_nodeState_change_d[n, d] >> fn_group_flows__d;
+        for{(g, ga) in group_output__group_aggregate_Group_to_unit}
+            printf ',%.8g', + r_group_output__group_aggregate_Group_to_unit__d[g, ga, d] >> fn_group_flows__d;
+        for{(g, u, source, sink) in group_output__process__node__to_unit_not_in_aggregate} 
+            printf ',%.8g', - r_process__source__sink_Flow__d[u, source, sink, d] >> fn_group_flows__d;
+        printf ',%.8g,%.8g,%.8g,%.8g,%.8g', 
+		  - r_group_output_Internal_connection_losses__d[g, d],
+          - r_group_output_Internal_unit_losses__d[g, d],
+          - r_group_node_state_losses__d[g, d],
+          + r_group_node_down_penalties__d[g, d],
+          + r_group_node_inflow__d[g, d] >> fn_group_flows__d;
       } 
   }
 

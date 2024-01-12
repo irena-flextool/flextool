@@ -3683,6 +3683,146 @@
                         ]
                     }
                 }
+            ],
+            "group_flows__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "group"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": -1
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "flow_annualized"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "type"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "name"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": -3
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "group_process_CO2__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "ObjectClass",
+                                "position": "hidden",
+                                "value": "group"
+                            },
+                            {
+                                "map_type": "Object",
+                                "position": -1
+                            },
+                            {
+                                "map_type": "ObjectMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "CO2_annualized"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -3737,7 +3877,9 @@
             "connection_left_to_right__period__t",
             "connection_right_to_left__period",
             "connection_right_to_left__period__t",
-            "group_flows__period__t"
+            "group_flows__period__t",
+            "group_flows__period",
+            "group_process_CO2__period"
         ],
         "table_options": {
             "node__period": {},
@@ -3865,6 +4007,12 @@
             "connection_right_to_left__period": {},
             "connection_right_to_left__period__t": {},
             "group_flows__period__t": {
+                "has_header": false
+            },
+            "group_flows__period": {
+                "has_header": false
+            },
+            "group_process_CO2__period": {
                 "has_header": false
             }
         },
@@ -4213,25 +4361,32 @@
                 "6": "float",
                 "7": "float",
                 "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "float",
-                "21": "float",
-                "22": "float",
-                "23": "float",
-                "24": "float",
-                "25": "float",
-                "26": "float",
-                "27": "float"
+                "9": "float"
+            },
+            "group_flows__period": {
+                "0": "string",
+                "1": "string",
+                "2": "float",
+                "3": "float",
+                "4": "float",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float"
+            },
+            "group_process_CO2__period": {
+                "0": "string",
+                "1": "string",
+                "2": "float"
+            },
+            "connection_right_to_left__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string",
+                "6": "string"
             }
         },
         "table_default_column_type": {
@@ -4278,7 +4433,9 @@
             "node_invest_marginal__period": "float",
             "connection_invest_marginal__period": "float",
             "unit_capacity__period": "float",
-            "group_flows__period__t": "float"
+            "group_flows__period__t": "float",
+            "group_process_CO2__period": "float",
+            "group_flows__period": "float"
         },
         "table_row_types": {
             "unit__outputNode__period": {
