@@ -2010,7 +2010,7 @@ s.t. constraint_greater_than {(c, 'greater_than') in constraint__sense, (d, t) i
 	
 s.t. process_constraint_less_than {(c, 'less_than') in constraint__sense, (d, t) in dt} :
   + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_flow_constraint}
-    ( + v_flow[source, source, p, d, t] * p_entity_unitsize[p]
+    ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
 	      * p_process_node_constraint_flow_coefficient[p, source, c]
 	) * step_duration[d, t]
   + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_flow_constraint}
