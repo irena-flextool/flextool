@@ -2694,7 +2694,7 @@ s.t. co2_max_period{g in group_co2_max_period, d in period_in_use} :
         ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t]
         )  
       )
-    )
+    ) / period_share_of_year[d]
   )
   <=
   + pdGroup[g, 'co2_max_period', d]
@@ -2983,7 +2983,7 @@ param r_process_emissions_co2_dt{(p, c, n) in process__commodity__node_co2, (d, 
 ;	  
 
 param r_process_emissions_co2_d{(p, c, n) in process__commodity__node_co2, d in d_realized_period} :=
-  + sum{t in time_in_use : (d, t) in dt_realize_dispatch} ( r_process_emissions_co2_dt[p, c, n, d, t] );
+  + sum{t in time_in_use : (d, t) in dt_realize_dispatch} ( r_process_emissions_co2_dt[p, c, n, d, t] ) / complete_period_share_of_year[d];
 
 param r_emissions_co2_dt{(c, n) in commodity_node_co2, (d, t) in dt} :=
   + sum{(p, c, n) in process__commodity__node_co2} r_process_emissions_co2_dt[p, c, n, d, t];
@@ -3503,7 +3503,7 @@ for {s in solve_current, d in d_realized_period}
 	for {g in groupOutput : sum{(p, c, n) in process__commodity__node_co2 : (g, p) in group_process} 1}
 	  { printf ',%.6f',
 	      sum{(p, c, n) in process__commodity__node_co2 : (g, p) in group_process}
-		      r_process_emissions_co2_d[p, c, n, d] / 1000000 / complete_period_share_of_year[d]
+		      r_process_emissions_co2_d[p, c, n, d] / 1000000
 		>> fn_groupNode__d_CO2;
 	  }
   }
