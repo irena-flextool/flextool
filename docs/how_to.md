@@ -225,7 +225,6 @@ Additional parameters:
 - `lifetime_method`: Model can either be forced to reinvest when the lifetime ends `reinvest_automatic` or have a choice `reinvest_choice`
 - `salvage_value`: Sets the extra value that can be gained for retiring [CUR/kW]
 - `fixed_cost`: Annual cost for capacity [CUR/kW]
-- `retire_forced`: forces to retire at least this amount of capacity
 
 In many cases some of the investment decisions are tied to each other. Here the battery capacity and the connection capacity of the *battery_inverter* will be tied as they are simultaneously limited by the choice of the battery technology to be invested in.
 To model this, a new constraint needs to be created that ties together the storage capacity of the *battery* and the charging/discharging capacity of the *battery_inverter*. A new `constraint` object *battery_tie_kW_kWh* is created and it is given parameters `constant`, `is_active` and `sense`. Constant could be left out, since it is zero, but `is_active` must be defined in order to include the constraint in the *battery_invest* `alternative`. The `sense` of the constraint must be *equal* to enforce the kw/kWh relation.
@@ -503,11 +502,14 @@ Next we will add ramp limits. With the ramping limits, the user can force the ch
 **(init.sqlite scenario: coal_co2 )**
 ***init - west - coal - co2_price - co2_limit***
 
-Carbon dioxide emissions are added to FlexTool by associating relevant `commodities` (e.g. *coal*) with a `co2_content` parameter (CO2 content per MWh of energy contained in the fuel). 
-The other CO2 parameters are handeled through a group of nodes (Here *coal_price* or *coal_limit* `groups`). Therefore one needs to create a group and add all the nodes that supply these commodities to a group with a `group_node` relationship. (Here the relationship *co2_price--coal_market*)
+Carbon dioxide emissions are added to FlexTool by associating relevant `commodities` (e.g. *coal*) with a `co2_content` parameter (CO2 content (tons per MWh) of energy contained in the fuel). 
+The other CO2 parameters are handeled through a group of nodes (Here *coal_price* or *coal_limit* `groups`). Therefore one needs to create a group and add all the nodes that supply these commodities (eg. coal_market) to a group with a `group_node` relationship. (Here the relationship *co2_price--coal_market*)
 To set a price one needs to create set the co2_method parameter to *price* (constant) and create the `co2_price` parameter with the desired value. This price is added to the price of the commodity. 
 
-Alternatively one can set a limit on the co2 used by setting the `co2_method` parameter to *period* and setting the `co2_max_period` (periodic map) parameter. If both methods *price* and *period* are to be used, then they need to use different `groups`. The groups can include the same `nodes`.
+Alternatively one can set a limit on the co2 used by setting the `co2_method` parameter to *period* or *total* and setting the `co2_max_period` (periodic map [tCO2]) parameter or `co2_max_total` (constant [tCO2]) parameter. 
+
+There methods can be combined by setting the `co2_method` to *price_period*, *price_total*, *period_total* or *price_period_total*.
+
 
 ![Add CO2](./coal_co2.png)
 
