@@ -67,6 +67,7 @@ def migrate_database(database_path):
         elif next_version == 15:
             remove_parameters_manual(db,[["unit", "invest_forced"], ["unit", "retire_forced"], ["connection", "invest_forced"], ["connection", "retire_forced"],
                                          ["node", "invest_forced"], ["node", "retire_forced"]])
+            add_parameters_manual(db, [["group", "co2_max_period", "no_method", "co2_methods", "[tCO2] Annualized maximum limit for emitted CO2 in each period."]])
         else:
             print("Version invalid")
         next_version += 1 
