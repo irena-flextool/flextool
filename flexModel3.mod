@@ -345,6 +345,29 @@ set ed_history_realized_read dimen 2 within {e in entity, d in period_with_histo
 param p_entity_period_existing_capacity {e in entity, d in period_with_history};
 param p_entity_period_invested_capacity {e in entity, d in period_with_history};
 
+set group_stochastic dimen 1 within {group};
+set period__branch dimen 2 within {period, branch};
+set branch := setof{(d,b) in period__branch}(b);
+param p_branch_weight {(period,branch) in period_branch};
+param p_branch_realized {(period,branch) in period_branch};
+
+#stochastic versions of timeseries
+set branch__process__param__time dimen 4 within {branch, process, processTimeParam, time};
+set branch__profile_param__time dimen 3 within {branch, profile, time};
+set branch__connection__param__time := { b in branch, (p, param, t) in process__param__time : (p in process_connection)};
+set branch__process__source__param__time dimen 5 within {branch, process_source, sourceSinkTimeParam, time};
+set branch__process__sink__param__time dimen 5 within {branch, process_sink, sourceSinkTimeParam, time};
+set branch__node__param__time dimen 4 within {branch, node, nodeTimeParam, time};
+set branch__node__time_inflow dimen 3 within {branch, node, time};
+
+param bpt_node {branch, node, nodeTimeParam, time} default 0;
+param bpt_node_inflow {branch, node, time} default 0;
+param bpt_process_source {branch, (p, source) in process_source, sourceSinkTimeParam, time} default 0;
+param bpt_process_sink {branch, (p, sink) in process_sink, sourceSinkTimeParam, time} default 0;
+param bpt_profile {branch, profile, time};
+param bpt_reserve_upDown_group {branch, reserve, upDown, group, reserveTimeParam, time};
+param bpt_process {branch, process, processTimeParam, time} default 0;
+
 param scale_the_objective;
 param scale_the_state;
 
@@ -474,6 +497,9 @@ table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
 table data IN 'CSV' 'input/p_discount_rate.csv' : [model], p_discount_rate;
 table data IN 'CSV' 'input/default_values.csv' : objectClass_paramName_default <-[objectClass, paramName];
 table data IN 'CSV' 'input/default_values.csv' : [objectClass,paramName], default_value;
+table data IN 'CSV' 'input/group_stochastic.csv' : [group] <- group_stochastic;
+
+
 # Parameters from the solve loop
 table data IN 'CSV' 'solve_data/solve_hole_multiplier.csv' : [solve], p_hole_multiplier;
 table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
@@ -500,6 +526,18 @@ table data IN 'CSV' 'solve_data/timeline_matching_map.csv' : dtt_timeline_matchi
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : dt_complete <- [period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : [period, step], complete_step_duration;
 table data IN 'CSV' 'solve_data/p_roll_continue_state.csv' : [node], p_roll_continue_state;
+table data IN 'CSV' 'solve_data/period__branch.csv' : period__branch <- [period, branch];
+table data IN 'CSV' 'solve_data/period__branch.csv' : [period, branch], p_branch_weight;
+table data IN 'CSV' 'solve_data/period__branch.csv' : [period, branch], p_branch_realized;
+
+# Stochastic input data 
+table data IN 'CSV' 'solve_data/bpt_node.csv' : [branch, node, nodeParam, time], bpt_node;
+table data IN 'CSV' 'solve_data/bpt_node_inflow.csv' : [branch, node, time], bpt_node_inflow;
+table data IN 'CSV' 'solve_data/bpt_process_sink.csv' : [branch, process, sink, sourceSinkTimeParam, time], bpt_process_sink;
+table data IN 'CSV' 'solve_data/bpt_process_source.csv' : [branch, process, source, sourceSinkTimeParam, time], bpt_process_source;
+table data IN 'CSV' 'solve_data/bpt_process.csv' : [branch, process, processParam, time], bpt_process;
+table data IN 'CSV' 'solve_data/bpt_profile.csv' : [branch, profile, time], bpt_profile;
+table data IN 'CSV' 'solve_data/bpt_reserve__upDown__group.csv' : [branch, reserve, upDown, group, reserveParam, time], bpt_reserve_upDown_group;
 
 # After rolling forward the investment model
 table data IN 'CSV' 'solve_data/p_entity_divested.csv' : [entity], p_entity_divested;
