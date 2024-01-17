@@ -1446,7 +1446,6 @@
 <li><code>invest_max_period</code> - [MWh] Maximum storage investment for each period. Period.</li>
 <li><code>invest_min_total</code> - [MWh] Minimum storage investment over all solves. Constant.</li>
 <li><code>invest_min_period</code> - [MWh] Minimum storage investment for each period. Period.</li>
-<li><code>invest_forced</code> - [MWh] Storage capacity that must be invested in a given period. Investment cost will be included in the cost results even though the model does not have an investment variable. Constant or period.</li>
 <li><code>fixed_cost</code> - [CUR/kWh] Annual fixed cost for storage. Constant or period.</li>
 <li><code>penalty_up</code> - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time. Default value is 10 000, but this can be changed from the database.</li>
 <li><code>penalty_down</code> - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time. Default value is 10 000, but this can be changed from the database.</li>
@@ -1455,7 +1454,7 @@
 <li><code>availablity</code> - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.</li>
 </ul>
 <h3 id="using-nodes-as-storages">Using nodes as storages</h3>
-<p>FlexTool manages storages through nodes. A regular node maintains an energy/material balance between all inputs and outputs (<code>has_balance</code> set to <em>yes</em>). A storage node includes an additional state variable, which means that the node can also use charging and discharging of the storage while maintaining the energy balance. A storage node is created by setting <code>has_storage</code> to <em>yes</em> and by adding storage capacity using the <code>existing</code> parameter and/or by letting the model invest in storage capacity (<code>invest_method</code>, <code>invest_cost</code>, <code>invest_max_period</code>, <code>invest_max_total</code> and <code>invest_forced</code> parameters).</p>
+<p>FlexTool manages storages through nodes. A regular node maintains an energy/material balance between all inputs and outputs (<code>has_balance</code> set to <em>yes</em>). A storage node includes an additional state variable, which means that the node can also use charging and discharging of the storage while maintaining the energy balance. A storage node is created by setting <code>has_storage</code> to <em>yes</em> and by adding storage capacity using the <code>existing</code> parameter and/or by letting the model invest in storage capacity (<code>invest_method</code>, <code>invest_cost</code>, <code>invest_max_period</code> and <code>invest_max_total</code> parameters).</p>
 <p>Since FlexTool allows different temporal structures (multi-periods, rolling optimization, etc.) there needs to be ways to define how the storages behave when the model timeline is not fully consequtive. By default, storages are forced to match start level to the end level within timeblocks. This is an acceptable setting for small storages that do not carry meaningful amounts of energy between longer time periods in the model.</p>
 <p>There are three methods associated with storage start and end values: <code>storage_binding_method</code>, <code>storage_start_end_method</code> and <code>storage_solve_horizon_method</code>. </p>
 <ul>
@@ -1513,13 +1512,11 @@
 <li><code>invest_max_period</code> - [MW] Maximum capacity investment for each period. Period.</li>
 <li><code>invest_min_total</code> - [MW] Maximum capacity investment over all solves. Constant.</li>
 <li><code>invest_min_period</code> - [MW] Maximum capacity investment for each period. Period.</li>
-<li><code>invest_forced</code> - [MWh] Capacity that must be invested in a given period. Investment cost will be included in the cost results even though the model does not have an investment variable. Constant or period.</li>
 <li><code>retire_cost</code> - [CUR/kW] Retirement cost for new capacity. Constant or period.</li>
 <li><code>retire_max_total</code> - [MW] Maximum capacity retirement over all solves. Constant.</li>
 <li><code>retire_max_period</code> - [MW] Maximum capacity retirement for each period. Period.</li>
 <li><code>retire_min_total</code> - [MW] Minimum capacity retirement over all solves. Constant.</li>
 <li><code>retire_min_period</code> - [MW] Minimum capacity retirement for each period. Period.</li>
-<li><code>retire_forced</code> - [MW] Capacity that must be invested in a given period. Retirement cost will be included in the cost results even though the model does not have an retirement variable. Constant or period.</li>
 <li><code>fixed_cost</code> - [CUR/kW] Annual fixed cost for capacity. Constant or period. </li>
 <li><code>virtual_unitsize</code> - [MWh] Size of a single unit - used for integer investments (lumped investments). If not given, assumed from the existing capacity.</li>
 </ul>
@@ -1575,7 +1572,7 @@
 <li><code>invest_cost</code> - [CUR/kW] Investment cost for new 'virtual' capacity. Constant or period.</li>
 <li><code>interest_rate</code> - [e.g. 0.05 equals 5%] Interest rate for investments. Constant or period.</li>
 <li><code>lifetime</code> - [years] Used to calculate annuity together with interest rate. Constant or period.</li>
-<li>other investment parameters: <code>invest_max_total</code>, <code>invest_max_period</code>, <code>invest_min_total</code>, <code>invest_min_period</code>, <code>invest_forced</code>, <code>salvage_value</code></li>
+<li>other investment parameters: <code>invest_max_total</code>, <code>invest_max_period</code>, <code>invest_min_total</code>, <code>invest_min_period</code>, <code>salvage_value</code></li>
 <li><code>is_DC</code> - A flag whether the connection is DC (the flow will not be counted as synchronous if there is a <em>non_synchronous_limit</em>). Default false.</li>
 <li><code>virtual_unitsize</code> - [MW] Size of single connection - used for integer (lumped) investments.</li>
 <li><code>availability</code> - [e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant or time.</li>
@@ -1623,7 +1620,7 @@
 <ul>
 <li><code>co2_method</code> - Choice of the CO2 method or a combination of methods: no_method, price, period, total, price_period, price_total, period_total, price_period_total.</li>
 <li><code>co2_price</code> [CUR/ton] CO2 price for a group of nodes. Constant or period.</li>
-<li><code>co2_max_period</code> [tCO2] Maximum limit for emitted CO2 in each period.</li>
+<li><code>co2_max_period</code> [tCO2] Annualized maximum limit for emitted CO2 in each period.</li>
 <li><code>co2_max_total</code> [tCO2] Maximum limit for emitted CO2 in the whole solve.</li>
 </ul>
 <h3 id="controlling-outputs">Controlling outputs</h3>

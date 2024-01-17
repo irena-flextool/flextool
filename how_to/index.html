@@ -1303,7 +1303,6 @@ In the example, the <em>wind_plant</em> alone is not able to meet the load in al
 <li><code>lifetime_method</code>: Model can either be forced to reinvest when the lifetime ends <code>reinvest_automatic</code> or have a choice <code>reinvest_choice</code></li>
 <li><code>salvage_value</code>: Sets the extra value that can be gained for retiring [CUR/kW]</li>
 <li><code>fixed_cost</code>: Annual cost for capacity [CUR/kW]</li>
-<li><code>retire_forced</code>: forces to retire at least this amount of capacity</li>
 </ul>
 <p>In many cases some of the investment decisions are tied to each other. Here the battery capacity and the connection capacity of the <em>battery_inverter</em> will be tied as they are simultaneously limited by the choice of the battery technology to be invested in.
 To model this, a new constraint needs to be created that ties together the storage capacity of the <em>battery</em> and the charging/discharging capacity of the <em>battery_inverter</em>. A new <code>constraint</code> object <em>battery_tie_kW_kWh</em> is created and it is given parameters <code>constant</code>, <code>is_active</code> and <code>sense</code>. Constant could be left out, since it is zero, but <code>is_active</code> must be defined in order to include the constraint in the <em>battery_invest</em> <code>alternative</code>. The <code>sense</code> of the constraint must be <em>equal</em> to enforce the kw/kWh relation.</p>
@@ -1518,10 +1517,11 @@ where   slope = 1 / efficiency - section
 <h2 id="how-to-add-co2-emissions-costs-and-limits">How to add CO2 emissions, costs and limits</h2>
 <p><strong>(init.sqlite scenario: coal_co2 )</strong>
 <strong><em>init - west - coal - co2_price - co2_limit</em></strong></p>
-<p>Carbon dioxide emissions are added to FlexTool by associating relevant <code>commodities</code> (e.g. <em>coal</em>) with a <code>co2_content</code> parameter (CO2 content per MWh of energy contained in the fuel). 
-The other CO2 parameters are handeled through a group of nodes (Here <em>coal_price</em> or <em>coal_limit</em> <code>groups</code>). Therefore one needs to create a group and add all the nodes that supply these commodities to a group with a <code>group_node</code> relationship. (Here the relationship <em>co2_price--coal_market</em>)
+<p>Carbon dioxide emissions are added to FlexTool by associating relevant <code>commodities</code> (e.g. <em>coal</em>) with a <code>co2_content</code> parameter (CO2 content (tons per MWh) of energy contained in the fuel). 
+The other CO2 parameters are handeled through a group of nodes (Here <em>coal_price</em> or <em>coal_limit</em> <code>groups</code>). Therefore one needs to create a group and add all the nodes that supply these commodities (eg. coal_market) to a group with a <code>group_node</code> relationship. (Here the relationship <em>co2_price--coal_market</em>)
 To set a price one needs to create set the co2_method parameter to <em>price</em> (constant) and create the <code>co2_price</code> parameter with the desired value. This price is added to the price of the commodity. </p>
-<p>Alternatively one can set a limit on the co2 used by setting the <code>co2_method</code> parameter to <em>period</em> and setting the <code>co2_max_period</code> (periodic map) parameter. If both methods <em>price</em> and <em>period</em> are to be used, then they need to use different <code>groups</code>. The groups can include the same <code>nodes</code>.</p>
+<p>Alternatively one can set a limit on the co2 used by setting the <code>co2_method</code> parameter to <em>period</em> or <em>total</em> and setting the <code>co2_max_period</code> (periodic map [tCO2]) parameter or <code>co2_max_total</code> (constant [tCO2]) parameter. </p>
+<p>There methods can be combined by setting the <code>co2_method</code> to <em>price_period</em>, <em>price_total</em>, <em>period_total</em> or <em>price_period_total</em>.</p>
 <p><img alt="Add CO2" src="../coal_co2.png" /></p>
 <h2 id="how-to-create-a-non-synchronous-limit">How to create a non-synchronous limit</h2>
 <p><strong>(non_sync_and_curtailment.sqlite)</strong>

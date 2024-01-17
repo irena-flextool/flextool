@@ -497,6 +497,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Energy flows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#optional-output-output_connetion_flows_separate" class="md-nav__link">
+    <span class="md-ellipsis">
+      Optional output: output_connetion_flows_separate
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -521,69 +536,6 @@
   <a href="#unit-online-and-startup" class="md-nav__link">
     <span class="md-ellipsis">
       Unit online and startup
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#group-results" class="md-nav__link">
-    <span class="md-ellipsis">
-      Group results
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#capacity-and-investment-results" class="md-nav__link">
-    <span class="md-ellipsis">
-      Capacity and investment results
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#co2-emissions" class="md-nav__link">
-    <span class="md-ellipsis">
-      CO2 emissions
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reserves" class="md-nav__link">
-    <span class="md-ellipsis">
-      Reserves
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#inertia-and-non-synchronous-generation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Inertia and non-synchronous generation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ramps" class="md-nav__link">
-    <span class="md-ellipsis">
-      Ramps
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#slack-and-penalty-values" class="md-nav__link">
-    <span class="md-ellipsis">
-      Slack and penalty values
     </span>
   </a>
   
@@ -786,6 +738,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Energy flows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#optional-output-output_connetion_flows_separate" class="md-nav__link">
+    <span class="md-ellipsis">
+      Optional output: output_connetion_flows_separate
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -810,69 +777,6 @@
   <a href="#unit-online-and-startup" class="md-nav__link">
     <span class="md-ellipsis">
       Unit online and startup
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#group-results" class="md-nav__link">
-    <span class="md-ellipsis">
-      Group results
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#capacity-and-investment-results" class="md-nav__link">
-    <span class="md-ellipsis">
-      Capacity and investment results
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#co2-emissions" class="md-nav__link">
-    <span class="md-ellipsis">
-      CO2 emissions
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reserves" class="md-nav__link">
-    <span class="md-ellipsis">
-      Reserves
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#inertia-and-non-synchronous-generation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Inertia and non-synchronous generation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ramps" class="md-nav__link">
-    <span class="md-ellipsis">
-      Ramps
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#slack-and-penalty-values" class="md-nav__link">
-    <span class="md-ellipsis">
-      Slack and penalty values
     </span>
   </a>
   
@@ -913,7 +817,7 @@
 </ul>
 <h2 id="costs">Costs</h2>
 <ul>
-<li><code>model</code> object <code>cost</code> parameter - M[CUR] (millions of user chosen currency) includes annualized total cost as well as annualized costs divided into </li>
+<li><code>model</code> object <code>cost_annualized</code> parameter - M[CUR] (millions of user chosen currency) includes annualized total cost as well as annualized costs divided into </li>
 <li><em>unit investment/retirement</em> - M[CUR] cost of investing in unit capacity or benefits from salvaging unit capacity</li>
 <li><em>connection investment/retirement</em> - M[CUR] cost of investing in connection capacity or benefits from salvaging connection capacity</li>
 <li><em>storage investment/retirement</em> - M[CUR] cost of investing in storage capacity or benefits from salvaging storage capacity</li>
@@ -929,6 +833,8 @@
 <li><em>upward reserve penalty</em> - M[CUR] cost of not meeting the upward reserve constraint</li>
 <li><em>downward reserve penalty</em> - M[CUR] cost of not meeting the downward reserve constraint</li>
 <li><code>model</code> object <code>cost_t</code> parameter - M[CUR] similar as above but costs given for each timestep (no investment/retirement costs)</li>
+<li><code>model</code> object <code>cost_discounted_solve</code> paramater - M[CUR] Costs for the solve considering discounting and years presented (scaled to all years presented). Divided like in <code>cost_annualized</code></li>
+<li><code>model</code> object <code>cost_discounted_total</code> parameter - M[CUR] Total costs for all the solves considering discounting and years presented (scaled to all years presented). Divided like in <code>cost_annualized</code></li>
 </ul>
 <h2 id="prices">Prices</h2>
 <ul>
@@ -936,10 +842,18 @@
 </ul>
 <h2 id="energy-flows">Energy flows</h2>
 <ul>
-<li><code>unit__node</code> relationship <code>flow</code> parameter - [MWh] cumulative flow from the node (if node is input) or to the node (if node is output)</li>
-<li><code>unit__node</code> relationship <code>flow_t</code> parameter - [MWh] flow from the node (if node is input) or to the node (if node is output)</li>
-<li><code>connection__node__node</code> relationship <code>flow</code> parameter - [MWh] cumulative flow through the connection (left to right is positive)</li>
-<li><code>connection__node__node</code> relationship <code>flow_t</code> parameter - [MWh] flow through the connection (left to right is positive)</li>
+<li><code>unit__node</code> relationship <code>flow_annualized</code> parameter - [MWh] cumulative flow from the node (if node is input) or to the node (if node is output) annualized.
+Annualization scales the sum to correspond with full year time series.</li>
+<li><code>unit__node</code> relationship <code>flow_t</code> parameter - [MW] flow from the node (if node is input) or to the node (if node is output)</li>
+<li><code>connection__node__node</code> relationship <code>flow_annualized</code> parameter - [MWh] cumulative flow through the connection (left to right is positive) annualized</li>
+<li><code>connection__node__node</code> relationship <code>flow_t</code> parameter - [MW] flow through the connection (left to right is positive)</li>
+</ul>
+<h3 id="optional-output-output_connetion_flows_separate">Optional output: output_connetion_flows_separate</h3>
+<ul>
+<li><code>connection__node__node</code> relationship <code>flow_to_first_node_annualized</code> parameter - [MWh] annualized cumulative flow through the connection only to the left (first) node.</li>
+<li><code>connection__node__node</code> relationship <code>flow_to_second_node_annualized</code> parameter - [MWh] annualized cumulative flow through the connection only to the right (second) node.</li>
+<li><code>connection__node__node</code> relationship <code>flow_to_first_node_t</code> parameter - [MW] flow through the connection to the left (first) node.</li>
+<li><code>connection__node__node</code> relationship <code>flow_to_second_node_t</code> parameter - [MW] flow through the connection to the right (second) node.</li>
 </ul>
 <h2 id="capacity-factors">Capacity factors</h2>
 <ul>
@@ -949,15 +863,19 @@
 <h2 id="energy-balance-in-nodes">Energy balance in nodes</h2>
 <ul>
 <li><code>node</code> object <code>balance</code> parameter - [MWh] cumulative inputs (positive) and outputs (negative) to the node from all the possible sources (<em>from_units</em>, <em>from_connection</em>, <em>to_units</em>, <em>to_connections</em>, <em>state change</em> over the period, <em>self discharge</em> during the period, <em>upward slack</em> for involuntary demand reduction and <em>downward slack</em> for involuntary demand increase)</li>
-<li><code>node</code> object <code>balance_t</code> parameter - [MWh] same as above, but for each timestep</li>
+<li><code>node</code> object <code>balance_t</code> parameter - [MW] same as above, but for each timestep</li>
 <li><code>node</code> object <code>state_t</code> parameter - [MWh] storage state of the node in each timestep</li>
-<li><code>node</code> object <code>state_t</code> parameter - storage state of the node in each timestep (typically MWh).</li>
 </ul>
 <h2 id="unit-online-and-startup">Unit online and startup</h2>
 <ul>
 <li><code>unit</code> object <code>online_average</code> parameter - [count] average online status of the unit (average number of units online during the period)</li>
 <li><code>unit</code> object <code>online_t</code> parameter - [count] online status of the unit (number of units online in each timestep)</li>
 <li><code>unit</code> object <code>startup_cumulative</code> parameter - [count] cumulative number of unit startups during the period</li>
+</ul>
+<h1 id="unit-curtailment">Unit curtailment</h1>
+<ul>
+<li><code>unit</code> object <code>curtailment_share</code> parameter - [0-1] Share of curtailed production from potential production for periods</li>
+<li><code>unit</code> object <code>curtailment_t</code> parameter - [MW] curtailed flow to the node</li>
 </ul>
 <h2 id="group-results">Group results</h2>
 <ul>
@@ -967,6 +885,11 @@
 <li><em>curtailed VRE share</em> - [0-1] how much the unused flows from VRE sources would have been of the inflow</li>
 <li><em>upward slack share</em> - [0-1] upward slack in relation to the inflow</li>
 <li><em>downward slack share</em> - [0-1] downward slack in relation to the inflow</li>
+<li><code>group</code> object <code>flow_annualized</code> parameter - [MWh] produces grouped and annualized flow results of the <code>node</code> members of the <code>group</code></li>
+<li><code>group</code> object <code>flow_t</code> parameter - [MW] produces grouped flow results to the <code>node</code> members of the <code>group</code></li>
+<li><code>group</code> object <code>sum_flow_annualized</code> parameter [MWh] Annualized sum of flows in the group (members from group__connection__node and group__unit__node). Annualization scales the sum to correspond with full year time series.</li>
+<li><code>group</code> object <code>sum_flow_t</code> parameter [MW] Sum of flows in the group (members from group__connection__node and group__unit__node).</li>
+<li><code>group</code> object <code>VRE_share_t</code> parameter - [0-1]  how much the flows from VRE sources (inputs using  'upper limit' profile) are of the inflow for each timestep</li>
 </ul>
 <h2 id="capacity-and-investment-results">Capacity and investment results</h2>
 <ul>
@@ -981,7 +904,8 @@
 </ul>
 <h2 id="co2-emissions">CO2 emissions</h2>
 <ul>
-<li><code>unit</code> object <code>co2</code> parameter - [tCO2] how many million tons of CO2 the unit has generated (by using commodity with CO2 content) or removed</li>
+<li><code>group</code> object <code>CO2_annualized</code> parameter - [Mt] how many million tons of CO2 annualized the units and connections in this group have generated (by using commodity with CO2 content) or removed.</li>
+<li><code>unit</code> object <code>CO2_annualized</code> parameter - [Mt] how many million tons of CO2 annualized the unit has generated (by using commodity with CO2 content) or removed</li>
 </ul>
 <h2 id="reserves">Reserves</h2>
 <ul>
