@@ -106,13 +106,15 @@ Update IRENA FlexTool:
 
 - cd to the FlexTool directory
 - `python update_flextool.py`
-- This will pull the new version of the tool as well as migrating the input databases to the new version without destroying the data. Making a backup copy of the input data is still a good practice.
+- This will pull the new version of the tool as well as migrating the input databases to the new version without destroying the data. Making a backup copy of the input data is still a good practice. The input_data_template.sqlite should not be used directly but by making a copy of it. 
     - The updated databases are: 
         - The database chosen as the input data in the tool!!!
         - init.sqlite
         - input_data_template.sqlite
+        - time_settings_only.sqlite
         - how to example databases
 - If the git complains about merge conflicts, it is probably due to you modifying the template files. Use `git restore .`  and `git pull `. This will restore ALL the files downloaded from the repository to their original states. Then repeat `python update_flextool.py`
+- The Results.sqlite will only get additive changes, as we do not want to destroy your data. This causes old parameter definitions to linger in the database. You can remove them by replacing the database with a copy of the Results_template.sqlite that is kept up to date.
 
 - One can also migrate other input databases to the new version by calling:
     - `python migrate_database.py *absolute_path_to_database*` or
