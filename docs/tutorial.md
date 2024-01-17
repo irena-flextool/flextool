@@ -37,7 +37,7 @@ Remark: in case you had already populated the ***Input data*** database, you nee
 
 You should have the FlexTool project open in the Spine Toolbox. For this tutorial a database *time_settings_only.sqlite* is provided in the Flextool folder. As the name suggests, it includes the basic time settings needed for running the tool. If you want to know how it is done or how to make your own time settings go to [How-to-create-basic-time-settings](https://irena-flextool.github.io/flextool/how_to#how-to-create-basic-time-settings). How to -section includes simple examples on specific parts of the system. You can explore it after the tutorial.
 
-First make a copy of the database and name it *tutorial.sqlite*. (In the future a new project should be started by copying *time_settings_only.sqlite* or the empty database *input_data_template.sqlite*). Then choose it to be the Input_data:
+First make a copy of the database and name it *tutorial.sqlite*. (In the future a new project should be started by copying *time_settings_only.sqlite* or the empty database *input_data_template.sqlite*. Use copy and rename, not directly! Otherwise the progress might be lost when updating the tool, as these databases are part of the repository). Then choose it to be the Input_data:
 ![Choose a database](./choosing_database.png)
 
 ### 1st step - a node with no units
