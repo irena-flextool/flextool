@@ -2669,65 +2669,60 @@ s.t. inertia_constraint {g in groupInertia, (d, t) in dt} :
 ;
 
 s.t. co2_max_period{g in group_co2_max_period, d in period_in_use} :
-  sum{(g, c, n, d) in group_commodity_node_period_co2_period }
-  ( 
-    + ( p_commodity[c, 'co2_content']  
-    * (
-      # CO2 increases 
-      + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt } 
-      ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t] )
-      + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } 
-      ( ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
-          * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
-          + ( if (p, 'min_load_efficiency') in process__ct_method then 
-            + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
-                + (if p in process_online_integer then v_online_integer[p, d, t])
-            )
-            * ptProcess_section[p, t]
-            * p_entity_unitsize[p]
-          )	  
-      ) * step_duration[d, t]
-      )		  
-      # CO2 removals
-      - sum {(p, source, n) in process_source_sink, (d, t) in dt } 
-        ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t]
-        )  
-      )
-    ) / period_share_of_year[d]
-  )
+  + sum{(g, c, n, d) in group_commodity_node_period_co2_period }
+    ( 
+      + p_commodity[c, 'co2_content']  
+        * (
+            # CO2 increases 
+            + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt } 
+              ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t] )
+            + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } 
+              ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t]
+                  * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+                  * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
+                + ( if (p, 'min_load_efficiency') in process__ct_method then 
+                    + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
+                        + (if p in process_online_integer then v_online_integer[p, d, t])
+                      )
+                      * ptProcess_section[p, t]
+                      * p_entity_unitsize[p]
+                  )	  
+              ) 
+            # CO2 removals
+            - sum {(p, source, n) in process_source_sink, (d, t) in dt } 
+              ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t] )  
+          ) / period_share_of_year[d]
+    )
   <=
   + pdGroup[g, 'co2_max_period', d]
 ;
 
 s.t. co2_max_total{g in group_co2_max_total} :
-  sum{(g, c, n) in group_commodity_node_period_co2_total }
-  ( 
-    + ( p_commodity[c, 'co2_content']  
-    * (
-      # CO2 increases 
-      + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt } 
-      ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t] )
-      + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } 
-      ( ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
-          * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
-          + ( if (p, 'min_load_efficiency') in process__ct_method then 
-            + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
-                + (if p in process_online_integer then v_online_integer[p, d, t])
-            )
-            * ptProcess_section[p, t]
-            * p_entity_unitsize[p]
-          )	  
-      ) * step_duration[d, t]
-      )		  
-      # CO2 removals
-      - sum {(p, source, n) in process_source_sink, (d, t) in dt } 
-        ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t]
-        )  
-      )
+  + sum{(g, c, n) in group_commodity_node_period_co2_total }
+    ( 
+      + p_commodity[c, 'co2_content']  
+        * (
+            # CO2 increases 
+            + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt } 
+              ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t] )
+            + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } 
+              ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t]
+                  * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+                  * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
+                + ( if (p, 'min_load_efficiency') in process__ct_method then 
+                    + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
+                        + (if p in process_online_integer then v_online_integer[p, d, t])
+                      )
+                      * ptProcess_section[p, t]
+                      * p_entity_unitsize[p]
+				  )
+              )	  
+          # CO2 removals
+            - sum {(p, source, n) in process_source_sink, (d, t) in dt } 
+              ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t]
+              )  
+          )
     )
-  )
   <=
   + p_group[g, 'co2_max_total']
 ;
