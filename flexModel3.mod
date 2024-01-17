@@ -360,13 +360,13 @@ set branch__process__sink__param__time dimen 5 within {branch, process_sink, sou
 set branch__node__param__time dimen 4 within {branch, node, nodeTimeParam, time};
 set branch__node__time_inflow dimen 3 within {branch, node, time};
 
-param bpt_node {branch, node, nodeTimeParam, time} default 0;
-param bpt_node_inflow {branch, node, time} default 0;
-param bpt_process_source {branch, (p, source) in process_source, sourceSinkTimeParam, time} default 0;
-param bpt_process_sink {branch, (p, sink) in process_sink, sourceSinkTimeParam, time} default 0;
-param bpt_profile {branch, profile, time};
-param bpt_reserve_upDown_group {branch, reserve, upDown, group, reserveTimeParam, time};
-param bpt_process {branch, process, processTimeParam, time} default 0;
+param pbt_node {branch, node, nodeTimeParam, time} default 0;
+param pbt_node_inflow {branch, node, time} default 0;
+param pbt_process_source {branch, (p, source) in process_source, sourceSinkTimeParam, time} default 0;
+param pbt_process_sink {branch, (p, sink) in process_sink, sourceSinkTimeParam, time} default 0;
+param pbt_profile {branch, profile, time};
+param pbt_reserve_upDown_group {branch, reserve, upDown, group, reserveTimeParam, time};
+param pbt_process {branch, process, processTimeParam, time} default 0;
 
 param scale_the_objective;
 param scale_the_state;
@@ -531,13 +531,13 @@ table data IN 'CSV' 'solve_data/period__branch.csv' : [period, branch], p_branch
 table data IN 'CSV' 'solve_data/period__branch.csv' : [period, branch], p_branch_realized;
 
 # Stochastic input data 
-table data IN 'CSV' 'solve_data/bpt_node.csv' : [branch, node, nodeParam, time], bpt_node;
-table data IN 'CSV' 'solve_data/bpt_node_inflow.csv' : [branch, node, time], bpt_node_inflow;
-table data IN 'CSV' 'solve_data/bpt_process_sink.csv' : [branch, process, sink, sourceSinkTimeParam, time], bpt_process_sink;
-table data IN 'CSV' 'solve_data/bpt_process_source.csv' : [branch, process, source, sourceSinkTimeParam, time], bpt_process_source;
-table data IN 'CSV' 'solve_data/bpt_process.csv' : [branch, process, processParam, time], bpt_process;
-table data IN 'CSV' 'solve_data/bpt_profile.csv' : [branch, profile, time], bpt_profile;
-table data IN 'CSV' 'solve_data/bpt_reserve__upDown__group.csv' : [branch, reserve, upDown, group, reserveParam, time], bpt_reserve_upDown_group;
+table data IN 'CSV' 'solve_data/pbt_node.csv' : [branch, node, nodeParam, time], pbt_node;
+table data IN 'CSV' 'solve_data/pbt_node_inflow.csv' : [branch, node, time], pbt_node_inflow;
+table data IN 'CSV' 'solve_data/pbt_process_sink.csv' : [branch, process, sink, sourceSinkTimeParam, time], pbt_process_sink;
+table data IN 'CSV' 'solve_data/pbt_process_source.csv' : [branch, process, source, sourceSinkTimeParam, time], pbt_process_source;
+table data IN 'CSV' 'solve_data/pbt_process.csv' : [branch, process, processParam, time], pbt_process;
+table data IN 'CSV' 'solve_data/pbt_profile.csv' : [branch, profile, time], pbt_profile;
+table data IN 'CSV' 'solve_data/pbt_reserve__upDown__group.csv' : [branch, reserve, upDown, group, reserveParam, time], pbt_reserve_upDown_group;
 
 # After rolling forward the investment model
 table data IN 'CSV' 'solve_data/p_entity_divested.csv' : [entity], p_entity_divested;
@@ -728,11 +728,15 @@ set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
 param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} := 
         + if (c, param, d) in commodity__param__period
 		  then pd_commodity[c, param, d]
-		  else p_commodity[c, param];
+		  else if sum{(c, param, dp) in commodity__param__period && (dp, d) in period__branch} = 1
+      then pd_commodity[c, param, dp]
+      else p_commodity[c, param];
 
 param pdGroup {g in group, param in groupPeriodParam, d in period} :=
         + if (g, param, d) in group__param__period
 		  then pd_group[g, param, d]
+      else if sum{(c,param, dp) in group__param_period && (dp, d) in period__branch} = 1
+      then pd_group[g, param, dp]
 		  else if (g, param) in group__param 
 		  then p_group[g, param]
 		  else 0;
