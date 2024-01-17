@@ -2264,7 +2264,7 @@
                             {
                                 "map_type": "ParameterDefinition",
                                 "position": "hidden",
-                                "value": "co2"
+                                "value": "CO2_annualized"
                             },
                             {
                                 "map_type": "Alternative",
@@ -3516,86 +3516,6 @@
                     }
                 }
             ],
-            "connection_left_to_right__period": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "connection_left_to_right__period__t": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "connection_right_to_left__period": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "connection_right_to_left__period__t": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "ObjectClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Object",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ObjectMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
             "group_flows__period__t": [
                 {
                     "Mapping 1": {
@@ -4002,10 +3922,6 @@
             },
             "slack__downward__node_state__period__t": {},
             "slack__upward__node_state__period__t": {},
-            "connection_left_to_right__period": {},
-            "connection_left_to_right__period__t": {},
-            "connection_right_to_left__period": {},
-            "connection_right_to_left__period__t": {},
             "group_flows__period__t": {
                 "has_header": false
             },
@@ -4378,15 +4294,6 @@
                 "0": "string",
                 "1": "string",
                 "2": "float"
-            },
-            "connection_right_to_left__period__t": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "string",
-                "4": "string",
-                "5": "string",
-                "6": "string"
             }
         },
         "table_default_column_type": {

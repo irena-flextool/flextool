@@ -16,7 +16,7 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
 
 ## Costs
 
-- `model` object `cost` parameter - M[CUR] (millions of user chosen currency) includes annualized total cost as well as annualized costs divided into 
+- `model` object `cost_annualized` parameter - M[CUR] (millions of user chosen currency) includes annualized total cost as well as annualized costs divided into 
   - *unit investment/retirement* - M[CUR] cost of investing in unit capacity or benefits from salvaging unit capacity
   - *connection investment/retirement* - M[CUR] cost of investing in connection capacity or benefits from salvaging connection capacity
   - *storage investment/retirement* - M[CUR] cost of investing in storage capacity or benefits from salvaging storage capacity
@@ -32,6 +32,9 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
   - *upward reserve penalty* - M[CUR] cost of not meeting the upward reserve constraint
   - *downward reserve penalty* - M[CUR] cost of not meeting the downward reserve constraint
 - `model` object `cost_t` parameter - M[CUR] similar as above but costs given for each timestep (no investment/retirement costs)
+- `model` object `cost_discounted_solve` paramater - M[CUR] Costs for the solve considering discounting and years presented (scaled to all years presented). Divided like in `cost_annualized`
+- `model` object `cost_discounted_total` parameter - M[CUR] Total costs for all the solves considering discounting and years presented (scaled to all years presented). Divided like in `cost_annualized`
+
 
 ## Prices
 
@@ -39,10 +42,17 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
 
 ## Energy flows
 
-- `unit__node` relationship `flow` parameter - [MWh] cumulative flow from the node (if node is input) or to the node (if node is output)
-- `unit__node` relationship `flow_t` parameter - [MWh] flow from the node (if node is input) or to the node (if node is output)
-- `connection__node__node` relationship `flow` parameter - [MWh] cumulative flow through the connection (left to right is positive)
-- `connection__node__node` relationship `flow_t` parameter - [MWh] flow through the connection (left to right is positive)
+- `unit__node` relationship `flow_annualized` parameter - [MWh] cumulative flow from the node (if node is input) or to the node (if node is output) annualized.
+Annualization scales the sum to correspond with full year time series.
+- `unit__node` relationship `flow_t` parameter - [MW] flow from the node (if node is input) or to the node (if node is output)
+- `connection__node__node` relationship `flow_annualized` parameter - [MWh] cumulative flow through the connection (left to right is positive) annualized
+- `connection__node__node` relationship `flow_t` parameter - [MW] flow through the connection (left to right is positive)
+
+### Optional output: output_connetion_flows_separate
+- `connection__node__node` relationship `flow_to_first_node_annualized` parameter - [MWh] annualized cumulative flow through the connection only to the left (first) node.
+- `connection__node__node` relationship `flow_to_second_node_annualized` parameter - [MWh] annualized cumulative flow through the connection only to the right (second) node.
+- `connection__node__node` relationship `flow_to_first_node_t` parameter - [MW] flow through the connection to the left (first) node.
+- `connection__node__node` relationship `flow_to_second_node_t` parameter - [MW] flow through the connection to the right (second) node.
 
 ## Capacity factors
 
@@ -52,15 +62,19 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
 ## Energy balance in nodes
 
 - `node` object `balance` parameter - [MWh] cumulative inputs (positive) and outputs (negative) to the node from all the possible sources (*from_units*, *from_connection*, *to_units*, *to_connections*, *state change* over the period, *self discharge* during the period, *upward slack* for involuntary demand reduction and *downward slack* for involuntary demand increase)
-- `node` object `balance_t` parameter - [MWh] same as above, but for each timestep
+- `node` object `balance_t` parameter - [MW] same as above, but for each timestep
 - `node` object `state_t` parameter - [MWh] storage state of the node in each timestep
-- `node` object `state_t` parameter - storage state of the node in each timestep (typically MWh).
 
 ## Unit online and startup
 
 - `unit` object `online_average` parameter - [count] average online status of the unit (average number of units online during the period)
 - `unit` object `online_t` parameter - [count] online status of the unit (number of units online in each timestep)
 - `unit` object `startup_cumulative` parameter - [count] cumulative number of unit startups during the period
+
+# Unit curtailment
+
+- `unit` object `curtailment_share` parameter - [0-1] Share of curtailed production from potential production for periods
+- `unit` object `curtailment_t` parameter - [MW] curtailed flow to the node
 
 ## Group results
 
@@ -70,6 +84,11 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
   - *curtailed VRE share* - [0-1] how much the unused flows from VRE sources would have been of the inflow
   - *upward slack share* - [0-1] upward slack in relation to the inflow
   - *downward slack share* - [0-1] downward slack in relation to the inflow
+- `group` object `flow_annualized` parameter - [MWh] produces grouped and annualized flow results of the `node` members of the `group`
+- `group` object `flow_t` parameter - [MW] produces grouped flow results to the `node` members of the `group`
+- `group` object `sum_flow_annualized` parameter [MWh] Annualized sum of flows in the group (members from group__connection__node and group__unit__node). Annualization scales the sum to correspond with full year time series.
+- `group` object `sum_flow_t` parameter [MW] Sum of flows in the group (members from group__connection__node and group__unit__node).
+- `group` object `VRE_share_t` parameter - [0-1]  how much the flows from VRE sources (inputs using  'upper limit' profile) are of the inflow for each timestep
 
 ## Capacity and investment results
 
@@ -84,7 +103,8 @@ FlexTool outputs results typical to a planning model or a scheduling model, but 
 
 ## CO2 emissions
 
-- `unit` object `co2` parameter - [tCO2] how many million tons of CO2 the unit has generated (by using commodity with CO2 content) or removed
+- `group` object `CO2_annualized` parameter - [Mt] how many million tons of CO2 annualized the units and connections in this group have generated (by using commodity with CO2 content) or removed.
+- `unit` object `CO2_annualized` parameter - [Mt] how many million tons of CO2 annualized the unit has generated (by using commodity with CO2 content) or removed
 
 ## Reserves
 

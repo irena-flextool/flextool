@@ -1,6 +1,7 @@
 *.csv
 FlexTool2D_data.sqlite
 Results.sqlite
+Results_template.sqlite
 Input_data.sqlite
 input_data_template.sqlite
 paramNotWritten.dat

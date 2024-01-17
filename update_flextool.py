@@ -33,8 +33,6 @@ def update_flextool(skip_git):
         initialize_database("Input_data.sqlite")
     if not os.path.exists("input_data_template.sqlite"):
         initialize_database("input_data_template.sqlite")
-    if not os.path.exists("Results.sqlite"):
-        shutil.copy("Results_template.sqlite", "Results.sqlite")
 
     db_to_update = []
     db_to_update.append("Init.sqlite")
@@ -58,15 +56,34 @@ def update_flextool(skip_git):
     for i in db_to_update:
         migrate_database(i)
 
-    #update result parameter definitions
+    result_template_path = './version/flextool_template_results_master.json'
+    #replace the template sqlite
+    if os.path.exists('Results_template.sqlite'):
+        os.remove('Results_template.sqlite')
+    initialize_result_database('Results_template.sqlite', result_template_path)
+
+    if not os.path.exists("Results.sqlite"):
+        shutil.copy("Results_template.sqlite", "Results.sqlite")
+    #update result parameter definitions    
     db = DatabaseMapping('sqlite:///' + 'Results.sqlite', create = False)
     #get template JSON. This can be the master or old template if conflicting migrations in between
-    with open ('./version/flextool_template_results_master.json') as json_file:
+    with open (result_template_path) as json_file:
         template = json.load(json_file)
     #these update the old descriptions, but wont remove them or change names (the new name is created, but old stays)
     (num,log) = import_data(db, object_parameters = template["object_parameters"])
     (num,log) = import_data(db, relationship_parameters = template["relationship_parameters"])
     db.commit_session("Updated relationship_parameters, object parameters to the Results.sqlite")
+
+def initialize_result_database(filename,json_path):
+
+    db = DatabaseMapping('sqlite:///' + filename, create = True)
+
+    with open (json_path) as json_file:
+        template = json.load(json_file)
+
+    (num,log) = import_data(db,**template)
+    print("Result database initialized")
+    db.commit_session("Result database initialized")
 
 def migrate_project(old_path, new_path):
     #purpose of this is to update some of the items that users should not need to modify
