@@ -47,6 +47,7 @@ class FlexToolRunner:
         self.timeblocks = self.get_timeblocks()
         self.timeblocks__timeline = self.get_timeblocks_timelines()
         self.timeblocks_used_by_solves = self.get_timeblocks_used_by_solves()
+        self.get_stochastic_branches()
         self.solver_precommand = self.get_solver_precommand()
         self.solver_arguments = self.get_solver_arguments()
         self.contains_solves = self.get_contains_solves()
@@ -550,6 +551,23 @@ class FlexToolRunner:
                     sys.exit(-1)
                 """
         return timeblocks
+
+    def get_stochastic_branches(self,filename):
+        """
+        read stochastic data
+        :return a 5d array (solve, period, branch, weight, realized):
+        """
+        with open(filename, 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            map_4d = defaultdict(list)
+            while True:
+                try:
+                    datain = next(filereader)
+                    map_4d[datain[0]].append([datain[1], datain[2], datain[3], datain[4]])
+                except StopIteration:
+                    break
+        self.stochastic_branches = map_4d
 
     def get_list_of_tuples(self, filename):
         """
@@ -1107,6 +1125,15 @@ class FlexToolRunner:
                     for i in active_time:
                         realfile.write(period+","+i[0]+"\n")
     
+    def write_fix_storage_timesteps(self, period__branch):
+        """
+        write the timesteps to where the storage is fixed for included solves
+        """
+        with open("solve_data/period__temp_period__branch.csv", 'w') as realfile:
+            realfile.write("period,branch\n")
+            for row in period__branch:
+                realfile.write(row[0]+","+row[1]+"\n")
+    
     #these exist to connect timesteps from two different timelines or aggregated versions of one
     def connect_two_timelines(self,period,first_solve,second_solve):
         first_period_timeblocks = self.timeblocks_used_by_solves[first_solve]
@@ -1406,7 +1433,34 @@ class FlexToolRunner:
                 fix_storage_time_lists.update(inner_fix_storage_time_lists)
 
         return solves, complete_solves, active_time_lists, jump_lists, realized_time_lists, fix_storage_time_lists, parent_roll_lists
+    
+    def create_stochastic_periods(solves, complete_solve, active_time_lists, stochastic_info):
+        
+        period__branch = defaultdict(list)
 
+        for solve in solves:
+            info = stochastic_info[complete_solve[solve]]
+            active_time_list = active_time_lists[solve]
+            for period, active_time in active_time_list:
+                #get all start times
+                start_times = defaultdict(list)
+                for row in info:
+                    if row[0]==period:
+                        start_times[row[1]] = (row[2],row[3])
+                for step in active_time:
+                    if step in start_times.keys():
+                        time_end = start_times[step][0]
+                        branch = start_times[step][1]
+                        time_start_ind = active_time.index(step)
+                        time_end_ind = active_time.index(time_end)
+                        active_time_list[branch] = active_time[time_start_ind:time_end_ind+1]
+                        period__branch[solve].append((period, branch))
+                
+                period__branch[solve].append((period, period))
+            active_time_lists[solve] = active_time_list
+        
+        return period__branch, active_time_lists
+   
     def periodic_postprocess(self,groupby_map, method = None, arithmetic = "sum"):
         for key, group in list(groupby_map.items()):
             if method == "timewise":
@@ -1577,6 +1631,8 @@ def main():
                 if solve__period[0] == solve and not any(solve__period[1]== sublist[0] for sublist in solve_period_history[solve]):
                     solve_period_history[solve].append((solve__period[1], 1))
     
+    period__branch, active_time_lists = runner.create_stochastic_periods(solves, complete_solve, active_time_lists, runner.stochastic_branches)
+
     first = True
     for i, solve in enumerate(all_solves):
         complete_active_time_lists = runner.get_active_time(complete_solve[solve], runner.timeblocks_used_by_solves, runner.timeblocks, runner.timelines, runner.timeblocks__timeline)
@@ -1599,6 +1655,7 @@ def main():
         runner.write_last_step(realized_time_lists[solve], 'solve_data/last_realized_timestep.csv')
         runner.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
         runner.write_fix_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
+        runner.write_branch__period_relationship(period__branch, solve)
 
         #check if the upper level fixes storages
         if complete_solve[solve] in runner.contains_solves.values() and any(complete_solve[parent_roll[solve]] == solve_period[0] for solve_period in runner.fix_storage_periods): # check that the parent_roll exists and has storage fixing
