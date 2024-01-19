@@ -345,11 +345,11 @@ set ed_history_realized_read dimen 2 within {e in entity, d in period_with_histo
 param p_entity_period_existing_capacity {e in entity, d in period_with_history};
 param p_entity_period_invested_capacity {e in entity, d in period_with_history};
 
-set group_stochastic dimen 1 within {group};
-set period__branch dimen 2 within {period, branch};
+set groupStochastic dimen 1 within {group};
+set period__branch dimen 2 within {period, period};
 set branch := setof{(d,b) in period__branch}(b);
-param p_branch_weight {(period,branch) in period_branch};
-param p_branch_realized {(period,branch) in period_branch};
+param p_branch_weight {(d,b) in period__branch};
+param p_branch_realized {(d,b) in period__branch};
 
 #stochastic versions of timeseries
 set branch__process__param__time dimen 4 within {branch, process, processTimeParam, time};
@@ -400,6 +400,7 @@ table data IN 'CSV' 'input/profile.csv': profile <- [profile];
 table data IN 'CSV' 'solve_data/p_years_represented.csv': year <- [years_from_solve];
 table data IN 'CSV' 'input/optional_outputs.csv': optional_outputs <- [output, value];
 table data IN 'CSV' 'input/exclude_entity_outputs.csv': exclude_entity_outputs <- [value];
+table data IN 'CSV' 'input/group_stochastic.csv' : groupStochastic <- [groupIncludeStochastics];
 
 # Single dimension membership sets
 table data IN 'CSV' 'input/process_connection.csv': process_connection <- [process_connection];
@@ -497,8 +498,6 @@ table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
 table data IN 'CSV' 'input/p_discount_rate.csv' : [model], p_discount_rate;
 table data IN 'CSV' 'input/default_values.csv' : objectClass_paramName_default <-[objectClass, paramName];
 table data IN 'CSV' 'input/default_values.csv' : [objectClass,paramName], default_value;
-table data IN 'CSV' 'input/group_stochastic.csv' : [group] <- group_stochastic;
-
 
 # Parameters from the solve loop
 table data IN 'CSV' 'solve_data/solve_hole_multiplier.csv' : [solve], p_hole_multiplier;
@@ -725,17 +724,17 @@ set process_online_integer 'processes with an online status using integer variab
 set process_online := process_online_linear union process_online_integer;
 set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
 
-param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} := 
+param pdCommodity {c in commodity, param in commodityPeriodParam, (dp, d) in period__branch} := 
         + if (c, param, d) in commodity__param__period
 		  then pd_commodity[c, param, d]
-		  else if sum{(c, param, dp) in commodity__param__period && (dp, d) in period__branch} = 1
+		  else if (c, param, dp) in commodity__param__period
       then pd_commodity[c, param, dp]
       else p_commodity[c, param];
 
-param pdGroup {g in group, param in groupPeriodParam, d in period} :=
+param pdGroup {g in group, param in groupPeriodParam, (dp, d) in period__branch} :=
         + if (g, param, d) in group__param__period
 		  then pd_group[g, param, d]
-      else if sum{(c,param, dp) in group__param_period && (dp, d) in period__branch} = 1
+      else if (c,param, dp) in group__param_period
       then pd_group[g, param, dp]
 		  else if (g, param) in group__param 
 		  then p_group[g, param]
@@ -2590,7 +2589,7 @@ s.t. minCumulative_flow_solve {g in group : p_group[g, 'min_cumulative_flow']} :
       * hours_in_solve
 ;
 
-s.t. maxCumulative_flow_period {g in group, d in period : pd_group[g, 'max_cumulative_flow', d]} :
+s.t. maxCumulative_flow_period {g in group, d in period : pdGroup[g, 'max_cumulative_flow', d]} :
   + sum{(g, p, n) in group_process_node, (d, t) in dt} (
       # n is sink
       + sum {(p, source, n) in process_source_sink} (
@@ -2613,11 +2612,11 @@ s.t. maxCumulative_flow_period {g in group, d in period : pd_group[g, 'max_cumul
 		)
 	)  * step_duration[d, t]
 	<=
-  + pd_group[g, 'max_cumulative_flow', d] 
+  + pdGroup[g, 'max_cumulative_flow', d] 
       * hours_in_period[d]
 ;
 
-s.t. minCumulative_flow_period {g in group, d in period : pd_group[g, 'min_cumulative_flow', d]} :
+s.t. minCumulative_flow_period {g in group, d in period : pdGroup[g, 'min_cumulative_flow', d]} :
   + sum{(g, p, n) in group_process_node, (d, t) in dt} (
       # n is sink
       + sum {(p, source, n) in process_source_sink} (
@@ -2640,7 +2639,7 @@ s.t. minCumulative_flow_period {g in group, d in period : pd_group[g, 'min_cumul
 		)
 	) * step_duration[d, t]
 	>=
-  + pd_group[g, 'min_cumulative_flow', d] 
+  + pdGroup[g, 'min_cumulative_flow', d] 
       * hours_in_period[d]
 ;
 

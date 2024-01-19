@@ -21,7 +21,7 @@ def migrate_database(database_path):
         version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
     next_version = int(version) + 1
-    new_version = 15
+    new_version = 16
 
     while next_version <= new_version:
         if next_version == 0:
@@ -68,6 +68,11 @@ def migrate_database(database_path):
             remove_parameters_manual(db,[["unit", "invest_forced"], ["unit", "retire_forced"], ["connection", "invest_forced"], ["connection", "retire_forced"],
                                          ["node", "invest_forced"], ["node", "retire_forced"]])
             add_parameters_manual(db, [["group", "co2_max_period", "no_method", "co2_methods", "[tCO2] Annualized maximum limit for emitted CO2 in each period."]])
+        elif next_version == 16:
+            add_value_list_manual(db,[["yes_no", "yes"], ["yes_no", "no"]])
+            new_parameters = [["solve", "stochastic_branches", None, None, "[4d-Array], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be the realized one."],
+                              ["group", "include_stochastics", "no", "yes_no", "Includes the stochastic branches to be used for the nodes/units/connections in this group"]]
+            add_parameters_manual(db,new_parameters)
         else:
             print("Version invalid")
         next_version += 1 
@@ -180,10 +185,6 @@ def change_optional_output_type(db, filepath):
     
     db.remove_items(**{'parameter_definition': [enable_parameter_definition.id,disable_parameter_definition.id]})
     db.commit_session("Changed optional outputs")
-
-def add_group_flow_output(db):
-    sq= db.entity_parameter_value_sq
-    sq_def = db.object_parameter_definition_sq
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

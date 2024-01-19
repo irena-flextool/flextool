@@ -47,7 +47,8 @@ class FlexToolRunner:
         self.timeblocks = self.get_timeblocks()
         self.timeblocks__timeline = self.get_timeblocks_timelines()
         self.timeblocks_used_by_solves = self.get_timeblocks_used_by_solves()
-        self.get_stochastic_branches()
+        self.stochastic_branches = self.get_stochastic_branches()
+        self.stochastic_timesteps = defaultdict(list)
         self.solver_precommand = self.get_solver_precommand()
         self.solver_arguments = self.get_solver_arguments()
         self.contains_solves = self.get_contains_solves()
@@ -552,22 +553,22 @@ class FlexToolRunner:
                 """
         return timeblocks
 
-    def get_stochastic_branches(self,filename):
+    def get_stochastic_branches(self):
         """
         read stochastic data
         :return a 5d array (solve, period, branch, weight, realized):
         """
-        with open(filename, 'r') as blk:
+        with open('input/stochastic_branches.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
-            map_4d = defaultdict(list)
+            map_5d = defaultdict(list)
             while True:
                 try:
                     datain = next(filereader)
-                    map_4d[datain[0]].append([datain[1], datain[2], datain[3], datain[4]])
+                    map_5d[datain[0]].append([datain[1], datain[2], datain[3], datain[4], datain[5]])
                 except StopIteration:
                     break
-        self.stochastic_branches = map_4d
+        return map_5d
 
     def get_list_of_tuples(self, filename):
         """
@@ -602,7 +603,7 @@ class FlexToolRunner:
             active_step += 1
         return steps
 
-    def write_full_timelines(self, period__timeblocks_in_this_solve, timeblocks__timeline, timelines, filename):
+    def write_full_timelines(self, stochastic_timesteps, period__timeblocks_in_this_solve, timeblocks__timeline, timelines, filename):
         """
         write to file a list of timestep as defined in timelines.
         :param filename: filename to write to
@@ -619,6 +620,9 @@ class FlexToolRunner:
                             if timeline == tt[0]:
                                 for item in timelines[timeline]:
                                     outfile.write(period__timeblock[0] + ',' + item[0] + '\n')
+            for step in stochastic_timesteps:
+                print(stochastic_timesteps)
+                outfile.write(step[0] + ',' + step[1] + '\n')
 
     def write_active_timelines(self, timeline, filename, complete = False):
         """
@@ -914,7 +918,7 @@ class FlexToolRunner:
             exit(-1)
         return active_time
 
-    def make_step_jump(self, active_time_list):
+    def make_step_jump(self, active_time_list, period__branch):
         """
         make a file that indicates the length of jump from one simulation step to next one.
         the final line should always contain a jump to the first line.
@@ -948,8 +952,15 @@ class FlexToolRunner:
                     else:
                         step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[j - 1][0], period, active_time[j - 1][0], jump))
                 else:  # first time step of the period is handled here
-                    jump = active_time[j][1] - active_time_list[previous_period_name][-1][1]
-                    step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], previous_period_name, active_time_list[previous_period_name][-1][0], jump))
+                    if (period, period) not in period__branch:
+                        for i in period__branch:
+                            if i[1] == period:
+                                original_period = i[0]
+                        jump = active_time[j][1] - active_time_list[original_period][-1][1]
+                        step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], original_period, active_time_list[original_period][-1][0], jump))
+                    else:
+                        jump = active_time[j][1] - active_time_list[previous_period_name][-1][1]
+                        step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], previous_period_name, active_time_list[previous_period_name][-1][0], jump))
         return step_lengths
 
     def write_step_jump(self, step_lengths):
@@ -1125,11 +1136,11 @@ class FlexToolRunner:
                     for i in active_time:
                         realfile.write(period+","+i[0]+"\n")
     
-    def write_fix_storage_timesteps(self, period__branch):
+    def write_branch__period_relationship(self, period__branch):
         """
         write the timesteps to where the storage is fixed for included solves
         """
-        with open("solve_data/period__temp_period__branch.csv", 'w') as realfile:
+        with open("solve_data/period__branch.csv", 'w') as realfile:
             realfile.write("period,branch\n")
             for row in period__branch:
                 realfile.write(row[0]+","+row[1]+"\n")
@@ -1330,11 +1341,11 @@ class FlexToolRunner:
                     elif period == roll_start[0]:
                         realized[period] = full_active_time_list[period][roll_start[1]:]
                         started = True
-            jump= self.make_step_jump(active)
+            #jump= self.make_step_jump(active)
             active_time_lists[solve_name] = active
             realized_time_lists[solve_name] = realized
             jump_lists[solve_name] = jump
-        return solves, active_time_lists, jump_lists, realized_time_lists
+        return solves, active_time_lists, realized_time_lists
 
     def define_solve(self, solve, parent_solve__roll = None, realized = [], start = None, duration = -1):
         complete_solves= OrderedDict() #complete_solve is for rolling, so that the rolls inherit the parameters of the whole solve
@@ -1378,13 +1389,13 @@ class FlexToolRunner:
                 start_timestep = self.find_next_timestep(full_active_time_list_own, start, parent_solve__roll[0], solve) # if the timestep is not in the lower timeline
                 period_start_timestep = [start[0],start_timestep]
             
-            roll_solves, roll_active_time_lists, roll_jump_lists, roll_realized_time_lists = self.create_rolling_solves(solve, full_active_time_list, rolling_times[0], rolling_times[1], period_start_timestep, duration)
+            roll_solves, roll_active_time_lists, roll_realized_time_lists = self.create_rolling_solves(solve, full_active_time_list, rolling_times[0], rolling_times[1], period_start_timestep, duration)
             for i in roll_solves:
                 complete_solves[i] = solve
                 parent_roll_lists[i] = parent_solve__roll[1]
 
             active_time_lists.update(roll_active_time_lists)
-            jump_lists.update(roll_jump_lists)
+            #jump_lists.update(roll_jump_lists)
             realized_time_lists.update(roll_realized_time_lists)
             fix_storage_time_lists.update(roll_realized_time_lists)
             self.first_of_solve.append(roll_solves[0])
@@ -1400,12 +1411,12 @@ class FlexToolRunner:
                         start = None
                     #upper_jump = lower_duration 
                     duration = rolling_times[0]
-                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, [solve, roll], realized, start, duration)
+                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_fix_storage_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, [solve, roll], realized, start, duration)
                     solves += inner_solves
                     complete_solves.update(inner_complete_solve)
                     parent_roll_lists.update(inner_parent_roll_lists)
                     active_time_lists.update(inner_active_time_lists)
-                    jump_lists.update(inner_jump_lists)
+                    #jump_lists.update(inner_jump_lists)
                     realized_time_lists.update(inner_realized_time_lists)
                     fix_storage_time_lists.update(inner_fix_storage_time_lists)
             else:
@@ -1415,51 +1426,68 @@ class FlexToolRunner:
             parent_roll_lists[solve] = parent_solve__roll[1]
             complete_solves[solve]= solve #complete_solve is for rolling, so that the rolls inherit the parameters of the solve. If not rolling, the solve is its own complete solve
             active_time_lists[solve] = full_active_time_list
-            jumps = self.make_step_jump(full_active_time_list)
-            jump_lists[solve] = jumps
-            realized_time_lists[solve]=full_active_time_list
+            #jumps = self.make_step_jump(full_active_time_list)
+            #jump_lists[solve] = jumps
+            realized_time_lists[solve]= full_active_time_list
             fix_storage_time_lists[solve] = full_active_time_list
             self.first_of_solve.append(solve)
             self.last_of_solve.append(solve)
 
             if contains_solve != None:
-                inner_solves, inner_complete_solve, inner_active_time_lists, inner_jump_lists, inner_realized_time_lists, inner_fix_storage_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, [solve, solve], realized)
+                inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_fix_storage_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, [solve, solve], realized)
                 solves += inner_solves
                 complete_solves.update(inner_complete_solve)
                 parent_roll_lists.update(inner_parent_roll_lists)
                 active_time_lists.update(inner_active_time_lists)
-                jump_lists.update(inner_jump_lists)
+                #jump_lists.update(inner_jump_lists)
                 realized_time_lists.update(inner_realized_time_lists)
                 fix_storage_time_lists.update(inner_fix_storage_time_lists)
 
-        return solves, complete_solves, active_time_lists, jump_lists, realized_time_lists, fix_storage_time_lists, parent_roll_lists
+        period__branch, active_time_lists, jump_lists, realized_time_lists, fix_storage_time_lists = self.create_stochastic_periods(self.stochastic_branches, solves, complete_solves, active_time_lists)
+
+        return solves, complete_solves, active_time_lists, jump_lists, realized_time_lists, fix_storage_time_lists, parent_roll_lists, period__branch
     
-    def create_stochastic_periods(solves, complete_solve, active_time_lists, stochastic_info):
+    def create_stochastic_periods(self, stochastic_branches, solves, complete_solves, active_time_lists):
         
         period__branch = defaultdict(list)
+        jump_lists = OrderedDict()
+        realized_time_lists = defaultdict(list)
+        fix_storage_time_lists = defaultdict(list)
+        new_active_time_list = OrderedDict()
 
         for solve in solves:
-            info = stochastic_info[complete_solve[solve]]
+            info = stochastic_branches[complete_solves[solve]]
             active_time_list = active_time_lists[solve]
-            for period, active_time in active_time_list:
+
+            for period, active_time in active_time_list.items():
+                new_active_time_list[period] = active_time_list[period]
                 #get all start times
                 start_times = defaultdict(list)
                 for row in info:
                     if row[0]==period:
-                        start_times[row[1]] = (row[2],row[3])
+                        start_times[row[2]].append(row[1])
+                print(start_times)
                 for step in active_time:
-                    if step in start_times.keys():
-                        time_end = start_times[step][0]
-                        branch = start_times[step][1]
+                    if step[0] in start_times.keys():
                         time_start_ind = active_time.index(step)
-                        time_end_ind = active_time.index(time_end)
-                        active_time_list[branch] = active_time[time_start_ind:time_end_ind+1]
-                        period__branch[solve].append((period, branch))
-                
+                        #realized ends at the start of first branch
+                        new_active_time_list[period] = active_time[0:time_start_ind]
+                        for branch in start_times[step[0]]:
+                            new_active_time_list[branch] = active_time[time_start_ind:]
+                            period__branch[solve].append((period, branch))
+                        
+                            #get timesteps
+                            for i in active_time[time_start_ind:]:
+                                self.stochastic_timesteps[solve].append((branch, i[0]))
+                        break
                 period__branch[solve].append((period, period))
-            active_time_lists[solve] = active_time_list
-        
-        return period__branch, active_time_lists
+
+            realized_time_lists[solve] = new_active_time_list
+            fix_storage_time_lists[solve] = new_active_time_list
+            active_time_lists[solve] = new_active_time_list
+            jump_lists[solve] = self.make_step_jump(new_active_time_list, period__branch[solve])
+
+        return period__branch, active_time_lists, jump_lists, realized_time_lists, fix_storage_time_lists 
    
     def periodic_postprocess(self,groupby_map, method = None, arithmetic = "sum"):
         for key, group in list(groupby_map.items()):
@@ -1582,6 +1610,7 @@ def main():
     complete_solve= OrderedDict()
     parent_roll = OrderedDict()
     fix_storage_time_lists= OrderedDict()
+    period__branch = OrderedDict()
     all_solves=[]
 
     try:
@@ -1598,7 +1627,7 @@ def main():
         sys.exit(-1)
     
     for solve in solves:
-        solve_solves, solve_complete_solve, solve_active_time_lists, solve_jump_lists, solve_realized_time_lists, solve_fix_storage_timesteps, solve_parent_roll = runner.define_solve(solve, [None,None], [])
+        solve_solves, solve_complete_solve, solve_active_time_lists, solve_jump_lists, solve_realized_time_lists, solve_fix_storage_timesteps, solve_parent_roll, solve_period__branch = runner.define_solve(solve, [None,None], [])
         all_solves += solve_solves
         complete_solve.update(solve_complete_solve)
         parent_roll.update(solve_parent_roll)
@@ -1606,6 +1635,7 @@ def main():
         jump_lists.update(solve_jump_lists)
         realized_time_lists.update(solve_realized_time_lists)
         fix_storage_time_lists.update(solve_fix_storage_timesteps)
+        period__branch.update(solve_period__branch)
 
     real_solves = [] 
     for solve in solves: #real solves are the defined solves not including the individual rolls
@@ -1630,13 +1660,14 @@ def main():
             for solve__period in (runner.realized_periods+runner.invest_periods+runner.realized_invest_periods+runner.fix_storage_periods):
                 if solve__period[0] == solve and not any(solve__period[1]== sublist[0] for sublist in solve_period_history[solve]):
                     solve_period_history[solve].append((solve__period[1], 1))
-    
-    period__branch, active_time_lists = runner.create_stochastic_periods(solves, complete_solve, active_time_lists, runner.stochastic_branches)
 
     first = True
     for i, solve in enumerate(all_solves):
+        print(active_time_lists)
+        print(runner.stochastic_branches)
+        print(period__branch)
         complete_active_time_lists = runner.get_active_time(complete_solve[solve], runner.timeblocks_used_by_solves, runner.timeblocks, runner.timelines, runner.timeblocks__timeline)
-        runner.write_full_timelines(runner.timeblocks_used_by_solves[complete_solve[solve]], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
+        runner.write_full_timelines(runner.stochastic_timesteps[solve], runner.timeblocks_used_by_solves[complete_solve[solve]], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
         runner.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete = True)
         runner.write_step_jump(jump_lists[solve])
@@ -1655,7 +1686,7 @@ def main():
         runner.write_last_step(realized_time_lists[solve], 'solve_data/last_realized_timestep.csv')
         runner.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
         runner.write_fix_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
-        runner.write_branch__period_relationship(period__branch, solve)
+        runner.write_branch__period_relationship(period__branch[solve])
 
         #check if the upper level fixes storages
         if complete_solve[solve] in runner.contains_solves.values() and any(complete_solve[parent_roll[solve]] == solve_period[0] for solve_period in runner.fix_storage_periods): # check that the parent_roll exists and has storage fixing
