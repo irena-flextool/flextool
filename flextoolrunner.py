@@ -362,7 +362,14 @@ class FlexToolRunner:
             'pt_profile.csv': "average",
             'pt_process_source.csv': "average",
             'pt_process_sink.csv': "average",
-            'pt_reserve__upDown__group.csv': "average"
+            'pt_reserve__upDown__group.csv': "average",
+            'pbt_node_inflow.csv': "sum",
+            'pbt_node.csv': "average",
+            'pbt_process.csv': "average",
+            'pbt_profile.csv': "average",
+            'pbt_process_source.csv': "average",
+            'pbt_process_sink.csv': "average",
+            'pbt_reserve__upDown__group.csv': "average"
         }
         create = False
         for period_timeblock in self.timeblocks_used_by_solves[solve]:
@@ -646,7 +653,7 @@ class FlexToolRunner:
                     for item in period:
                         outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
 
-    def write_years_represented(self, years_represented, filename):
+    def write_years_represented(self, period__branch, years_represented, filename):
         """
         write to file a list of periods with the number of years the period represents before the next period starts
         :param filename: filename to write to
@@ -662,6 +669,10 @@ class FlexToolRunner:
                     years_to_cover_within_year = min(1, float(period__years[1]))
                     outfile.write(period__years[0] + ',y' + str(year_count) + ',' + str(year_count) + ','
                             + str(years_to_cover_within_year) + '\n')
+                    for pd in period__branch:
+                        if pd[0] in period__years[0] and pd[0] != pd[1]:
+                            outfile.write(pd[1]+ ',y' + str(year_count) + ',' + str(year_count) + ','
+                            + str(years_to_cover_within_year) + '\n')
                     year_count = year_count + years_to_cover_within_year
 
     def write_hole_multiplier(self, solve, filename):
@@ -671,7 +682,7 @@ class FlexToolRunner:
                 holefile.write(solve + "," + self.hole_multipliers[solve] + "\n")
 
 
-    def write_period_years(self, years_represented, filename):
+    def write_period_years(self, stochastic_branches, years_represented, filename):
         """
         write to file a list of timesteps as defined by the active timeline of the current solve
         :param filename: filename to write to
@@ -684,7 +695,11 @@ class FlexToolRunner:
             year_count = 0
             for period__year in years_represented:
                 outfile.write(period__year[0] + ',' + str(year_count) + '\n')
+                for pd in stochastic_branches:
+                    if pd[0] in period__year[0] and pd[0] != pd[1]:
+                        outfile.write(pd[1] + ',' + str(year_count) + '\n')
                 year_count += float(period__year[1])
+
 
     def make_block_timeline(self, start, length):
         """
@@ -1138,13 +1153,64 @@ class FlexToolRunner:
     
     def write_branch__period_relationship(self, period__branch):
         """
-        write the timesteps to where the storage is fixed for included solves
+        write the period_branch relatioship
         """
         with open("solve_data/period__branch.csv", 'w') as realfile:
             realfile.write("period,branch\n")
             for row in period__branch:
                 realfile.write(row[0]+","+row[1]+"\n")
     
+    def write_branch_realized_and_weight(self, complete_solve, period__branch_list, active_time_list):
+        """
+        write the the weights and which one of the branches is the realized (used on the realized time and if not stochastic)
+        """
+        period__branch_weight = defaultdict()
+        period_realized = defaultdict()
+        for period__branch in period__branch_list: 
+            branch_first = active_time_list[period__branch[1]][0][0]
+            for row in self.stochastic_branches[complete_solve]:
+                if [period__branch[0], period__branch[1], branch_first] == row[0:3]:
+                    period__branch_weight[period__branch] = row[4]
+                    if row[3] == 'yes':
+                        period_realized[period__branch[0]] = period__branch[1]
+        with open("solve_data/period__branch_weight.csv", 'w') as realfile:
+            realfile.write("period,branch,p_period__branch_weight\n")
+            for period__branch in period__branch_weight.keys():
+                realfile.write(period__branch[0]+","+period__branch[1]+","+period__branch_weight[period__branch]+"\n")
+        with open("solve_data/period__branch_realized.csv", 'w') as realfile:
+            realfile.write("period,branch\n")
+            for period in period_realized.keys():
+                realfile.write(period+","+period_realized[period]+"\n")
+
+    def write_first_and_last_periods(self, active_time_list, period__timeblocks_in_this_solve):
+        """
+        write first and last periods (timewise) for the solve
+        Assumes that the periods in right order in active_time_list, but gets the multiple branches as last
+        """
+        period_first_of_solve = list(active_time_list.keys())[0]
+        period_last = []
+        period_last.append(list(active_time_list.keys())[-1])
+        time_step_last = active_time_list[period_last[0]][-1][0]
+
+        for period in active_time_list.keys():
+            if active_time_list[period][-1][0] == time_step_last and period != period_last[0]:
+                period_last.append(period)
+
+        with open("solve_data/period_first_of_solve.csv", 'w') as realfile:
+            realfile.write("period\n")
+            realfile.write(period_first_of_solve+"\n")
+        
+        with open("solve_data/period_last.csv", 'w') as realfile:
+            realfile.write("period\n")
+            for period in period_last:
+                realfile.write(period +"\n")
+        period_first = period__timeblocks_in_this_solve[0][0]
+
+        with open("solve_data/period_first.csv", 'w') as realfile:
+            realfile.write("period\n")
+            realfile.write(period_first+"\n")
+
+        
     #these exist to connect timesteps from two different timelines or aggregated versions of one
     def connect_two_timelines(self,period,first_solve,second_solve):
         first_period_timeblocks = self.timeblocks_used_by_solves[first_solve]
@@ -1671,14 +1737,14 @@ def main():
         runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
         runner.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete = True)
         runner.write_step_jump(jump_lists[solve])
-        runner.write_period_years(solve_period_history[complete_solve[solve]], 'solve_data/period_with_history.csv')
+        runner.write_period_years(period__branch[solve], solve_period_history[complete_solve[solve]], 'solve_data/period_with_history.csv')
         runner.write_periods(complete_solve[solve], runner.realized_invest_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
         #assume that if realized_invest_periods is not defined,but the invest_periods and realized_periods are defined, use realized_periods also as the realized_invest_periods
         if (not any(complete_solve[solve] == step[0] for step in runner.realized_invest_periods)) and any(complete_solve[solve] == step[0] for step in runner.invest_periods) and any(complete_solve[solve] == step[0] for step in runner.realized_periods):
              runner.write_periods(complete_solve[solve], runner.realized_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
         runner.write_periods(complete_solve[solve], runner.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
-        runner.write_years_represented(runner.solve_period_years_represented[complete_solve[solve]],'solve_data/p_years_represented.csv')
-        runner.write_period_years(runner.solve_period_years_represented[complete_solve[solve]],'solve_data/p_discount_years.csv')
+        runner.write_years_represented(period__branch[solve], runner.solve_period_years_represented[complete_solve[solve]],'solve_data/p_years_represented.csv')
+        runner.write_period_years(period__branch[solve], runner.solve_period_years_represented[complete_solve[solve]],'solve_data/p_discount_years.csv')
         runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
         runner.write_hole_multiplier(solve, 'solve_data/solve_hole_multiplier.csv')
         runner.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
@@ -1687,6 +1753,8 @@ def main():
         runner.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
         runner.write_fix_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
         runner.write_branch__period_relationship(period__branch[solve])
+        runner.write_branch_realized_and_weight(complete_solve[solve], period__branch[solve], active_time_lists[solve])
+        runner.write_first_and_last_periods(active_time_lists[solve], runner.timeblocks_used_by_solves[complete_solve[solve]])
 
         #check if the upper level fixes storages
         if complete_solve[solve] in runner.contains_solves.values() and any(complete_solve[parent_roll[solve]] == solve_period[0] for solve_period in runner.fix_storage_periods): # check that the parent_roll exists and has storage fixing
