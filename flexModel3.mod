@@ -247,7 +247,8 @@ set time_in_use := setof {(d, t) in dt} (t);
 set period_in_use := setof {(d, t) in dt} (d);
 set period_first_of_solve dimen 1 within period;
 
-set dt_realize_dispatch dimen 2 within period_time;
+set dt_realize_dispatch_input dimen 2 within period_time;
+set dt_realize_dispatch := if 'output_horizon' in enable_optional_outputs then dt else dt_realize_dispatch_input;
 set d_realized_period := setof {(d, t) in dt_realize_dispatch} (d);
 set realized_period__time_last dimen 2 within period_time;
 #dt_complete is the timesteps of the whole rolling_window set, not just single roll. For single_solve it is the same as dt
@@ -516,7 +517,7 @@ table data IN 'CSV' 'solve_data/realized_invest_periods_of_current_solve.csv' : 
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
 table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
 table data IN 'CSV' 'solve_data/p_nested_model.csv' : [modelParam], p_nested_model;
-table data IN 'CSV' 'solve_data/realized_dispatch.csv' : dt_realize_dispatch <- [period, step];
+table data IN 'CSV' 'solve_data/realized_dispatch.csv' : dt_realize_dispatch_input <- [period, step];
 table data IN 'CSV' 'solve_data/fix_storage_timesteps.csv' : dt_fix_storage_timesteps <- [period, step];
 table data IN 'CSV' 'solve_data/fix_storage_price.csv' : ndt_fix_storage_price <- [node, period, step] ;
 table data IN 'CSV' 'solve_data/fix_storage_price.csv' : [node, period, step], p_fix_storage_price;
@@ -981,7 +982,7 @@ param solve_share_of_year := hours_in_solve / 8760;
 param p_years_d{d in period_with_history} := p_period_from_solve[d];
 #param p_years_d{d in periodAll} := sum {y in year : (d, y) in period__year} p_years_represented[d, y];
 
-param complete_hours_in_period{d in period} := sum {(d, t) in dt_complete} (complete_step_duration[d, t]);
+param complete_hours_in_period{d in period} := sum {(d2, t) in dt_complete: (d2, d) in period__branch} (complete_step_duration[d2, t]);
 param complete_period_share_of_year{d in period} := complete_hours_in_period[d] / 8760;
 
 param period_share_of_annual_flow {n in node, d in period : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
@@ -3682,7 +3683,8 @@ for {s in solve_current, d in d_realize_invest}
 	printf '\n' >> fn_annuity;
   }
 
-
+display complete_period_share_of_year;
+display p_discount_factor_operations_yearly;
 printf 'Write discounted total cost for each cost type per solve...\n';
 param fn_costs_total_discounted symbolic := "output/costs_discounted__solve.csv";
 for {i in 1..1 : p_model['solveFirst']}

@@ -1129,15 +1129,15 @@ class FlexToolRunner:
         with open(filename, 'w') as firstfile:
             firstfile.write(header+"\n")
 
-    def write_realized_dispatch(self,active_time_list,solve):
+    def write_realized_dispatch(self, realized_time_list, solve):
         """
         write the timesteps to be realized for the dispatch decisions
         """
         with open("solve_data/realized_dispatch.csv", 'w') as realfile:
             realfile.write("period,step\n")
-            for period, active_time in active_time_list.items():
+            for period, realized_time in realized_time_list.items():
                 if (solve,period) in self.realized_periods:
-                    for i in active_time:
+                    for i in realized_time:
                         realfile.write(period+","+i[0]+"\n")
 
     def write_fix_storage_timesteps(self,active_time_list,solve):
@@ -1410,7 +1410,7 @@ class FlexToolRunner:
             #jump= self.make_step_jump(active)
             active_time_lists[solve_name] = active
             realized_time_lists[solve_name] = realized
-            jump_lists[solve_name] = jump
+            #jump_lists[solve_name] = jump
         return solves, active_time_lists, realized_time_lists
 
     def define_solve(self, solve, parent_solve__roll = None, realized = [], start = None, duration = -1):
@@ -1418,7 +1418,6 @@ class FlexToolRunner:
         active_time_lists= OrderedDict()    
         jump_lists = OrderedDict()
         realized_time_lists = OrderedDict()
-        fix_storage_time_lists = OrderedDict()
         full_active_time_list = OrderedDict()
         parent_roll_lists = OrderedDict()
         solves=[]
@@ -1463,7 +1462,6 @@ class FlexToolRunner:
             active_time_lists.update(roll_active_time_lists)
             #jump_lists.update(roll_jump_lists)
             realized_time_lists.update(roll_realized_time_lists)
-            fix_storage_time_lists.update(roll_realized_time_lists)
             self.first_of_solve.append(roll_solves[0])
             self.last_of_solve.append(roll_solves[-1])
 
@@ -1477,14 +1475,13 @@ class FlexToolRunner:
                         start = None
                     #upper_jump = lower_duration 
                     duration = rolling_times[0]
-                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_fix_storage_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, [solve, roll], realized, start, duration)
+                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, [solve, roll], realized, start, duration)
                     solves += inner_solves
                     complete_solves.update(inner_complete_solve)
                     parent_roll_lists.update(inner_parent_roll_lists)
                     active_time_lists.update(inner_active_time_lists)
                     #jump_lists.update(inner_jump_lists)
                     realized_time_lists.update(inner_realized_time_lists)
-                    fix_storage_time_lists.update(inner_fix_storage_time_lists)
             else:
                 solves += roll_solves
         else:
@@ -1495,36 +1492,32 @@ class FlexToolRunner:
             #jumps = self.make_step_jump(full_active_time_list)
             #jump_lists[solve] = jumps
             realized_time_lists[solve]= full_active_time_list
-            fix_storage_time_lists[solve] = full_active_time_list
             self.first_of_solve.append(solve)
             self.last_of_solve.append(solve)
 
             if contains_solve != None:
-                inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_fix_storage_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, [solve, solve], realized)
+                inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, [solve, solve], realized)
                 solves += inner_solves
                 complete_solves.update(inner_complete_solve)
                 parent_roll_lists.update(inner_parent_roll_lists)
                 active_time_lists.update(inner_active_time_lists)
                 #jump_lists.update(inner_jump_lists)
                 realized_time_lists.update(inner_realized_time_lists)
-                fix_storage_time_lists.update(inner_fix_storage_time_lists)
 
-        period__branch, active_time_lists, jump_lists, realized_time_lists, fix_storage_time_lists = self.create_stochastic_periods(self.stochastic_branches, solves, complete_solves, active_time_lists)
+        period__branch, active_time_lists, jump_lists, realized_time_lists = self.create_stochastic_periods(self.stochastic_branches, solves, complete_solves, active_time_lists, realized_time_lists)
 
-        return solves, complete_solves, active_time_lists, jump_lists, realized_time_lists, fix_storage_time_lists, parent_roll_lists, period__branch
+        return solves, complete_solves, active_time_lists, jump_lists, realized_time_lists, parent_roll_lists, period__branch
     
-    def create_stochastic_periods(self, stochastic_branches, solves, complete_solves, active_time_lists):
+    def create_stochastic_periods(self, stochastic_branches, solves, complete_solves, active_time_lists, realized_time_lists):
         
         period__branch = defaultdict(list)
         jump_lists = OrderedDict()
-        realized_time_lists = defaultdict(list)
-        fix_storage_time_lists = defaultdict(list)
-        new_active_time_list = OrderedDict()
-
+        new_realized_time_list = OrderedDict()
+        new_active_time_list = OrderedDict() 
         for solve in solves:
             info = stochastic_branches[complete_solves[solve]]
             active_time_list = active_time_lists[solve]
-
+            realized_time_list = realized_time_lists[solve]
             for period, active_time in active_time_list.items():
                 new_active_time_list[period] = active_time_list[period]
                 #get all start times
@@ -1535,9 +1528,16 @@ class FlexToolRunner:
                 print(start_times)
                 for step in active_time:
                     if step[0] in start_times.keys():
+                        realized_time = realized_time_list[period]
                         time_start_ind = active_time.index(step)
                         #realized ends at the start of first branch
                         new_active_time_list[period] = active_time[0:time_start_ind]
+                        if time_start_ind <= len(realized_time):
+                            new_realized_time_list[period] = realized_time[0:time_start_ind]
+                            for branch in start_times[step[0]]:
+                                new_realized_time_list[branch] = realized_time[time_start_ind:]
+                        else:
+                            new_realized_time_list[period] = realized_time_list[period]
                         for branch in start_times[step[0]]:
                             new_active_time_list[branch] = active_time[time_start_ind:]
                             period__branch[solve].append((period, branch))
@@ -1548,12 +1548,11 @@ class FlexToolRunner:
                         break
                 period__branch[solve].append((period, period))
 
-            realized_time_lists[solve] = new_active_time_list
-            fix_storage_time_lists[solve] = new_active_time_list
+            realized_time_lists[solve] = new_realized_time_list
             active_time_lists[solve] = new_active_time_list
             jump_lists[solve] = self.make_step_jump(new_active_time_list, period__branch[solve])
 
-        return period__branch, active_time_lists, jump_lists, realized_time_lists, fix_storage_time_lists 
+        return period__branch, active_time_lists, jump_lists, realized_time_lists 
    
     def periodic_postprocess(self,groupby_map, method = None, arithmetic = "sum"):
         for key, group in list(groupby_map.items()):
@@ -1675,7 +1674,6 @@ def main():
     realized_time_lists = OrderedDict()
     complete_solve= OrderedDict()
     parent_roll = OrderedDict()
-    fix_storage_time_lists= OrderedDict()
     period__branch = OrderedDict()
     all_solves=[]
 
@@ -1693,14 +1691,13 @@ def main():
         sys.exit(-1)
     
     for solve in solves:
-        solve_solves, solve_complete_solve, solve_active_time_lists, solve_jump_lists, solve_realized_time_lists, solve_fix_storage_timesteps, solve_parent_roll, solve_period__branch = runner.define_solve(solve, [None,None], [])
+        solve_solves, solve_complete_solve, solve_active_time_lists, solve_jump_lists, solve_realized_time_lists, solve_parent_roll, solve_period__branch = runner.define_solve(solve, [None,None], [])
         all_solves += solve_solves
         complete_solve.update(solve_complete_solve)
         parent_roll.update(solve_parent_roll)
         active_time_lists.update(solve_active_time_lists)
         jump_lists.update(solve_jump_lists)
         realized_time_lists.update(solve_realized_time_lists)
-        fix_storage_time_lists.update(solve_fix_storage_timesteps)
         period__branch.update(solve_period__branch)
 
     real_solves = [] 
@@ -1751,7 +1748,7 @@ def main():
         runner.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
         runner.write_last_step(realized_time_lists[solve], 'solve_data/last_realized_timestep.csv')
         runner.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
-        runner.write_fix_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
+        runner.write_fix_storage_timesteps(realized_time_lists[solve],complete_solve[solve])
         runner.write_branch__period_relationship(period__branch[solve])
         runner.write_branch_realized_and_weight(complete_solve[solve], period__branch[solve], active_time_lists[solve])
         runner.write_first_and_last_periods(active_time_lists[solve], runner.timeblocks_used_by_solves[complete_solve[solve]])

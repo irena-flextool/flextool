@@ -70,8 +70,9 @@ def migrate_database(database_path):
             add_parameters_manual(db, [["group", "co2_max_period", "no_method", "co2_methods", "[tCO2] Annualized maximum limit for emitted CO2 in each period."]])
         elif next_version == 16:
             add_value_list_manual(db,[["yes_no", "yes"], ["yes_no", "no"]])
-            new_parameters = [["solve", "stochastic_branches", None, None, "[4d-Array], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be the realized one."],
-                              ["group", "include_stochastics", "no", "yes_no", "Includes the stochastic branches to be used for the nodes/units/connections in this group"]]
+            new_parameters = [["solve", "stochastic_branches", None, None, "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time"],
+                              ["group", "include_stochastics", "no", "yes_no", "Includes the stochastic branches to be used for the nodes/units/connections in this group"],
+                              ["model", "output_horizon", "no", "yes_no", "Outputs the flows in the horizons. Used for testing the model."]]
             add_parameters_manual(db,new_parameters)
         else:
             print("Version invalid")

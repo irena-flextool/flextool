@@ -5351,7 +5351,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 0,
-                    "filter_re": "^output_unit__node_flow_t$|^output_connection__node__node_flow_t$|^output_node_balance_t$|^output_ramp_envelope$|^output_unit__node_ramp_t$|^output_connection_flow_separate$",
+                    "filter_re": "^output_unit__node_flow_t$|^output_connection__node__node_flow_t$|^output_node_balance_t$|^output_ramp_envelope$|^output_unit__node_ramp_t$|^output_connection_flow_separate|^output_horizon$",
                     "header": "output"
                 },
                 {
