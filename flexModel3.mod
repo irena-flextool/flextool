@@ -32,6 +32,7 @@ set solve_current 'current solve name' dimen 1;
 set period 'd - Time periods in the current solve' := setof {(d, t) in period_time} (d);
 set period_first dimen 1 within period;
 set period_last dimen 1 within period;
+set branch_all dimen 1;
 set period__branch dimen 2 within {period, period};
 set branch := setof{(d,b) in period__branch}(b);
 set period__year dimen 2;
@@ -349,27 +350,28 @@ param p_entity_period_existing_capacity {e in entity, d in period_with_history};
 param p_entity_period_invested_capacity {e in entity, d in period_with_history};
 
 set groupStochastic dimen 1 within {group};
-set period__branch_realized dimen 2 within {period, branch};
+set period__branch_realized dimen 2 within {period, branch_all};
 param p_period__branch_weight {(d,b) in period__branch} default 1;
 param p_branch_weight {b in branch} := 
 (sum{(d,b) in period__branch} p_period__branch_weight[d,b]) / 
 (sum{(d,b2) in period__branch, (b2, ts) in period__time_first: (d,b) in period__branch && (b,ts) in period__time_first} p_period__branch_weight[d, b2]);
 
 #stochastic versions of timeseries
-set process__param__branch__time dimen 5 within {process, processTimeParam, branch, time, time};
-set profile__branch__time dimen 4 within {profile, branch, time, time};
-set process__source__param__branch__time dimen 6 within {process_source, sourceSinkTimeParam, branch, time, time};
-set process__sink__param__branch__time dimen 6 within {process_sink, sourceSinkTimeParam, branch, time, time};
-set node__param__branch__time dimen 5 within {node, nodeTimeParam, branch, time, time};
-set node__branch__time_inflow dimen 4 within {node, branch, time, time};
+set process__param__branch__time dimen 5 within {process, processTimeParam, branch_all, time, time};
+set profile__branch__time dimen 4 within {profile, branch_all, time, time};
+set process__source__param__branch__time dimen 6 within {process_source, sourceSinkTimeParam, branch_all, time, time};
+set process__sink__param__branch__time dimen 6 within {process_sink, sourceSinkTimeParam, branch_all, time, time};
+set node__param__branch__time dimen 5 within {node, nodeTimeParam, branch_all, time, time};
+set node__branch__time_inflow dimen 4 within {node, branch_all, time, time};
+set reserve__upDown__group__reserveParam__branch__time dimen 7 within {reserve, upDown, group, reserveTimeParam, branch_all, time, time};
 
-param pbt_node {node, nodeTimeParam, branch, time, time} default 0;
-param pbt_node_inflow {node, branch, time, time} default 0;
-param pbt_process_source {(p, source) in process_source, sourceSinkTimeParam, branch, time, time} default 0;
-param pbt_process_sink {(p, sink) in process_sink, sourceSinkTimeParam, branch, time, time} default 0;
-param pbt_profile {profile, branch, time, time};
-param pbt_reserve_upDown_group {reserve, upDown, group, reserveTimeParam, branch, time, time};
-param pbt_process {process, processTimeParam, branch, time, time} default 0;
+param pbt_node {node, nodeTimeParam, branch_all, time, time} default 0;
+param pbt_node_inflow {node, branch_all, time, time} default 0;
+param pbt_process_source {(p, source) in process_source, sourceSinkTimeParam, branch_all, time, time} default 0;
+param pbt_process_sink {(p, sink) in process_sink, sourceSinkTimeParam, branch_all, time, time} default 0;
+param pbt_profile {profile, branch_all, time, time} default 0;
+param pbt_reserve_upDown_group {reserve, upDown, group, reserveTimeParam, branch_all, time, time} default 0;
+param pbt_process {process, processTimeParam, branch_all, time, time} default 0;
 
 param scale_the_objective;
 param scale_the_state;
@@ -527,6 +529,7 @@ table data IN 'CSV' 'solve_data/timeline_matching_map.csv' : dtt_timeline_matchi
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : dt_complete <- [period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : [period, step], complete_step_duration;
 table data IN 'CSV' 'solve_data/p_roll_continue_state.csv' : [node], p_roll_continue_state;
+table data IN 'CSV' 'solve_data/branch_all.csv' : branch_all <- [branch];
 table data IN 'CSV' 'solve_data/period__branch.csv' : period__branch <- [period, branch];
 table data IN 'CSV' 'solve_data/period__branch_weight.csv' : [period, branch], p_period__branch_weight;
 table data IN 'CSV' 'solve_data/period__branch_realized.csv' : period__branch_realized <- [period, branch];
@@ -548,6 +551,7 @@ table data IN 'CSV' 'solve_data/pbt_process.csv' : process__param__branch__time 
 table data IN 'CSV' 'solve_data/pbt_process.csv' : [process, processParam, branch, time_start, time], pbt_process;
 table data IN 'CSV' 'solve_data/pbt_profile.csv' : profile__branch__time <- [profile, branch, time_start, time];
 table data IN 'CSV' 'solve_data/pbt_profile.csv' : [profile, branch, time_start, time], pbt_profile;
+table data IN 'CSV' 'solve_data/pbt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__branch__time <- [reserve, upDown, group, reserveParam, branch, time_start, time];
 table data IN 'CSV' 'solve_data/pbt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, branch, time_start, time], pbt_reserve_upDown_group;
 
 # After rolling forward the investment model
@@ -834,7 +838,7 @@ param pdNode {n in node, param in nodePeriodParam, d in period_with_history} :=
         + if (n, param, d) in node__param__period
 		  then pd_node[n, param, d]
       else if sum{(c, param, db) in node__param__period: (db, d) in period__branch} 1
-      then sum{(db, d) in period__branch} pd_node[n, param, db] # ei toimi oikein, summa kaikki db (varmaan)
+      then sum{(db, d) in period__branch} pd_node[n, param, db]
 		  else p_node[n, param];
 #t in complete_time_in_use?
 param pdtNode {n in node, param in nodeTimeParam, (d, t) in dt} :=
@@ -966,8 +970,12 @@ param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink_
 		  else 0;
 
 
-param ptReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, t in time_in_use} :=
-        + if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
+param pdtReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, (d,t) in dt} :=
+      + if sum{(r, ud, g, param, d, ts, t) in reserve__upDown__group__reserveParam__branch__time:(d,ts) in period__time_first} 1 && g in groupStochastic
+      then sum{(d,ts) in period__time_first} pbt_reserve_upDown_group[r, ud, g, param, d, ts, t]
+      else if sum{(r, ud, g, param, b, ts, t) in reserve__upDown__group__reserveParam__branch__time, (pe,b) in period__branch_realized: (pe,d) in period__branch && (d,ts) in period__time_first} 1
+      then sum{(pe,b) in period__branch_realized, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_reserve_upDown_group[r, ud, g, param, b, ts, t] 
+      else if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
 		  then pt_reserve_upDown_group[r, ud, g, param, t]
 		  else p_reserve_upDown_group[r, ud, g, param];
 set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group} 1};
@@ -1575,6 +1583,30 @@ printf 'Checking: node not in more than one loss of load sharing group\n';
 check {n in node}:
   sum{(g,n) in group_node: g in group_loss_share} 1 < 2;
 
+printf'Checking: Start time of the period can be found in the start times\n';
+printf'of the stochastic timeseries if given as stochastic\n';
+printf'for process\n';
+check {(d,t) in period__time_first: sum{(p, param, b, ts, t2) in process__param__branch__time} 1}:
+  sum{(p, param, b, t, t) in process__param__branch__time, (d2,b) in period__branch_realized: (d2,d) in period__branch} 1 > 0;
+printf'for process_inputNode\n';
+check {(d,t) in period__time_first: sum{(p, source, param, b, ts, t2) in process__source__param__branch__time} 1}:
+  sum{(p, source, param, b, t, t) in process__source__param__branch__time, (d2,b) in period__branch_realized: (d2,d) in period__branch} 1 > 0;
+printf'for process_outputNode\n';
+check {(d,t) in period__time_first: sum{(p, sink, param, b, ts, t2) in process__sink__param__branch__time} 1}:
+  sum{(p, sink, param, b, t, t) in process__sink__param__branch__time, (d2,b) in period__branch_realized: (d2,d) in period__branch} 1 > 0;
+printf'for Node inflow\n';
+check{(d,t) in period__time_first: sum{(n, b, ts, t2) in node__branch__time_inflow} 1 }:
+  sum{(n, b, t, t) in node__branch__time_inflow, (d2,b) in period__branch_realized: (d2,d) in period__branch} 1 > 0;
+printf'for Node\n';
+check {(d,t) in period__time_first: sum{(n, param, b, ts, t2) in node__param__branch__time} 1}:
+  sum{(n, param, b, t, t) in node__param__branch__time, (d2,b) in period__branch_realized: (d2,d) in period__branch} 1 > 0;
+printf'for profile\n';
+check {(d,t) in period__time_first: sum{(p, b, ts, t2) in profile__branch__time} 1}:
+  sum{(p, b, t, t) in profile__branch__time, (d2,b) in period__branch_realized: (d2,d) in period__branch} 1 > 0;
+printf'for reserve\n';
+check {(d,t) in period__time_first: sum{(r, ud, g, param, b, ts, t2) in reserve__upDown__group__reserveParam__branch__time} 1}:
+  sum{(r, ud, g, param, b, t, t) in reserve__upDown__group__reserveParam__branch__time, (d2,b) in period__branch_realized: (d2,d) in period__branch} 1 > 0;  
+
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
 minimize total_cost:
@@ -1681,7 +1713,7 @@ minimize total_cost:
                                             * pdtNode[n, 'penalty_up', d, t]  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
   + sum {n in nodeBalance, (d, t) in dt} vq_state_down[n, d, t] * node_capacity_for_scaling[n, d]
                                             * pdtNode[n, 'penalty_down', d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
-  + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} vq_reserve[r, ud, ng, d, t]  * ptReserve_upDown_group[r, ud, ng, 'reservation', t]
+  + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} vq_reserve[r, ud, ng, d, t]  * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
                                             * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 
   - sum {n in nodeState, (d, t) in period__time_last : (n, 'use_reference_price') in node__storage_solve_horizon_method && d in period_last}
@@ -1770,9 +1802,9 @@ s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__m
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
 	      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 		)
-  + vq_reserve[r, ud, ng, d, t] * ptReserve_upDown_group[r, ud, ng, 'reservation', t]
+  + vq_reserve[r, ud, ng, d, t] * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
   >=
-  + ptReserve_upDown_group[r, ud, ng, 'reservation', t]
+  + pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
 ;
 
 s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__method_dynamic, (d, t) in dt} :
@@ -1795,7 +1827,7 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
 	      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 		)
-  + vq_reserve[r, ud, ng, d, t] * ptReserve_upDown_group[r, ud, ng, 'reservation', t]
+  + vq_reserve[r, ud, ng, d, t] * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
   >=
   + sum {(p, r, ud, n) in process_reserve_upDown_node_increase_reserve_ratio : (ng, n) in group_node 
           && (r, ud, ng) in reserve__upDown__group}
@@ -1833,7 +1865,7 @@ s.t. reserveBalance_up_n_1_eq{(r, 'up', ng, r_m) in reserve__upDown__group__meth
 	      * p_process_reserve_upDown_node[p, r, 'up', n, 'reliability']
 	      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 		)
-  + vq_reserve[r, 'up', ng, d, t] * ptReserve_upDown_group[r, 'up', ng, 'reservation', t]
+  + vq_reserve[r, 'up', ng, d, t] * pdtReserve_upDown_group[r, 'up', ng, 'reservation', d, t]
   >=
   + sum{(p_n_1, source, n) in process_source_sink : (ng, n) in group_node} 
       + v_flow[p_n_1, source, n, d, t] * p_entity_unitsize[p_n_1]
@@ -1865,7 +1897,7 @@ s.t. reserveBalance_down_n_1_eq{(r, 'down', ng, r_m) in reserve__upDown__group__
 	      * p_process_reserve_upDown_node[p, r, 'down', n, 'reliability']
 	      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 		)
-  + vq_reserve[r, 'down', ng, d, t] * ptReserve_upDown_group[r, 'down', ng, 'reservation', t]
+  + vq_reserve[r, 'down', ng, d, t] * pdtReserve_upDown_group[r, 'down', ng, 'reservation', d, t]
   >=
   + sum{(p_n_1, n, sink) in process_source_sink_noEff : (ng, n) in group_node} 
       + v_flow[p_n_1, n, sink, d, t] * p_entity_unitsize[p_n_1]
@@ -2043,16 +2075,16 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
 ;
 
 #Storage state fix quantity for timesteps
-s.t. node_balance_fix_quantity_eq_lower {(n, d, t, t2) in ndtt_fix_storage_quantity_mapped: (d,t) in period__time_last && d in period_last}:
+s.t. node_balance_fix_quantity_eq_lower {(n, d, t, t2) in ndtt_fix_storage_quantity_mapped, (d2,d) in period__branch: (d,t) in period__time_last && d in period_last}:
   + v_state[n,d,t]* p_entity_unitsize[n] 
   = 
-  + p_fix_storage_quantity[n,d,t2];
+  + p_fix_storage_quantity[n,d2,t2];
 
 #Storage state fix price for timesteps
-s.t. node_balance_fix_price_eq_lower {(n, d, t, t2) in ndtt_fix_storage_price_mapped: (d,t) in period__time_last && d in period_last}:
+s.t. node_balance_fix_price_eq_lower {(n, d, t, t2) in ndtt_fix_storage_price_mapped, (d2,d) in period__branch: (d,t) in period__time_last && d in period_last}:
   + v_state[n,d,t]* pdNode[n, 'storage_state_reference_price', d]* p_entity_unitsize[n] 
   = 
-  + p_fix_storage_price[n,d,t2];
+  + p_fix_storage_price[n,d2,t2];
 
 s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in period__time_last
      : d in period_last
@@ -3148,7 +3180,7 @@ param r_costPenalty_capacity_margin_d{g in groupCapacityMargin, d in period_inve
 param r_costPenalty_reserve_upDown_dt{(r, ud, ng) in reserve__upDown__group, (d, t) in dt} :=
   + step_duration[d, t]
       * (
-          + vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve'] * ptReserve_upDown_group[r, ud, ng, 'reservation', t]
+          + vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve'] * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
 	    )
 ;
 
@@ -3364,7 +3396,7 @@ for {(n,'fix_price') in node__storage_nested_fix_method, (d, t) in dt : (d, t) i
 printf 'Write node state last timestep ..\n';
 param fn_p_roll_continue_state symbolic := "solve_data/p_roll_continue_state.csv";
 printf 'node,p_roll_continue_state\n' > fn_p_roll_continue_state;
-for {n in nodeState, (d, t) in dt_realize_dispatch : (d, t) in realized_period__time_last}
+for {n in nodeState, (d, t) in dt_realize_dispatch : (d, t) in realized_period__time_last && (d,d) in period__branch}
   {
     printf '%s,%.8g\n', n, v_state[n, d, t].val* p_entity_unitsize[n]  >> fn_p_roll_continue_state;
   }
@@ -4219,9 +4251,7 @@ for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_ou
 		
 param w_cf := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow;
 display w_cf;
-display process__source__sink__profile__profile_method;
-#display {p in process_VRE, (d,t) in dt} pdtProcess_section[p,d,t];
-display {(d,t) in dt} pdtProfile['wind',d,t];
+
 printf 'Write unit__outputNode curtailment share of VRE units for periods...\n';
 param fn_unit__sinkNode__d_curtailment symbolic := "output/unit_curtailment_share__outputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -4824,7 +4854,7 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
     printf '\n%s,%s,%s', s, d, t >> fn_group_reserve_slack__dt;
     for {(r, ud, g) in reserve__upDown__group}
       {
-        printf ',%.8g', vq_reserve[r, ud, g, d, t].val * ptReserve_upDown_group[r, ud, g, 'reservation', t]
+        printf ',%.8g', vq_reserve[r, ud, g, d, t].val * pdtReserve_upDown_group[r, ud, g, 'reservation', d, t]
 		    >> fn_group_reserve_slack__dt;
       }
   }
@@ -4924,9 +4954,9 @@ for {(p, r, ud, n, d, t) in prundt} {
 		      p, r, ud, n, d, t, v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p], d_reserve_upDown_node[p, r, ud, n, d, t] >> unitTestFile;
 }
 for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
-  printf (if vq_reserve[r, ud, ng, d, t].val * ptReserve_upDown_group[r, ud, ng, 'reservation', t] <> dq_reserve[r, ud, ng, d, t]
+  printf (if vq_reserve[r, ud, ng, d, t].val * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t] <> dq_reserve[r, ud, ng, d, t]
           then 'Reserve slack variable test fails at %s, %s, %s, %s, %s. Model value: %.8g, test value: %.8g\n' else ''),
-		      r, ud, ng, d, t, vq_reserve[r, ud, ng, d, t].val * ptReserve_upDown_group[r, ud, ng, 'reservation', t], dq_reserve[r, ud, ng, d, t] >> unitTestFile;
+		      r, ud, ng, d, t, vq_reserve[r, ud, ng, d, t].val * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t], dq_reserve[r, ud, ng, d, t] >> unitTestFile;
 }
 
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
@@ -4939,6 +4969,7 @@ display period;
 display period__time_first;
 display period_last;
 display branch;
+display branch_all;
 display period__branch;
 display period__branch_realized;
 display {d in period_in_use}: p_branch_weight[d];
@@ -4962,7 +4993,7 @@ display {n in nodeState, (d,t) in dt}: v_state[n,d,t];
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: pdtNode[n, 'availability', d, t];
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val * p_entity_unitsize[n];
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p];
-#display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val * ptReserve_upDown_group[r, ud, ng, 'reservation', t];
+#display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t];
 #display nodeBalance;
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d];
