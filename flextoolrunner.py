@@ -1743,6 +1743,9 @@ def main():
 
     first = True
     for i, solve in enumerate(all_solves):
+        print(period__branch_lists[solve])
+        print(solve_period_history)
+        print(runner.realized_invest_periods)
         complete_active_time_lists = runner.get_active_time(complete_solve[solve], runner.timeblocks_used_by_solves, runner.timeblocks, runner.timelines, runner.timeblocks__timeline)
         runner.write_full_timelines(runner.stochastic_timesteps[solve], runner.timeblocks_used_by_solves[complete_solve[solve]], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
