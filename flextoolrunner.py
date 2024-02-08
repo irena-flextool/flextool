@@ -63,7 +63,7 @@ class FlexToolRunner:
         self.realized_periods = self.get_list_of_tuples('input/solve__realized_period.csv') + self.get_2d_map_periods('input/solve__realized_period_2d_map.csv')
         self.realized_invest_periods = self.get_list_of_tuples('input/solve__realized_invest_period.csv') + self.get_2d_map_periods('input/solve__realized_invest_period_2d_map.csv')
         self.fix_storage_periods = self.get_list_of_tuples('input/solve__fix_storage_period.csv') + self.get_2d_map_periods('input/solve__fix_storage_period_2d_map.csv')
-        self.remove_periods()
+        #self.remove_periods()
         #self.write_full_timelines(self.timelines, 'steps.csv')
     
     def remove_periods(self):
@@ -404,10 +404,6 @@ class FlexToolRunner:
                                 datain = next(filereader)
                                 for timeline in timelines:
                                     new_timeline = self.timelines[timeline]
-                                    #started = False
-                                    #last_timestamp = new_timeline[-1][0]
-                                    #last_timestep_length = float(new_timeline[-1][1])
-                                    #last = False
                                     for timeline_row in new_timeline:
                                         values = []
                                         timeline_step_duration = int(float(timeline_row[1]))
@@ -628,7 +624,6 @@ class FlexToolRunner:
                                 for item in timelines[timeline]:
                                     outfile.write(period__timeblock[0] + ',' + item[0] + '\n')
             for step in stochastic_timesteps:
-                print(stochastic_timesteps)
                 outfile.write(step[0] + ',' + step[1] + '\n')
 
     def write_active_timelines(self, timeline, filename, complete = False):
@@ -933,7 +928,7 @@ class FlexToolRunner:
             exit(-1)
         return active_time
 
-    def make_step_jump(self, active_time_list, period__branch):
+    def make_step_jump(self, active_time_list, period__branch, solve_branch__time_branch_list):
         """
         make a file that indicates the length of jump from one simulation step to next one.
         the final line should always contain a jump to the first line.
@@ -967,12 +962,38 @@ class FlexToolRunner:
                     else:
                         step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[j - 1][0], period, active_time[j - 1][0], jump))
                 else:  # first time step of the period is handled here
+                    #three options (period,period) is the realized, (period, branch) are the branches in the realized period, 
+                    #(other_period,branch): continuing branch to the next period
                     if (period, period) not in period__branch:
                         for i in period__branch:
                             if i[1] == period:
                                 original_period = i[0]
-                        jump = active_time[j][1] - active_time_list[original_period][-1][1]
-                        step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], original_period, active_time_list[original_period][-1][0], jump))
+                        if (original_period,original_period) in period__branch:
+                            jump = active_time[j][1] - active_time_list[original_period][-1][1]
+                            step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], original_period, active_time_list[original_period][-1][0], jump))
+                        else:
+                            #find the previous branch with the same name
+                            for sb_tb in solve_branch__time_branch_list:
+                                if sb_tb[0] == period:
+                                    time_branch = sb_tb[1]
+                            past = False
+                            found = False
+                            previous_period_with_branch = None
+                            for solve_period, a_t in reversed(active_time_list.items()):
+                                if past:
+                                    for sb_tb in solve_branch__time_branch_list:
+                                        if sb_tb[0] == solve_period and sb_tb[1] == time_branch:
+                                            previous_period_with_branch = solve_period
+                                            found = True
+                                    if found:
+                                        break
+                                else:
+                                    if solve_period == period:
+                                        past = True
+
+                            jump = active_time[j][1] - active_time_list[previous_period_with_branch][-1][1]
+                            step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], previous_period_with_branch, active_time_list[previous_period_with_branch][-1][0], jump))
+                        
                     else:
                         jump = active_time[j][1] - active_time_list[previous_period_name][-1][1]
                         step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], previous_period_name, active_time_list[previous_period_name][-1][0], jump))
@@ -1160,7 +1181,7 @@ class FlexToolRunner:
             for row in period__branch:
                 realfile.write(row[0]+","+row[1]+"\n")
 
-    def write_all_branches(self,period__branch_list, filename):
+    def write_all_branches(self,period__branch_list):
         """
         write all branches in all solves
         """
@@ -1169,33 +1190,57 @@ class FlexToolRunner:
                 for row in period__branch_list[solve]:
                     if row[1] not in branches:
                         branches.append(row[1])
-        with open(filename, 'w') as realfile:
+        with open("solve_data/branch_all.csv", 'w') as realfile:
             realfile.write("branch\n")
             for branch in branches:
                 realfile.write(branch+"\n")
-        
-    def write_branch_realized_and_weight(self, complete_solve, period__branch_list, active_time_list):
+
+        timeseries_names=[
+        'pbt_node_inflow.csv',
+        'pbt_node.csv',
+        'pbt_process.csv',
+        'pbt_profile.csv',
+        'pbt_process_source.csv',
+        'pbt_process_sink.csv',
+        'pbt_reserve__upDown__group.csv']
+
+        time_branches = []
+        for filename in timeseries_names:
+            with open('input/'+filename, 'r') as blk:
+                filereader = csv.reader(blk, delimiter=',')
+                headers = next(filereader)
+                while True:
+                    try:
+                        datain = next(filereader)
+                        if datain[1] not in time_branches:
+                            time_branches.append(datain[1])
+                    except StopIteration:
+                        break
+        with open("solve_data/time_branch_all.csv", 'w') as realfile:
+            realfile.write("time_branch\n")
+            for time_branch in time_branches:
+                realfile.write(time_branch+"\n")
+         
+    def write_solve_branch__time_branch_list_and_weight(self, complete_solve, active_time_list, solve_branch__time_branch_list, branch_start_time):
         """
         write the the weights and which one of the branches is the realized (used on the realized time and if not stochastic)
         """
-        period__branch_weight = defaultdict()
-        period_realized = defaultdict()
-        for period__branch in period__branch_list: 
-            branch_first = active_time_list[period__branch[1]][0][0]
+        time_branch_weight = defaultdict()
+        if branch_start_time != None:
             for row in self.stochastic_branches[complete_solve]:
-                if [period__branch[0], period__branch[1], branch_first] == row[0:3]:
-                    period__branch_weight[period__branch] = row[4]
-        for row in self.stochastic_branches[complete_solve]:
-            if row[3] == 'yes':
-                period_realized[row[0]] = row[1]
-        with open("solve_data/period__branch_weight.csv", 'w') as realfile:
-            realfile.write("period,branch,p_period__branch_weight\n")
-            for period__branch in period__branch_weight.keys():
-                realfile.write(period__branch[0]+","+period__branch[1]+","+period__branch_weight[period__branch]+"\n")
-        with open("solve_data/period__branch_realized.csv", 'w') as realfile:
+                if branch_start_time[0] == row[0] and branch_start_time[1] == row[2]:
+                    time_branch_weight[row[1]] = row[4]
+
+        with open("solve_data/solve_branch_weight.csv", 'w') as realfile:
+            realfile.write("branch,p_branch_weight_input\n")
+            for solve_branch__time_branch in solve_branch__time_branch_list:
+                if solve_branch__time_branch[1] in time_branch_weight.keys() and solve_branch__time_branch[0] in active_time_list.keys():
+                    realfile.write(solve_branch__time_branch[0] +","+ time_branch_weight[solve_branch__time_branch[1]]+"\n")  
+
+        with open("solve_data/solve_branch__time_branch.csv", 'w') as realfile:
             realfile.write("period,branch\n")
-            for period in period_realized.keys():
-                realfile.write(period+","+period_realized[period]+"\n")
+            for solve_branch__time_branch in solve_branch__time_branch_list:
+                realfile.write(solve_branch__time_branch[0]+","+solve_branch__time_branch[1]+"\n")
 
     def write_first_and_last_periods(self, active_time_list, period__timeblocks_in_this_solve):
         """
@@ -1342,7 +1387,6 @@ class FlexToolRunner:
         splits the solve to overlapping sequence of solves "rolls" 
         """
         active_time_lists= OrderedDict()    
-        jump_lists = OrderedDict()
         realized_time_lists = OrderedDict()
         solves=[]
         starts=[]
@@ -1428,16 +1472,13 @@ class FlexToolRunner:
                     elif period == roll_start[0]:
                         realized[period] = full_active_time_list[period][roll_start[1]:]
                         started = True
-            #jump= self.make_step_jump(active)
             active_time_lists[solve_name] = active
             realized_time_lists[solve_name] = realized
-            #jump_lists[solve_name] = jump
         return solves, active_time_lists, realized_time_lists
 
     def define_solve(self, solve, parent_solve__roll = None, realized = [], start = None, duration = -1):
         complete_solves= OrderedDict() #complete_solve is for rolling, so that the rolls inherit the parameters of the whole solve
         active_time_lists= OrderedDict()    
-        jump_lists = OrderedDict()
         realized_time_lists = OrderedDict()
         full_active_time_list = OrderedDict()
         parent_roll_lists = OrderedDict()
@@ -1481,7 +1522,6 @@ class FlexToolRunner:
                 parent_roll_lists[i] = parent_solve__roll[1]
 
             active_time_lists.update(roll_active_time_lists)
-            #jump_lists.update(roll_jump_lists)
             realized_time_lists.update(roll_realized_time_lists)
             self.first_of_solve.append(roll_solves[0])
             self.last_of_solve.append(roll_solves[-1])
@@ -1501,7 +1541,6 @@ class FlexToolRunner:
                     complete_solves.update(inner_complete_solve)
                     parent_roll_lists.update(inner_parent_roll_lists)
                     active_time_lists.update(inner_active_time_lists)
-                    #jump_lists.update(inner_jump_lists)
                     realized_time_lists.update(inner_realized_time_lists)
             else:
                 solves += roll_solves
@@ -1510,8 +1549,6 @@ class FlexToolRunner:
             parent_roll_lists[solve] = parent_solve__roll[1]
             complete_solves[solve]= solve #complete_solve is for rolling, so that the rolls inherit the parameters of the solve. If not rolling, the solve is its own complete solve
             active_time_lists[solve] = full_active_time_list
-            #jumps = self.make_step_jump(full_active_time_list)
-            #jump_lists[solve] = jumps
             realized_time_lists[solve]= full_active_time_list
             self.first_of_solve.append(solve)
             self.last_of_solve.append(solve)
@@ -1522,7 +1559,6 @@ class FlexToolRunner:
                 complete_solves.update(inner_complete_solve)
                 parent_roll_lists.update(inner_parent_roll_lists)
                 active_time_lists.update(inner_active_time_lists)
-                #jump_lists.update(inner_jump_lists)
                 realized_time_lists.update(inner_realized_time_lists)
 
         return solves, complete_solves, active_time_lists, realized_time_lists, parent_roll_lists
@@ -1530,46 +1566,79 @@ class FlexToolRunner:
     def create_stochastic_periods(self, stochastic_branches, solves, complete_solves, active_time_lists, realized_time_lists):
         
         period__branch_lists = defaultdict(list)
-        jump_lists = OrderedDict() 
+        solve_branch__time_branch_lists = defaultdict(list)
+        jump_lists = OrderedDict()
+        branch_start_time_lists = defaultdict() 
         for solve in solves:
             new_realized_time_list = OrderedDict()
             new_active_time_list = OrderedDict()
             info = stochastic_branches[complete_solves[solve]]
             active_time_list = active_time_lists[solve]
             realized_time_list = realized_time_lists[solve]
+            branched = False
+            branches = []
+            branch_start_time_lists[solve] = None
             for period, active_time in active_time_list.items():
-                new_active_time_list[period] = active_time_list[period]
-                new_realized_time_list[period] = realized_time_list[period]
-                #get all start times
-                start_times = defaultdict(list)
-                for row in info:
-                    if row[0]==period:
-                        start_times[row[2]].append(row[1])
-                for step in active_time[1:]:    #branching cannot start from the first step
-                    if step[0] in start_times.keys():
-                        realized_time = realized_time_list[period]
-                        time_start_ind = active_time.index(step)
-                        #realized ends at the start of first branch
-                        new_active_time_list[period] = active_time[0:time_start_ind]
-                        if time_start_ind <= len(realized_time):
-                            new_realized_time_list[period] = realized_time[0:time_start_ind]
+                if not branched:
+                    period__branch_lists[solve].append((period, period))
+                    #get all start times
+                    start_times = defaultdict(list)
+                    for row in info:
+                        if row[0]==period:
+                            start_times[row[2]].append(row[1])
+                    for step in active_time[1:]:    #branching cannot start from the first step
+                        if step[0] in start_times.keys():
+                            branched = True
+                            branch_start_time_lists[solve] = (period,step[0])
+                            realized_time = realized_time_list[period]
+                            time_start_ind = active_time.index(step)
+                            #realized ends at the start of first branch
+                            new_active_time_list[period] = active_time[0:time_start_ind]
+                            if time_start_ind <= len(realized_time):
+                                new_realized_time_list[period] = realized_time[0:time_start_ind]
                             for branch in start_times[step[0]]:
-                                new_realized_time_list[branch] = realized_time[time_start_ind:]
-                        for branch in start_times[step[0]]:
-                            new_active_time_list[branch] = active_time[time_start_ind:]
-                            period__branch_lists[solve].append((period, branch))
-                        
-                            #get timesteps
-                            for i in active_time[time_start_ind:]:
-                                self.stochastic_timesteps[solve].append((branch, i[0]))
-                        break
-                period__branch_lists[solve].append((period, period))
+                                branches.append(branch)
+                                solve_branch = period + "_" + branch
+                                new_active_time_list[solve_branch] = active_time[time_start_ind:]
+                                period__branch_lists[solve].append((period, solve_branch))
+                                solve_branch__time_branch_lists[solve].append((solve_branch, branch))
+                                #get timesteps
+                                for i in active_time[time_start_ind:]:
+                                    self.stochastic_timesteps[solve].append((solve_branch, i[0]))
+                            break
+                else:
+                    for branch in branches:
+                        solve_branch = period + "_" + branch
+                        new_active_time_list[solve_branch] = active_time_list[period]
+                        #new_realized_time_list[solve_branch] = realized_time_list[period]
+                        period__branch_lists[solve].append((period,solve_branch))
+                        solve_branch__time_branch_lists[solve].append((solve_branch, branch))
+                        for i in active_time_list[period]:
+                             self.stochastic_timesteps[solve].append((solve_branch, i[0]))
+                if not branched:
+                    new_active_time_list[period] = active_time_list[period]
+                    if period in realized_time_list.keys():
+                        new_realized_time_list[period] = realized_time_list[period]
+            
+            #find the realized branch for this start time
+            if branch_start_time_lists[solve] != None:
+                found = 0
+                realized_branches = []
+                for row in info:
+                    if row[0]==branch_start_time_lists[solve][0] and row[2] == branch_start_time_lists[solve][1] and row[3] == 'yes':
+                        found +=1
+                        realized_branches.append(row[1])
+                if found != 1:
+                    logging.error("Each period should only have one realized branch. Found: " + str(found) + "\n")
+                    exit(-1)
+            for period in active_time_list.keys(): 
+                solve_branch__time_branch_lists[solve].append((period, realized_branches[0]))
 
             realized_time_lists[solve] = new_realized_time_list
             active_time_lists[solve] = new_active_time_list
-            jump_lists[solve] = self.make_step_jump(new_active_time_list, period__branch_lists[solve])
+            jump_lists[solve] = self.make_step_jump(new_active_time_list, period__branch_lists[solve], solve_branch__time_branch_lists[solve])
 
-        return period__branch_lists, active_time_lists, jump_lists, realized_time_lists 
+        return period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, realized_time_lists, branch_start_time_lists 
    
     def periodic_postprocess(self,groupby_map, method = None, arithmetic = "sum"):
         for key, group in list(groupby_map.items()):
@@ -1692,6 +1761,7 @@ def main():
     complete_solve= OrderedDict()
     parent_roll = OrderedDict()
     period__branch_lists = OrderedDict()
+    branch_start_time_lists = defaultdict()
     all_solves=[]
 
     try:
@@ -1714,8 +1784,8 @@ def main():
         parent_roll.update(solve_parent_roll)
         active_time_lists.update(solve_active_time_lists)
         realized_time_lists.update(solve_realized_time_lists)
-    
-    period__branch_lists, active_time_lists, jump_lists, realized_time_lists = runner.create_stochastic_periods(runner.stochastic_branches, all_solves, complete_solve, active_time_lists, realized_time_lists)
+
+    period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, realized_time_lists, branch_start_time_lists = runner.create_stochastic_periods(runner.stochastic_branches, all_solves, complete_solve, active_time_lists, realized_time_lists)
 
     real_solves = [] 
     for solve in solves: #real solves are the defined solves not including the individual rolls
@@ -1736,16 +1806,21 @@ def main():
         for period__year in runner.solve_period_years_represented[solve]:
             if not any(period__year[0]== sublist[0] for sublist in solve_period_history[solve]):
                 solve_period_history[solve].append((period__year[0], period__year[1]))
-        if not runner.solve_period_years_represented[solve]:
-            for solve__period in (runner.realized_periods+runner.invest_periods+runner.realized_invest_periods+runner.fix_storage_periods):
-                if solve__period[0] == solve and not any(solve__period[1]== sublist[0] for sublist in solve_period_history[solve]):
-                    solve_period_history[solve].append((solve__period[1], 1))
+        if not runner.solve_period_years_represented[solve]:    #if not defined, all the periods have the value 1
+            for period__timeblockSet in runner.timeblocks_used_by_solves[solve]:
+                if not any(period__timeblockSet[0]== sublist[0] for sublist in solve_period_history[solve]):
+                    solve_period_history[solve].append((period__timeblockSet[0], 1))
+            #for solve__period in (runner.realized_periods+runner.invest_periods+runner.realized_invest_periods+runner.fix_storage_periods):
+            #    if solve__period[0] == solve and not any(solve__period[1]== sublist[0] for sublist in solve_period_history[solve]):
+            #        solve_period_history[solve].append((solve__period[1], 1))
+    for solve in active_time_lists.keys():
+        for period in active_time_lists[solve]:
+            if (period,period) in period__branch_lists[solve] and not any(period== sublist[0] for sublist in solve_period_history[complete_solve[solve]]):
+                logging.error("The years_represented is defined, but not to all of the periods in the solve")
+                exit(-1)
 
     first = True
     for i, solve in enumerate(all_solves):
-        print(period__branch_lists[solve])
-        print(solve_period_history)
-        print(runner.realized_invest_periods)
         complete_active_time_lists = runner.get_active_time(complete_solve[solve], runner.timeblocks_used_by_solves, runner.timeblocks, runner.timelines, runner.timeblocks__timeline)
         runner.write_full_timelines(runner.stochastic_timesteps[solve], runner.timeblocks_used_by_solves[complete_solve[solve]], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
@@ -1767,8 +1842,8 @@ def main():
         runner.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
         runner.write_fix_storage_timesteps(realized_time_lists[solve],complete_solve[solve])
         runner.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
-        runner.write_all_branches(period__branch_lists, 'solve_data/branch_all.csv')
-        runner.write_branch_realized_and_weight(complete_solve[solve], period__branch_lists[solve], active_time_lists[solve])
+        runner.write_all_branches(period__branch_lists)
+        runner.write_solve_branch__time_branch_list_and_weight(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve])
         runner.write_first_and_last_periods(active_time_lists[solve], runner.timeblocks_used_by_solves[complete_solve[solve]])
 
         #check if the upper level fixes storages
