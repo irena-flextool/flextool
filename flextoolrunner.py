@@ -1631,8 +1631,8 @@ class FlexToolRunner:
                 if found != 1:
                     logging.error("Each period should only have one realized branch. Found: " + str(found) + "\n")
                     exit(-1)
-            for period in active_time_list.keys(): 
-                solve_branch__time_branch_lists[solve].append((period, realized_branches[0]))
+                for period in active_time_list.keys(): 
+                    solve_branch__time_branch_lists[solve].append((period, realized_branches[0]))
 
             realized_time_lists[solve] = new_realized_time_list
             active_time_lists[solve] = new_active_time_list
