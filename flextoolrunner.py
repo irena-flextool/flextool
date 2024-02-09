@@ -46,7 +46,6 @@ class FlexToolRunner:
         self.solvers = self.get_solver()
         self.timeblocks = self.get_timeblocks()
         self.timeblocks__timeline = self.get_timeblocks_timelines()
-        self.timeblocks_used_by_solves = self.get_timeblocks_used_by_solves()
         self.stochastic_branches = self.get_stochastic_branches()
         self.stochastic_timesteps = defaultdict(list)
         self.solver_precommand = self.get_solver_precommand()
@@ -59,28 +58,28 @@ class FlexToolRunner:
         self.create_timeline_from_timestep_duration()
         self.first_of_solve = []
         self.last_of_solve = []
+        self.timeblocks_used_by_solves = {**self.get_timeblocks_used_by_solves(), **self.get_2d_timeblocks_used_by_solves()}
         self.invest_periods = self.get_list_of_tuples('input/solve__invest_period.csv') + self.get_2d_map_periods('input/solve__invest_period_2d_map.csv')
         self.realized_periods = self.get_list_of_tuples('input/solve__realized_period.csv') + self.get_2d_map_periods('input/solve__realized_period_2d_map.csv')
         self.realized_invest_periods = self.get_list_of_tuples('input/solve__realized_invest_period.csv') + self.get_2d_map_periods('input/solve__realized_invest_period_2d_map.csv')
         self.fix_storage_periods = self.get_list_of_tuples('input/solve__fix_storage_period.csv') + self.get_2d_map_periods('input/solve__fix_storage_period_2d_map.csv')
-        #self.remove_periods()
         #self.write_full_timelines(self.timelines, 'steps.csv')
     
-    def remove_periods(self):
-        for solve, items in list(self.solve_period_years_represented.items()):
-            keep=[]
-            for period_years in items:
-                if (solve,period_years[0])  in self.fix_storage_periods or (solve,period_years[0]) in self.realized_periods or (solve,period_years[0]) in self.realized_invest_periods or (solve,period_years[0]) in self.invest_periods:
-                    keep.append(period_years)
-            self.solve_period_years_represented[solve] = keep 
+    def get_2d_timeblocks_used_by_solves(self):
 
-        for solve, items in list(self.timeblocks_used_by_solves.items()):
-            keep=[]
-            for period_timeblock in items:
-                if (solve,period_timeblock[0])  in self.fix_storage_periods or (solve,period_timeblock[0]) in self.realized_periods or (solve,period_timeblock[0]) in self.realized_invest_periods or (solve,period_timeblock[0]) in self.invest_periods:
-                    keep.append(period_timeblock)
-            self.timeblocks_used_by_solves[solve] = keep 
-    
+        with open('input/timeblocks_in_use_2d.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            timeblocks_used_by_solves = defaultdict(list)
+            while True:
+                try:
+                    datain = next(filereader)
+                    new_name = datain[0]+"_"+datain[1]
+                    self.duplicate_solve(datain[0],new_name)
+                    timeblocks_used_by_solves[new_name].append((datain[2], datain[3]))
+                except StopIteration:
+                    break
+        return timeblocks_used_by_solves
     
     def get_2d_map_periods(self,input_filename):
 
@@ -97,10 +96,6 @@ class FlexToolRunner:
                 except StopIteration:
                     break
         return period_list
-    
-    def duplicate_map(self,old_solve,new_solve,dup_map):
-        if old_solve in dup_map.keys():
-            dup_map[new_solve]=dup_map[old_solve]
         
     def duplicate_solve(self, old_solve, new_name):
         if new_name not in self.model_solve.values() and new_name not in self.contains_solves.values():
@@ -112,14 +107,14 @@ class FlexToolRunner:
                 self.highs_parallel,
                 self.solve_period_years_represented,
                 self.solvers,
-                self.timeblocks_used_by_solves,
                 self.solver_precommand,
                 self.solver_arguments,
                 self.contains_solves,
                 self.rolling_times
             ]
             for dup_map in dup_map_list:
-                self.duplicate_map(old_solve,new_name,dup_map)
+                if old_solve in dup_map.keys():
+                    dup_map[new_name]=dup_map[old_solve]
             for model, solves in list(self.model_solve.items()):
                 if old_solve in solves:
                     solves.remove(old_solve)
@@ -1342,46 +1337,6 @@ class FlexToolRunner:
             for period_timestep, upper_timestep in list(matching_map.items()):
                 realfile.write(period_timestep[0]+","+period_timestep[1]+","+ upper_timestep+"\n")
 
-    def write_timeline_matching_map_old(self, upper_active_time_list, lower_active_time_list, period__timeblocks_in_this_solve, timeblocks__timeline, timelines):
-        """
-        write the matching map for different level timelines, the fixed timestep might not exist in the lower timeline
-        gives csv: [period, timestep, upper_timestep]
-        """
-
-        #get full timeline
-        for period__timeblock in period__timeblocks_in_this_solve:
-            for timeline in timelines:
-                for timeblock_in_timeline, tt in timeblocks__timeline.items():
-                    if period__timeblock[1] == timeblock_in_timeline:
-                        if timeline == tt[0]:
-                            if timeline in self.original_timeline.keys():
-                                full_timeline = timelines[self.original_timeline[timeline]] # get the full non agregated timeline
-                            else:
-                                full_timeline = timelines[timeline]
-        all_timesteps = []
-        for i in full_timeline:
-            all_timesteps.append(i[0])
-
-        #match the period_last with the closest fixed timestep
-        matching_map = defaultdict()
-        for period, lower_active_time in lower_active_time_list.items():
-            if period in upper_active_time_list.keys():
-                lower_period_last = lower_active_time[-1]
-                upper_active_time_period = upper_active_time_list[period]
-                position = all_timesteps.index(lower_period_last[0])
-                found = False
-                while position >= 0 and found == False:
-                    timestep = all_timesteps[position]
-                    if any(timestep == step[0] for step in upper_active_time_period):
-                        found = True
-                    position -= 1
-                matching_map[(period,lower_period_last[0])] = timestep
-        
-        with open("solve_data/timeline_matching_map.csv", 'w') as realfile:
-            realfile.write("period,step,upper_step\n")
-            for period_timestep, upper_timestep in list(matching_map.items()):
-                realfile.write(period_timestep[0]+","+period_timestep[1]+","+ upper_timestep+"\n")
-
     def create_rolling_solves(self, solve, full_active_time_list, jump, horizon, start = None, duration = -1):
         """
         splits the solve to overlapping sequence of solves "rolls" 
@@ -1794,6 +1749,13 @@ def main():
         real_solves.append(inner_solve)
 
     for solve in real_solves:
+        #check that period__years_represented has only periods included in the solve
+        new_years_represented = []
+        for period__year in runner.solve_period_years_represented[solve]:
+            if any(period__year[0] == period__timeblockSet[0] for period__timeblockSet in runner.timeblocks_used_by_solves[solve]):  
+                new_years_represented.append(period__year)
+        runner.solve_period_years_represented[solve] = new_years_represented
+        # get period_history from earlier solves
         for solve_2 in real_solves:
             if solve_2 == solve:
                 break
@@ -1802,17 +1764,16 @@ def main():
                     this_solve = runner.solve_period_years_represented[solve_2]
                     for period in this_solve:
                         if period[0] == solve__period[1] and not any(period[0]== sublist[0] for sublist in solve_period_history[solve]):
-                            solve_period_history[solve].append((period[0], period[1]))
+                                solve_period_history[solve].append((period[0], period[1]))
+        # get period_history from this solve
         for period__year in runner.solve_period_years_represented[solve]:
             if not any(period__year[0]== sublist[0] for sublist in solve_period_history[solve]):
                 solve_period_history[solve].append((period__year[0], period__year[1]))
-        if not runner.solve_period_years_represented[solve]:    #if not defined, all the periods have the value 1
+        #if not defined, all the periods have the value 1
+        if not runner.solve_period_years_represented[solve]:
             for period__timeblockSet in runner.timeblocks_used_by_solves[solve]:
                 if not any(period__timeblockSet[0]== sublist[0] for sublist in solve_period_history[solve]):
                     solve_period_history[solve].append((period__timeblockSet[0], 1))
-            #for solve__period in (runner.realized_periods+runner.invest_periods+runner.realized_invest_periods+runner.fix_storage_periods):
-            #    if solve__period[0] == solve and not any(solve__period[1]== sublist[0] for sublist in solve_period_history[solve]):
-            #        solve_period_history[solve].append((solve__period[1], 1))
     for solve in active_time_lists.keys():
         for period in active_time_lists[solve]:
             if (period,period) in period__branch_lists[solve] and not any(period== sublist[0] for sublist in solve_period_history[complete_solve[solve]]):

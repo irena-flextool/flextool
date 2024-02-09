@@ -2604,7 +2604,8 @@
                 },
                 {
                     "map_type": "ParameterValueType",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "1d_map"
                 },
                 {
                     "map_type": "IndexName",
@@ -2614,14 +2615,6 @@
                     "map_type": "ParameterValueIndex",
                     "position": 1,
                     "header": "period"
-                },
-                {
-                    "map_type": "IndexName",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": "hidden"
                 },
                 {
                     "map_type": "ExpandedValue",
@@ -6194,6 +6187,72 @@
                     "map_type": "ExpandedValue",
                     "position": 4,
                     "header": "pbt_profile"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "timeblockSet_in_use_2d": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "timeblocks_in_use_2d"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^solve$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^period_timeblockSet$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "solve"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "2d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 1,
+                    "header": "roll"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "period"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 3,
+                    "header": "timeblocks"
                 }
             ],
             "enabled": true,

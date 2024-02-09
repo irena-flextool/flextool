@@ -21,7 +21,7 @@ def migrate_database(database_path):
         version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
     next_version = int(version) + 1
-    new_version = 16
+    new_version = 17
 
     while next_version <= new_version:
         if next_version == 0:
@@ -68,7 +68,9 @@ def migrate_database(database_path):
             remove_parameters_manual(db,[["unit", "invest_forced"], ["unit", "retire_forced"], ["connection", "invest_forced"], ["connection", "retire_forced"],
                                          ["node", "invest_forced"], ["node", "retire_forced"]])
             add_parameters_manual(db, [["group", "co2_max_period", "no_method", "co2_methods", "[tCO2] Annualized maximum limit for emitted CO2 in each period."]])
-        elif next_version == 16:
+        elif next_version == 16: 
+            add_parameters_manual(db, [["group", "co2_max_period", None, None, "[tCO2] Annualized maximum limit for emitted CO2 in each period."]])
+        elif next_version == 17:
             add_value_list_manual(db,[["yes_no", "yes"], ["yes_no", "no"]])
             new_parameters = [["solve", "stochastic_branches", None, None, "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time"],
                               ["group", "include_stochastics", "no", "yes_no", "Includes the stochastic branches to be used for the nodes/units/connections in this group"],

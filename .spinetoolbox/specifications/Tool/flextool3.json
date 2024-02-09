@@ -124,6 +124,7 @@
         "input/timeblocks.csv",
         "input/timeblocks__timeline.csv",
         "input/timeblocks_in_use.csv",
+        "input/timeblocks_in_use_2d.csv",
         "input/timeline.csv",
         "input/timeline_duration_in_years.csv"
     ],
