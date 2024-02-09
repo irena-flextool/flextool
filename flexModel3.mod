@@ -4262,18 +4262,21 @@ printf 'Write unit__outputNode curtailment share of VRE units for periods...\n';
 param fn_unit__sinkNode__d_curtailment symbolic := "output/unit_curtailment_share__outputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf 'solve,period' > fn_unit__sinkNode__d_curtailment;  # Print the header on the first solve
+    printf 'type,solve,period' > fn_unit__sinkNode__d_curtailment;  # Print the header on the first solve
 	for {(u, sink) in process_sink : u in process_VRE} printf ',%s', u >> fn_unit__sinkNode__d_curtailment;
-	printf '\n,' >> fn_unit__sinkNode__d_curtailment;
+	printf '\n,,' >> fn_unit__sinkNode__d_curtailment;
 	for {(u, sink) in process_sink : u in process_VRE} printf ',%s', sink >> fn_unit__sinkNode__d_curtailment;
   }
 for {s in solve_current, d in d_realized_period: 'yes' not in exclude_entity_outputs}
   {
-	printf '\n%s,%s', s, d >> fn_unit__sinkNode__d_curtailment;
+	  printf '\n%s,%s,%s','curtailment', s, d >> fn_unit__sinkNode__d_curtailment;
     for {(u, sink) in process_sink : u in process_VRE}
       { printf ',%.6f', ( if entity_all_capacity[u, d] 
 					      then ( potentialVREgen[u, sink, d] - r_process_sink_flow_d[u, sink, d] ) / potentialVREgen[u, sink, d]
 						  else 0 ) >> fn_unit__sinkNode__d_curtailment; }
+    printf '\n%s,%s,%s','potential', s, d >> fn_unit__sinkNode__d_curtailment;
+    for {(u, sink) in process_sink : u in process_VRE}
+      { printf ',%.6f', ( if entity_all_capacity[u, d] then potentialVREgen[u, sink, d] else 0 ) >> fn_unit__sinkNode__d_curtailment; }
   } 
 printf 'Write unit__outputNode curtailment share of VRE units for periods...\n';
 param fn_unit__sinkNode__share__dt_curtailment symbolic := "output/unit_curtailment_share__outputNode__period__t.csv";

@@ -3292,7 +3292,7 @@
                             {
                                 "map_type": "IndexName",
                                 "position": "hidden",
-                                "value": "solve"
+                                "value": "type"
                             },
                             {
                                 "map_type": "ParameterValueIndex",
@@ -3301,11 +3301,20 @@
                             {
                                 "map_type": "IndexName",
                                 "position": "hidden",
-                                "value": "period"
+                                "value": "solve"
                             },
                             {
                                 "map_type": "ParameterValueIndex",
                                 "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
                             },
                             {
                                 "map_type": "ExpandedValue",
@@ -3793,10 +3802,6 @@
             "group_node_VRE_share__period__t",
             "slack__downward__node_state__period__t",
             "slack__upward__node_state__period__t",
-            "connection_left_to_right__period",
-            "connection_left_to_right__period__t",
-            "connection_right_to_left__period",
-            "connection_right_to_left__period__t",
             "group_flows__period__t",
             "group_flows__period",
             "group_process_CO2__period"
@@ -4230,7 +4235,8 @@
             "unit_curtailment_share__outputNode__period": {
                 "0": "string",
                 "1": "string",
-                "2": "float"
+                "2": "string",
+                "3": "float"
             },
             "unit_curtailment__outputNode__period__t": {
                 "0": "string",
