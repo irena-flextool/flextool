@@ -1590,27 +1590,46 @@ printf 'Checking: node not in more than one loss of load sharing group\n';
 check {n in node}:
   sum{(g,n) in group_node: g in group_loss_share} 1 < 2;
 
-printf'Checking: Start time of the period can be found at the start times\n';
-printf'of the timeseries if given as stochastic\n';
-printf'for process\n';
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for process timeseries \n';
 check {(d,t) in period__time_first: sum{(p, param, tb, ts, t2) in process__param__branch__time} 1}:
   sum{(p, param, tb, t, t) in process__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;
-printf'for process_inputNode\n';
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for process_inputNode timeseries\n';
 check {(d,t) in period__time_first: sum{(p, source, param, tb, ts, t2) in process__source__param__branch__time} 1}:
   sum{(p, source, param, tb, t, t) in process__source__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;
-printf'for process_outputNode\n';
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for process_outputNode timeseries\n';
 check {(d,t) in period__time_first: sum{(p, sink, param, tb, ts, t2) in process__sink__param__branch__time} 1}:
   sum{(p, sink, param, tb, t, t) in process__sink__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;
-printf'for Node inflow\n';
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for Node inflow timeseries\n';
 check{(d,t) in period__time_first: sum{(n, tb, ts, t2) in node__branch__time_inflow} 1 }:
   sum{(n, tb, t, t) in node__branch__time_inflow, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;
-printf'for Node\n';
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for Node timeseries\n';
 check {(d,t) in period__time_first: sum{(n, param, tb, ts, t2) in node__param__branch__time} 1}:
   sum{(n, param, tb, t, t) in node__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;
-printf'for profile\n';
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for profile timeseries\n';
 check {(d,t) in period__time_first: sum{(p, tb, ts, t2) in profile__branch__time} 1}:
   sum{(p, tb, t, t) in profile__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;
-printf'for reserve\n';
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for reserve timeseries\n';
 check {(d,t) in period__time_first: sum{(r, ud, g, param, tb, ts, t2) in reserve__upDown__group__reserveParam__branch__time} 1}:
   sum{(r, ud, g, param, tb, t, t) in reserve__upDown__group__reserveParam__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;  
 
@@ -1756,6 +1775,7 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
   + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n] )
+  + (if n in nodeState && (d, t) in period__time_first && d in period_first_of_solve && not p_nested_model['solveFirst'] then (v_state[n,d,t] * p_entity_unitsize[n] - p_roll_continue_state[n]))
   =
   # n is sink
   + sum {(p, source, n) in process_source_sink} (
@@ -2047,13 +2067,13 @@ s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, 
 ;
 
 
-s.t. storage_state_roll_continue {n in nodeState, (d, t) in period__time_first
-     : not p_nested_model['solveFirst'] 
-	 && d in period_first_of_solve } :
-  + v_state[n, d, t] * p_entity_unitsize[n]
-  =
-  + p_roll_continue_state[n]
-;
+#s.t. storage_state_roll_continue {n in nodeState, (d, t) in period__time_first
+#     : not p_nested_model['solveFirst'] 
+#	 && d in period_first_of_solve } :
+#  + v_state[n, d, t] * p_entity_unitsize[n]
+#  =
+#  + p_roll_continue_state[n]
+#;
 
 s.t. storage_state_start {n in nodeState, (d, t) in period__time_first
      : p_nested_model['solveFirst'] 
