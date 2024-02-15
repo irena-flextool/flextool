@@ -963,11 +963,27 @@ class FlexToolRunner:
                         for i in period__branch:
                             if i[1] == period:
                                 original_period = i[0]
-                        if (original_period,original_period) in period__branch:
+                        if (original_period,original_period) in period__branch and original_period in active_time_list.keys():
                             jump = active_time[j][1] - active_time_list[original_period][-1][1]
                             step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], original_period, active_time_list[original_period][-1][0], jump))
+                        elif (original_period,original_period) in period__branch: 
+                            #if branching happens in the first timestep of a period
+                            #find the last realized period
+                            past = False
+                            previous_realized_period = None
+                            for solve_period, a_t in reversed(active_time_list.items()):
+                                if past:
+                                    if (solve_period, solve_period) in period__branch:
+                                        previous_realized_period = solve_period
+                                        break
+                                else:
+                                    if solve_period == period:
+                                        past = True
+                            jump = active_time[j][1] - active_time_list[previous_realized_period][-1][1]
+                            step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], previous_realized_period, active_time_list[previous_realized_period][-1][0], jump))   
                         else:
-                            #find the previous branch with the same name
+                            #if branch continuing in the next period
+                            #find the previous branch with the same time_branch
                             for sb_tb in solve_branch__time_branch_list:
                                 if sb_tb[0] == period:
                                     time_branch = sb_tb[1]
@@ -1534,6 +1550,9 @@ class FlexToolRunner:
             branches = []
             branch_start_time_lists[solve] = None
             for period, active_time in active_time_list.items():
+                first_step = (period, active_time[0][0])
+                break            
+            for period, active_time in active_time_list.items():
                 if not branched:
                     period__branch_lists[solve].append((period, period))
                     #get all start times
@@ -1541,14 +1560,15 @@ class FlexToolRunner:
                     for row in info:
                         if row[0]==period:
                             start_times[row[2]].append(row[1])
-                    for step in active_time[1:]:    #branching cannot start from the first step
-                        if step[0] in start_times.keys():
+                    for step in active_time:    #branching cannot start from the first step of the solve
+                        if step[0] in start_times.keys() and (period,step[0]) != first_step:
                             branched = True
                             branch_start_time_lists[solve] = (period,step[0])
                             realized_time = realized_time_list[period]
                             time_start_ind = active_time.index(step)
                             #realized ends at the start of first branch
-                            new_active_time_list[period] = active_time[0:time_start_ind]
+                            if time_start_ind > 0: 
+                                new_active_time_list[period] = active_time[0:time_start_ind]
                             if time_start_ind <= len(realized_time):
                                 new_realized_time_list[period] = realized_time[0:time_start_ind]
                             for branch in start_times[step[0]]:
@@ -1576,19 +1596,20 @@ class FlexToolRunner:
                         new_realized_time_list[period] = realized_time_list[period]
             
             #find the realized branch for this start time
-            if branch_start_time_lists[solve] != None:
+            for period, active_time in active_time_list.items():
                 found = 0
-                realized_branches = []
                 for row in info:
-                    if row[0]==branch_start_time_lists[solve][0] and row[2] == branch_start_time_lists[solve][1] and row[3] == 'yes':
+                    if row[0]==period and row[2] == active_time[0][0] and row[3] == 'yes':
                         found +=1
-                        realized_branches.append(row[1])
-                if found != 1:
-                    logging.error("Each period should only have one realized branch. Found: " + str(found) + "\n")
+                        solve_branch__time_branch_lists[solve].append((period, row[1])) 
+                if found == 0 and branch_start_time_lists[solve] != None:
+                    for row in info:
+                        if row[0]==branch_start_time_lists[solve][0] and row[2] == branch_start_time_lists[solve][1] and row[3] == 'yes':
+                            found +=1
+                            solve_branch__time_branch_lists[solve].append((period, row[1]))
+                if (branch_start_time_lists[solve] != None and found == 0) or found > 1:
+                    logging.error("Each period should have one and only one realized branch. Found: " + str(found) + "\n")
                     exit(-1)
-                for period in active_time_list.keys(): 
-                    solve_branch__time_branch_lists[solve].append((period, realized_branches[0]))
-
             realized_time_lists[solve] = new_realized_time_list
             active_time_lists[solve] = new_active_time_list
             jump_lists[solve] = self.make_step_jump(new_active_time_list, period__branch_lists[solve], solve_branch__time_branch_lists[solve])
