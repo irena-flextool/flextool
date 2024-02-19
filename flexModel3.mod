@@ -725,14 +725,14 @@ set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
 param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} := 
         + if (c, param, d) in commodity__param__period
 		  then pd_commodity[c, param, d]
-		  else if sum{(c, param, db) in commodity__param__period: (db, d) in period__branch} 1
+		  else if exists{(c, param, db) in commodity__param__period: (db, d) in period__branch} 1
       then sum{(db, d) in period__branch} pd_commodity[c, param, db]
       else p_commodity[c, param];
 
 param pdGroup {g in group, param in groupPeriodParam, d in period} :=
         + if (g, param, d) in group__param__period
 		  then pd_group[g, param, d]
-      else if sum{(c,param, db) in group__param__period : (db,d) in period__branch} 1
+      else if exists{(c,param, db) in group__param__period : (db,d) in period__branch} 1
       then sum{(db, d) in period__branch} pd_group[g, param, db]
 		  else if (g, param) in group__param 
 		  then p_group[g, param]
@@ -819,15 +819,15 @@ set process__source__sink__ramp_method :=
 param pdNode {n in node, param in nodePeriodParam, d in period_with_history} :=
         + if (n, param, d) in node__param__period
 		  then pd_node[n, param, d]
-      else if sum{(c, param, db) in node__param__period: (db, d) in period__branch} 1
+      else if exists{(c, param, db) in node__param__period: (db, d) in period__branch} 1
       then sum{(db, d) in period__branch} pd_node[n, param, db]
 		  else p_node[n, param];
 #t in complete_time_in_use?
 param pdtNode {n in node, param in nodeTimeParam, (d, t) in dt} :=
-      + if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, param, tb, ts, t) in node__param__branch__time} 1 
-      && sum{(g,n) in group_node: g in groupStochastic} 1
+      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, param, tb, ts, t) in node__param__branch__time} 1 
+      && exists{(g,n) in group_node: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_node[n, param, tb, ts, t]
-      else if sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch && (n, param, tb, ts, t) in node__param__branch__time} 1
+      else if exists{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch && (n, param, tb, ts, t) in node__param__branch__time} 1
       then sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch} pbt_node[n, param, tb, ts, t] 
       else if (n, param, t) in node__param__time
 		  then pt_node[n, param, t]
@@ -843,21 +843,21 @@ param ptNode_inflow {n in node, t in time} :=
         + if (n, t) in node__time_inflow
 		  then pt_node_inflow[n, t]
 		  else p_node[n, 'inflow'];
-set nodeSelfDischarge :=  {n in nodeState : sum{(d, t) in dt : pdtNode[n, 'self_discharge_loss', d, t]} 1};
+set nodeSelfDischarge :=  {n in nodeState : exists{(d, t) in dt : pdtNode[n, 'self_discharge_loss', d, t]} 1};
 		  
 param pdProcess {p in process, param in processPeriodParam, d in period_with_history} :=
         + if (p, param, d) in process__param__period
 		  then pd_process[p, param, d]
-      else if sum{(p, param, db) in process__param__period: (db, d) in period__branch} 1
+      else if exists{(p, param, db) in process__param__period: (db, d) in period__branch} 1
       then sum{(db, d) in period__branch} pd_process[p, param, db]
 		  else if (p, param) in process__param
 		  then p_process[p, param]
 		  else 0;
 param pdtProcess {p in process, param in processTimeParam, (d,t) in dt} :=
-      + if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, param, tb, ts, t) in process__param__branch__time} 1 
-      && sum{(g,p) in group_process: g in groupStochastic} 1
+      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, param, tb, ts, t) in process__param__branch__time} 1 
+      && exists{(g,p) in group_process: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process[p, param, tb, ts, t]
-      else if sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, param, tb, ts, t) in process__param__branch__time} 1
+      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, param, tb, ts, t) in process__param__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process[p, param, tb, ts, t] 
       else if (p, param, t) in process__param__time
 		  then pt_process[p, param, t]
@@ -868,12 +868,12 @@ param pdtProcess {p in process, param in processTimeParam, (d,t) in dt} :=
 		  else 0;
 
 param pdtProfile {p in profile, (d,t) in dt} :=
-      + if (sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, tb, ts, t) in profile__branch__time} 1 
-      && ((sum{(pc, p, m) in process__profile__profile_method, (g, pc) in group_process: g in groupStochastic} 1 ) 
-      || (sum{(n, p, m) in node__profile__profile_method, (g,n) in group_node: g in groupStochastic} 1)
-      || (sum{(pc, n, p, m) in process__node__profile__profile_method, (g,pc) in group_process: g in groupStochastic} 1)))
+      + if (exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, tb, ts, t) in profile__branch__time} 1 
+      && ((exists{(pc, p, m) in process__profile__profile_method, (g, pc) in group_process: g in groupStochastic} 1 ) 
+      || (exists{(n, p, m) in node__profile__profile_method, (g,n) in group_node: g in groupStochastic} 1)
+      || (exists{(pc, n, p, m) in process__node__profile__profile_method, (g,pc) in group_process: g in groupStochastic} 1)))
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_profile[p, tb, ts, t]
-      else if sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, tb, ts, t) in profile__branch__time} 1
+      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, tb, ts, t) in profile__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_profile[p, tb, ts, t] 
       else if (p, t) in profile_param__time
 		  then pt_profile[p, t]
@@ -909,10 +909,10 @@ param pProcess_source_sink {(p, source, sink, param) in process__source__sink__p
 		  else 0;
 
 param pdtProcess_source {(p, source) in process_source, param in sourceSinkTimeParam, (d, t) in dt} :=  # : sum{d in period : (d, t) in dt} 1
-      + if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1 
-      && sum{(g,p) in group_process: g in groupStochastic} 1
+      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1 
+      && exists{(g,p) in group_process: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_source[p, source, param, tb, ts, t]
-      else if sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
+      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_source[p, source, param, tb, ts, t] 
 		  else if (p, source, param, t) in process__source__param__time
 		  then pt_process_source[p, source, param, t]
@@ -921,10 +921,10 @@ param pdtProcess_source {(p, source) in process_source, param in sourceSinkTimeP
 		  else 0;
         
 param pdtProcess_sink {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in dt} :=  #  : sum{d in period : (d, t) in dt} 1
-      + if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1 
-      && sum{(g,p) in group_process: g in groupStochastic} 1
+      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1 
+      && exists{(g,p) in group_process: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_sink[p, sink, param, tb, ts, t]
-      else if sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
+      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_sink[p, sink, param, tb, ts, t] 
 		  else if (p, sink, param, t) in process__sink__param__time
 		  then pt_process_sink[p, sink, param, t]
@@ -933,15 +933,15 @@ param pdtProcess_sink {(p, sink) in process_sink, param in sourceSinkTimeParam, 
 		  else 0;
 
 param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, (d, t) in dt} := #  : sum{d in period : (d, t) in dt} 1
-      + if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
-      && sum{(g,p) in group_process: g in groupStochastic} 1
+      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
+      && exists{(g,p) in group_process: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_sink[p, sink, param, tb, ts, t]
-      else if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
-      && sum{(g,p) in group_process: g in groupStochastic} 1
+      else if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
+      && exists{(g,p) in group_process: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_source[p, source, param, tb, ts, t]
-      else if sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch &&(p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
+      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch &&(p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_sink[p, sink, param, tb, ts, t]
-      else if sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
+      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_source[p, source, param, tb, ts, t] 
       else if (p, sink, param, t) in process__sink__param__time
 		  then pt_process_sink[p, sink, param, t]
@@ -959,9 +959,9 @@ param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink_
 
 
 param pdtReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, (d,t) in dt} :=
-      + if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time} 1 && g in groupStochastic
+      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time} 1 && g in groupStochastic
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_reserve_upDown_group[r, ud, g, param, tb, ts, t]
-      else if sum{(pe,tb) in solve_branch__time_branch,  (d,ts) in period__time_first: (pe,d) in period__branch && (r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time} 1
+      else if exists{(pe,tb) in solve_branch__time_branch,  (d,ts) in period__time_first: (pe,d) in period__branch && (r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_reserve_upDown_group[r, ud, g, param, tb, ts, t] 
       else if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
 		  then pt_reserve_upDown_group[r, ud, g, param, t]
@@ -1026,10 +1026,10 @@ param new_old_slope {n in node, d in period : (n, 'scale_to_annual_and_peak_flow
 param new_old_section {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
         pdNode[n, 'peak_inflow', d] * new_old_multiplier[n, d];
 param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  := 
-        + (if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, tb, ts, t) in node__branch__time_inflow} 1 
-      && sum{(g,n) in group_node: g in groupStochastic} 1
+        + (if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, tb, ts, t) in node__branch__time_inflow} 1 
+      && exists{(g,n) in group_node: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first,(d,tb) in solve_branch__time_branch} pbt_node_inflow[n, tb, ts, t]
-      else if sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch && (n, tb, ts, t) in node__branch__time_inflow} 1
+      else if exists{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch && (n, tb, ts, t) in node__branch__time_inflow} 1
       then sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch} pbt_node_inflow[n, tb, ts, t]  
       else if (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] then
 		    + period_flow_annual_multiplier[n, d] * ptNode_inflow[n, t]
@@ -1576,44 +1576,44 @@ printf'Checking: If stochastic timeseries data given,\n';
 printf'the realized branch is set for the period in stochastic_branches\n';
 printf'and the period start time is a branch start time is the timeseries\n';
 printf'for process timeseries \n';
-check {(d,t) in period__time_first: sum{(p, param, tb, ts, t2) in process__param__branch__time} 1}:
-  sum{(p, param, tb, t, t) in process__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;
+check {(d,t) in period__time_first: exists{(p, param, tb, ts, t2) in process__param__branch__time} 1}:
+  exists{(p, param, tb, t, t) in process__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
 printf'Checking: If stochastic timeseries data given,\n';
 printf'the realized branch is set for the period in stochastic_branches\n';
 printf'and the period start time is a branch start time is the timeseries\n';
 printf'for process_inputNode timeseries\n';
-check {(d,t) in period__time_first: sum{(p, source, param, tb, ts, t2) in process__source__param__branch__time} 1}:
-  sum{(p, source, param, tb, t, t) in process__source__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;
+check {(d,t) in period__time_first: exists{(p, source, param, tb, ts, t2) in process__source__param__branch__time} 1}:
+  exists{(p, source, param, tb, t, t) in process__source__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
 printf'Checking: If stochastic timeseries data given,\n';
 printf'the realized branch is set for the period in stochastic_branches\n';
 printf'and the period start time is a branch start time is the timeseries\n';
 printf'for process_outputNode timeseries\n';
-check {(d,t) in period__time_first: sum{(p, sink, param, tb, ts, t2) in process__sink__param__branch__time} 1}:
-  sum{(p, sink, param, tb, t, t) in process__sink__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;
+check {(d,t) in period__time_first: exists{(p, sink, param, tb, ts, t2) in process__sink__param__branch__time} 1}:
+  exists{(p, sink, param, tb, t, t) in process__sink__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
 printf'Checking: If stochastic timeseries data given,\n';
 printf'the realized branch is set for the period in stochastic_branches\n';
 printf'and the period start time is a branch start time is the timeseries\n';
 printf'for Node inflow timeseries\n';
-check{(d,t) in period__time_first: sum{(n, tb, ts, t2) in node__branch__time_inflow} 1 }:
-  sum{(n, tb, t, t) in node__branch__time_inflow, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;
+check{(d,t) in period__time_first: exists{(n, tb, ts, t2) in node__branch__time_inflow} 1 }:
+  exists{(n, tb, t, t) in node__branch__time_inflow, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
 printf'Checking: If stochastic timeseries data given,\n';
 printf'the realized branch is set for the period in stochastic_branches\n';
 printf'and the period start time is a branch start time is the timeseries\n';
 printf'for Node timeseries\n';
-check {(d,t) in period__time_first: sum{(n, param, tb, ts, t2) in node__param__branch__time} 1}:
-  sum{(n, param, tb, t, t) in node__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;
+check {(d,t) in period__time_first: exists{(n, param, tb, ts, t2) in node__param__branch__time} 1}:
+  exists{(n, param, tb, t, t) in node__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
 printf'Checking: If stochastic timeseries data given,\n';
 printf'the realized branch is set for the period in stochastic_branches\n';
 printf'and the period start time is a branch start time is the timeseries\n';
 printf'for profile timeseries\n';
-check {(d,t) in period__time_first: sum{(p, tb, ts, t2) in profile__branch__time} 1}:
-  sum{(p, tb, t, t) in profile__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;
+check {(d,t) in period__time_first: exists{(p, tb, ts, t2) in profile__branch__time} 1}:
+  exists{(p, tb, t, t) in profile__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
 printf'Checking: If stochastic timeseries data given,\n';
 printf'the realized branch is set for the period in stochastic_branches\n';
 printf'and the period start time is a branch start time is the timeseries\n';
 printf'for reserve timeseries\n';
-check {(d,t) in period__time_first: sum{(r, ud, g, param, tb, ts, t2) in reserve__upDown__group__reserveParam__branch__time} 1}:
-  sum{(r, ud, g, param, tb, t, t) in reserve__upDown__group__reserveParam__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1 > 0;  
+check {(d,t) in period__time_first: exists{(r, ud, g, param, tb, ts, t2) in reserve__upDown__group__reserveParam__branch__time} 1}:
+  exists{(r, ud, g, param, tb, t, t) in reserve__upDown__group__reserveParam__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;  
 
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
