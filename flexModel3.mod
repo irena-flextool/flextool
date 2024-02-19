@@ -843,10 +843,10 @@ param pdNode {n in node, param in nodePeriodParam, d in period_with_history} :=
 		  else p_node[n, param];
 #t in complete_time_in_use?
 param pdtNode {n in node, param in nodeTimeParam, (d, t) in dt} :=
-      + if sum{(n, param, tb, ts, t) in node__param__branch__time: (d,ts) in period__time_first && (d,tb) in solve_branch__time_branch} 1 
+      + if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, param, tb, ts, t) in node__param__branch__time} 1 
       && sum{(g,n) in group_node: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_node[n, param, tb, ts, t]
-      else if sum{(n, param, tb, ts, t) in node__param__branch__time, (p,tb) in solve_branch__time_branch: (p,d) in period__branch && (d,ts) in period__time_first} 1
+      else if sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch && (n, param, tb, ts, t) in node__param__branch__time} 1
       then sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch} pbt_node[n, param, tb, ts, t] 
       else if (n, param, t) in node__param__time
 		  then pt_node[n, param, t]
@@ -873,10 +873,10 @@ param pdProcess {p in process, param in processPeriodParam, d in period_with_his
 		  then p_process[p, param]
 		  else 0;
 param pdtProcess {p in process, param in processTimeParam, (d,t) in dt} :=
-      + if sum{(p, param, tb, ts, t) in process__param__branch__time:(d,ts) in period__time_first && (d,tb) in solve_branch__time_branch} 1 
+      + if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, param, tb, ts, t) in process__param__branch__time} 1 
       && sum{(g,p) in group_process: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process[p, param, tb, ts, t]
-      else if sum{(p, param, b, ts, t) in process__param__branch__time, (pe,tb) in solve_branch__time_branch: (pe,d) in period__branch && (d,ts) in period__time_first} 1
+      else if sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, param, tb, ts, t) in process__param__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process[p, param, tb, ts, t] 
       else if (p, param, t) in process__param__time
 		  then pt_process[p, param, t]
@@ -887,12 +887,12 @@ param pdtProcess {p in process, param in processTimeParam, (d,t) in dt} :=
 		  else 0;
 
 param pdtProfile {p in profile, (d,t) in dt} :=
-      + if (sum{(p, tb, ts, t) in profile__branch__time:(d,ts) in period__time_first && (d,tb) in solve_branch__time_branch} 1 
+      + if (sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, tb, ts, t) in profile__branch__time} 1 
       && ((sum{(pc, p, m) in process__profile__profile_method, (g, pc) in group_process: g in groupStochastic} 1 ) 
       || (sum{(n, p, m) in node__profile__profile_method, (g,n) in group_node: g in groupStochastic} 1)
       || (sum{(pc, n, p, m) in process__node__profile__profile_method, (g,pc) in group_process: g in groupStochastic} 1)))
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_profile[p, tb, ts, t]
-      else if sum{(p, tb, ts, t) in profile__branch__time, (pe,tb) in solve_branch__time_branch: (pe,d) in period__branch && (d,ts) in period__time_first} 1
+      else if sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, tb, ts, t) in profile__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_profile[p, tb, ts, t] 
       else if (p, t) in profile_param__time
 		  then pt_profile[p, t]
@@ -928,10 +928,10 @@ param pProcess_source_sink {(p, source, sink, param) in process__source__sink__p
 		  else 0;
 
 param pdtProcess_source {(p, source) in process_source, param in sourceSinkTimeParam, (d, t) in dt} :=  # : sum{d in period : (d, t) in dt} 1
-      + if sum{(p, source, param, tb, ts, t) in process__source__param__branch__time:(d,ts) in period__time_first && (d,tb) in solve_branch__time_branch} 1 
+      + if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1 
       && sum{(g,p) in group_process: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_source[p, source, param, tb, ts, t]
-      else if sum{(p, source, param, tb, ts, t) in process__source__param__branch__time, (pe,tb) in solve_branch__time_branch: (pe,d) in period__branch && (d,ts) in period__time_first} 1
+      else if sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_source[p, source, param, tb, ts, t] 
 		  else if (p, source, param, t) in process__source__param__time
 		  then pt_process_source[p, source, param, t]
@@ -940,10 +940,10 @@ param pdtProcess_source {(p, source) in process_source, param in sourceSinkTimeP
 		  else 0;
         
 param pdtProcess_sink {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in dt} :=  #  : sum{d in period : (d, t) in dt} 1
-      + if sum{(p, sink, param, tb, ts, t) in process__sink__param__branch__time:(d,ts) in period__time_first && (d,tb) in solve_branch__time_branch} 1 
+      + if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1 
       && sum{(g,p) in group_process: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_sink[p, sink, param, tb, ts, t]
-      else if sum{(p, sink, param, tb, ts, t) in process__sink__param__branch__time, (pe,tb) in solve_branch__time_branch: (pe,d) in period__branch && (d,ts) in period__time_first} 1
+      else if sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_sink[p, sink, param, tb, ts, t] 
 		  else if (p, sink, param, t) in process__sink__param__time
 		  then pt_process_sink[p, sink, param, t]
@@ -952,14 +952,15 @@ param pdtProcess_sink {(p, sink) in process_sink, param in sourceSinkTimeParam, 
 		  else 0;
 
 param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, (d, t) in dt} := #  : sum{d in period : (d, t) in dt} 1
-      + if sum{(g,p) in group_process: g in groupStochastic} 1
-      then (if sum{(p, sink, param, tb, ts, t) in process__sink__param__branch__time:(d,ts) in period__time_first && (d,tb) in solve_branch__time_branch} 1
-        then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_sink[p, sink, param, tb, ts, t]
-        else if sum{(p, source, param, tb, ts, t) in process__source__param__branch__time:(d,ts) in period__time_first && (d,tb) in solve_branch__time_branch} 1
-        then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_source[p, source, param, tb, ts, t])
-      else if sum{(p, sink, param, tb, ts, t) in process__sink__param__branch__time, (pe,tb) in solve_branch__time_branch: (pe,d) in period__branch && (d,ts) in period__time_first} 1
+      + if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
+      && sum{(g,p) in group_process: g in groupStochastic} 1
+      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_sink[p, sink, param, tb, ts, t]
+      else if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
+      && sum{(g,p) in group_process: g in groupStochastic} 1
+      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_source[p, source, param, tb, ts, t]
+      else if sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch &&(p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_sink[p, sink, param, tb, ts, t]
-      else if sum{(p, source, param, tb, ts, t) in process__source__param__branch__time, (pe,tb) in solve_branch__time_branch: (pe,d) in period__branch && (d,ts) in period__time_first} 1
+      else if sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_source[p, source, param, tb, ts, t] 
       else if (p, sink, param, t) in process__sink__param__time
 		  then pt_process_sink[p, sink, param, t]
@@ -977,9 +978,9 @@ param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink_
 
 
 param pdtReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, (d,t) in dt} :=
-      + if sum{(r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time:(d,ts) in period__time_first && (d,tb) in solve_branch__time_branch} 1 && g in groupStochastic
+      + if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time} 1 && g in groupStochastic
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_reserve_upDown_group[r, ud, g, param, tb, ts, t]
-      else if sum{(r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time, (pe,tb) in solve_branch__time_branch: (pe,d) in period__branch && (d,ts) in period__time_first} 1
+      else if sum{(pe,tb) in solve_branch__time_branch,  (d,ts) in period__time_first: (pe,d) in period__branch && (r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time} 1
       then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_reserve_upDown_group[r, ud, g, param, tb, ts, t] 
       else if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
 		  then pt_reserve_upDown_group[r, ud, g, param, t]
@@ -1044,10 +1045,10 @@ param new_old_slope {n in node, d in period : (n, 'scale_to_annual_and_peak_flow
 param new_old_section {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
         pdNode[n, 'peak_inflow', d] * new_old_multiplier[n, d];
 param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  := 
-        + (if sum{(n, tb, ts, t) in node__branch__time_inflow:(d,ts) in period__time_first && (d,tb) in solve_branch__time_branch} 1 
+        + (if sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, tb, ts, t) in node__branch__time_inflow} 1 
       && sum{(g,n) in group_node: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first,(d,tb) in solve_branch__time_branch} pbt_node_inflow[n, tb, ts, t]
-      else if sum{(n, tb, ts, t) in node__branch__time_inflow, (p,tb) in solve_branch__time_branch: (p,d) in period__branch && (d,ts) in period__time_first} 1
+      else if sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch && (n, tb, ts, t) in node__branch__time_inflow} 1
       then sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch} pbt_node_inflow[n, tb, ts, t]  
       else if (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] then
 		    + period_flow_annual_multiplier[n, d] * ptNode_inflow[n, t]
@@ -3804,7 +3805,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '"non-synchronous penalty","upward reserve penalty",' >> fn_summary_cost;
 	printf '"downward reserve penalty"\n' >> fn_summary_cost;
   }
-for {s in solve_current, d in period}
+for {s in solve_current, d in (d_realized_period union d_realize_invest)}
   { 
     printf '%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
       s, d,
