@@ -436,11 +436,7 @@ table data IN 'CSV' 'input/p_process.csv' : process__param <- [process, processP
 table data IN 'CSV' 'input/p_profile.csv' : profile_param <- [profile];
 table data IN 'CSV' 'input/p_node.csv' : node__param <- [node, nodeParam];
 table data IN 'CSV' 'input/pd_node.csv' : node__param__period <- [node, nodeParam, period];
-table data IN 'CSV' 'solve_data/pt_node.csv' : node__param__time <- [node, nodeParam, time];
-table data IN 'CSV' 'solve_data/pt_node_inflow.csv' : node__time_inflow <- [node, time];
 table data IN 'CSV' 'input/pd_process.csv' : process__param__period <- [process, processParam, period];
-table data IN 'CSV' 'solve_data/pt_process.csv' : process__param__time <- [process, processParam, time];
-table data IN 'CSV' 'solve_data/pt_profile.csv' : profile_param__time <- [profile, time];
 table data IN 'CSV' 'input/p_group.csv' : group__param <- [group, groupParam];
 table data IN 'CSV' 'input/pd_group.csv' : group__param__period <- [group, groupParam, period];
 table data IN 'CSV' 'input/process__ct_method.csv' : process__ct_method_read <- [process,ct_method];
@@ -453,18 +449,15 @@ table data IN 'CSV' 'input/process__startup_method.csv' : process__startup_metho
 table data IN 'CSV' 'input/process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
 table data IN 'CSV' 'input/process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
 table data IN 'CSV' 'input/reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
-table data IN 'CSV' 'solve_data/pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time];
 table data IN 'CSV' 'input/timeblocks_in_use.csv' : solve_period_timeblockset <- [solve,period,timeblocks];
 table data IN 'CSV' 'input/timeblocks__timeline.csv' : timeblockset__timeline <- [timeblocks,timeline];
 table data IN 'CSV' 'solve_data/solve_current.csv' : solve_current <- [solve];
 table data IN 'CSV' 'input/p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
-table data IN 'CSV' 'solve_data/pt_process_source.csv' : process__source__param__time <- [process, source, sourceSinkTimeParam, time];
 table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
-table data IN 'CSV' 'solve_data/pt_process_sink.csv' : process__sink__param__time <- [process, sink, sourceSinkTimeParam, time];
 table data IN 'CSV' 'input/pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
 table data IN 'CSV' 'input/timeline.csv' : timeline__timestep__duration <- [timeline,timestep,duration];
 
-# Parameters for model data. Timestep values are in solve_data as they might be averaged for the solve
+# Parameters for model data.
 table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_commodity;
 table data IN 'CSV' 'input/pd_commodity.csv' : [commodity, commodityParam, period], pd_commodity;
 table data IN 'CSV' 'input/p_group__process.csv' : [group, process, groupParam], p_group__process;
@@ -472,59 +465,55 @@ table data IN 'CSV' 'input/p_group.csv' : [group, groupParam], p_group;
 table data IN 'CSV' 'input/pd_group.csv' : [group, groupParam, period], pd_group;
 table data IN 'CSV' 'input/p_node.csv' : [node, nodeParam], p_node;
 table data IN 'CSV' 'input/pd_node.csv' : [node, nodeParam, period], pd_node;
-table data IN 'CSV' 'solve_data/pt_node.csv' : [node, nodeParam, time], pt_node;
-table data IN 'CSV' 'solve_data/pt_node_inflow.csv' : [node, time], pt_node_inflow;
 table data IN 'CSV' 'input/p_process_node_constraint_flow_coefficient.csv' : [process, node, constraint], p_process_node_constraint_flow_coefficient;
 table data IN 'CSV' 'input/p_process_constraint_capacity_coefficient.csv' : [process, constraint], p_process_constraint_capacity_coefficient;
 table data IN 'CSV' 'input/p_node_constraint_capacity_coefficient.csv' : [node, constraint], p_node_constraint_capacity_coefficient;
 table data IN 'CSV' 'input/p_node_constraint_state_coefficient.csv' : [node, constraint], p_node_constraint_state_coefficient;
 table data IN 'CSV' 'input/p_process__reserve__upDown__node.csv' : [process, reserve, upDown, node, reserveParam], p_process_reserve_upDown_node;
 table data IN 'CSV' 'input/p_process_sink.csv' : [process, sink, sourceSinkParam], p_process_sink;
-table data IN 'CSV' 'solve_data/pt_process_sink.csv' : [process, sink, sourceSinkTimeParam, time], pt_process_sink;
 table data IN 'CSV' 'input/p_process_sink_coefficient.csv' : [process, sink], p_process_sink_coefficient;
 table data IN 'CSV' 'input/p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
 table data IN 'CSV' 'input/p_process_source_coefficient.csv' : [process, source], p_process_source_coefficient;
-table data IN 'CSV' 'solve_data/pt_process_source.csv' : [process, source, sourceSinkTimeParam, time], pt_process_source;
 table data IN 'CSV' 'input/p_constraint_constant.csv' : [constraint], p_constraint_constant;
 table data IN 'CSV' 'input/p_process.csv' : [process, processParam], p_process;
 table data IN 'CSV' 'input/pd_process.csv' : [process, processParam, period], pd_process;
-table data IN 'CSV' 'solve_data/pt_process.csv' : [process, processParam, time], pt_process;
 table data IN 'CSV' 'input/p_profile.csv' : [profile], p_profile;
-table data IN 'CSV' 'solve_data/pt_profile.csv' : [profile, time], pt_profile;
 table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
-table data IN 'CSV' 'solve_data/pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
 table data IN 'CSV' 'input/timeline_duration_in_years.csv' : [timeline], p_timeline_duration_in_years;
 table data IN 'CSV' 'solve_data/p_discount_years.csv' : [period], p_discount_years~param;
-table data IN 'CSV' 'solve_data/p_years_represented.csv' : period__year <- [period,years_from_solve];
-table data IN 'CSV' 'solve_data/p_years_represented.csv' : [period, years_from_solve], p_years_represented~p_years_represented;
-table data IN 'CSV' 'solve_data/p_years_represented.csv' : [period, years_from_solve], p_years_from_solve~p_years_from_solve;
+table data IN 'CSV' 'solve_data/p_years_represented.csv' : period__year <- [period,years_from_solve], p_years_represented~p_years_represented, p_years_from_solve~p_years_from_solve;
 table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
 table data IN 'CSV' 'input/p_discount_rate.csv' : [model], p_discount_rate;
 table data IN 'CSV' 'input/default_values.csv' : objectClass_paramName_default <-[objectClass, paramName];
 table data IN 'CSV' 'input/default_values.csv' : [objectClass,paramName], default_value;
 
+#Timeseries parameters, Timestep values are in solve_data as they might be averaged for the solve
+table data IN 'CSV' 'solve_data/pt_node.csv' : node__param__time <- [node, nodeParam, time], pt_node~pt_node;
+table data IN 'CSV' 'solve_data/pt_node_inflow.csv' : node__time_inflow <- [node, time], pt_node_inflow~pt_node_inflow;
+table data IN 'CSV' 'solve_data/pt_process.csv' : process__param__time <- [process, processParam, time], pt_process~pt_process;
+table data IN 'CSV' 'solve_data/pt_profile.csv' : profile_param__time <- [profile, time], pt_profile~pt_profile;
+table data IN 'CSV' 'solve_data/pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group~pt_reserve_upDown_group;
+table data IN 'CSV' 'solve_data/pt_process_source.csv' : process__source__param__time <- [process, source, sourceSinkTimeParam, time], pt_process_source~pt_process_source;
+table data IN 'CSV' 'solve_data/pt_process_sink.csv' : process__sink__param__time <- [process, sink, sourceSinkTimeParam, time], pt_process_sink~pt_process_sink;
+
 # Parameters from the solve loop
 table data IN 'CSV' 'solve_data/solve_hole_multiplier.csv' : [solve], p_hole_multiplier;
-table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
-table data IN 'CSV' 'solve_data/steps_in_use.csv' : [period, step], step_duration;
+table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step], step_duration~step_duration;
 table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,step];
 table data IN 'CSV' 'solve_data/first_timesteps.csv' : period__time_first <- [period,step];
 table data IN 'CSV' 'solve_data/last_timesteps.csv' : period__time_last <- [period,step];
 table data IN 'CSV' 'solve_data/last_realized_timestep.csv' : realized_period__time_last <- [period,step];
 table data IN 'CSV' 'solve_data/step_previous.csv' : dtttdt <- [period, time, previous, previous_within_block, previous_period, previous_within_solve];
 table data IN 'CSV' 'solve_data/step_previous.csv' : [period, time], dt_jump~jump;
-table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <- [period];
-table data IN 'CSV' 'solve_data/period_with_history.csv' : [period], p_period_from_solve~param;
+table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <- [period], p_period_from_solve~param;
 table data IN 'CSV' 'solve_data/realized_invest_periods_of_current_solve.csv' : d_realize_invest <- [period];
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
 table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
 table data IN 'CSV' 'solve_data/p_nested_model.csv' : [modelParam], p_nested_model;
 table data IN 'CSV' 'solve_data/realized_dispatch.csv' : dt_realize_dispatch_input <- [period, step];
 table data IN 'CSV' 'solve_data/fix_storage_timesteps.csv' : dt_fix_storage_timesteps <- [period, step];
-table data IN 'CSV' 'solve_data/fix_storage_price.csv' : ndt_fix_storage_price <- [node, period, step] ;
-table data IN 'CSV' 'solve_data/fix_storage_price.csv' : [node, period, step], p_fix_storage_price;
-table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : ndt_fix_storage_quantity <- [node, period, step];
-table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : [node, period, step], p_fix_storage_quantity;
+table data IN 'CSV' 'solve_data/fix_storage_price.csv' : ndt_fix_storage_price <- [node, period, step], p_fix_storage_price~p_fix_storage_price;
+table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : ndt_fix_storage_quantity <- [node, period, step], p_fix_storage_quantity~p_fix_storage_quantity;
 table data IN 'CSV' 'solve_data/timeline_matching_map.csv' : dtt_timeline_matching <- [period, step, upper_step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : dt_complete <- [period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : [period, step], complete_step_duration;
@@ -538,22 +527,14 @@ table data IN 'CSV' 'solve_data/period_first.csv' : period_first <- [period];
 table data IN 'CSV' 'solve_data/period_last.csv' : period_last <- [period];
 table data IN 'CSV' 'solve_data/period_first_of_solve.csv' : period_first_of_solve <- [period];
 
-
 # Stochastic input data 
-table data IN 'CSV' 'solve_data/pbt_node.csv' : node__param__branch__time <- [node, nodeParam, branch, time_start, time];
-table data IN 'CSV' 'solve_data/pbt_node.csv' : [node, nodeParam, branch, time_start, time], pbt_node;
-table data IN 'CSV' 'solve_data/pbt_node_inflow.csv' : node__branch__time_inflow <- [node, branch, time_start, time];
-table data IN 'CSV' 'solve_data/pbt_node_inflow.csv' : [node, branch, time_start, time], pbt_node_inflow;
-table data IN 'CSV' 'solve_data/pbt_process_sink.csv' : process__sink__param__branch__time <- [process, sink, sourceSinkTimeParam, branch, time_start, time];
-table data IN 'CSV' 'solve_data/pbt_process_sink.csv' : [process, sink, sourceSinkTimeParam, branch, time_start, time], pbt_process_sink;
-table data IN 'CSV' 'solve_data/pbt_process_source.csv' : process__source__param__branch__time <-  [process, source, sourceSinkTimeParam, branch, time_start, time];
-table data IN 'CSV' 'solve_data/pbt_process_source.csv' : [process, source, sourceSinkTimeParam, branch, time_start, time], pbt_process_source;
-table data IN 'CSV' 'solve_data/pbt_process.csv' : process__param__branch__time <- [process, processParam, branch, time_start, time];
-table data IN 'CSV' 'solve_data/pbt_process.csv' : [process, processParam, branch, time_start, time], pbt_process;
-table data IN 'CSV' 'solve_data/pbt_profile.csv' : profile__branch__time <- [profile, branch, time_start, time];
-table data IN 'CSV' 'solve_data/pbt_profile.csv' : [profile, branch, time_start, time], pbt_profile;
-table data IN 'CSV' 'solve_data/pbt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__branch__time <- [reserve, upDown, group, reserveParam, branch, time_start, time];
-table data IN 'CSV' 'solve_data/pbt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, branch, time_start, time], pbt_reserve_upDown_group;
+table data IN 'CSV' 'solve_data/pbt_node.csv' : node__param__branch__time <- [node, nodeParam, branch, time_start, time], pbt_node~pbt_node;
+table data IN 'CSV' 'solve_data/pbt_node_inflow.csv' : node__branch__time_inflow <- [node, branch, time_start, time], pbt_node_inflow~pbt_node_inflow;
+table data IN 'CSV' 'solve_data/pbt_process_sink.csv' : process__sink__param__branch__time <- [process, sink, sourceSinkTimeParam, branch, time_start, time], pbt_process_sink~pbt_process_sink;
+table data IN 'CSV' 'solve_data/pbt_process_source.csv' : process__source__param__branch__time <-  [process, source, sourceSinkTimeParam, branch, time_start, time], pbt_process_source~pbt_process_source;
+table data IN 'CSV' 'solve_data/pbt_process.csv' : process__param__branch__time <- [process, processParam, branch, time_start, time], pbt_process~pbt_process;
+table data IN 'CSV' 'solve_data/pbt_profile.csv' : profile__branch__time <- [profile, branch, time_start, time], pbt_profile~pbt_profile;
+table data IN 'CSV' 'solve_data/pbt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__branch__time <- [reserve, upDown, group, reserveParam, branch, time_start, time], pbt_reserve_upDown_group~pbt_reserve_upDown_group;
 
 # After rolling forward the investment model
 table data IN 'CSV' 'solve_data/p_entity_divested.csv' : [entity], p_entity_divested;
