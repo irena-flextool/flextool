@@ -265,8 +265,6 @@ set ndt_fix_storage_quantity dimen 3 within  {node, period_solve, time};
 set n_fix_storage_quantity := setof{(n,d,t) in ndt_fix_storage_quantity}(n);
 set n_fix_storage_price := setof{(n,d,t) in ndt_fix_storage_price}(n);
 set dtt_timeline_matching dimen 3 within {period,time,time};
-set ndtt_fix_storage_quantity_mapped := setof{n in n_fix_storage_quantity, (d, t, t2) in dtt_timeline_matching} (n, d, t, t2);
-set ndtt_fix_storage_price_mapped := setof{n in n_fix_storage_price, (d, t, t2) in dtt_timeline_matching}(n, d, t, t2);
 
 param p_fix_storage_price {node, period_solve, time};
 param p_fix_storage_quantity {node, period_solve, time};
@@ -822,7 +820,7 @@ param pdNode {n in node, param in nodePeriodParam, d in period_with_history} :=
       else if exists{(c, param, db) in node__param__period: (db, d) in period__branch} 1
       then sum{(db, d) in period__branch} pd_node[n, param, db]
 		  else p_node[n, param];
-#t in complete_time_in_use?
+
 param pdtNode {n in node, param in nodeTimeParam, (d, t) in dt} :=
       + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, param, tb, ts, t) in node__param__branch__time} 1 
       && exists{(g,n) in group_node: g in groupStochastic} 1
@@ -838,7 +836,7 @@ param pdtNode {n in node, param in nodeTimeParam, (d, t) in dt} :=
           else if ('node',param) in objectClass_paramName_default
           then default_value['node', param]
           else 0;
-#not complete_time_in_use?
+
 param ptNode_inflow {n in node, t in time} :=
         + if (n, t) in node__time_inflow
 		  then pt_node_inflow[n, t]
@@ -2048,15 +2046,6 @@ s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, 
       * pdtNode[n, 'availability', d, t]
 ;
 
-
-#s.t. storage_state_roll_continue {n in nodeState, (d, t) in period__time_first
-#     : not p_nested_model['solveFirst'] 
-#	 && d in period_first_of_solve } :
-#  + v_state[n, d, t] * p_entity_unitsize[n]
-#  =
-#  + p_roll_continue_state[n]
-#;
-
 s.t. storage_state_start {n in nodeState, (d, t) in period__time_first
      : p_nested_model['solveFirst'] 
 	 && d in period_first 
@@ -2084,16 +2073,16 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
 ;
 
 #Storage state fix quantity for timesteps
-s.t. node_balance_fix_quantity_eq_lower {(n, d, t, t2) in ndtt_fix_storage_quantity_mapped, (d2,d) in period__branch: (d,t) in period__time_last && d in period_last}:
+s.t. node_balance_fix_quantity_eq_lower {n in n_fix_storage_quantity, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last}:
   + v_state[n,d,t]* p_entity_unitsize[n] 
   = 
-  + p_fix_storage_quantity[n,d2,t2];
+  + sum{(d, t, t2) in dtt_timeline_matching} p_fix_storage_quantity[n,d2,t2];
 
 #Storage state fix price for timesteps
-s.t. node_balance_fix_price_eq_lower {(n, d, t, t2) in ndtt_fix_storage_price_mapped, (d2,d) in period__branch: (d,t) in period__time_last && d in period_last}:
+s.t. node_balance_fix_price_eq_lower {n in n_fix_storage_price, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last}:
   + v_state[n,d,t]* pdNode[n, 'storage_state_reference_price', d]* p_entity_unitsize[n] 
   = 
-  + p_fix_storage_price[n,d2,t2];
+  + sum{(d, t, t2) in dtt_timeline_matching} p_fix_storage_price[n,d2,t2];
 
 s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in period__time_last
      : d in period_last
@@ -2103,8 +2092,8 @@ s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in peri
    && (n, 'bind_within_solve') not in node__storage_binding_method
    && (n, 'bind_within_period') not in node__storage_binding_method
    && (n, 'bind_within_timeblock') not in node__storage_binding_method
-   && sum{(n, d, t, t2) in ndtt_fix_storage_price_mapped} 1 = 0
-   && sum{(n, d, t, t2) in ndtt_fix_storage_quantity_mapped} 1 = 0)} :
+   && sum{(d, t, t2) in dtt_timeline_matching: n in n_fix_storage_price} 1 = 0
+   && sum{(d, t, t2) in dtt_timeline_matching: n in n_fix_storage_quantity} 1 = 0)} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
   + pdtNode[n,'storage_state_reference_value', d, t]
@@ -3076,14 +3065,14 @@ param r_connection_to_right_node__d{c in process_connection, d in d_realized_per
   + sum {(d, t) in dt_realize_dispatch} r_connection_to_right_node__dt[c, d, t] * step_duration[d, t]
 ;
 
-param r_nodeState_change_dt{n in nodeState, (d, t) in dt} := sum {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} (
+param r_nodeState_change_dt{n in nodeState, (d, t) in dt_realize_dispatch} := sum {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} (
       + (if (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n])
 );
 param r_nodeState_change_d{n in nodeState, d in d_realized_period} := sum {(d, t) in dt_realize_dispatch} r_nodeState_change_dt[n, d, t];
-param r_selfDischargeLoss_dt{n in nodeSelfDischarge, (d, t) in dt} := v_state[n, d, t] * pdtNode[n, 'self_discharge_loss', d, t] * p_entity_unitsize[n];
+param r_selfDischargeLoss_dt{n in nodeSelfDischarge, (d, t) in dt_realize_dispatch} := v_state[n, d, t] * pdtNode[n, 'self_discharge_loss', d, t] * p_entity_unitsize[n];
 param r_selfDischargeLoss_d{n in nodeSelfDischarge, d in d_realized_period} := sum{(d, t) in dt_realize_dispatch} r_selfDischargeLoss_dt[n, d, t] * step_duration[d, t];
 
 param r_cost_commodity_dt{(c, n) in commodity_node, (d, t) in dt} := 
@@ -3114,13 +3103,13 @@ param r_process_emissions_co2_dt{(p, c, n) in process__commodity__node_co2, (d, 
 ;	  
 
 param r_process_emissions_co2_d{(p, c, n) in process__commodity__node_co2, d in d_realized_period} :=
-  + sum{t in time_in_use : (d, t) in dt_realize_dispatch} ( r_process_emissions_co2_dt[p, c, n, d, t] ) / complete_period_share_of_year[d];
+  + sum{(d, t) in dt_realize_dispatch} ( r_process_emissions_co2_dt[p, c, n, d, t] ) / complete_period_share_of_year[d];
 
 param r_emissions_co2_dt{(c, n) in commodity_node_co2, (d, t) in dt} :=
   + sum{(p, c, n) in process__commodity__node_co2} r_process_emissions_co2_dt[p, c, n, d, t];
 
 param r_emissions_co2_d{(c, n) in commodity_node_co2, d in d_realized_period} :=
-  + sum{t in time_in_use : (d, t) in dt_realize_dispatch} ( r_emissions_co2_dt[c, n, d, t] ) / complete_period_share_of_year[d];
+  + sum{(d, t) in dt_realize_dispatch} ( r_emissions_co2_dt[c, n, d, t] ) / complete_period_share_of_year[d];
 
 param r_cost_co2_dt{(g, c, n, d, t) in gcndt_co2_price} := 
   + r_emissions_co2_dt[c, n, d, t] 
@@ -3380,7 +3369,7 @@ param fn_fix_quantity_nodeState__dt symbolic := "solve_data/fix_storage_quantity
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'period,step,node,p_fix_storage_quantity\n' > fn_fix_quantity_nodeState__dt;
   }
-for {(d,t) in dt_fix_storage_timesteps : (d,t) in period__time_first} #clear also after before each time values are outputted, to avoid duplicates
+for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear also after before each time values are outputted, to avoid duplicates
   { printf 'period,step,node,p_fix_storage_quantity\n' > fn_fix_quantity_nodeState__dt;
   }
 for {(n,'fix_quantity') in node__storage_nested_fix_method, (d, t) in dt_fix_storage_timesteps}
@@ -3393,7 +3382,7 @@ param fn_fix_price_nodeState__dt symbolic := "solve_data/fix_storage_price.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'period,step,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
   }
-for {(d,t) in dt_fix_storage_timesteps : (d,t) in period__time_first} #clear also after before each time values are outputted, to avoid duplicates
+for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear also after before each time values are outputted, to avoid duplicates
   { printf 'period,step,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
   }
 for {(n,'fix_price') in node__storage_nested_fix_method, (d, t) in dt_fix_storage_timesteps}
@@ -3404,7 +3393,7 @@ for {(n,'fix_price') in node__storage_nested_fix_method, (d, t) in dt_fix_storag
 printf 'Write node state last timestep ..\n';
 param fn_p_roll_continue_state symbolic := "solve_data/p_roll_continue_state.csv";
 printf 'node,p_roll_continue_state\n' > fn_p_roll_continue_state;
-for {n in nodeState, (d, t) in dt_realize_dispatch : (d, t) in realized_period__time_last && (d,d) in period__branch}
+for {n in nodeState, (d, t) in realized_period__time_last: (d,d) in period__branch && (d, t) in dt_realize_dispatch}
   {
     printf '%s,%.8g\n', n, v_state[n, d, t].val* p_entity_unitsize[n]  >> fn_p_roll_continue_state;
   }
@@ -4978,6 +4967,9 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 param w_unit_test := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv - w_ramp_room - w_inertia - w_slacks;
 display w_unit_test;
 
+
+param w_full := gmtime()-datetime0;
+display w_full;
 #display period_first;
 #display period;
 #display period__time_first;
