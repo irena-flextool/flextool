@@ -2,7 +2,7 @@ import json
 import argparse
 import os
 import sys
-from spinedb_api import import_data, DatabaseMapping, from_database
+from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError
 
 def migrate_database(database_path):
 
@@ -107,18 +107,27 @@ def remove_parameters_manual(db,obj_param_names):
         if param != None:
             id_list.append(param.id)
 
-    db.remove_items(**{'parameter_definition': id_list})
-    db.commit_session("Removed parameters")
+    try:
+        db.remove_items(**{'parameter_definition': id_list})
+        db.commit_session("Removed parameters")
+    except SpineDBAPIError:
+        print("This removal has been done before, continuing")
     return 0
 
 def add_parameters_manual(db,new_parameters):
     (num,log) = import_data(db, object_parameters = new_parameters)
-    db.commit_session("Added new parameters")
+    try:
+        db.commit_session("Added new parameters")
+    except SpineDBAPIError:
+        print("These parameters have been added before, continuing") 
     return 0
 
 def add_value_list_manual(db, new_value_lists):
     (num,log) = import_data(db,parameter_value_lists = new_value_lists)
-    db.commit_session("Added new parameter value lists")
+    try:
+        db.commit_session("Added new parameter value lists")
+    except SpineDBAPIError:
+        print("These value lists have been added before, continuing")
     return 0
 
 def add_new_parameters(db, filepath):
@@ -134,8 +143,10 @@ def add_new_parameters(db, filepath):
     #With objective parameters, no duplicates are created. These will replace the old ones or create new. There will always be imports.
     (num,log) = import_data(db, object_parameters = template["object_parameters"])
 
-    db.commit_session("Added output node flows")
-
+    try:
+        db.commit_session("Added new parameters")
+    except SpineDBAPIError:
+        print("These parameters have been added before, continuing") 
     return 0
 
 def change_optional_output_type(db, filepath):
