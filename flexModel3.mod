@@ -1617,7 +1617,7 @@ param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
 minimize total_cost:
 ( + sum {(c, n) in commodity_node, (d, t) in dt}
-  p_branch_weight[d] *
+    + p_branch_weight[d] *
 	( pdCommodity[c, 'price', d]
 	  * (
 		  # Buying a commodity (increases the objective function)
@@ -1643,7 +1643,8 @@ minimize total_cost:
 	  * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	)
   + sum {(g, c, n, d, t) in gcndt_co2_price} 
-	( p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
+	  + p_branch_weight[d] *
+  ( p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
 	  * (
 		  # Paying for CO2 (increases the objective function)
 		  + sum {(p, n, sink) in process_source_sink_noEff } 
@@ -1667,22 +1668,26 @@ minimize total_cost:
 	    )		
 	  * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	)
-  + sum {(p, d, t) in pdt_online_linear} 
+  + sum {(p, d, t) in pdt_online_linear}
+    + p_branch_weight[d] * 
       ( v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d] 
 	      * p_entity_unitsize[p] 
 		  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	  )
-  + sum {(p, d, t) in pdt_online_integer} 
+  + sum {(p, d, t) in pdt_online_integer}
+    + p_branch_weight[d] * 
       ( v_startup_integer[p, d, t] * pdProcess[p, 'startup_cost', d] 
 	      * p_entity_unitsize[p] 
 		  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	  )
   + sum {(p, source, sink, d, t) in pssdt_varCost_noEff}
+    + p_branch_weight[d] *
     ( + pdtProcess__source__sink__dt_varCost[p, source, sink, d, t]
 	    * v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
         * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	)
   + sum {(p, source, sink, d, t) in pssdt_varCost_eff_unit_source}
+    + p_branch_weight[d] *
     (  
       - pdtProcess_source[p, source, 'other_operational_cost', d, t]
 	    *  
@@ -1700,48 +1705,55 @@ minimize total_cost:
         * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	)
   + sum {(p, source, sink, d, t) in pssdt_varCost_eff_unit_sink}
+    + p_branch_weight[d] *
     ( + pdtProcess_sink[p, sink, 'other_operational_cost', d, t]
 	    * v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
         * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	)
   + sum {(p, source, sink, d, t) in pssdt_varCost_eff_connection}
+    + p_branch_weight[d] *
     ( + pdtProcess[p, 'other_operational_cost', d, t]
  	   * v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
        * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	)
 #  + sum {(p, source, sink, m) in process__source__sink__ramp_method, (d, t) in dt : m in ramp_cost_method}
 #    ( + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p] * pProcess_source_sink[p, source, sink, 'ramp_cost'] ) * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
-  + sum {g in groupInertia, (d, t) in dt} vq_inertia[g, d, t] * pdGroup[g, 'inertia_limit', d]
+  + sum {g in groupInertia, (d, t) in dt} p_branch_weight[d] * vq_inertia[g, d, t] * pdGroup[g, 'inertia_limit', d]
                                             * pdGroup[g, 'penalty_inertia', d] * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
-  + sum {g in groupNonSync, (d, t) in dt} vq_non_synchronous[g, d, t] * group_capacity_for_scaling[g, d]
+  + sum {g in groupNonSync, (d, t) in dt} p_branch_weight[d] * vq_non_synchronous[g, d, t] * group_capacity_for_scaling[g, d]
                                             * pdGroup[g, 'penalty_non_synchronous', d]  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
-  + sum {n in nodeBalance, (d, t) in dt} vq_state_up[n, d, t] * node_capacity_for_scaling[n, d]
+  + sum {n in nodeBalance, (d, t) in dt} p_branch_weight[d] * vq_state_up[n, d, t] * node_capacity_for_scaling[n, d]
                                             * pdtNode[n, 'penalty_up', d, t]  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
-  + sum {n in nodeBalance, (d, t) in dt} vq_state_down[n, d, t] * node_capacity_for_scaling[n, d]
+  + sum {n in nodeBalance, (d, t) in dt} p_branch_weight[d] * vq_state_down[n, d, t] * node_capacity_for_scaling[n, d]
                                             * pdtNode[n, 'penalty_down', d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
-  + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} vq_reserve[r, ud, ng, d, t]  * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
+  + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} p_branch_weight[d] * vq_reserve[r, ud, ng, d, t]  * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
                                             * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 
   - sum {n in nodeState, (d, t) in period__time_last : (n, 'use_reference_price') in node__storage_solve_horizon_method && d in period_last}
-      + pdNode[n, 'storage_state_reference_price', d]
+    + p_branch_weight[d]
+      * pdNode[n, 'storage_state_reference_price', d]
         * v_state[n, d, t] * p_entity_unitsize[n]
 		* step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
   + sum {e in entity, d in period_in_use}  # This is constant term and will be dropped by the solver. Here for completeness.
-    + p_entity_all_existing[e, d]
+    + p_branch_weight[d]
+      * p_entity_all_existing[e, d]
       * ( + (if e in node then pdNode[e, 'fixed_cost', d] * 1000)
 	      + (if e in process then pdProcess[e, 'fixed_cost', d] * 1000)
 		)
 	  * p_discount_factor_operations_yearly[d]
   + sum {(e, d) in ed_invest} 
-    + v_invest[e, d]
+    + p_branch_weight[d]
+      * v_invest[e, d]
       * p_entity_unitsize[e]
       * ed_entity_annual_discounted[e, d]
   - sum {(e, d) in ed_divest} 
-    + v_divest[e, d]
+    + p_branch_weight[d]
+      * v_divest[e, d]
       * p_entity_unitsize[e]
       * ed_entity_annual_divest_discounted[e, d]
   + sum {g in groupCapacityMargin, d in period_invest}
-    + vq_capacity_margin[g, d] * group_capacity_for_scaling[g, d]
+    + p_branch_weight[d]
+    * vq_capacity_margin[g, d] * group_capacity_for_scaling[g, d]
 	  * pdGroup[g, 'penalty_capacity_margin', d]
 	  * p_discount_factor_operations_yearly[d]
 ) * scale_the_objective
