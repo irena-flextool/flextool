@@ -445,6 +445,8 @@ The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* 
 - `is_active`: yes 
 - Create relations `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*nodeA*.
 
+![Hydro reservoir for pump](./hydro_reservoir_for_pump.PNG)
+
 Next create the pump_storage. This is the downstream storage from the hydro plant. Again it should have the parameters as the reservoir:
 
 - `is_active`: yes
@@ -518,8 +520,8 @@ We still have to make the unit to consume electricity even though it does not af
 
 And setting parameters for `unit_inputNode`:
 
-- (hydro_pump | nodeA) `constraint_flow_coefficient` Map: plant_storage_nodeA_split , 2
-- (hydro_pump | pump_storage) `constraint_flow_coefficient` Map: plant_storage_nodeA_split , -1
+- (hydro_pump | nodeA) `constraint_flow_coefficient` Map: *pump_storage_nodeA_fix* , 2
+- (hydro_pump | pump_storage) `constraint_flow_coefficient` Map: *pump_storage_nodeA_fix* , -1
 
 ```
 2 * flow_from_nodeA - flow_from_pump_storage = 0
