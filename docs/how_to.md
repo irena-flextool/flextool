@@ -309,11 +309,8 @@ Again, the negative value can be turned positive by arranging it to the right si
 ## How to create a hydro reservoir
 **hydro_reservoir.sq**
 
-~~~
-Note! This example concerns a single reservoir hydro power plant. 
-If the river system has multiple plants in a series and their operations are tied, 
-then multiple nodes and units are needed to represent the system.
-~~~
+### Simple hydro reseroir
+***(scenario: hydro)***
 
 The objective is to create a hydro power plant with a reservoir and connect it to a demand node.
 
@@ -325,7 +322,109 @@ Hydro reservoir power plant requires three components:
 
 It can be useful to create a new alternative for these components to be able to include and exclude them from the scenarios.
 
-The reservoir is made with a node as only nodes can have storage in FlexTool. The incoming water can be represented by the inflow parameter. It can be a constant or a time variant. The unit of the inflow should be the power that can be created from the quantity of the incoming water at maximum efficiency [MW]. In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
+The reservoir is made with a node as only nodes can have storage in FlexTool. The incoming water can be represented by the inflow parameter. It can be a constant or a time variant. 
+
+There are two ways to handle the water to electricity coefficient. In this example we store the water as volume and convert it to electricity in the unit. 
+This option is better when modelling river systems with multiple reservoirs. Note that in the results, the state of the reservoir is then as volume.
+For the other option of converting the volume to potential energy in the reservoir, look at the start of the 'How to create a hydro pump storage'.
+
+In this implementation of reservoir hydro power, there is an option to spill water from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled water can be seen from the results as the 'downward slack' of the node.
+
+The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
+
+- `is_active`: yes
+- `has_balance`: yes
+- `has_storage`: yes
+- `inflow`: Mapping of the incoming water as volume [m^3/h]
+- `existing`: The maximum size of the reservoir [m^3]
+- `penalty_up`: a larger number than with the demand node to not allow creating extra water if not enough electricity is being created
+- `penalty_down`: 0 or a large number (spilling or not)
+- a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeblock* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*, which will pick the storage level at the end of each solve from the time series provided as a reference (*storage_state_reference_value*).
+
+The `unit` is connected to the *reservoir* `node` and the output `node` *demand_node* (unit_c and unit_node_c in excel):
+
+- The `efficiency` of the plant is the coefficient of transfering an unit of volume to an unit of electricity (using piecewise linear efficiency is naturally possible), here we use 0.57. 
+- Set `existing` capacity [MW]
+- `is_active`: yes 
+- Create relations `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*demand_node*.
+
+![Hydro reservoir](./hydro_reservoir.PNG)
+
+### River system with multiple reservoirs
+**(scenario: hydro_with_downriver_spill_unit)**
+**(scenario: river_system)**
+
+In this example, we create a hydro system with multiple reseroirs and downriver water demand. Here the water in the reservoir is represented as volume and the conversion to electricity is done in the units.
+
+The reservoir and demand node are the same as above. The `penalty_down` of the reservoir now needs to be the other than 0 as the spilled water needs to flow to the downriver node
+
+Let's start with the downriver demand. 
+
+The downriver node represents the requirement to pass a minimum amount of water through the plant to not dry out the river. The downriver node needs:
+
+- `is_active`: yes
+- `has_balance`: yes
+- `inflow`: Minimum requirement of water flow as the potential power (Map or constant)[m^3/h]
+- `penalty_up`: a large number to prefer not creating energy from nowhere
+- `penalty_down`: 0, this makes the requirement to be at least the amount of water as the demand, not the equal to it
+
+The hydro plant unit now also needs the relation `unit_outputNode`: *hydro_plant*|*downriver* . 
+
+The hydro plant now needs to both pass the water to downriver and the electricity to the demand node. Also, it needs to handle the water to electricity transformation as the reservoir now has volume not energy. The user needs to get the water to electricity coefficient ie. how much energy does one unit of volume create when passing the unit in this example the coefficient is 0.57. As the unit creates both the water and the electricity, the efficiency now is the sum of the two. 
+
+- `efficiency`: 1 + coefficient
+
+Now the unit creates enough stuff to output, but the model can still choose how it will distribute it between the two output nodes. We still need to fix the ratio of output flows. This is done with an user constraint. Here we call this constraint *hydro_split*. The constraint needs parameters:
+
+- `is_active`: yes
+- `sense`: equal
+- `constant`: 0
+
+As we are fixing the output flows, the we need to add the flows with their coefficients to this constraint. This is done with the unit_outputNode parameter `constraint_flow_coefficient`:
+
+- `unit_outputNode`(*hydro_plant*|*downriver*): `constraint_flow_coefficient`: Map (hydro_split| 0.57)  
+- `unit_outputNode`(*hydro_plant*|*demand_node*): `constraint_flow_coefficient`: Map (hydro_split| -1)
+
+These create the constraint: 
+```
+-flow_to_demand_node + 0.57 flow_to_downriver = 0
+```
+
+The capacity of an unit limits both outputs. Here the flow to downriver is larger than to the demand node. The capacity of the unit should be the electrical capacity divided by the water to electricity coefficient. With the electrical capacity of 500MW and water to elecricity coefficient of 0.57 the capacity of the unit becomes 878. Now at full power, 878 units of water flow to downriver and 500MW of electricity flow to the demand node.
+
+To add a spill option to the reservoir we need to create another unit. This is because just making extra water disappear with the `penalty_down`: 0, will not transfer this water to the downriver node to fulfil its needs. 
+This spill unit has the relations:
+- `unit_inputNode` (*spill_unit*|*reservoir*)
+- `unit_outputNode` (*spill_unit*|*downriver*)
+
+And parameters:
+
+- `is_active`: yes
+- `efficiency`: 1
+- `existing`: A large enough number to not be a limit
+
+![Hydro reservoir with downriver](./hydro_reservoir_with_downriver.PNG)
+
+The database also includes an example of a river system with two additional reservoirs and plants. Both of them flow to the reservoir already made in this how to. These two are created the exact same way as above, but with just different values and the relation `unit_outputNode`: (hydro_plant_2| reservoir) and `unit_outputNode`: (hydro_plant_3| reservoir).
+
+In principle you can create as large river systems as you want, but each reservoir adds extra computational burden. Think about the possibility to combine the reservoirs and plants in the system and what information you lose with this approximation.
+
+![River system](./hydro_river_system.PNG)
+
+## How to create a hydro pump storage
+**(hydro_with_pump.sqlite)**
+
+For a hydro pump storage one needs the following components:
+
+- Demand `node` 
+- hydro_plant `unit` with 
+- storage `node`, 
+- hydro_pump `unit` with 
+- pump storage `node` 
+- a source for external energy (pumped storage plant will lose energy due to charging losses). Wind power plant will be used as a source for external energy.
+
+There are two ways to handle the water to electricity coefficient. Here, we convert the reservoir capacity and inflow to potential energy. 
+The unit of the inflow should be the power that can be created from the quantity of the incoming water at maximum efficiency [MW]. In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
 In this implementation of reservoir hydro power, there is an option to spill water (energy) from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled energy can be seen from the results as the 'downward slack' of the node.
 
 The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
@@ -346,23 +445,7 @@ The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* 
 - `is_active`: yes 
 - Create relations `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*nodeA*.
 
-![Hydro reservoir](./hydro_reservoir.PNG)
-
-## How to create a hydro pump storage
-**(hydro_with_pump.sqlite)**
-
-For a hydro pump storage one needs the following components:
-
-- Demand `node` 
-- hydro_plant `unit` with 
-- storage `node`, 
-- hydro_pump `unit` with 
-- pump storage `node` 
-- a source for external energy (pumped storage plant will lose energy due to charging losses)
-
-For the demand node and the hydro plant we will use the same components as in the previous hydro_reservoir example. With the difference that both demand and hydro_plant capacities are doubled. Wind power plant will be used as a source for external energy.
-
-First create the pump_storage. This is the downstream storage from the hydro plant. Again it should have the parameters as the reservoir:
+Next create the pump_storage. This is the downstream storage from the hydro plant. Again it should have the parameters as the reservoir:
 
 - `is_active`: yes
 - `has_balance`: yes
@@ -371,7 +454,7 @@ First create the pump_storage. This is the downstream storage from the hydro pla
 - `penalty_up`: a large number to avoid creating energy from nowhere
 - `penalty_down`: 0 
 
-In this example database, we have both a closed system and a river system. The difference is that in the closed system the inflow is zero in both reservoir and pump_storage. In river system we have the incoming water for the reservoir as in the reservoir example. In the downstream pump storage we implement a outflow as the negative inflow representing the minimum amount of water that has to flow out of the system at each timestep to not dry out the river. The `penalty_down` is set as 0 to allow it let more water go when it needs to, otherwise the storages will keep filling up if the incoming water is larger than the minimum outgoing water.
+In this example database, we have both a closed system and a river system. The difference is that in the closed system the inflow is zero in both reservoir and pump_storage. In river system we have the incoming water for the reservoir as in the reservoir example. In the downstream pump storage, we implement an outflow as the negative inflow representing the minimum amount of water that has to flow out of the system at each timestep to not dry out the river. The `penalty_down` is set as 0 to allow it let more water go when it needs to, otherwise the storages will keep filling up if the incoming water is larger than the minimum outgoing water.
 
 The storage level fixes should be the same in both storages (reservoir and pump storage). Here:
 
