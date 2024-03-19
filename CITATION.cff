@@ -1,0 +1,29 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: IRENA FlexTool
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Juha
+    family-names: Kiviluoma
+    email: juha.kiviluoma@vtt.fi
+    affiliation: VTT
+    orcid: 'https://orcid.org/0000-0002-1299-9056'
+  - name: International Renewable Energy Agency (IRENA)
+    website: 'https://www.irena.org/'
+repository-code: 'https://github.com/irena-flextool/flextool'
+url: 'https://www.irena.org/Energy-Transition/Planning/Flextool'
+abstract: >-
+  IRENA FlexTool is an energy and power systems model for
+  understanding the role of variable power generation in
+  future energy systems.
+keywords:
+  - Energy
+  - Electricity
+  - Modelling-framework
+  - Spine-Toolbox
+license: GPL-3.0
