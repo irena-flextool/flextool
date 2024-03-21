@@ -2252,7 +2252,7 @@ s.t. minToSink {(p, source, sink) in process__source__sinkIsNode_not2way1var, (d
 
 # Force source flows from 1-way processes with more than 1 source to be at least 0 (conversion equation does not do it)
 s.t. maxFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source, (d, t) in dt : p_process_source_coefficient[p, source]} :
-  + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
+  + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] * p_process_source_coefficient[p, source] 
   <=
   + ( if p not in process_online then
       + ( + p_entity_all_existing[p, d]
@@ -2260,27 +2260,24 @@ s.t. maxFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSink
           - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	    )	
 	    * pdtProcess[p, 'availability', d, t]
-		* p_process_source_coefficient[p, source] 
 	)
   + ( if p in process_online_linear then
       + v_online_linear[p, d, t]
 		* p_entity_unitsize[p]
         * pdtProcess[p, 'availability', d, t]
-		* p_process_source_coefficient[p, source] 
 	)
   + ( if p in process_online_integer then
       + v_online_integer[p, d, t]
 		* p_entity_unitsize[p]
         * pdtProcess[p, 'availability', d, t]
-		* p_process_source_coefficient[p, source] 
     ) 
 ;
 
 s.t. minFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source, (d, t) in dt : p_process_source_coefficient[p, source]} :
-  + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
+  + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] * p_process_source_coefficient[p, source]
   >=
-  + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] * p_process_source_coefficient[p, source] else 0)
-  + (if p in process_online_integer then v_online_integer[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] * p_process_source_coefficient[p, source] else 0)
+  + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] else 0)
+  + (if p in process_online_integer then v_online_integer[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] else 0)
 ;
   
 # Special equation to limit the 1variable connection on the negative transfer
@@ -3370,7 +3367,7 @@ param fn_entity_divested symbolic := "solve_data/p_entity_divested.csv";
 printf 'entity,p_entity_divested\n' > fn_entity_divested;
 for {e in entityDivest} 
   {
-    printf '%s,%.8g\n', e, 
+    printf '%s,%.12g\n', e, 
 	  + (if not p_model['solveFirst'] then p_entity_divested[e] else 0)
 	  + sum {(e, d_divest) in ed_divest} v_divest[e, d_divest].val * p_entity_unitsize[e]
 	>> fn_entity_divested;
@@ -3386,7 +3383,7 @@ for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear als
   }
 for {(n,'fix_quantity') in node__storage_nested_fix_method, (d, t) in dt_fix_storage_timesteps}
   {
-    printf '%s,%s,%s,%.8g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]>> fn_fix_quantity_nodeState__dt;
+    printf '%s,%s,%s,%.12g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]>> fn_fix_quantity_nodeState__dt;
   }
 
 printf 'Write node state price for fixed timesteps ..\n';
@@ -3399,7 +3396,7 @@ for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear als
   }
 for {(n,'fix_price') in node__storage_nested_fix_method, (d, t) in dt_fix_storage_timesteps}
   {
-    printf '%s,%s,%s,%.8g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]*pdNode[n, 'storage_state_reference_price', d]>> fn_fix_price_nodeState__dt;
+    printf '%s,%s,%s,%.12g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]*pdNode[n, 'storage_state_reference_price', d]>> fn_fix_price_nodeState__dt;
   }
 
 printf 'Write node state last timestep ..\n';
@@ -3407,7 +3404,7 @@ param fn_p_roll_continue_state symbolic := "solve_data/p_roll_continue_state.csv
 printf 'node,p_roll_continue_state\n' > fn_p_roll_continue_state;
 for {n in nodeState, (d, t) in realized_period__time_last: (d,d) in period__branch && (d, t) in dt_realize_dispatch}
   {
-    printf '%s,%.8g\n', n, v_state[n, d, t].val* p_entity_unitsize[n]  >> fn_p_roll_continue_state;
+    printf '%s,%.12g\n', n, v_state[n, d, t].val* p_entity_unitsize[n]  >> fn_p_roll_continue_state;
   }
 
 printf 'Write unit capacity results...\n';
