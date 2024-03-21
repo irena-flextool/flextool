@@ -1551,7 +1551,16 @@ class FlexToolRunner:
             branch_start_time_lists[solve] = None
             for period, active_time in active_time_list.items():
                 first_step = (period, active_time[0][0])
-                break            
+                break
+
+            #check that the start times of the solves can be found from the stochastic_branches parameter
+            found_start = False
+            for row in info:
+                if first_step[1] == row[2]:
+                    found_start = True
+            if found_start == False and len(info) != 0:
+                logging.error("Start time of the solve cannot be found from the stochastic_branches parameter. Check that rolling_jump matches with the branch starts")
+                exit(-1)
             for period, active_time in active_time_list.items():
                 if not branched:
                     period__branch_lists[solve].append((period, period))
@@ -1861,7 +1870,7 @@ def main():
             runner.write_empty_investment_file()
             runner.write_empty_storage_fix_file()
             runner.write_headers_for_empty_output_files('output/costs_discounted.csv', 'param_costs,costs_discounted')
-        exit_status = runner.model_run(solve)
+        exit_status = runner.model_run(complete_solve[solve])
         if exit_status == 0:
             logging.info('Success!')
         else:
