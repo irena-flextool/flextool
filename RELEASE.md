@@ -1,3 +1,76 @@
+## Release 3.3.0 (__.3.2024)
+**Bug fixes**
+
+-	Investments: maxState to only sum over the investments in this node, not all the nodes
+-	Ramp constraint now correctly calculates the investments done in previous periods
+-	Min and Max Invest/Divest constraints to only affect investment periods
+-	Efficiency works with profile units
+-	Allow upward and downward slacks to be more than the inflow
+-	Potential VRE generation now includes efficiency and availability
+-	Non-sync group constraint now excludes the flows inside the group
+-	Two-way MIP connection to allow only one direction at a time
+-	Connection variable cost to the objective function
+-	Allow investing with just `invest_periods` without `realized_periods`
+- unit_inputNode: `coefficient` applied correctly to units with multiple inputs 
+
+**New features**
+
+- Two-stage stochastic modelling of future uncertainty
+-	Better infeasibility and required parameter checks to inform the user what is wrong with the model
+-	Small changes to some result data parameters
+-	Added availability (constant /timeseries) parameter for entities
+-	Several outputs to be optional to hasten the data transfer.
+-	Added group flow output parameter `output_aggregate_outputs` to give the flow of the desired nodes in a grouped format
+-	Option for loss of load sharing `share_loss_of_load` between nodes in a group to better describe the system where loss of load is present
+-	Button to open the summary file to the workflow
+-	Database with ready time settings for the users to start with *time_settings_only.sqlite*
+-	C02 max total costraint
+-	Default values for: 
+  
+  -	Penalty values
+  -	Efficiency
+  -	Constraint constant
+  -	Reserve reliability
+
+**Documentation**
+
+-	Introduction
+-	New better Tutorial
+-	Installation / update instructions
+-	Theory slides
+-	How to section to guide on making specific parts of the model
+
+Building parts of the model:
+
+-	How to create basic temporal structures for your model
+-	How to create a PV, wind or run-of-river hydro power plant
+-	How to connect nodes in the same energy network
+-	How to set the demand in a node
+-	How to add a storage unit (battery)
+-	How to make investments (storage/unit)
+-	How to create combined heat and power (CHP)
+-	How to create a hydro reservoir
+-	How to create a hydro pump storage
+-	How to add a reserve
+-	How to add a minimum load, start-up and ramp
+-	How to add CO2 emissions, costs and limits
+-	How to create a non-synchronous limit
+-	How to see the VRE curtailment and VRE share results for a node
+
+Setting different solves:
+
+-	How to run solves in a sequence (investment + dispatch)
+-	How to create a multi-year model
+-	How to use stochastics (dealing with uncertainty of the future)
+
+General:
+
+-	How to use CPLEX as the solver
+-	How to create aggregate outputs
+-	How to enable/disable outputs
+-	How to make the Flextool run faster
+
+
 ## Release 3.2.0 (23.8.2023)
 **Bug fixes**
 - Storage state, unit flows and ramps were not properly limited in multi-period investment models.
