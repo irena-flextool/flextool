@@ -30,9 +30,14 @@ set solve_period '(solve, d) - Time periods in the solves to extract periods tha
 set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
 set solve_current 'current solve name' dimen 1;
 set period 'd - Time periods in the current solve' := setof {(d, t) in period_time} (d);
-set period_first := {d in period : sum{d2 in period : d2 <= d} 1 = 1};
-set period_last  := {d in period : sum{d2 in period : d2 <= d} 1 = card(period)};
-set year 'y - Years for discount calculations' dimen 1;
+set period_first dimen 1 within period;
+set period_last dimen 1 within period;
+set branch_all dimen 1;
+set time_branch_all dimen 1;
+set period__branch dimen 2 within {period, period};
+set branch := setof{(d,b) in period__branch}(b);
+set period__year dimen 2;
+set year 'y - Years for discount calculations' := setof{(d, y) in period__year}(y);
 set timeline__timestep__duration dimen 3;
 set time 't - Time steps in the current timelines' := setof {(tl, t, duration) in timeline__timestep__duration} (t); 
 set timeblockset__timeline dimen 2;
@@ -107,7 +112,7 @@ set period_node 'picking up periods from node data' := setof {(n, param, d) in n
 set period_commodity 'picking up periods from commodity data' := setof {(n, param, d) in commodity__param__period} (d);
 set period_process 'picking up periods from process data' := setof {(n, param, d) in process__param__period} (d);
 
-set periodAll 'd - Time periods in data (including those currently in use)' := period_group union period_node union period_commodity union period_process union period_solve;
+set periodAll 'd - Time periods in data (including those currently in use)' := period_group union period_node union period_commodity union period_process union period_solve union branch;
 
 
 param p_group {g in group, groupParam} default 0;
@@ -242,9 +247,10 @@ set period_with_history dimen 1 within periodAll;
 param p_period_from_solve{period_with_history};
 set time_in_use := setof {(d, t) in dt} (t);
 set period_in_use := setof {(d, t) in dt} (d);
-set period_first_of_solve := {d in period_in_use : sum{d2 in period_in_use : d2 <= d} 1 = 1};
+set period_first_of_solve dimen 1 within period;
 
-set dt_realize_dispatch dimen 2 within period_time;
+set dt_realize_dispatch_input dimen 2 within period_time;
+set dt_realize_dispatch := if 'output_horizon' in enable_optional_outputs then dt else dt_realize_dispatch_input;
 set d_realized_period := setof {(d, t) in dt_realize_dispatch} (d);
 set realized_period__time_last dimen 2 within period_time;
 #dt_complete is the timesteps of the whole rolling_window set, not just single roll. For single_solve it is the same as dt
@@ -259,8 +265,6 @@ set ndt_fix_storage_quantity dimen 3 within  {node, period_solve, time};
 set n_fix_storage_quantity := setof{(n,d,t) in ndt_fix_storage_quantity}(n);
 set n_fix_storage_price := setof{(n,d,t) in ndt_fix_storage_price}(n);
 set dtt_timeline_matching dimen 3 within {period,time,time};
-set ndtt_fix_storage_quantity_mapped := setof{n in n_fix_storage_quantity, (d, t, t2) in dtt_timeline_matching} (n, d, t, t2);
-set ndtt_fix_storage_price_mapped := setof{n in n_fix_storage_price, (d, t, t2) in dtt_timeline_matching}(n, d, t, t2);
 
 param p_fix_storage_price {node, period_solve, time};
 param p_fix_storage_quantity {node, period_solve, time};
@@ -332,7 +336,6 @@ param step_duration{(d, t) in dt};
 param p_hole_multiplier {solve_current} default 1;
 
 param p_timeline_duration_in_years{timeline};
-set period__year dimen 2 within {period, year};
 param p_years_represented{d in period, y in year} default 1;
 param p_years_from_solve{d in period, y in year} default 0;
 param p_discount_years{d in period} default 0;
@@ -344,6 +347,29 @@ param p_entity_divested {e in entity : e in entityDivest};
 set ed_history_realized_read dimen 2 within {e in entity, d in period_with_history};
 param p_entity_period_existing_capacity {e in entity, d in period_with_history};
 param p_entity_period_invested_capacity {e in entity, d in period_with_history};
+
+set groupStochastic dimen 1 within {group};
+set solve_branch__time_branch dimen 2 within {branch_all, time_branch_all};
+param p_branch_weight_input {b in branch} default 1;
+param p_branch_weight {b in branch} := 
+p_branch_weight_input[b] /(sum{(d,b2) in period__branch, (b2, ts) in period__time_first: (b,ts) in period__time_first && (d,b) in period__branch} p_branch_weight_input[b2]);
+
+#stochastic versions of timeseries
+set process__param__branch__time dimen 5 within {process, processTimeParam, time_branch_all, time, time};
+set profile__branch__time dimen 4 within {profile, time_branch_all, time, time};
+set process__source__param__branch__time dimen 6 within {process_source, sourceSinkTimeParam, time_branch_all, time, time};
+set process__sink__param__branch__time dimen 6 within {process_sink, sourceSinkTimeParam, time_branch_all, time, time};
+set node__param__branch__time dimen 5 within {node, nodeTimeParam, time_branch_all, time, time};
+set node__branch__time_inflow dimen 4 within {node, time_branch_all, time, time};
+set reserve__upDown__group__reserveParam__branch__time dimen 7 within {reserve, upDown, group, reserveTimeParam, time_branch_all, time, time};
+
+param pbt_node {node, nodeTimeParam, time_branch_all, time, time} default 0;
+param pbt_node_inflow {node, time_branch_all, time, time} default 0;
+param pbt_process_source {(p, source) in process_source, sourceSinkTimeParam, time_branch_all, time, time} default 0;
+param pbt_process_sink {(p, sink) in process_sink, sourceSinkTimeParam, time_branch_all, time, time} default 0;
+param pbt_profile {profile, time_branch_all, time, time} default 0;
+param pbt_reserve_upDown_group {reserve, upDown, group, reserveTimeParam, time_branch_all, time, time} default 0;
+param pbt_process {process, processTimeParam, time_branch_all, time, time} default 0;
 
 param scale_the_objective;
 param scale_the_state;
@@ -374,9 +400,9 @@ table data IN 'CSV' 'input/groupOutputNodeFlows.csv' : groupOutputNodeFlows <- [
 table data IN 'CSV' 'input/groupOutputAggregateFlows.csv' : groupOutputAggregateFlows <- [groupOutputAggregateFlows];
 table data IN 'CSV' 'input/process.csv': process <- [process];
 table data IN 'CSV' 'input/profile.csv': profile <- [profile];
-table data IN 'CSV' 'solve_data/p_years_represented.csv': year <- [years_from_solve];
 table data IN 'CSV' 'input/optional_outputs.csv': optional_outputs <- [output, value];
 table data IN 'CSV' 'input/exclude_entity_outputs.csv': exclude_entity_outputs <- [value];
+table data IN 'CSV' 'input/groupIncludeStochastics.csv' : groupStochastic <- [group];
 
 # Single dimension membership sets
 table data IN 'CSV' 'input/process_connection.csv': process_connection <- [process_connection];
@@ -408,11 +434,7 @@ table data IN 'CSV' 'input/p_process.csv' : process__param <- [process, processP
 table data IN 'CSV' 'input/p_profile.csv' : profile_param <- [profile];
 table data IN 'CSV' 'input/p_node.csv' : node__param <- [node, nodeParam];
 table data IN 'CSV' 'input/pd_node.csv' : node__param__period <- [node, nodeParam, period];
-table data IN 'CSV' 'solve_data/pt_node.csv' : node__param__time <- [node, nodeParam, time];
-table data IN 'CSV' 'solve_data/pt_node_inflow.csv' : node__time_inflow <- [node, time];
 table data IN 'CSV' 'input/pd_process.csv' : process__param__period <- [process, processParam, period];
-table data IN 'CSV' 'solve_data/pt_process.csv' : process__param__time <- [process, processParam, time];
-table data IN 'CSV' 'solve_data/pt_profile.csv' : profile_param__time <- [profile, time];
 table data IN 'CSV' 'input/p_group.csv' : group__param <- [group, groupParam];
 table data IN 'CSV' 'input/pd_group.csv' : group__param__period <- [group, groupParam, period];
 table data IN 'CSV' 'input/process__ct_method.csv' : process__ct_method_read <- [process,ct_method];
@@ -425,18 +447,15 @@ table data IN 'CSV' 'input/process__startup_method.csv' : process__startup_metho
 table data IN 'CSV' 'input/process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
 table data IN 'CSV' 'input/process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
 table data IN 'CSV' 'input/reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
-table data IN 'CSV' 'solve_data/pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time];
 table data IN 'CSV' 'input/timeblocks_in_use.csv' : solve_period_timeblockset <- [solve,period,timeblocks];
 table data IN 'CSV' 'input/timeblocks__timeline.csv' : timeblockset__timeline <- [timeblocks,timeline];
 table data IN 'CSV' 'solve_data/solve_current.csv' : solve_current <- [solve];
 table data IN 'CSV' 'input/p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
-table data IN 'CSV' 'solve_data/pt_process_source.csv' : process__source__param__time <- [process, source, sourceSinkTimeParam, time];
 table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
-table data IN 'CSV' 'solve_data/pt_process_sink.csv' : process__sink__param__time <- [process, sink, sourceSinkTimeParam, time];
 table data IN 'CSV' 'input/pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
 table data IN 'CSV' 'input/timeline.csv' : timeline__timestep__duration <- [timeline,timestep,duration];
 
-# Parameters for model data. Timestep values are in solve_data as they might be averaged for the solve
+# Parameters for model data.
 table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_commodity;
 table data IN 'CSV' 'input/pd_commodity.csv' : [commodity, commodityParam, period], pd_commodity;
 table data IN 'CSV' 'input/p_group__process.csv' : [group, process, groupParam], p_group__process;
@@ -444,62 +463,76 @@ table data IN 'CSV' 'input/p_group.csv' : [group, groupParam], p_group;
 table data IN 'CSV' 'input/pd_group.csv' : [group, groupParam, period], pd_group;
 table data IN 'CSV' 'input/p_node.csv' : [node, nodeParam], p_node;
 table data IN 'CSV' 'input/pd_node.csv' : [node, nodeParam, period], pd_node;
-table data IN 'CSV' 'solve_data/pt_node.csv' : [node, nodeParam, time], pt_node;
-table data IN 'CSV' 'solve_data/pt_node_inflow.csv' : [node, time], pt_node_inflow;
 table data IN 'CSV' 'input/p_process_node_constraint_flow_coefficient.csv' : [process, node, constraint], p_process_node_constraint_flow_coefficient;
 table data IN 'CSV' 'input/p_process_constraint_capacity_coefficient.csv' : [process, constraint], p_process_constraint_capacity_coefficient;
 table data IN 'CSV' 'input/p_node_constraint_capacity_coefficient.csv' : [node, constraint], p_node_constraint_capacity_coefficient;
 table data IN 'CSV' 'input/p_node_constraint_state_coefficient.csv' : [node, constraint], p_node_constraint_state_coefficient;
 table data IN 'CSV' 'input/p_process__reserve__upDown__node.csv' : [process, reserve, upDown, node, reserveParam], p_process_reserve_upDown_node;
 table data IN 'CSV' 'input/p_process_sink.csv' : [process, sink, sourceSinkParam], p_process_sink;
-table data IN 'CSV' 'solve_data/pt_process_sink.csv' : [process, sink, sourceSinkTimeParam, time], pt_process_sink;
 table data IN 'CSV' 'input/p_process_sink_coefficient.csv' : [process, sink], p_process_sink_coefficient;
 table data IN 'CSV' 'input/p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
 table data IN 'CSV' 'input/p_process_source_coefficient.csv' : [process, source], p_process_source_coefficient;
-table data IN 'CSV' 'solve_data/pt_process_source.csv' : [process, source, sourceSinkTimeParam, time], pt_process_source;
 table data IN 'CSV' 'input/p_constraint_constant.csv' : [constraint], p_constraint_constant;
 table data IN 'CSV' 'input/p_process.csv' : [process, processParam], p_process;
 table data IN 'CSV' 'input/pd_process.csv' : [process, processParam, period], pd_process;
-table data IN 'CSV' 'solve_data/pt_process.csv' : [process, processParam, time], pt_process;
 table data IN 'CSV' 'input/p_profile.csv' : [profile], p_profile;
-table data IN 'CSV' 'solve_data/pt_profile.csv' : [profile, time], pt_profile;
 table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
-table data IN 'CSV' 'solve_data/pt_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group;
 table data IN 'CSV' 'input/timeline_duration_in_years.csv' : [timeline], p_timeline_duration_in_years;
 table data IN 'CSV' 'solve_data/p_discount_years.csv' : [period], p_discount_years~param;
-table data IN 'CSV' 'solve_data/p_years_represented.csv' : period__year <- [period,years_from_solve];
-table data IN 'CSV' 'solve_data/p_years_represented.csv' : [period, years_from_solve], p_years_represented~p_years_represented;
-table data IN 'CSV' 'solve_data/p_years_represented.csv' : [period, years_from_solve], p_years_from_solve~p_years_from_solve;
+table data IN 'CSV' 'solve_data/p_years_represented.csv' : period__year <- [period,years_from_solve], p_years_represented~p_years_represented, p_years_from_solve~p_years_from_solve;
 table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
 table data IN 'CSV' 'input/p_discount_rate.csv' : [model], p_discount_rate;
 table data IN 'CSV' 'input/default_values.csv' : objectClass_paramName_default <-[objectClass, paramName];
 table data IN 'CSV' 'input/default_values.csv' : [objectClass,paramName], default_value;
+
+#Timeseries parameters, Timestep values are in solve_data as they might be averaged for the solve
+table data IN 'CSV' 'solve_data/pt_node.csv' : node__param__time <- [node, nodeParam, time], pt_node~pt_node;
+table data IN 'CSV' 'solve_data/pt_node_inflow.csv' : node__time_inflow <- [node, time], pt_node_inflow~pt_node_inflow;
+table data IN 'CSV' 'solve_data/pt_process.csv' : process__param__time <- [process, processParam, time], pt_process~pt_process;
+table data IN 'CSV' 'solve_data/pt_profile.csv' : profile_param__time <- [profile, time], pt_profile~pt_profile;
+table data IN 'CSV' 'solve_data/pt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__time <- [reserve, upDown, group, reserveParam, time], pt_reserve_upDown_group~pt_reserve_upDown_group;
+table data IN 'CSV' 'solve_data/pt_process_source.csv' : process__source__param__time <- [process, source, sourceSinkTimeParam, time], pt_process_source~pt_process_source;
+table data IN 'CSV' 'solve_data/pt_process_sink.csv' : process__sink__param__time <- [process, sink, sourceSinkTimeParam, time], pt_process_sink~pt_process_sink;
+
 # Parameters from the solve loop
 table data IN 'CSV' 'solve_data/solve_hole_multiplier.csv' : [solve], p_hole_multiplier;
-table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step];
-table data IN 'CSV' 'solve_data/steps_in_use.csv' : [period, step], step_duration;
+table data IN 'CSV' 'solve_data/steps_in_use.csv' : dt <- [period, step], step_duration~step_duration;
 table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,step];
 table data IN 'CSV' 'solve_data/first_timesteps.csv' : period__time_first <- [period,step];
 table data IN 'CSV' 'solve_data/last_timesteps.csv' : period__time_last <- [period,step];
 table data IN 'CSV' 'solve_data/last_realized_timestep.csv' : realized_period__time_last <- [period,step];
 table data IN 'CSV' 'solve_data/step_previous.csv' : dtttdt <- [period, time, previous, previous_within_block, previous_period, previous_within_solve];
 table data IN 'CSV' 'solve_data/step_previous.csv' : [period, time], dt_jump~jump;
-table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <- [period];
-table data IN 'CSV' 'solve_data/period_with_history.csv' : [period], p_period_from_solve~param;
+table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <- [period], p_period_from_solve~param;
 table data IN 'CSV' 'solve_data/realized_invest_periods_of_current_solve.csv' : d_realize_invest <- [period];
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
 table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
 table data IN 'CSV' 'solve_data/p_nested_model.csv' : [modelParam], p_nested_model;
-table data IN 'CSV' 'solve_data/realized_dispatch.csv' : dt_realize_dispatch <- [period, step];
+table data IN 'CSV' 'solve_data/realized_dispatch.csv' : dt_realize_dispatch_input <- [period, step];
 table data IN 'CSV' 'solve_data/fix_storage_timesteps.csv' : dt_fix_storage_timesteps <- [period, step];
-table data IN 'CSV' 'solve_data/fix_storage_price.csv' : ndt_fix_storage_price <- [node, period, step] ;
-table data IN 'CSV' 'solve_data/fix_storage_price.csv' : [node, period, step], p_fix_storage_price;
-table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : ndt_fix_storage_quantity <- [node, period, step];
-table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : [node, period, step], p_fix_storage_quantity;
+table data IN 'CSV' 'solve_data/fix_storage_price.csv' : ndt_fix_storage_price <- [node, period, step], p_fix_storage_price~p_fix_storage_price;
+table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : ndt_fix_storage_quantity <- [node, period, step], p_fix_storage_quantity~p_fix_storage_quantity;
 table data IN 'CSV' 'solve_data/timeline_matching_map.csv' : dtt_timeline_matching <- [period, step, upper_step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : dt_complete <- [period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : [period, step], complete_step_duration;
 table data IN 'CSV' 'solve_data/p_roll_continue_state.csv' : [node], p_roll_continue_state;
+table data IN 'CSV' 'solve_data/branch_all.csv' : branch_all <- [branch];
+table data IN 'CSV' 'solve_data/time_branch_all.csv' : time_branch_all <- [time_branch];
+table data IN 'CSV' 'solve_data/period__branch.csv' : period__branch <- [period, branch];
+table data IN 'CSV' 'solve_data/solve_branch_weight.csv' : [branch], p_branch_weight_input;
+table data IN 'CSV' 'solve_data/solve_branch__time_branch.csv' : solve_branch__time_branch <- [period, branch];
+table data IN 'CSV' 'solve_data/period_first.csv' : period_first <- [period];
+table data IN 'CSV' 'solve_data/period_last.csv' : period_last <- [period];
+table data IN 'CSV' 'solve_data/period_first_of_solve.csv' : period_first_of_solve <- [period];
+
+# Stochastic input data 
+table data IN 'CSV' 'solve_data/pbt_node.csv' : node__param__branch__time <- [node, nodeParam, branch, time_start, time], pbt_node~pbt_node;
+table data IN 'CSV' 'solve_data/pbt_node_inflow.csv' : node__branch__time_inflow <- [node, branch, time_start, time], pbt_node_inflow~pbt_node_inflow;
+table data IN 'CSV' 'solve_data/pbt_process_sink.csv' : process__sink__param__branch__time <- [process, sink, sourceSinkTimeParam, branch, time_start, time], pbt_process_sink~pbt_process_sink;
+table data IN 'CSV' 'solve_data/pbt_process_source.csv' : process__source__param__branch__time <-  [process, source, sourceSinkTimeParam, branch, time_start, time], pbt_process_source~pbt_process_source;
+table data IN 'CSV' 'solve_data/pbt_process.csv' : process__param__branch__time <- [process, processParam, branch, time_start, time], pbt_process~pbt_process;
+table data IN 'CSV' 'solve_data/pbt_profile.csv' : profile__branch__time <- [profile, branch, time_start, time], pbt_profile~pbt_profile;
+table data IN 'CSV' 'solve_data/pbt_reserve__upDown__group.csv' : reserve__upDown__group__reserveParam__branch__time <- [reserve, upDown, group, reserveParam, branch, time_start, time], pbt_reserve_upDown_group~pbt_reserve_upDown_group;
 
 # After rolling forward the investment model
 table data IN 'CSV' 'solve_data/p_entity_divested.csv' : [entity], p_entity_divested;
@@ -511,7 +544,7 @@ table data IN 'CSV' 'solve_data/p_entity_period_existing_capacity.csv' : [entity
 table data IN 'CSV' 'output/costs_discounted.csv' : [param_costs], costs_discounted;
 
 #check
-set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : p_model["solveFirst"]};
+set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
 set process__fork_method_yes dimen 2 within {process, fork_method} := 
@@ -690,11 +723,15 @@ set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
 param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} := 
         + if (c, param, d) in commodity__param__period
 		  then pd_commodity[c, param, d]
-		  else p_commodity[c, param];
+		  else if exists{(c, param, db) in commodity__param__period: (db, d) in period__branch} 1
+      then sum{(db, d) in period__branch} pd_commodity[c, param, db]
+      else p_commodity[c, param];
 
 param pdGroup {g in group, param in groupPeriodParam, d in period} :=
         + if (g, param, d) in group__param__period
 		  then pd_group[g, param, d]
+      else if exists{(c,param, db) in group__param__period : (db,d) in period__branch} 1
+      then sum{(db, d) in period__branch} pd_group[g, param, db]
 		  else if (g, param) in group__param 
 		  then p_group[g, param]
 		  else 0;
@@ -780,9 +817,17 @@ set process__source__sink__ramp_method :=
 param pdNode {n in node, param in nodePeriodParam, d in period_with_history} :=
         + if (n, param, d) in node__param__period
 		  then pd_node[n, param, d]
+      else if exists{(c, param, db) in node__param__period: (db, d) in period__branch} 1
+      then sum{(db, d) in period__branch} pd_node[n, param, db]
 		  else p_node[n, param];
-param ptNode {n in node, param in nodeTimeParam, t in complete_time_in_use} :=
-        + if (n, param, t) in node__param__time
+
+param pdtNode {n in node, param in nodeTimeParam, (d, t) in dt} :=
+      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, param, tb, ts, t) in node__param__branch__time} 1 
+      && exists{(g,n) in group_node: g in groupStochastic} 1
+      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_node[n, param, tb, ts, t]
+      else if exists{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch && (n, param, tb, ts, t) in node__param__branch__time} 1
+      then sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch} pbt_node[n, param, tb, ts, t] 
+      else if (n, param, t) in node__param__time
 		  then pt_node[n, param, t]
 		  else if (n, param) in node__param 
 		  then p_node[n, param]
@@ -791,29 +836,44 @@ param ptNode {n in node, param in nodeTimeParam, t in complete_time_in_use} :=
           else if ('node',param) in objectClass_paramName_default
           then default_value['node', param]
           else 0;
+
 param ptNode_inflow {n in node, t in time} :=
         + if (n, t) in node__time_inflow
 		  then pt_node_inflow[n, t]
 		  else p_node[n, 'inflow'];
-set nodeSelfDischarge :=  {n in nodeState : sum{(d, t) in dt : ptNode[n, 'self_discharge_loss', t]} 1};
+set nodeSelfDischarge :=  {n in nodeState : exists{(d, t) in dt : pdtNode[n, 'self_discharge_loss', d, t]} 1};
 		  
 param pdProcess {p in process, param in processPeriodParam, d in period_with_history} :=
         + if (p, param, d) in process__param__period
 		  then pd_process[p, param, d]
+      else if exists{(p, param, db) in process__param__period: (db, d) in period__branch} 1
+      then sum{(db, d) in period__branch} pd_process[p, param, db]
 		  else if (p, param) in process__param
 		  then p_process[p, param]
 		  else 0;
-param ptProcess {p in process, param in processTimeParam, t in time_in_use} :=
-        + if (p, param, t) in process__param__time
+param pdtProcess {p in process, param in processTimeParam, (d,t) in dt} :=
+      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, param, tb, ts, t) in process__param__branch__time} 1 
+      && exists{(g,p) in group_process: g in groupStochastic} 1
+      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process[p, param, tb, ts, t]
+      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, param, tb, ts, t) in process__param__branch__time} 1
+      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process[p, param, tb, ts, t] 
+      else if (p, param, t) in process__param__time
 		  then pt_process[p, param, t]
 		  else if (p, param) in process__param
 		  then p_process[p, param]
-          else if param in processParam_def1
-          then 1
+      else if param in processParam_def1
+      then 1
 		  else 0;
 
-param ptProfile {p in profile, t in time_in_use} :=
-        + if (p, t) in profile_param__time
+param pdtProfile {p in profile, (d,t) in dt} :=
+      + if (exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, tb, ts, t) in profile__branch__time} 1 
+      && ((exists{(pc, p, m) in process__profile__profile_method, (g, pc) in group_process: g in groupStochastic} 1 ) 
+      || (exists{(n, p, m) in node__profile__profile_method, (g,n) in group_node: g in groupStochastic} 1)
+      || (exists{(pc, n, p, m) in process__node__profile__profile_method, (g,pc) in group_process: g in groupStochastic} 1)))
+      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_profile[p, tb, ts, t]
+      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, tb, ts, t) in profile__branch__time} 1
+      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_profile[p, tb, ts, t] 
+      else if (p, t) in profile_param__time
 		  then pt_profile[p, t]
 		  else if (p) in profile_param
 		  then p_profile[p]
@@ -846,24 +906,44 @@ param pProcess_source_sink {(p, source, sink, param) in process__source__sink__p
 		  then p_process_sink[p, sink, param]
 		  else 0;
 
-param ptProcess_source {(p, source) in process_source, param in sourceSinkTimeParam, t in time_in_use} :=  # : sum{d in period : (d, t) in dt} 1
-        + if (p, source, param, t) in process__source__param__time
+param pdtProcess_source {(p, source) in process_source, param in sourceSinkTimeParam, (d, t) in dt} :=  # : sum{d in period : (d, t) in dt} 1
+      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1 
+      && exists{(g,p) in group_process: g in groupStochastic} 1
+      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_source[p, source, param, tb, ts, t]
+      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
+      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_source[p, source, param, tb, ts, t] 
+		  else if (p, source, param, t) in process__source__param__time
 		  then pt_process_source[p, source, param, t]
-		  else if (p, source, param) in process__source__param
+      else if (p, source, param) in process__source__param
 		  then p_process_source[p, source, param]
 		  else 0;
         
-param ptProcess_sink {(p, sink) in process_sink, param in sourceSinkTimeParam, t in time_in_use} :=  #  : sum{d in period : (d, t) in dt} 1
-        + if (p, sink, param, t) in process__sink__param__time
+param pdtProcess_sink {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in dt} :=  #  : sum{d in period : (d, t) in dt} 1
+      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1 
+      && exists{(g,p) in group_process: g in groupStochastic} 1
+      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_sink[p, sink, param, tb, ts, t]
+      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
+      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_sink[p, sink, param, tb, ts, t] 
+		  else if (p, sink, param, t) in process__sink__param__time
 		  then pt_process_sink[p, sink, param, t]
-		  else if (p, sink, param) in process__sink__param
+      else if (p, sink, param) in process__sink__param
 		  then p_process_sink[p, sink, param]
 		  else 0;
 
-param ptProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, t in time_in_use} := #  : sum{d in period : (d, t) in dt} 1
-        + if (p, sink, param, t) in process__sink__param__time
+param pdtProcess_source_sink {(p, source, sink, param) in process__source__sink__param_t, (d, t) in dt} := #  : sum{d in period : (d, t) in dt} 1
+      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
+      && exists{(g,p) in group_process: g in groupStochastic} 1
+      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_sink[p, sink, param, tb, ts, t]
+      else if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
+      && exists{(g,p) in group_process: g in groupStochastic} 1
+      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_source[p, source, param, tb, ts, t]
+      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch &&(p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1
+      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_sink[p, sink, param, tb, ts, t]
+      else if exists{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch && (p, source, param, tb, ts, t) in process__source__param__branch__time} 1
+      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_process_source[p, source, param, tb, ts, t] 
+      else if (p, sink, param, t) in process__sink__param__time
 		  then pt_process_sink[p, sink, param, t]
-          else if (p, source, param, t) in process__source__param__time
+      else if (p, source, param, t) in process__source__param__time
 		  then pt_process_source[p, source, param, t]
 		  else if (p, param, t) in connection__param__time
 		  then pt_process[p, param, t]
@@ -876,8 +956,12 @@ param ptProcess_source_sink {(p, source, sink, param) in process__source__sink__
 		  else 0;
 
 
-param ptReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, t in time_in_use} :=
-        + if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
+param pdtReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in reserveTimeParam, (d,t) in dt} :=
+      + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time} 1 && g in groupStochastic
+      then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_reserve_upDown_group[r, ud, g, param, tb, ts, t]
+      else if exists{(pe,tb) in solve_branch__time_branch,  (d,ts) in period__time_first: (pe,d) in period__branch && (r, ud, g, param, tb, ts, t) in reserve__upDown__group__reserveParam__branch__time} 1
+      then sum{(pe,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (pe,d) in period__branch} pbt_reserve_upDown_group[r, ud, g, param, tb, ts, t] 
+      else if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
 		  then pt_reserve_upDown_group[r, ud, g, param, t]
 		  else p_reserve_upDown_group[r, ud, g, param];
 set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group} 1};
@@ -892,7 +976,7 @@ param solve_share_of_year := hours_in_solve / 8760;
 param p_years_d{d in period_with_history} := p_period_from_solve[d];
 #param p_years_d{d in periodAll} := sum {y in year : (d, y) in period__year} p_years_represented[d, y];
 
-param complete_hours_in_period{d in period} := sum {(d, t) in dt_complete} (complete_step_duration[d, t]);
+param complete_hours_in_period{d in period} := sum {(d2, t) in dt_complete: (d2, d) in period__branch} (complete_step_duration[d2, t]);
 param complete_period_share_of_year{d in period} := complete_hours_in_period[d] / 8760;
 
 param period_share_of_annual_flow {n in node, d in period : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
@@ -940,7 +1024,12 @@ param new_old_slope {n in node, d in period : (n, 'scale_to_annual_and_peak_flow
 param new_old_section {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
         pdNode[n, 'peak_inflow', d] * new_old_multiplier[n, d];
 param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  := 
-        ( if (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] then
+        + (if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, tb, ts, t) in node__branch__time_inflow} 1 
+      && exists{(g,n) in group_node: g in groupStochastic} 1
+      then sum{(d,ts) in period__time_first,(d,tb) in solve_branch__time_branch} pbt_node_inflow[n, tb, ts, t]
+      else if exists{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch && (n, tb, ts, t) in node__branch__time_inflow} 1
+      then sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch} pbt_node_inflow[n, tb, ts, t]  
+      else if (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] then
 		    + period_flow_annual_multiplier[n, d] * ptNode_inflow[n, t]
 		  else if (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d] then
 		    + period_flow_proportional_multiplier[n, d] * ptNode_inflow[n, t]
@@ -1039,14 +1128,14 @@ param ed_entity_annual_divest_discounted{e in entityDivest, d in period_invest} 
 ;
 
 set process_minload := {p in process : (p, 'min_load_efficiency') in process__ct_method};
-param ptProcess_section{p in process_minload, t in time_in_use} := 
-        + 1 / ptProcess[p, 'efficiency', t] 
-    	- ( 1 / ptProcess[p, 'efficiency', t] - ptProcess[p, 'min_load', t] / ptProcess[p, 'efficiency_at_min_load', t] ) 
-			    / (1 - ptProcess[p, 'min_load', t])
+param pdtProcess_section{p in process_minload, (d, t) in dt} := 
+        + 1 / pdtProcess[p, 'efficiency', d, t] 
+    	- ( 1 / pdtProcess[p, 'efficiency', d, t] - pdtProcess[p, 'min_load', d, t] / pdtProcess[p, 'efficiency_at_min_load', d, t] ) 
+			    / (1 - pdtProcess[p, 'min_load', d, t])
 		; 
-param ptProcess_slope{p in process, t in time_in_use} := 
-        1 / ptProcess[p, 'efficiency', t] 
-		- (if p in process_minload then ptProcess_section[p, t] else 0);
+param pdtProcess_slope{p in process, (d, t) in dt} := 
+        1 / pdtProcess[p, 'efficiency', d, t] 
+		- (if p in process_minload then pdtProcess_section[p, d, t] else 0);
 
 #         	          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
 #		              * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
@@ -1054,29 +1143,29 @@ param ptProcess_slope{p in process, t in time_in_use} :=
 param w_calc_slope := gmtime() - datetime0 - setup1;
 display w_calc_slope;
 
-param ptProcess__source__sink__dt_varCost {(p, source, sink) in process_source_sink, (d, t) in dt} :=
-  + (if (p, source) in process_source then ptProcess_source[p, source, 'other_operational_cost', t])
-  + (if (p, sink) in process_sink then ptProcess_sink[p, sink, 'other_operational_cost', t])
+param pdtProcess__source__sink__dt_varCost {(p, source, sink) in process_source_sink, (d, t) in dt} :=
+  + (if (p, source) in process_source then pdtProcess_source[p, source, 'other_operational_cost', d, t])
+  + (if (p, sink) in process_sink then pdtProcess_sink[p, sink, 'other_operational_cost', d, t])
   + (if (p, source, sink) in process_source_sink then 
-      ( if ptProcess[p, 'other_operational_cost', t] then ptProcess[p, 'other_operational_cost', t]
+      ( if pdtProcess[p, 'other_operational_cost', d, t] then pdtProcess[p, 'other_operational_cost', d, t]
 	  )
 	)
 ;
 
-param ptProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
-  + (if (p, source) in process_source then ptProcess_source[p, source, 'other_operational_cost', t])
-  + (if (p, sink) in process_sink then ptProcess_sink[p, sink, 'other_operational_cost', t])
+param pdtProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt} :=
+  + (if (p, source) in process_source then pdtProcess_source[p, source, 'other_operational_cost', d, t])
+  + (if (p, sink) in process_sink then pdtProcess_sink[p, sink, 'other_operational_cost', d, t])
   + (if (p, source, sink) in process_source_sink_alwaysProcess 
         && ((p, sink) in process_sink || (p, sink) in process_source)
-	 then ( if ptProcess[p, 'other_operational_cost', t] then ptProcess[p, 'other_operational_cost', t]
+	 then ( if pdtProcess[p, 'other_operational_cost', d, t] then pdtProcess[p, 'other_operational_cost', d, t]
 	      )
     )
 ;
 
-set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : ptProcess__source__sink__dt_varCost[p, source, sink, d, t]};
-set pssdt_varCost_eff_unit_source := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && ptProcess_source[p, source, 'other_operational_cost', t]};
-set pssdt_varCost_eff_unit_sink := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && ptProcess_sink[p, sink, 'other_operational_cost', t]};
-set pssdt_varCost_eff_connection := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : ptProcess[p,'other_operational_cost', t]};
+set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : pdtProcess__source__sink__dt_varCost[p, source, sink, d, t]};
+set pssdt_varCost_eff_unit_source := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && pdtProcess_source[p, source, 'other_operational_cost', d, t]};
+set pssdt_varCost_eff_unit_sink := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && pdtProcess_sink[p, sink, 'other_operational_cost', d, t]};
+set pssdt_varCost_eff_connection := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : pdtProcess[p,'other_operational_cost', d, t]};
 set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d] || sum{(e, c) in process_capacity_constraint} 1 || sum{(e, c) in node_capacity_constraint} 1 };
 set ed_invest_period := {(e, d) in ed_invest : (e, 'invest_period') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method 
                                                || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
@@ -1410,13 +1499,13 @@ var vq_state_up_group {g in group_loss_share, (d,t) in dt} >= 0;
 #########################
 ## Data checks 
 printf 'Checking: Eff. data for 1 variable conversions directly from source to sink (and possibly back)\n';
-check {(p, m) in process_method, t in time_in_use : m in method_1var && not (p, 'none') in process__ct_method } ptProcess[p, 'efficiency', t] != 0 ;
+check {(p, m) in process_method, (d,t) in dt : m in method_1var && not (p, 'none') in process__ct_method } pdtProcess[p, 'efficiency', d, t] != 0 ;
 
 printf 'Checking: Efficiency data for 1-way conversions with an online variable\n';
-check {(p, m) in process_method, t in time_in_use : m in method_1way_on} ptProcess[p, 'efficiency', t] != 0;
+check {(p, m) in process_method, (d,t) in dt : m in method_1way_on} pdtProcess[p, 'efficiency', d, t] != 0;
 
 printf 'Checking: Efficiency data for 2-way linear conversions without online variables\n';
-check {(p, m) in process_method, t in time_in_use : m in method_2way_off} ptProcess[p, 'efficiency', t] != 0;
+check {(p, m) in process_method, (d,t) in dt : m in method_2way_off} pdtProcess[p, 'efficiency', d, t] != 0;
 
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
 check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
@@ -1432,28 +1521,28 @@ check {n in nodeState} : n in nodeBalance;
 
 printf 'Checking: Availability conflicts with storage constraints\n';
 check {n in nodeState, (d,t) in period__time_first: (n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method}:
-  p_node[n,'storage_state_start'] <= ptNode[n, 'availability', t];
+  p_node[n,'storage_state_start'] <= pdtNode[n, 'availability', d, t];
 check {n in nodeState, (d,t) in period__time_last: (n, 'fix_end') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method}:
-  p_node[n,'storage_state_end'] <= ptNode[n, 'availability', t];
+  p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t];
 
 check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
 && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
-  p_node[n,'storage_state_start'] <= ptNode[n, 'availability', t];
+  p_node[n,'storage_state_start'] <= pdtNode[n, 'availability', d, t];
 check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
 && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
-  p_node[n,'storage_state_end'] <= ptNode[n, 'availability', t];
+  p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t];
 
 check {n in nodeState, (d,t,t_previous,t_previous_within_block,d_previous,t_previous_within_solve) in dtttdt: 
 ((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
 && (n, 'bind_within_timeblock') in node__storage_binding_method
 && dt_jump[d,t] != 1}:
-  p_node[n,'storage_state_end'] <= ptNode[n, 'availability', t] && p_node[n,'storage_state_end'] <= ptNode[n,'availability',t_previous];
+  p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t] && p_node[n,'storage_state_end'] <= pdtNode[n,'availability', d, t_previous];
 
 check {n in nodeState, (d,t,t_previous,t_previous_within_block,d_previous,t_previous_within_solve) in dtttdt: 
 ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
 && (n, 'bind_within_timeblock') in node__storage_binding_method
 && dt_jump[d,t] != 1}:
-  (p_node[n,'storage_state_start'] <= ptNode[n, 'availability', t] && p_node[n,'storage_state_start'] <= ptNode[n,'availability',t_previous]);
+  (p_node[n,'storage_state_start'] <= pdtNode[n, 'availability', d, t] && p_node[n,'storage_state_start'] <= pdtNode[n,'availability', d, t_previous]);
 
 check {n in nodeState, (d,t) in period__time_last: 
   (n, 'use_reference_value') in node__storage_solve_horizon_method 
@@ -1462,7 +1551,7 @@ check {n in nodeState, (d,t) in period__time_last:
    && (n, 'bind_within_solve') not in node__storage_binding_method
    && (n, 'bind_within_period') not in node__storage_binding_method
    && (n, 'bind_within_timeblock') not in node__storage_binding_method}:
-  ptNode[n,'storage_state_reference_value',t] <= ptNode[n, 'availability', t];
+  pdtNode[n,'storage_state_reference_value', d, t] <= pdtNode[n, 'availability', d, t];
 
 printf 'Checking: transfer_method no_losses_no_variable_cost\n';
 printf 'is not allowed to a group with non-synchronous constraint\n';
@@ -1474,17 +1563,61 @@ check {g in groupNonSync, (p,source,sink) in process_source_sink:
 
 printf 'Checking: transfer_method no_losses_no_variable_cost\n';
 printf 'is not allowed to have other_operational_cost\n';
-check {(p,m) in process_method, t in time_in_use: m in method_2way_1var}: 
-  ptProcess[p, 'other_operational_cost', t] = 0;
+check {(p,m) in process_method, (d,t) in dt: m in method_2way_1var}: 
+  pdtProcess[p, 'other_operational_cost', d, t] = 0;
 
 printf 'Checking: node not in more than one loss of load sharing group\n';
 check {n in node}:
   sum{(g,n) in group_node: g in group_loss_share} 1 < 2;
 
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for process timeseries \n';
+check {(d,t) in period__time_first: exists{(p, param, tb, ts, t2) in process__param__branch__time} 1}:
+  exists{(p, param, tb, t, t) in process__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for process_inputNode timeseries\n';
+check {(d,t) in period__time_first: exists{(p, source, param, tb, ts, t2) in process__source__param__branch__time} 1}:
+  exists{(p, source, param, tb, t, t) in process__source__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for process_outputNode timeseries\n';
+check {(d,t) in period__time_first: exists{(p, sink, param, tb, ts, t2) in process__sink__param__branch__time} 1}:
+  exists{(p, sink, param, tb, t, t) in process__sink__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for Node inflow timeseries\n';
+check{(d,t) in period__time_first: exists{(n, tb, ts, t2) in node__branch__time_inflow} 1 }:
+  exists{(n, tb, t, t) in node__branch__time_inflow, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for Node timeseries\n';
+check {(d,t) in period__time_first: exists{(n, param, tb, ts, t2) in node__param__branch__time} 1}:
+  exists{(n, param, tb, t, t) in node__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for profile timeseries\n';
+check {(d,t) in period__time_first: exists{(p, tb, ts, t2) in profile__branch__time} 1}:
+  exists{(p, tb, t, t) in profile__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+printf'Checking: If stochastic timeseries data given,\n';
+printf'the realized branch is set for the period in stochastic_branches\n';
+printf'and the period start time is a branch start time is the timeseries\n';
+printf'for reserve timeseries\n';
+check {(d,t) in period__time_first: exists{(r, ud, g, param, tb, ts, t2) in reserve__upDown__group__reserveParam__branch__time} 1}:
+  exists{(r, ud, g, param, tb, t, t) in reserve__upDown__group__reserveParam__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;  
+
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
 minimize total_cost:
-( + sum {(c, n) in commodity_node, (d, t) in dt} 
+( + sum {(c, n) in commodity_node, (d, t) in dt}
+    + p_branch_weight[d] *
 	( pdCommodity[c, 'price', d]
 	  * (
 		  # Buying a commodity (increases the objective function)
@@ -1492,13 +1625,13 @@ minimize total_cost:
 			( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] )
 		  + sum {(p, n, sink) in process_source_sink_eff } (
 			  + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-				  * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+				  * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 				  * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
 			  + (if (p, 'min_load_efficiency') in process__ct_method then 
 				  + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 				      + (if p in process_online_integer then v_online_integer[p, d, t])
 					)
-					* ptProcess_section[p, t]
+					* pdtProcess_section[p, d, t]
 					* p_entity_unitsize[p]
 				)	  
 			)		  
@@ -1510,20 +1643,21 @@ minimize total_cost:
 	  * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	)
   + sum {(g, c, n, d, t) in gcndt_co2_price} 
-	( p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
+	  + p_branch_weight[d] *
+  ( p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
 	  * (
 		  # Paying for CO2 (increases the objective function)
 		  + sum {(p, n, sink) in process_source_sink_noEff } 
 			( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] )
 		  + sum {(p, n, sink) in process_source_sink_eff } (
 			  + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-				  * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+				  * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 				  * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
 			  + (if (p, 'min_load_efficiency') in process__ct_method then 
 				  + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 				      + (if p in process_online_integer then v_online_integer[p, d, t])
 					)
-					* ptProcess_section[p, t]
+					* pdtProcess_section[p, d, t]
 					* p_entity_unitsize[p]
 				)	  
 			)		  
@@ -1534,81 +1668,92 @@ minimize total_cost:
 	    )		
 	  * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	)
-  + sum {(p, d, t) in pdt_online_linear} 
+  + sum {(p, d, t) in pdt_online_linear}
+    + p_branch_weight[d] * 
       ( v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d] 
 	      * p_entity_unitsize[p] 
 		  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	  )
-  + sum {(p, d, t) in pdt_online_integer} 
+  + sum {(p, d, t) in pdt_online_integer}
+    + p_branch_weight[d] * 
       ( v_startup_integer[p, d, t] * pdProcess[p, 'startup_cost', d] 
 	      * p_entity_unitsize[p] 
 		  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	  )
   + sum {(p, source, sink, d, t) in pssdt_varCost_noEff}
-    ( + ptProcess__source__sink__dt_varCost[p, source, sink, d, t]
+    + p_branch_weight[d] *
+    ( + pdtProcess__source__sink__dt_varCost[p, source, sink, d, t]
 	    * v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
         * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	)
   + sum {(p, source, sink, d, t) in pssdt_varCost_eff_unit_source}
+    + p_branch_weight[d] *
     (  
-      - ptProcess_source[p, source, 'other_operational_cost', t]
+      - pdtProcess_source[p, source, 'other_operational_cost', d, t]
 	    *  
 	    ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] 
-		    * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+		    * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 			* (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, source] else 1)
           + ( if (p, 'min_load_efficiency') in process__ct_method then 
 	          + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 			      + (if p in process_online_integer then v_online_integer[p, d, t])
 			    )
-			    * ptProcess_section[p, t]
+			    * pdtProcess_section[p, d, t]
 			    * p_entity_unitsize[p]
 			)
 		)	  
         * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	)
   + sum {(p, source, sink, d, t) in pssdt_varCost_eff_unit_sink}
-    ( + ptProcess_sink[p, sink, 'other_operational_cost', t]
+    + p_branch_weight[d] *
+    ( + pdtProcess_sink[p, sink, 'other_operational_cost', d, t]
 	    * v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
         * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	)
   + sum {(p, source, sink, d, t) in pssdt_varCost_eff_connection}
-    ( + ptProcess[p, 'other_operational_cost', t]
+    + p_branch_weight[d] *
+    ( + pdtProcess[p, 'other_operational_cost', d, t]
  	   * v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
        * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 	)
 #  + sum {(p, source, sink, m) in process__source__sink__ramp_method, (d, t) in dt : m in ramp_cost_method}
 #    ( + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p] * pProcess_source_sink[p, source, sink, 'ramp_cost'] ) * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
-  + sum {g in groupInertia, (d, t) in dt} vq_inertia[g, d, t] * pdGroup[g, 'inertia_limit', d]
+  + sum {g in groupInertia, (d, t) in dt} p_branch_weight[d] * vq_inertia[g, d, t] * pdGroup[g, 'inertia_limit', d]
                                             * pdGroup[g, 'penalty_inertia', d] * step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
-  + sum {g in groupNonSync, (d, t) in dt} vq_non_synchronous[g, d, t] * group_capacity_for_scaling[g, d]
+  + sum {g in groupNonSync, (d, t) in dt} p_branch_weight[d] * vq_non_synchronous[g, d, t] * group_capacity_for_scaling[g, d]
                                             * pdGroup[g, 'penalty_non_synchronous', d]  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
-  + sum {n in nodeBalance, (d, t) in dt} vq_state_up[n, d, t] * node_capacity_for_scaling[n, d]
-                                            * ptNode[n, 'penalty_up', t]  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
-  + sum {n in nodeBalance, (d, t) in dt} vq_state_down[n, d, t] * node_capacity_for_scaling[n, d]
-                                            * ptNode[n, 'penalty_down', t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
-  + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} vq_reserve[r, ud, ng, d, t]  * ptReserve_upDown_group[r, ud, ng, 'reservation', t]
+  + sum {n in nodeBalance, (d, t) in dt} p_branch_weight[d] * vq_state_up[n, d, t] * node_capacity_for_scaling[n, d]
+                                            * pdtNode[n, 'penalty_up', d, t]  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
+  + sum {n in nodeBalance, (d, t) in dt} p_branch_weight[d] * vq_state_down[n, d, t] * node_capacity_for_scaling[n, d]
+                                            * pdtNode[n, 'penalty_down', d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
+  + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} p_branch_weight[d] * vq_reserve[r, ud, ng, d, t]  * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
                                             * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']  * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
 
   - sum {n in nodeState, (d, t) in period__time_last : (n, 'use_reference_price') in node__storage_solve_horizon_method && d in period_last}
-      + pdNode[n, 'storage_state_reference_price', d]
+    + p_branch_weight[d]
+      * pdNode[n, 'storage_state_reference_price', d]
         * v_state[n, d, t] * p_entity_unitsize[n]
 		* step_duration[d, t] * p_discount_factor_operations_yearly[d] / period_share_of_year[d]
   + sum {e in entity, d in period_in_use}  # This is constant term and will be dropped by the solver. Here for completeness.
-    + p_entity_all_existing[e, d]
+    + p_branch_weight[d]
+      * p_entity_all_existing[e, d]
       * ( + (if e in node then pdNode[e, 'fixed_cost', d] * 1000)
 	      + (if e in process then pdProcess[e, 'fixed_cost', d] * 1000)
 		)
 	  * p_discount_factor_operations_yearly[d]
   + sum {(e, d) in ed_invest} 
-    + v_invest[e, d]
+    + p_branch_weight[d]
+      * v_invest[e, d]
       * p_entity_unitsize[e]
       * ed_entity_annual_discounted[e, d]
   - sum {(e, d) in ed_divest} 
-    + v_divest[e, d]
+    + p_branch_weight[d]
+      * v_divest[e, d]
       * p_entity_unitsize[e]
       * ed_entity_annual_divest_discounted[e, d]
   + sum {g in groupCapacityMargin, d in period_invest}
-    + vq_capacity_margin[g, d] * group_capacity_for_scaling[g, d]
+    + p_branch_weight[d]
+    * vq_capacity_margin[g, d] * group_capacity_for_scaling[g, d]
 	  * pdGroup[g, 'penalty_capacity_margin', d]
 	  * p_discount_factor_operations_yearly[d]
 ) * scale_the_objective
@@ -1622,6 +1767,7 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
   + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n] )
+  + (if n in nodeState && (d, t) in period__time_first && d in period_first_of_solve && not p_nested_model['solveFirst'] then (v_state[n,d,t] * p_entity_unitsize[n] - p_roll_continue_state[n]))
   =
   # n is sink
   + sum {(p, source, n) in process_source_sink} (
@@ -1630,13 +1776,13 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
   # n is source
   - sum {(p, n, sink) in process_source_sink_eff } ( 
       + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-	      * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 		  * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
       + (if (p, 'min_load_efficiency') in process__ct_method then 
 			  + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 			      + (if p in process_online_integer then v_online_integer[p, d, t])
 				)
-			    * ptProcess_section[p, t]
+			    * pdtProcess_section[p, d, t]
 				* p_entity_unitsize[p]
 		)
     ) * step_duration[d, t]		
@@ -1646,7 +1792,7 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
   + (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
   - (if n in nodeSelfDischarge then 
       + v_state[n, d, t] 
-	    * (-1 + (1 + ptNode[n, 'self_discharge_loss', t]) ** step_duration[d, t])
+	    * (-1 + (1 + pdtNode[n, 'self_discharge_loss', d, t]) ** step_duration[d, t])
 		  * p_entity_unitsize[n]
     )
   + vq_state_up[n, d, t] * node_capacity_for_scaling[n, d]
@@ -1673,11 +1819,11 @@ s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__m
 		    && (r, ud, ng) in reserve__upDown__group} 
 	    ( v_reserve[p, r, ud, n, d, t] * p_entity_unitsize[p]
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
-	      * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 		)
-  + vq_reserve[r, ud, ng, d, t] * ptReserve_upDown_group[r, ud, ng, 'reservation', t]
+  + vq_reserve[r, ud, ng, d, t] * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
   >=
-  + ptReserve_upDown_group[r, ud, ng, 'reservation', t]
+  + pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
 ;
 
 s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__method_dynamic, (d, t) in dt} :
@@ -1698,16 +1844,16 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
 		    && (r, ud, ng) in reserve__upDown__group} 
 	    ( v_reserve[p, r, ud, n, d, t] * p_entity_unitsize[p]
 	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
-	      * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 		)
-  + vq_reserve[r, ud, ng, d, t] * ptReserve_upDown_group[r, ud, ng, 'reservation', t]
+  + vq_reserve[r, ud, ng, d, t] * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
   >=
   + sum {(p, r, ud, n) in process_reserve_upDown_node_increase_reserve_ratio : (ng, n) in group_node 
           && (r, ud, ng) in reserve__upDown__group}
 	   ( + sum{(p, source, n) in process_source_sink} v_flow[p, source, n, d, t] * p_entity_unitsize[p] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio']
 	     + sum{(p, n, sink) in process_source_sink_noEff} v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio']
 	     + sum{(p, n, sink) in process_source_sink_eff} v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * p_process_reserve_upDown_node[p, r, ud, n, 'increase_reserve_ratio']
-	                                                    * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	                                                    * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 	   )
   + sum {(n, ng) in group_node : p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio']}
 	   (pdtNodeInflow[n, d, t] * p_reserve_upDown_group[r, ud, ng, 'increase_reserve_ratio'])/ step_duration[d, t]
@@ -1736,9 +1882,9 @@ s.t. reserveBalance_up_n_1_eq{(r, 'up', ng, r_m) in reserve__upDown__group__meth
 		} 
 	    ( v_reserve[p, r, 'up', n, d, t] * p_entity_unitsize[p]
 	      * p_process_reserve_upDown_node[p, r, 'up', n, 'reliability']
-	      * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 		)
-  + vq_reserve[r, 'up', ng, d, t] * ptReserve_upDown_group[r, 'up', ng, 'reservation', t]
+  + vq_reserve[r, 'up', ng, d, t] * pdtReserve_upDown_group[r, 'up', ng, 'reservation', d, t]
   >=
   + sum{(p_n_1, source, n) in process_source_sink : (ng, n) in group_node} 
       + v_flow[p_n_1, source, n, d, t] * p_entity_unitsize[p_n_1]
@@ -1768,9 +1914,9 @@ s.t. reserveBalance_down_n_1_eq{(r, 'down', ng, r_m) in reserve__upDown__group__
 		} 
 	    ( v_reserve[p, r, 'down', n, d, t] * p_entity_unitsize[p]
 	      * p_process_reserve_upDown_node[p, r, 'down', n, 'reliability']
-	      * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 		)
-  + vq_reserve[r, 'down', ng, d, t] * ptReserve_upDown_group[r, 'down', ng, 'reservation', t]
+  + vq_reserve[r, 'down', ng, d, t] * pdtReserve_upDown_group[r, 'down', ng, 'reservation', d, t]
   >=
   + sum{(p_n_1, n, sink) in process_source_sink_noEff : (ng, n) in group_node} 
       + v_flow[p_n_1, n, sink, d, t] * p_entity_unitsize[p_n_1]
@@ -1778,7 +1924,7 @@ s.t. reserveBalance_down_n_1_eq{(r, 'down', ng, r_m) in reserve__upDown__group__
   + sum{(p_n_1, n, sink) in process_source_sink_eff : (ng, n) in group_node } 
       + v_flow[p_n_1, n, sink, d, t] * p_entity_unitsize[p_n_1]
 	    * p_process_reserve_upDown_node[p_n_1, r, 'down', n, 'large_failure_ratio']
-	    * (if (p_n_1, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p_n_1, t] else 1 / ptProcess[p_n_1, 'efficiency', t])
+	    * (if (p_n_1, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p_n_1, d, t] else 1 / pdtProcess[p_n_1, 'efficiency', d, t])
 ;
 param reserves := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance;
 display reserves;
@@ -1794,12 +1940,12 @@ s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t) in dt} :
     ( + v_flow[p, p, sink, d, t] * p_entity_unitsize[p]
 	      * p_process_sink_coefficient[p, sink]
 	)
-	  * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	  * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
   + (if (p, 'min_load_efficiency') in process__ct_method then 
 			( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 			  + (if p in process_online_integer then v_online_integer[p, d, t])
 			)
-            * ptProcess_section[p, t] * p_entity_unitsize[p])
+            * pdtProcess_section[p, d, t] * p_entity_unitsize[p])
 ;
 param indirect := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves;
 display indirect;
@@ -1814,19 +1960,19 @@ s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__s
 		else 1
       )
   <=
-  + ptProfile[f, t]
+  + pdtProfile[f, d, t]
     * ( + p_entity_all_existing[p, d]
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
-      * ptProcess[p, 'availability', t]
-      / (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+      * pdtProcess[p, 'availability', d, t]
+      / (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
   + ( if (p, 'min_load_efficiency') in process__ct_method then 
 	    ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 		  + (if p in process_online_integer then v_online_integer[p, d, t])
 		)
-        * ptProcess_section[p, t] * p_entity_unitsize[p]
-        * ptProcess[p, 'availability', t]
+        * pdtProcess_section[p, d, t] * p_entity_unitsize[p]
+        * pdtProcess[p, 'availability', d, t]
 	)
 ;
 
@@ -1839,19 +1985,19 @@ s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__s
 		else 1
 	  )
   >=
-  + ptProfile[f, t]
+  + pdtProfile[f, d, t]
     * ( + p_entity_all_existing[p, d]
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
-      * ptProcess[p, 'availability', t]
-      / (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+      * pdtProcess[p, 'availability', d, t]
+      / (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
   + ( if (p, 'min_load_efficiency') in process__ct_method then 
 		( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 		  + (if p in process_online_integer then v_online_integer[p, d, t])
 		)
-        * ptProcess_section[p, t] * p_entity_unitsize[p]
-        * ptProcess[p, 'availability', t]
+        * pdtProcess_section[p, d, t] * p_entity_unitsize[p]
+        * pdtProcess[p, 'availability', d, t]
 	)
 ;
 
@@ -1863,62 +2009,53 @@ s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink_
 			)
 	)
   =
-  + ptProfile[f, t]
+  + pdtProfile[f, d, t]
     * ( + p_entity_all_existing[p, d]
         + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	  )
-      * ptProcess[p, 'availability', t]
-      / (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+      * pdtProcess[p, 'availability', d, t]
+      / (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
   + ( if (p, 'min_load_efficiency') in process__ct_method then 
 		( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 		  + (if p in process_online_integer then v_online_integer[p, d, t])
 		)
-        * ptProcess_section[p, t] * p_entity_unitsize[p]
-        * ptProcess[p, 'availability', t]
+        * pdtProcess_section[p, d, t] * p_entity_unitsize[p]
+        * pdtProcess[p, 'availability', d, t]
 	)
 ;
 
 s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_method, (d, t) in dt} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   <=
-  + ptProfile[f, t]
+  + pdtProfile[f, d, t]
     * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )
-      * ptNode[n, 'availability', t]
+      * pdtNode[n, 'availability', d, t]
 ;
 
 s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_method, (d, t) in dt} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   >=
-  + ptProfile[f, t]
+  + pdtProfile[f, d, t]
     * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )
-      * ptNode[n, 'availability', t]
+      * pdtNode[n, 'availability', d, t]
 ;
 
 s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, t) in dt} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
-  + ptProfile[f, t]
+  + pdtProfile[f, d, t]
     * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 	  )
-      * ptNode[n, 'availability', t]
-;
-
-
-s.t. storage_state_roll_continue {n in nodeState, (d, t) in period__time_first
-     : not p_nested_model['solveFirst'] 
-	 && d in period_first_of_solve } :
-  + v_state[n, d, t] * p_entity_unitsize[n]
-  =
-  + p_roll_continue_state[n]
+      * pdtNode[n, 'availability', d, t]
 ;
 
 s.t. storage_state_start {n in nodeState, (d, t) in period__time_first
@@ -1948,16 +2085,16 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
 ;
 
 #Storage state fix quantity for timesteps
-s.t. node_balance_fix_quantity_eq_lower {(n, d, t, t2) in ndtt_fix_storage_quantity_mapped: (d,t) in period__time_last && d in period_last}:
+s.t. node_balance_fix_quantity_eq_lower {n in n_fix_storage_quantity, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last}:
   + v_state[n,d,t]* p_entity_unitsize[n] 
   = 
-  + p_fix_storage_quantity[n,d,t2];
+  + sum{(d, t, t2) in dtt_timeline_matching} p_fix_storage_quantity[n,d2,t2];
 
 #Storage state fix price for timesteps
-s.t. node_balance_fix_price_eq_lower {(n, d, t, t2) in ndtt_fix_storage_price_mapped: (d,t) in period__time_last && d in period_last}:
+s.t. node_balance_fix_price_eq_lower {n in n_fix_storage_price, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last}:
   + v_state[n,d,t]* pdNode[n, 'storage_state_reference_price', d]* p_entity_unitsize[n] 
   = 
-  + p_fix_storage_price[n,d,t2];
+  + sum{(d, t, t2) in dtt_timeline_matching} p_fix_storage_price[n,d2,t2];
 
 s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in period__time_last
      : d in period_last
@@ -1967,11 +2104,11 @@ s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in peri
    && (n, 'bind_within_solve') not in node__storage_binding_method
    && (n, 'bind_within_period') not in node__storage_binding_method
    && (n, 'bind_within_timeblock') not in node__storage_binding_method
-   && sum{(n, d, t, t2) in ndtt_fix_storage_price_mapped} 1 = 0
-   && sum{(n, d, t, t2) in ndtt_fix_storage_quantity_mapped} 1 = 0)} :
+   && sum{(d, t, t2) in dtt_timeline_matching: n in n_fix_storage_price} 1 = 0
+   && sum{(d, t, t2) in dtt_timeline_matching: n in n_fix_storage_quantity} 1 = 0)} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
-  + ptNode[n,'storage_state_reference_value',t]
+  + pdtNode[n,'storage_state_reference_value', d, t]
     * ( + p_entity_all_existing[n, d]
         + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
@@ -2077,7 +2214,7 @@ s.t. maxState {n in nodeState, (d, t) in dt} :
       + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
       - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
     ) 
-	* ptNode[n, 'availability', t]
+	* pdtNode[n, 'availability', d, t]
 ;
 
 s.t. maxToSink {(p, source, sink) in process__source__sinkIsNode, (d, t) in dt : p_process_sink_coefficient[p, sink]} :
@@ -2089,20 +2226,20 @@ s.t. maxToSink {(p, source, sink) in process__source__sinkIsNode, (d, t) in dt :
           + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
           - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	    )	
-		* ptProcess[p, 'availability', t]
+		* pdtProcess[p, 'availability', d, t]
 		* p_process_sink_coefficient[p, sink]
 	)
   + ( if p in process_online_linear then
       + p_process_sink_coefficient[p, sink]
         * v_online_linear[p, d, t]
 		* p_entity_unitsize[p]
-        * ptProcess[p, 'availability', t]
+        * pdtProcess[p, 'availability', d, t]
     ) 
   + ( if p in process_online_integer then
       + p_process_sink_coefficient[p, sink]
         * v_online_integer[p, d, t]
 		* p_entity_unitsize[p]
-        * ptProcess[p, 'availability', t]
+        * pdtProcess[p, 'availability', d, t]
     ) 
 ;
 
@@ -2115,35 +2252,32 @@ s.t. minToSink {(p, source, sink) in process__source__sinkIsNode_not2way1var, (d
 
 # Force source flows from 1-way processes with more than 1 source to be at least 0 (conversion equation does not do it)
 s.t. maxFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source, (d, t) in dt : p_process_source_coefficient[p, source]} :
-  + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
+  + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] * p_process_source_coefficient[p, source] 
   <=
   + ( if p not in process_online then
       + ( + p_entity_all_existing[p, d]
           + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
           - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	    )	
-	    * ptProcess[p, 'availability', t]
-		* p_process_source_coefficient[p, source] 
+	    * pdtProcess[p, 'availability', d, t]
 	)
   + ( if p in process_online_linear then
       + v_online_linear[p, d, t]
 		* p_entity_unitsize[p]
-        * ptProcess[p, 'availability', t]
-		* p_process_source_coefficient[p, source] 
+        * pdtProcess[p, 'availability', d, t]
 	)
   + ( if p in process_online_integer then
       + v_online_integer[p, d, t]
 		* p_entity_unitsize[p]
-        * ptProcess[p, 'availability', t]
-		* p_process_source_coefficient[p, source] 
+        * pdtProcess[p, 'availability', d, t]
     ) 
 ;
 
 s.t. minFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source, (d, t) in dt : p_process_source_coefficient[p, source]} :
-  + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
+  + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] * p_process_source_coefficient[p, source]
   >=
-  + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] * p_process_source_coefficient[p, source] else 0)
-  + (if p in process_online_integer then v_online_integer[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] * p_process_source_coefficient[p, source] else 0)
+  + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] else 0)
+  + (if p in process_online_integer then v_online_integer[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] else 0)
 ;
   
 # Special equation to limit the 1variable connection on the negative transfer
@@ -2180,13 +2314,13 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt : p_p
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
 	      ) 
-		  * ptProcess[p, 'availability', t]
+		  * pdtProcess[p, 'availability', d, t]
 	)
   + ( if p in process_online_linear then
       + p_process_source_coefficient[p, source]
         * v_online_linear[p, d, t] 
 		* p_entity_unitsize[p]
-        * ptProcess[p, 'availability', t]
+        * pdtProcess[p, 'availability', d, t]
     )  
   + ( if p in process_online_integer then
       + p_process_source_coefficient[p, source]
@@ -2196,7 +2330,7 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt : p_p
 			- v_online_integer[p, d, t]   # Using binary online variable as a switch between directions
 		  )   
 		* p_entity_unitsize[p]
-        * ptProcess[p, 'availability', t]
+        * pdtProcess[p, 'availability', d, t]
     )  
 ;
 
@@ -2370,7 +2504,7 @@ s.t. reserve_process_upward{(p, r, 'up', n, d, t) in prundt} :
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
           )
     	* ( if (sum{(p, prof, 'upper_limit') in process__profile__profile_method} 1) then
-	          ( + sum{(p, prof, 'upper_limit') in process__profile__profile_method} ptProfile[prof, t] )
+	          ( + sum{(p, prof, 'upper_limit') in process__profile__profile_method} pdtProfile[prof, d, t] )
 	        else 1
 	      )
   )
@@ -2385,7 +2519,7 @@ s.t. reserve_process_downward{(p, r, 'down', n, d, t) in prundt} :
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
           ) * ( if (sum{(p, prof, 'lower_limit') in process__profile__profile_method} 1) then
-	              ( + sum{(p, prof, 'lower_limit') in process__profile__profile_method} ptProfile[prof, t] )
+	              ( + sum{(p, prof, 'lower_limit') in process__profile__profile_method} pdtProfile[prof, d, t] )
 	          )
 	  )    
 ;
@@ -2503,12 +2637,12 @@ s.t. maxCumulative_flow_solve {g in group : p_group[g, 'max_cumulative_flow']} :
       # n is source
       - sum {(p, n, sink) in process_source_sink_eff } ( 
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-	           * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	           * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
           + (if (p, 'min_load_efficiency') in process__ct_method then 
 		      + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 				  + (if p in process_online_integer then v_online_integer[p, d, t])
 				)
-		    	* ptProcess_section[p, t]
+		    	* pdtProcess_section[p, d, t]
 			    * p_entity_unitsize[p]
 		    )
         )		
@@ -2530,12 +2664,12 @@ s.t. minCumulative_flow_solve {g in group : p_group[g, 'min_cumulative_flow']} :
       # n is source
       - sum {(p, n, sink) in process_source_sink_eff } ( 
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-	           * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	           * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
           + (if (p, 'min_load_efficiency') in process__ct_method then 
 		      + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 				  + (if p in process_online_integer then v_online_integer[p, d, t])
 				)
-		    	* ptProcess_section[p, t]
+		    	* pdtProcess_section[p, d, t]
 			    * p_entity_unitsize[p]
 		    )
         )		
@@ -2548,7 +2682,7 @@ s.t. minCumulative_flow_solve {g in group : p_group[g, 'min_cumulative_flow']} :
       * hours_in_solve
 ;
 
-s.t. maxCumulative_flow_period {g in group, d in period : pd_group[g, 'max_cumulative_flow', d]} :
+s.t. maxCumulative_flow_period {g in group, d in period : pdGroup[g, 'max_cumulative_flow', d]} :
   + sum{(g, p, n) in group_process_node, (d, t) in dt} (
       # n is sink
       + sum {(p, source, n) in process_source_sink} (
@@ -2557,12 +2691,12 @@ s.t. maxCumulative_flow_period {g in group, d in period : pd_group[g, 'max_cumul
       # n is source
       - sum {(p, n, sink) in process_source_sink_eff } ( 
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-	           * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	           * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
           + (if (p, 'min_load_efficiency') in process__ct_method then 
 			  + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 			      + (if p in process_online_integer then v_online_integer[p, d, t])
 				)
-		    	* ptProcess_section[p, t]
+		    	* pdtProcess_section[p, d, t]
 			    * p_entity_unitsize[p]
 		    )
         )		
@@ -2571,11 +2705,11 @@ s.t. maxCumulative_flow_period {g in group, d in period : pd_group[g, 'max_cumul
 		)
 	)  * step_duration[d, t]
 	<=
-  + pd_group[g, 'max_cumulative_flow', d] 
+  + pdGroup[g, 'max_cumulative_flow', d] 
       * hours_in_period[d]
 ;
 
-s.t. minCumulative_flow_period {g in group, d in period : pd_group[g, 'min_cumulative_flow', d]} :
+s.t. minCumulative_flow_period {g in group, d in period : pdGroup[g, 'min_cumulative_flow', d]} :
   + sum{(g, p, n) in group_process_node, (d, t) in dt} (
       # n is sink
       + sum {(p, source, n) in process_source_sink} (
@@ -2584,12 +2718,12 @@ s.t. minCumulative_flow_period {g in group, d in period : pd_group[g, 'min_cumul
       # n is source
       - sum {(p, n, sink) in process_source_sink_eff } ( 
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-	           * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	           * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
           + (if (p, 'min_load_efficiency') in process__ct_method then 
 			  + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 			      + (if p in process_online_integer then v_online_integer[p, d, t])
 				)
-		        * ptProcess_section[p, t]
+		        * pdtProcess_section[p, d, t]
 			   	* p_entity_unitsize[p]
 		    )
         )		
@@ -2598,7 +2732,7 @@ s.t. minCumulative_flow_period {g in group, d in period : pd_group[g, 'min_cumul
 		)
 	) * step_duration[d, t]
 	>=
-  + pd_group[g, 'min_cumulative_flow', d] 
+  + pdGroup[g, 'min_cumulative_flow', d] 
       * hours_in_period[d]
 ;
 
@@ -2611,12 +2745,12 @@ s.t. maxInstant_flow {(g, d, t) in gdt_maxInstantFlow} :
       # n is source
       - sum {(p, n, sink) in process_source_sink_eff } ( 
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-	           * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	           * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
           + (if (p, 'min_load_efficiency') in process__ct_method then 
 			  + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 			      + (if p in process_online_integer then v_online_integer[p, d, t])
 				)
-		    	* ptProcess_section[p, t]
+		    	* pdtProcess_section[p, d, t]
 			    * p_entity_unitsize[p]
 		    )
         )		
@@ -2636,12 +2770,12 @@ s.t. minInstant_flow {(g, d, t) in gdt_minInstantFlow} :
       # n is source
       - sum {(p, n, sink) in process_source_sink_eff } ( 
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
-	           * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	           * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
           + (if (p, 'min_load_efficiency') in process__ct_method then 
 			  + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 			      + (if p in process_online_integer then v_online_integer[p, d, t])
 				)
-	    	    * ptProcess_section[p, t]
+	    	    * pdtProcess_section[p, d, t]
 		    	* p_entity_unitsize[p]
 		    )
         )		
@@ -2678,13 +2812,13 @@ s.t. co2_max_period{g in group_co2_max_period, d in period_in_use} :
               ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t] )
             + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } 
               ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t]
-                  * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+                  * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
                   * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
                 + ( if (p, 'min_load_efficiency') in process__ct_method then 
                     + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
                         + (if p in process_online_integer then v_online_integer[p, d, t])
                       )
-                      * ptProcess_section[p, t]
+                      * pdtProcess_section[p, d, t]
                       * p_entity_unitsize[p]
                   )	  
               ) 
@@ -2707,13 +2841,13 @@ s.t. co2_max_total{g in group_co2_max_total} :
               ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t] )
             + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } 
               ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t]
-                  * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+                  * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
                   * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n] else 1)
                 + ( if (p, 'min_load_efficiency') in process__ct_method then 
                     + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
                         + (if p in process_online_integer then v_online_integer[p, d, t])
                       )
-                      * ptProcess_section[p, t]
+                      * pdtProcess_section[p, d, t]
                       * p_entity_unitsize[p]
 				  )
               )	  
@@ -2741,13 +2875,13 @@ s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
 	  ) * step_duration[d, t]
     + sum {(p, source, sink) in process_source_sink_eff: (g, source) in group_node}
       ( + v_flow[p, source, sink, d, t]
-	      * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 	      * (if p in process_unit then p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, source] else 1)
   	    + ( if (p, 'min_load_efficiency') in process__ct_method then 
 	        + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 	            + (if p in process_online_integer then v_online_integer[p, d, t])
 	          )
-		      * ptProcess_section[p, t]
+		      * pdtProcess_section[p, d, t]
 	      )
         -(if (p,g) in process__group_inside_group_nonSync then v_flow[p, source, sink, d, t] else 0)
 	  )	* p_entity_unitsize[p]
@@ -2764,7 +2898,7 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
 		   && (g, sink) in group_node
 		   && p in process_unit
 		} 
-    ( + ptProfile[f, t]
+    ( + pdtProfile[f, d, t]
         * ( + p_entity_all_existing[p, d]
             + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
             - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
@@ -2792,13 +2926,13 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
 		} 
     ( + if (p, source, sink) in process_source_sink_eff then 
         ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
-	          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	          * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 		      * p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, source]
           + (if (p, 'min_load_efficiency') in process__ct_method then 
 			  + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 			      + (if p in process_online_integer then v_online_integer[p, d, t])
 				)
-			    * ptProcess_section[p, t]
+			    * pdtProcess_section[p, d, t]
 			    * p_entity_unitsize[p]
 	  	    )
 	    ) * step_duration[d, t]
@@ -2848,22 +2982,22 @@ param r_process__source__sink_Flow__dt{(p, source, sink) in process_source_sink_
   + sum {(p, m) in process_method : m in method_1var_per_way}
     ( + sum {(p, source, sink2) in process_source_toSink} 
         ( + v_flow[p, source, sink2, d, t].val * p_entity_unitsize[p]
-	          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	          * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
 	  		  * (if p in process_unit then p_process_sink_coefficient[p, sink2] / p_process_source_coefficient[p, source] else 1)
           + (if (p, 'min_load_efficiency') in process__ct_method then 
 			  + r_process_Online__dt[p, d, t]
-			    * ptProcess_section[p, t] * p_entity_unitsize[p])
+			    * pdtProcess_section[p, d, t] * p_entity_unitsize[p])
 	    )
       + sum {(p, source2, sink) in process_source_toSink} 
           + v_flow[p, source2, sink, d, t].val * p_entity_unitsize[p]
       + sum {(p, source, sink2) in process_sink_toSource} 
         ( + v_flow[p, source, sink2, d, t].val * p_entity_unitsize[p]
-	          * (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+	          * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
           + (if (p, 'min_load_efficiency') in process__ct_method then 
 			  + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 			      + (if p in process_online_integer then v_online_integer[p, d, t])
 				)
-	            * ptProcess_section[p, t] * p_entity_unitsize[p])
+	            * pdtProcess_section[p, d, t] * p_entity_unitsize[p])
 	    )
       + sum {(p, source2, sink) in process_sink_toSource} 
           + v_flow[p, source2, sink, d, t].val * p_entity_unitsize[p]
@@ -2940,14 +3074,14 @@ param r_connection_to_right_node__d{c in process_connection, d in d_realized_per
   + sum {(d, t) in dt_realize_dispatch} r_connection_to_right_node__dt[c, d, t] * step_duration[d, t]
 ;
 
-param r_nodeState_change_dt{n in nodeState, (d, t) in dt} := sum {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} (
-      + (if (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
+param r_nodeState_change_dt{n in nodeState, (d, t) in dt_realize_dispatch} := sum {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} (
+      + (if (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n])
 );
 param r_nodeState_change_d{n in nodeState, d in d_realized_period} := sum {(d, t) in dt_realize_dispatch} r_nodeState_change_dt[n, d, t];
-param r_selfDischargeLoss_dt{n in nodeSelfDischarge, (d, t) in dt} := v_state[n, d, t] * ptNode[n, 'self_discharge_loss', t] * p_entity_unitsize[n];
+param r_selfDischargeLoss_dt{n in nodeSelfDischarge, (d, t) in dt_realize_dispatch} := v_state[n, d, t] * pdtNode[n, 'self_discharge_loss', d, t] * p_entity_unitsize[n];
 param r_selfDischargeLoss_d{n in nodeSelfDischarge, d in d_realized_period} := sum{(d, t) in dt_realize_dispatch} r_selfDischargeLoss_dt[n, d, t] * step_duration[d, t];
 
 param r_cost_commodity_dt{(c, n) in commodity_node, (d, t) in dt} := 
@@ -2978,13 +3112,13 @@ param r_process_emissions_co2_dt{(p, c, n) in process__commodity__node_co2, (d, 
 ;	  
 
 param r_process_emissions_co2_d{(p, c, n) in process__commodity__node_co2, d in d_realized_period} :=
-  + sum{t in time_in_use : (d, t) in dt_realize_dispatch} ( r_process_emissions_co2_dt[p, c, n, d, t] ) / complete_period_share_of_year[d];
+  + sum{(d, t) in dt_realize_dispatch} ( r_process_emissions_co2_dt[p, c, n, d, t] ) / complete_period_share_of_year[d];
 
 param r_emissions_co2_dt{(c, n) in commodity_node_co2, (d, t) in dt} :=
   + sum{(p, c, n) in process__commodity__node_co2} r_process_emissions_co2_dt[p, c, n, d, t];
 
 param r_emissions_co2_d{(c, n) in commodity_node_co2, d in d_realized_period} :=
-  + sum{t in time_in_use : (d, t) in dt_realize_dispatch} ( r_emissions_co2_dt[c, n, d, t] ) / complete_period_share_of_year[d];
+  + sum{(d, t) in dt_realize_dispatch} ( r_emissions_co2_dt[c, n, d, t] ) / complete_period_share_of_year[d];
 
 param r_cost_co2_dt{(g, c, n, d, t) in gcndt_co2_price} := 
   + r_emissions_co2_dt[c, n, d, t] 
@@ -2994,7 +3128,7 @@ param r_cost_co2_dt{(g, c, n, d, t) in gcndt_co2_price} :=
 param r_cost_process_other_operational_cost_dt{p in process, (d, t) in dt} :=
   + step_duration[d, t]
       * sum{(p, source, sink) in process_source_sink_alwaysProcess}
-          + ptProcess__source__sink__dt_varCost_alwaysProcess[p, source, sink, d, t]
+          + pdtProcess__source__sink__dt_varCost_alwaysProcess[p, source, sink, d, t]
 	          * r_process__source__sink_Flow__dt[p, source, sink, d, t]
 #	  * ( + sum {(p, source, sink, 'other_operational_cost') in process__source__sink__param_t}
 #	        ( + sum{(p, n, sink) in process_source_sink_alwaysProcess : (p, sink) in process_sink}
@@ -3025,8 +3159,8 @@ param r_cost_startup_dt{p in process, (d, t) in dt : p in process_online && pdPr
   );
 
 param r_costPenalty_nodeState_upDown_dt{n in nodeBalance, ud in upDown, (d, t) in dt} :=
-  + (if ud = 'up'   then vq_state_up[n, d, t] * node_capacity_for_scaling[n, d] * ptNode[n, 'penalty_up', t])
-  + (if ud = 'down' then vq_state_down[n, d, t] * node_capacity_for_scaling[n, d] * ptNode[n, 'penalty_down', t]) ;
+  + (if ud = 'up'   then vq_state_up[n, d, t] * node_capacity_for_scaling[n, d] * pdtNode[n, 'penalty_up', d, t])
+  + (if ud = 'down' then vq_state_down[n, d, t] * node_capacity_for_scaling[n, d] * pdtNode[n, 'penalty_down', d, t]) ;
 
 param r_penalty_nodeState_upDown_d{n in nodeBalance, ud in upDown, d in d_realized_period} :=
   + sum {(d, t) in dt_realize_dispatch : ud = 'up'}  vq_state_up[n, d, t] * node_capacity_for_scaling[n, d]
@@ -3053,7 +3187,7 @@ param r_costPenalty_capacity_margin_d{g in groupCapacityMargin, d in period_inve
 param r_costPenalty_reserve_upDown_dt{(r, ud, ng) in reserve__upDown__group, (d, t) in dt} :=
   + step_duration[d, t]
       * (
-          + vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve'] * ptReserve_upDown_group[r, ud, ng, 'reservation', t]
+          + vq_reserve[r, ud, ng, d, t] * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve'] * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
 	    )
 ;
 
@@ -3130,17 +3264,18 @@ param r_costExistingFixed_d{d in period} := sum{e in entity : (e, d) not in ed_i
 
 param pdNodeInflow{n in node, d in period} := sum{(d, t) in dt} pdtNodeInflow[n, d, t];
 
+
 param potentialVREgen_dt{(p, n) in process_sink, (d, t) in dt_realize_dispatch:  p in process_VRE} :=
   + sum{(p, source, n, f, m) in process__source__sink__profile__profile_method: m = 'upper_limit'} 
-      + ptProfile[f, t] * entity_all_capacity[p, d]
-        * ptProcess[p, 'availability', t]
-        / (if (p, 'min_load_efficiency') in process__ct_method then ptProcess_slope[p, t] else 1 / ptProcess[p, 'efficiency', t])
+      + pdtProfile[f, d, t] * entity_all_capacity[p, d]
+        * pdtProcess[p, 'availability', d, t]
+        / (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
       + ( if (p, 'min_load_efficiency') in process__ct_method then 
             ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
               + (if p in process_online_integer then v_online_integer[p, d, t])
             )
-            * ptProcess_section[p, t] * p_entity_unitsize[p]
-            * ptProcess[p, 'availability', t]
+            * pdtProcess_section[p, d, t] * p_entity_unitsize[p]
+            * pdtProcess[p, 'availability', d, t]
         );
 
 param potentialVREgen{(p, n) in process_sink, d in d_realized_period : p in process_VRE} :=
@@ -3232,7 +3367,7 @@ param fn_entity_divested symbolic := "solve_data/p_entity_divested.csv";
 printf 'entity,p_entity_divested\n' > fn_entity_divested;
 for {e in entityDivest} 
   {
-    printf '%s,%.8g\n', e, 
+    printf '%s,%.12g\n', e, 
 	  + (if not p_model['solveFirst'] then p_entity_divested[e] else 0)
 	  + sum {(e, d_divest) in ed_divest} v_divest[e, d_divest].val * p_entity_unitsize[e]
 	>> fn_entity_divested;
@@ -3243,12 +3378,12 @@ param fn_fix_quantity_nodeState__dt symbolic := "solve_data/fix_storage_quantity
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'period,step,node,p_fix_storage_quantity\n' > fn_fix_quantity_nodeState__dt;
   }
-for {(d,t) in dt_fix_storage_timesteps : (d,t) in period__time_first} #clear also after before each time values are outputted, to avoid duplicates
+for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear also after before each time values are outputted, to avoid duplicates
   { printf 'period,step,node,p_fix_storage_quantity\n' > fn_fix_quantity_nodeState__dt;
   }
-for {(n,'fix_quantity') in node__storage_nested_fix_method, (d, t) in dt : (d, t) in dt_fix_storage_timesteps}
+for {(n,'fix_quantity') in node__storage_nested_fix_method, (d, t) in dt_fix_storage_timesteps}
   {
-    printf '%s,%s,%s,%.8g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]>> fn_fix_quantity_nodeState__dt;
+    printf '%s,%s,%s,%.12g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]>> fn_fix_quantity_nodeState__dt;
   }
 
 printf 'Write node state price for fixed timesteps ..\n';
@@ -3256,20 +3391,20 @@ param fn_fix_price_nodeState__dt symbolic := "solve_data/fix_storage_price.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'period,step,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
   }
-for {(d,t) in dt_fix_storage_timesteps : (d,t) in period__time_first} #clear also after before each time values are outputted, to avoid duplicates
+for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear also after before each time values are outputted, to avoid duplicates
   { printf 'period,step,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
   }
-for {(n,'fix_price') in node__storage_nested_fix_method, (d, t) in dt : (d, t) in dt_fix_storage_timesteps}
+for {(n,'fix_price') in node__storage_nested_fix_method, (d, t) in dt_fix_storage_timesteps}
   {
-    printf '%s,%s,%s,%.8g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]*pdNode[n, 'storage_state_reference_price', d]>> fn_fix_price_nodeState__dt;
+    printf '%s,%s,%s,%.12g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]*pdNode[n, 'storage_state_reference_price', d]>> fn_fix_price_nodeState__dt;
   }
 
 printf 'Write node state last timestep ..\n';
 param fn_p_roll_continue_state symbolic := "solve_data/p_roll_continue_state.csv";
 printf 'node,p_roll_continue_state\n' > fn_p_roll_continue_state;
-for {n in nodeState, (d, t) in dt_realize_dispatch : (d, t) in realized_period__time_last}
+for {n in nodeState, (d, t) in realized_period__time_last: (d,d) in period__branch && (d, t) in dt_realize_dispatch}
   {
-    printf '%s,%.8g\n', n, v_state[n, d, t].val* p_entity_unitsize[n]  >> fn_p_roll_continue_state;
+    printf '%s,%.12g\n', n, v_state[n, d, t].val* p_entity_unitsize[n]  >> fn_p_roll_continue_state;
   }
 
 printf 'Write unit capacity results...\n';
@@ -3456,8 +3591,8 @@ for {g in groupOutput_node, s in solve_current, (d, t) in dt_realize_dispatch: s
 	       - sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 		         r_process__source__sink_Flow__dt[p, source, n, d, t] 
 		 ) 
-	   , ( sum{(g, n) in group_node : n in nodeBalance} r_costPenalty_nodeState_upDown_dt[n, 'up', d, t] / ptNode[n, 'penalty_up', t]) 
-	   , ( sum{(g, n) in group_node : n in nodeBalance} r_costPenalty_nodeState_upDown_dt[n, 'down', d, t] / ptNode[n, 'penalty_down', t] ) 
+	   , ( sum{(g, n) in group_node : n in nodeBalance} r_costPenalty_nodeState_upDown_dt[n, 'up', d, t] / pdtNode[n, 'penalty_up', d, t]) 
+	   , ( sum{(g, n) in group_node : n in nodeBalance} r_costPenalty_nodeState_upDown_dt[n, 'down', d, t] / pdtNode[n, 'penalty_down', d, t] ) 
 	>> fn_groupNode__dt;
   }
 
@@ -3586,7 +3721,8 @@ for {s in solve_current, d in d_realize_invest}
 	printf '\n' >> fn_annuity;
   }
 
-
+display complete_period_share_of_year;
+display p_discount_factor_operations_yearly;
 printf 'Write discounted total cost for each cost type per solve...\n';
 param fn_costs_total_discounted symbolic := "output/costs_discounted__solve.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -3648,7 +3784,7 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '"non-synchronous penalty","upward reserve penalty",' >> fn_summary_cost;
 	printf '"downward reserve penalty"\n' >> fn_summary_cost;
   }
-for {s in solve_current, d in period}
+for {s in solve_current, d in (d_realized_period union d_realize_invest)}
   { 
     printf '%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n', 
       s, d,
@@ -3772,12 +3908,12 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit__sinkNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', sink >> fn_unit__sinkNode__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_unit__node_flow_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
-  {
-	printf '\n%s,%s,%s', s, d, t >> fn_unit__sinkNode__dt;
+for {s in solve_current: 'output_unit__node_flow_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
+  { for {(d, t) in dt_realize_dispatch}
+  { printf '\n%s,%s,%s', s, d, t >> fn_unit__sinkNode__dt;
     for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit}
       { printf ',%.8g', r_process__source__sink_Flow__dt[u, source, sink, d, t] >> fn_unit__sinkNode__dt; }
-  } 
+  }}
 
 printf 'Write unit__inputNode flow for periods...\n';
 param fn_unit__sourceNode__d symbolic := "output/unit__inputNode__period.csv";
@@ -3804,12 +3940,12 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit__sourceNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', source >> fn_unit__sourceNode__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_unit__node_flow_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
-  {
-	printf '\n%s,%s,%s', s, d, t >> fn_unit__sourceNode__dt;
+for {s in solve_current: 'output_unit__node_flow_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
+  { for {(d, t) in dt_realize_dispatch}
+	{ printf '\n%s,%s,%s', s, d, t >> fn_unit__sourceNode__dt;
     for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}
       { printf ',%.8g', -r_process__source__sink_Flow__dt[u, source, sink, d, t] >> fn_unit__sourceNode__dt; }
-  } 
+  }} 
 
 printf 'Write connection flow for periods...\n';
 param fn_connection__d symbolic := "output/connection__period.csv";
@@ -3838,12 +3974,12 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_connection__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_connection__node__node_flow_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
-  {
-	printf '\n%s,%s,%s', s, d, t >> fn_connection__dt;
+for {s in solve_current: 'output_connection__node__node_flow_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
+  { for{(d, t) in dt_realize_dispatch}
+	{ printf '\n%s,%s,%s', s, d, t >> fn_connection__dt;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
 	  { printf ',%.8g', r_connection_dt[c, d, t] >> fn_connection__dt; }
-  }
+  }}
 
 printf 'Write connection flow to right node for periods...\n';
 param fn_connection_to_right_node__d symbolic := "output/connection_left_to_right__period.csv";
@@ -3872,12 +4008,12 @@ for {i in 1..1 : p_model['solveFirst'] && 'output_connection_flow_separate' in e
 	printf '\n,,' >> fn_connection_to_right_node__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', output >> fn_connection_to_right_node__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch : 'output_connection_flow_separate' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
-  {
-	printf '\n%s,%s,%s', s, d, t >> fn_connection_to_right_node__dt;
+for {s in solve_current : 'output_connection_flow_separate' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
+  { for {(d, t) in dt_realize_dispatch}
+	{ printf '\n%s,%s,%s', s, d, t >> fn_connection_to_right_node__dt;
     for {c in process_connection}
 	  { printf ',%.8g', r_connection_to_right_node__dt[c, d, t] >> fn_connection_to_right_node__dt; }
-  }
+  }}
 
 printf 'Write connection flow to left node for periods...\n';
 param fn_connection_to_left_node__d symbolic := "output/connection_right_to_left__period.csv";
@@ -3906,12 +4042,12 @@ for {i in 1..1 : p_model['solveFirst'] && 'output_connection_flow_separate' in e
 	printf '\n,,' >> fn_connection_to_left_node__dt;
 	for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink} printf ',%s', input >> fn_connection_to_left_node__dt;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch: 'output_connection_flow_separate' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
-  {
-	printf '\n%s,%s,%s', s, d, t >> fn_connection_to_left_node__dt;
+for {s in solve_current: 'output_connection_flow_separate' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
+  { for {(d, t) in dt_realize_dispatch}
+	{ printf '\n%s,%s,%s', s, d, t >> fn_connection_to_left_node__dt;
     for {c in process_connection}
 	  { printf ',%.8g', r_connection_to_left_node__dt[c, d, t] >> fn_connection_to_left_node__dt; }
-  }
+  }}
 
 printf 'Write group_output flows for time...\n';
 param fn_group_flows__dt symbolic := "output/group_flows__period__t.csv";
@@ -4126,18 +4262,21 @@ printf 'Write unit__outputNode curtailment share of VRE units for periods...\n';
 param fn_unit__sinkNode__d_curtailment symbolic := "output/unit_curtailment_share__outputNode__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf 'solve,period' > fn_unit__sinkNode__d_curtailment;  # Print the header on the first solve
+    printf 'type,solve,period' > fn_unit__sinkNode__d_curtailment;  # Print the header on the first solve
 	for {(u, sink) in process_sink : u in process_VRE} printf ',%s', u >> fn_unit__sinkNode__d_curtailment;
-	printf '\n,' >> fn_unit__sinkNode__d_curtailment;
+	printf '\n,,' >> fn_unit__sinkNode__d_curtailment;
 	for {(u, sink) in process_sink : u in process_VRE} printf ',%s', sink >> fn_unit__sinkNode__d_curtailment;
   }
 for {s in solve_current, d in d_realized_period: 'yes' not in exclude_entity_outputs}
   {
-	printf '\n%s,%s', s, d >> fn_unit__sinkNode__d_curtailment;
+	  printf '\n%s,%s,%s','curtailment', s, d >> fn_unit__sinkNode__d_curtailment;
     for {(u, sink) in process_sink : u in process_VRE}
       { printf ',%.6f', ( if entity_all_capacity[u, d] 
 					      then ( potentialVREgen[u, sink, d] - r_process_sink_flow_d[u, sink, d] ) / potentialVREgen[u, sink, d]
 						  else 0 ) >> fn_unit__sinkNode__d_curtailment; }
+    printf '\n%s,%s,%s','potential', s, d >> fn_unit__sinkNode__d_curtailment;
+    for {(u, sink) in process_sink : u in process_VRE}
+      { printf ',%.6f', ( if entity_all_capacity[u, d] then potentialVREgen[u, sink, d] else 0 ) >> fn_unit__sinkNode__d_curtailment; }
   } 
 printf 'Write unit__outputNode curtailment share of VRE units for periods...\n';
 param fn_unit__sinkNode__share__dt_curtailment symbolic := "output/unit_curtailment_share__outputNode__period__t.csv";
@@ -4172,12 +4311,12 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit__sinkNode__dt_curtailment;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_VRE} printf ',%s', sink >> fn_unit__sinkNode__dt_curtailment;
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch : 'yes' not in exclude_entity_outputs}
-  {
-	printf '\n%s,%s,%s', s, d, t >> fn_unit__sinkNode__dt_curtailment;
+for {s in solve_current : 'yes' not in exclude_entity_outputs}
+  { for {(d, t) in dt_realize_dispatch}
+	{ printf '\n%s,%s,%s', s, d, t >> fn_unit__sinkNode__dt_curtailment;
     for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_VRE}
       { printf ',%.6f', potentialVREgen_dt[u, sink, d, t] - r_process__source__sink_Flow__dt[u, source, sink, d, t] >> fn_unit__sinkNode__dt_curtailment; }
-  } 
+  }} 
   
 param w_curtailment := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf;
 display w_curtailment;
@@ -4191,12 +4330,12 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit_ramp__sinkNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit} printf ',%s', sink >> fn_unit_ramp__sinkNode__dt;
   }
-for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'output_unit__node_ramp_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
-  {
-	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sinkNode__dt;
-	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit}
+for {s in solve_current: 'output_unit__node_ramp_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
+  { for {(d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch}
+	{ printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sinkNode__dt;
+	  for {(u, source, sink) in process_source_sink_alwaysProcess : (u, sink) in process_sink && u in process_unit}
       { printf ',%.8g', r_process_source_sink_ramp_dtt[u, source, sink, d, t, t_previous] >> fn_unit_ramp__sinkNode__dt; }
-  } 
+  }} 
 
 param fn_unit_ramp__sourceNode__dt symbolic := "output/unit_ramp__inputNode__dt.csv";
 for {i in 1..1 : p_model['solveFirst']}
@@ -4206,12 +4345,12 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit_ramp__sourceNode__dt;
 	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit} printf ',%s', source >> fn_unit_ramp__sourceNode__dt;
   }
-for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'output_unit__node_ramp_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
-  {
-	printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sourceNode__dt;
-	for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}
+for {s in solve_current: 'output_unit__node_ramp_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
+  { for {(d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch}
+	{ printf '\n%s,%s,%s', s, d, t >> fn_unit_ramp__sourceNode__dt;
+	  for {(u, source, sink) in process_source_sink_alwaysProcess : (u, source) in process_source && u in process_unit}
       { printf ',%.8g', r_process_source_sink_ramp_dtt[u, source, sink, d, t, t_previous] >> fn_unit_ramp__sourceNode__dt; }
-  } 
+  }} 
 
 param w_ramps := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment;
 display w_ramps;
@@ -4272,14 +4411,14 @@ for {i in 1..1 : p_model['solveFirst']}
     for {p in process_unit  : p in process_online}
       { printf ',%s', p >> fn_unit_online__dt; }
   }  # Print the header on the first solve
-for {s in solve_current, (d, t) in dt_realize_dispatch : 'yes' not in exclude_entity_outputs}
-  {
-    printf '\n%s,%s,%s', s, d, t >> fn_unit_online__dt;
-	for {p in process_unit : p in process_online}
-	  {
-	    printf ',%.8g', r_process_Online__dt[p, d, t] >> fn_unit_online__dt;
-	  }
-  }
+for {s in solve_current : 'yes' not in exclude_entity_outputs}
+  { for {(d, t) in dt_realize_dispatch}
+    { printf '\n%s,%s,%s', s, d, t >> fn_unit_online__dt;
+      for {p in process_unit : p in process_online}
+        {
+          printf ',%.8g', r_process_Online__dt[p, d, t] >> fn_unit_online__dt;
+        }
+  }}
 
 printf 'Write average unit online during periods...\n';
 param fn_unit_online__d symbolic := "output/unit_online__period_average.csv";
@@ -4354,21 +4493,21 @@ param fn_node__dt symbolic := "output/node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,time,inflow,"from units","from connections","to units","to connections",' > fn_node__dt;
     printf '"state change","self discharge","upward slack","downward slack"\n' >> fn_node__dt; }  # Print the header on the first solve
-for {n in node, s in solve_current, (d, t) in dt_realize_dispatch: 'output_node_balance_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
-  {
-    printf '%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
-		, n, s, d, t
-        , (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
-	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_unit} r_process__source__sink_Flow__dt[p, source, n, d, t]
-	    , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_connection} r_process__source__sink_Flow__dt[p, source, n, d, t]
-  	    , sum{(p, n, sink) in process_source_sink_alwaysProcess : p in process_unit} -r_process__source__sink_Flow__dt[p, n, sink, d, t]
-  	    , sum{(p, n, sink) in process_source_sink_alwaysProcess : p in process_connection} -r_process__source__sink_Flow__dt[p, n, sink, d, t]
-	    , (if n in nodeState then r_nodeState_change_dt[n, d, t] else 0)
-        , (if n in nodeSelfDischarge then r_selfDischargeLoss_dt[n, d, t] else 0)
-	    , (if n in nodeBalance then vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d] else 0)
-	    , (if n in nodeBalance then -vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d] else 0)
-	  >> fn_node__dt;
-  }
+for {s in solve_current: 'output_node_balance_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
+  { for {n in node, (d, t) in dt_realize_dispatch}
+    { printf '%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
+      , n, s, d, t
+          , (if (n, 'no_inflow') not in node__inflow_method then pdtNodeInflow[n, d, t])
+        , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_unit} r_process__source__sink_Flow__dt[p, source, n, d, t]
+        , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_connection} r_process__source__sink_Flow__dt[p, source, n, d, t]
+          , sum{(p, n, sink) in process_source_sink_alwaysProcess : p in process_unit} -r_process__source__sink_Flow__dt[p, n, sink, d, t]
+          , sum{(p, n, sink) in process_source_sink_alwaysProcess : p in process_connection} -r_process__source__sink_Flow__dt[p, n, sink, d, t]
+        , (if n in nodeState then r_nodeState_change_dt[n, d, t] else 0)
+          , (if n in nodeSelfDischarge then r_selfDischargeLoss_dt[n, d, t] else 0)
+        , (if n in nodeBalance then vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d] else 0)
+        , (if n in nodeBalance then -vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d] else 0)
+      >> fn_node__dt;
+  }}
 
 printf 'Write nodal prices for time...\n';
 param fn_nodal_prices__dt symbolic := "output/node_prices__period__t.csv";
@@ -4378,14 +4517,14 @@ for {i in 1..1 : p_model['solveFirst']}
     for {n in nodeBalance}
       { printf ',%s', n >> fn_nodal_prices__dt; }
   }
-for {s in solve_current, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in dt_realize_dispatch && 'yes' not in exclude_entity_outputs}
-  {
-    printf '\n%s,%s,%s', s, d, t >> fn_nodal_prices__dt;
-    for {c in solve_current, n in nodeBalance}
-	  {
-	    printf ',%8g', -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * period_share_of_year[d] / scale_the_objective >> fn_nodal_prices__dt;
-      }
-  }
+for {s in solve_current: 'yes' not in exclude_entity_outputs}
+  { for {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in dt_realize_dispatch}
+    { printf '\n%s,%s,%s', s, d, t >> fn_nodal_prices__dt;
+      for {c in solve_current, n in nodeBalance}
+      {
+        printf ',%8g', -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * period_share_of_year[d] / scale_the_objective >> fn_nodal_prices__dt;
+        }
+  }}
 
 printf 'Write node state for time..\n';
 param fn_nodeState__dt symbolic := "output/node_state__period__t.csv";
@@ -4394,13 +4533,14 @@ for {i in 1..1 : p_model['solveFirst']}
     for {n in nodeState}
       { printf ',%s', n >> fn_nodeState__dt; }
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch : 'yes' not in exclude_entity_outputs}
-  { printf '\n%s,%s,%s', s, d, t >> fn_nodeState__dt;
-    for {n in nodeState} 
-      {
-	    printf ',%.8g', v_state[n, d, t].val * p_entity_unitsize[n] >> fn_nodeState__dt;
-      }
-  }
+for {s in solve_current : 'yes' not in exclude_entity_outputs}
+  { for {(d, t) in dt_realize_dispatch}
+    { printf '\n%s,%s,%s', s, d, t >> fn_nodeState__dt;
+      for {n in nodeState} 
+        {
+        printf ',%.8g', v_state[n, d, t].val * p_entity_unitsize[n] >> fn_nodeState__dt;
+        }
+  }}
 
 printf 'Write node upward slack over time..\n';
 param fn_node_upward_slack__dt symbolic := "output/slack__upward__node_state__period__t.csv";
@@ -4409,13 +4549,14 @@ for {i in 1..1 : p_model['solveFirst']}
     for {n in nodeBalance}
       { printf ',%s', n >> fn_node_upward_slack__dt; }
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch : 'yes' not in exclude_entity_outputs}
-  { printf '\n%s,%s,%s', s, d, t >> fn_node_upward_slack__dt;
-    for {n in nodeBalance} 
-      {
-	    printf ',%.8g', vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d]  >> fn_node_upward_slack__dt;
-      }
-  }
+for {s in solve_current : 'yes' not in exclude_entity_outputs}
+  { for {(d, t) in dt_realize_dispatch}
+    { printf '\n%s,%s,%s', s, d, t >> fn_node_upward_slack__dt;
+      for {n in nodeBalance} 
+        {
+        printf ',%.8g', vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d]  >> fn_node_upward_slack__dt;
+        }
+  }}
 
 printf 'Write node downward slack over time..\n';
 param fn_node_downward_slack__dt symbolic := "output/slack__downward__node_state__period__t.csv";
@@ -4424,13 +4565,14 @@ for {i in 1..1 : p_model['solveFirst']}
     for {n in nodeBalance}
       { printf ',%s', n >> fn_node_downward_slack__dt; }
   }
-for {s in solve_current, (d, t) in dt_realize_dispatch : 'yes' not in exclude_entity_outputs}
-  { printf '\n%s,%s,%s', s, d, t >> fn_node_downward_slack__dt;
-    for {n in nodeBalance} 
-      {
-	    printf ',%.8g', vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d]  >> fn_node_downward_slack__dt;
-      }
-  }
+for {s in solve_current : 'yes' not in exclude_entity_outputs}
+  { for {(d, t) in dt_realize_dispatch}
+    { printf '\n%s,%s,%s', s, d, t >> fn_node_downward_slack__dt;
+      for {n in nodeBalance} 
+        {
+        printf ',%.8g', vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d]  >> fn_node_downward_slack__dt;
+        }
+  }}
 
 printf 'Write reserve prices over time...\n';
 param fn_group_reserve_price__dt symbolic := "output/reserve_price__upDown__group__period__t.csv";
@@ -4559,7 +4701,7 @@ param r_node_ramproom_VRE_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'o
 			  	    then r_process_Online__dt[u, d, t] * p_entity_unitsize[u]
 			  		else entity_all_capacity[u, d]
 		          )
-				* sum{(u, source, n, f, 'upper_limit') in process__source__sink__profile__profile_method} ptProfile[f, t]
+				* sum{(u, source, n, f, 'upper_limit') in process__source__sink__profile__profile_method} pdtProfile[f, d, t]
 			  - r_process__source__sink_Flow__dt[u, source, n, d, t]
 			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'up'}
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
@@ -4583,7 +4725,7 @@ param r_node_ramproom_VRE_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 
 			  	    then r_process_Online__dt[u, d, t] * p_process[u, 'min_load'] * p_entity_unitsize[u]
 					else entity_all_capacity[u, d]
 		          )
-				* sum{(u, n, sink, f, 'upper_limit') in process__source__sink__profile__profile_method} ptProfile[f, t]
+				* sum{(u, n, sink, f, 'upper_limit') in process__source__sink__profile__profile_method} pdtProfile[f, d, t]
 			  - r_process__source__sink_Flow__dt[u, n, sink, d, t]
 			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
@@ -4645,19 +4787,19 @@ param fn_node_ramp__dtt symbolic := "output/node_ramp__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,time,"ramp","+connections_up","+VRE_up","units_up",' > fn_node_ramp__dtt;
     printf '"units_down","+VRE_down","+connections_down"' >> fn_node_ramp__dtt; }  # Print the header on the first solve
-for {n in nodeBalance, s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch && 'output_ramp_envelope' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
-  {
-    printf '\n%s,%s,%s,%s,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f'
-		, n, s, d, t
-		, r_node_ramp_dtt[n, d, t, t_previous]
-		, r_node_ramproom_connections_up_dtt[n, d, t, t_previous]
-		, r_node_ramproom_VRE_up_dtt[n, d, t, t_previous]
-        , r_node_ramproom_units_up_dtt[n, d, t, t_previous]
-		, r_node_ramproom_units_down_dtt[n, d, t, t_previous]
-		, r_node_ramproom_VRE_down_dtt[n, d, t, t_previous]
-		, r_node_ramproom_connections_down_dtt[n, d, t, t_previous]
-	  >> fn_node_ramp__dtt;
-  }
+for {s in solve_current: 'output_ramp_envelope' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
+  { for{n in nodeBalance, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch}
+    { printf '\n%s,%s,%s,%s,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f'
+      , n, s, d, t
+      , r_node_ramp_dtt[n, d, t, t_previous]
+      , r_node_ramproom_connections_up_dtt[n, d, t, t_previous]
+      , r_node_ramproom_VRE_up_dtt[n, d, t, t_previous]
+          , r_node_ramproom_units_up_dtt[n, d, t, t_previous]
+      , r_node_ramproom_units_down_dtt[n, d, t, t_previous]
+      , r_node_ramproom_VRE_down_dtt[n, d, t, t_previous]
+      , r_node_ramproom_connections_down_dtt[n, d, t, t_previous]
+      >> fn_node_ramp__dtt;
+  }}
 
 param w_ramp_room := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv;
 display w_ramp_room;
@@ -4724,7 +4866,7 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
     printf '\n%s,%s,%s', s, d, t >> fn_group_reserve_slack__dt;
     for {(r, ud, g) in reserve__upDown__group}
       {
-        printf ',%.8g', vq_reserve[r, ud, g, d, t].val * ptReserve_upDown_group[r, ud, g, 'reservation', t]
+        printf ',%.8g', vq_reserve[r, ud, g, d, t].val * pdtReserve_upDown_group[r, ud, g, 'reservation', d, t]
 		    >> fn_group_reserve_slack__dt;
       }
   }
@@ -4805,9 +4947,9 @@ for {n in node : 'method_1way_1var' in debug || 'mini_system' in debug} {
   }
   printf 'Testing outgoing flows of node %s\n', n >> unitTestFile;
   for {(p, n, sink, d, t) in peedt : sum{(p, m) in process_method : m = 'method_1var' || m = 'method_2way_2var'} 1 } {
-    printf (if -v_flow[p, n, sink, d, t].val * p_entity_unitsize[p] / ptProcess[p, 'efficiency', t] <> d_flow_1_or_2_variable[p, n, sink, d, t]
+    printf (if -v_flow[p, n, sink, d, t].val * p_entity_unitsize[p] / pdtProcess[p, 'efficiency', d, t] <> d_flow_1_or_2_variable[p, n, sink, d, t]
 	        then 'Test fails at %s, %s, %s, %s, %s, model value: %.8g, test value: %.8g\n' else ''),
-	            p, n, sink, d, t, -v_flow[p, n, sink, d, t].val * p_entity_unitsize[p] / ptProcess[p, 'efficiency', t], d_flow_1_or_2_variable[p, n, sink, d, t] >> unitTestFile;
+	            p, n, sink, d, t, -v_flow[p, n, sink, d, t].val * p_entity_unitsize[p] / pdtProcess[p, 'efficiency', d, t], d_flow_1_or_2_variable[p, n, sink, d, t] >> unitTestFile;
   }
   for {(p, n, sink, d, t) in peedt : sum{(p, m) in process_method : m in method && (m <> 'method_1var' || m <> 'method_2way_2var')} 1 } {
     printf (if -v_flow[p, n, sink, d, t].val * p_entity_unitsize[p] <> d_flow[p, n, sink, d, t] 
@@ -4824,9 +4966,9 @@ for {(p, r, ud, n, d, t) in prundt} {
 		      p, r, ud, n, d, t, v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p], d_reserve_upDown_node[p, r, ud, n, d, t] >> unitTestFile;
 }
 for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
-  printf (if vq_reserve[r, ud, ng, d, t].val * ptReserve_upDown_group[r, ud, ng, 'reservation', t] <> dq_reserve[r, ud, ng, d, t]
+  printf (if vq_reserve[r, ud, ng, d, t].val * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t] <> dq_reserve[r, ud, ng, d, t]
           then 'Reserve slack variable test fails at %s, %s, %s, %s, %s. Model value: %.8g, test value: %.8g\n' else ''),
-		      r, ud, ng, d, t, vq_reserve[r, ud, ng, d, t].val * ptReserve_upDown_group[r, ud, ng, 'reservation', t], dq_reserve[r, ud, ng, d, t] >> unitTestFile;
+		      r, ud, ng, d, t, vq_reserve[r, ud, ng, d, t].val * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t], dq_reserve[r, ud, ng, d, t] >> unitTestFile;
 }
 
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;	  
@@ -4834,6 +4976,26 @@ printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 param w_unit_test := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv - w_ramp_room - w_inertia - w_slacks;
 display w_unit_test;
 
+
+param w_full := gmtime()-datetime0;
+display w_full;
+#display period_first;
+#display period;
+#display period__time_first;
+#display period_last;
+#display branch;
+#display branch_all;
+#display period__branch;
+#display solve_branch__time_branch;
+#display {d in period_in_use}: p_branch_weight[d];
+#display {p in process, (d,t) in dt}: pdtProcess_slope[p, d, t];
+#display {n in nodeBalance, b in branch, (b,t) in dt, (b, ts) in period__time_first}: pbt_node_inflow[n, b, ts, t];
+#display {(g, n) in group_node, (d,t) in dt : g in groupStochastic}: pdtNodeInflow[n, d, t];
+#display {(p,n,f,m) in process__node__profile__profile_method, (d,t) in dt}: pdtProfile[f,d,t];
+#display {(p,n,p2) in process_source_sink, (d,t) in dt: n in nodeState} v_flow[p,n,p2,d,t];
+#display {(p,p2,n) in process_source_sink, (d,t) in dt: n in nodeState} v_flow[p,p2,n,d,t];
+#display {n in nodeState, (d,t) in dt}: v_state[n,d,t];
+#display dtttdt;
 #display {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } : v_reserve[p, r, ud, n, d, t].dual / p_entity_unitsize[p];
 #display {(p, source, sink) in process_source_sink_alwaysProcess, (d, t) in dt : (d, t) in test_dt}: r_process__source__sink_Flow__dt[p, source, sink, d, t];
 #display {p in process, (d, t) in dt : (d, t) in test_dt}: r_cost_process_other_operational_cost_dt[p, d, t];
@@ -4842,11 +5004,11 @@ display w_unit_test;
 #display {p in process_online, (d, t) in dt : (d, t) in test_dt} : r_process_Online__dt[p, d, t];
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: pdtNodeInflow[n, d, t];
-#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: ptNode[n, 'storage_state_reference_value', t];
-#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: ptNode[n, 'availability', t];
+#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: pdtNode[n, 'storage_state_reference_value', d, t];
+#display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: pdtNode[n, 'availability', d, t];
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val * p_entity_unitsize[n];
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p];
-#display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val * ptReserve_upDown_group[r, ud, ng, 'reservation', t];
+#display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t];
 #display nodeBalance;
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {n in nodeBalance, (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d];

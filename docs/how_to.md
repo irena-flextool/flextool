@@ -29,6 +29,7 @@ Setting different solves:
 - [How to create a multi-year model](#how-to-create-a-multi-year-model)
 - [How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model)
 - [How to use Nested Rolling window solves (investments and long-term storage)](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
+- [How to use stochastics (representing uncertainty)](#how-to-use-stochastics)
 
 General:
 
@@ -308,11 +309,8 @@ Again, the negative value can be turned positive by arranging it to the right si
 ## How to create a hydro reservoir
 **hydro_reservoir.sq**
 
-~~~
-Note! This example concerns a single reservoir hydro power plant. 
-If the river system has multiple plants in a series and their operations are tied, 
-then multiple nodes and units are needed to represent the system.
-~~~
+### Simple hydro reseroir
+***(scenario: hydro)***
 
 The objective is to create a hydro power plant with a reservoir and connect it to a demand node.
 
@@ -324,7 +322,109 @@ Hydro reservoir power plant requires three components:
 
 It can be useful to create a new alternative for these components to be able to include and exclude them from the scenarios.
 
-The reservoir is made with a node as only nodes can have storage in FlexTool. The incoming water can be represented by the inflow parameter. It can be a constant or a time variant. The unit of the inflow should be the power that can be created from the quantity of the incoming water at maximum efficiency [MW]. In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
+The reservoir is made with a node as only nodes can have storage in FlexTool. The incoming water can be represented by the inflow parameter. It can be a constant or a time variant. 
+
+There are two ways to handle the water to electricity coefficient. In this example we store the water as volume and convert it to electricity in the unit. 
+This option is better when modelling river systems with multiple reservoirs. Note that in the results, the state of the reservoir is then as volume.
+For the other option of converting the volume to potential energy in the reservoir, look at the start of the 'How to create a hydro pump storage'.
+
+In this implementation of reservoir hydro power, there is an option to spill water from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled water can be seen from the results as the 'downward slack' of the node.
+
+The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
+
+- `is_active`: yes
+- `has_balance`: yes
+- `has_storage`: yes
+- `inflow`: Mapping of the incoming water as volume [m^3/h]
+- `existing`: The maximum size of the reservoir [m^3]
+- `penalty_up`: a larger number than with the demand node to not allow creating extra water if not enough electricity is being created
+- `penalty_down`: 0 or a large number (spilling or not)
+- a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeblock* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*, which will pick the storage level at the end of each solve from the time series provided as a reference (*storage_state_reference_value*).
+
+The `unit` is connected to the *reservoir* `node` and the output `node` *demand_node* (unit_c and unit_node_c in excel):
+
+- The `efficiency` of the plant is the coefficient of transfering an unit of volume to an unit of electricity (using piecewise linear efficiency is naturally possible), here we use 0.57. 
+- Set `existing` capacity [MW]
+- `is_active`: yes 
+- Create relations `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*demand_node*.
+
+![Hydro reservoir](./hydro_reservoir.PNG)
+
+### River system with multiple reservoirs
+**(scenario: hydro_with_downriver_spill_unit)**
+**(scenario: river_system)**
+
+In this example, we create a hydro system with multiple reseroirs and downriver water demand. Here the water in the reservoir is represented as volume and the conversion to electricity is done in the units.
+
+The reservoir and demand node are the same as above. The `penalty_down` of the reservoir now needs to be the other than 0 as the spilled water needs to flow to the downriver node
+
+Let's start with the downriver demand. 
+
+The downriver node represents the requirement to pass a minimum amount of water through the plant to not dry out the river. The downriver node needs:
+
+- `is_active`: yes
+- `has_balance`: yes
+- `inflow`: Minimum requirement of water flow as the potential power (Map or constant)[m^3/h]
+- `penalty_up`: a large number to prefer not creating energy from nowhere
+- `penalty_down`: 0, this makes the requirement to be at least the amount of water as the demand, not the equal to it
+
+The hydro plant unit now also needs the relation `unit_outputNode`: *hydro_plant*|*downriver* . 
+
+The hydro plant now needs to both pass the water to downriver and the electricity to the demand node. Also, it needs to handle the water to electricity transformation as the reservoir now has volume not energy. The user needs to get the water to electricity coefficient ie. how much energy does one unit of volume create when passing the unit in this example the coefficient is 0.57. As the unit creates both the water and the electricity, the efficiency now is the sum of the two. 
+
+- `efficiency`: 1 + coefficient
+
+Now the unit creates enough stuff to output, but the model can still choose how it will distribute it between the two output nodes. We still need to fix the ratio of output flows. This is done with an user constraint. Here we call this constraint *hydro_split*. The constraint needs parameters:
+
+- `is_active`: yes
+- `sense`: equal
+- `constant`: 0
+
+As we are fixing the output flows, the we need to add the flows with their coefficients to this constraint. This is done with the unit_outputNode parameter `constraint_flow_coefficient`:
+
+- `unit_outputNode`(*hydro_plant*|*downriver*): `constraint_flow_coefficient`: Map (hydro_split| 0.57)  
+- `unit_outputNode`(*hydro_plant*|*demand_node*): `constraint_flow_coefficient`: Map (hydro_split| -1)
+
+These create the constraint: 
+```
+-flow_to_demand_node + 0.57 flow_to_downriver = 0
+```
+
+The capacity of an unit limits both outputs. Here the flow to downriver is larger than to the demand node. The capacity of the unit should be the electrical capacity divided by the water to electricity coefficient. With the electrical capacity of 500MW and water to elecricity coefficient of 0.57 the capacity of the unit becomes 878. Now at full power, 878 units of water flow to downriver and 500MW of electricity flow to the demand node.
+
+To add a spill option to the reservoir we need to create another unit. This is because just making extra water disappear with the `penalty_down`: 0, will not transfer this water to the downriver node to fulfil its needs. 
+This spill unit has the relations:
+- `unit_inputNode` (*spill_unit*|*reservoir*)
+- `unit_outputNode` (*spill_unit*|*downriver*)
+
+And parameters:
+
+- `is_active`: yes
+- `efficiency`: 1
+- `existing`: A large enough number to not be a limit
+
+![Hydro reservoir with downriver](./hydro_reservoir_with_downriver.PNG)
+
+The database also includes an example of a river system with two additional reservoirs and plants. Both of them flow to the reservoir already made in this how to. These two are created the exact same way as above, but with just different values and the relation `unit_outputNode`: (hydro_plant_2| reservoir) and `unit_outputNode`: (hydro_plant_3| reservoir).
+
+In principle you can create as large river systems as you want, but each reservoir adds extra computational burden. Think about the possibility to combine the reservoirs and plants in the system and what information you lose with this approximation.
+
+![River system](./hydro_river_system.PNG)
+
+## How to create a hydro pump storage
+**(hydro_with_pump.sqlite)**
+
+For a hydro pump storage one needs the following components:
+
+- Demand `node` 
+- hydro_plant `unit` with 
+- storage `node`, 
+- hydro_pump `unit` with 
+- pump storage `node` 
+- a source for external energy (pumped storage plant will lose energy due to charging losses). Wind power plant will be used as a source for external energy.
+
+There are two ways to handle the water to electricity coefficient. Here, we convert the reservoir capacity and inflow to potential energy. 
+The unit of the inflow should be the power that can be created from the quantity of the incoming water at maximum efficiency [MW]. In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
 In this implementation of reservoir hydro power, there is an option to spill water (energy) from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled energy can be seen from the results as the 'downward slack' of the node.
 
 The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
@@ -345,23 +445,9 @@ The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* 
 - `is_active`: yes 
 - Create relations `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*nodeA*.
 
-![Hydro reservoir](./hydro_reservoir.PNG)
+![Hydro reservoir for pump](./hydro_reservoir_for_pump.PNG)
 
-## How to create a hydro pump storage
-**(hydro_with_pump.sqlite)**
-
-For a hydro pump storage one needs the following components:
-
-- Demand `node` 
-- hydro_plant `unit` with 
-- storage `node`, 
-- hydro_pump `unit` with 
-- pump storage `node` 
-- a source for external energy (pumped storage plant will lose energy due to charging losses)
-
-For the demand node and the hydro plant we will use the same components as in the previous hydro_reservoir example. With the difference that both demand and hydro_plant capacities are doubled. Wind power plant will be used as a source for external energy.
-
-First create the pump_storage. This is the downstream storage from the hydro plant. Again it should have the parameters as the reservoir:
+Next create the pump_storage. This is the downstream storage from the hydro plant. Again it should have the parameters as the reservoir:
 
 - `is_active`: yes
 - `has_balance`: yes
@@ -370,7 +456,7 @@ First create the pump_storage. This is the downstream storage from the hydro pla
 - `penalty_up`: a large number to avoid creating energy from nowhere
 - `penalty_down`: 0 
 
-In this example database, we have both a closed system and a river system. The difference is that in the closed system the inflow is zero in both reservoir and pump_storage. In river system we have the incoming water for the reservoir as in the reservoir example. In the downstream pump storage we implement a outflow as the negative inflow representing the minimum amount of water that has to flow out of the system at each timestep to not dry out the river. The `penalty_down` is set as 0 to allow it let more water go when it needs to, otherwise the storages will keep filling up if the incoming water is larger than the minimum outgoing water.
+In this example database, we have both a closed system and a river system. The difference is that in the closed system the inflow is zero in both reservoir and pump_storage. In river system we have the incoming water for the reservoir as in the reservoir example. In the downstream pump storage, we implement an outflow as the negative inflow representing the minimum amount of water that has to flow out of the system at each timestep to not dry out the river. The `penalty_down` is set as 0 to allow it let more water go when it needs to, otherwise the storages will keep filling up if the incoming water is larger than the minimum outgoing water.
 
 The storage level fixes should be the same in both storages (reservoir and pump storage). Here:
 
@@ -434,8 +520,8 @@ We still have to make the unit to consume electricity even though it does not af
 
 And setting parameters for `unit_inputNode`:
 
-- (hydro_pump | nodeA) `constraint_flow_coefficient` Map: plant_storage_nodeA_split , 2
-- (hydro_pump | pump_storage) `constraint_flow_coefficient` Map: plant_storage_nodeA_split , -1
+- (hydro_pump | nodeA) `constraint_flow_coefficient` Map: *pump_storage_nodeA_fix* , 2
+- (hydro_pump | pump_storage) `constraint_flow_coefficient` Map: *pump_storage_nodeA_fix* , -1
 
 ```
 2 * flow_from_nodeA - flow_from_pump_storage = 0
@@ -832,6 +918,81 @@ The sample one solve invest also invests too little, as the largest demand-suppl
 
 The split sample investment run produces in this case similar results as the one solve sample run. This is not always the case! Here the only difference between the periods was linearly increased demand.  
 
+## How to use stochastics (representing uncertainty)
+**(stochastics.sqlite)**
+
+Stochastics are used to represent the uncertainty of the future in the decision making. The main idea of it is to connect multiple scenarios (branches) of the future to the realized timeline. The model then optimizes the system to get the minimize the total cost all the branches (weighted by their probability). Only the  realized timeline, shared between all branches, will be output. 
+
+For the stochastics to have an effect on the results, the system needs parameters that change between the stochastic branches. These could be e.g. wind power generation or fuel prices. The model will then have separate variables in every branch for all the decision the model can take ((e.g. invesment, storage state, online, flow). As a consequence, the realization phase will also be dependent on the things that happen in the stochastic branches - weighted by the probablity given to each branch. 
+
+![Stocahstic system](./branching_1.PNG)
+
+In this example, we show three ways to use stochastics: Single solve, rolling horizon and multiperiod single solve. They all share the same test system that includes: 
+
+- A demand node 
+- Coal, gas and wind power plants 
+- Hydro power plant with a reservoir and a downriver nodes
+
+The demand and the downriver nodes have a constant negative inflow. Therefore, the hydro plant capacity is partly in use at all times. The varying timeseries are the wind profile and the water inflow the reservoir. The coal commodity is more expensive than the gas, so the system will try to use the reservoir water to minimize the usage of coal. This will be affected by the forecast of the wind and the forecast of the water inflow. These are the stochastic timeseries in these examples. 
+
+You can have stochastics in multiple timeseries in the same solve, but these will have to share the branches. This means that for example if you have two wind plants with two different stochastic wind profiles with three branches (upper, mid and lower estimates) you need to think if it is best to use only three branches and put both of the upper estimates to the same 'upper' branch or should you use combinatorics to make nine branches. However, note that the tool will not do the combinatorics for you and the solving time will be heavily affected by extra branches. Consequently, the usual practice is to present all the stochastics using just e.g. three branches and consider the correlations between the stochastic parameters in the pre-processing of the input data.
+
+Notes about the storage options with stochastics:
+
+- The best options to use are:
+
+  - `Storage_state_start_end_method`: fix_start or fix_start_end (and the their values)
+  - `storage_solve_horizon_method`: fix_value or fix_price (and their values)
+
+- Do not use any of the `storage_binding_methods`, they do not work correctly with stochastics (there is no unambigious end state that could circle back to the first time step). 
+
+![Stocahstic system](./stochastic_system.PNG)
+
+### Single solve stochastics
+**(stochastics.sqlite scenario: 2_day_stochastic_dispatch)**
+
+In this scenario, 24 hours are realized with an uncertain forecast for the next day. The timeblock length is therefore 48 hours and the branching will happen at the timestep t0025. 
+To set up a stochastic solve, we need three things: The stochastic branch information, the stochastic timeseries and choosing which parts of the model use stochastic timeseries.
+
+The information about the branches are set with the *solve* parameter `stochastic_branches`. This is a 4 dimensional map. (Edit -> choose map -> right click -> add columns).
+The columns are: period, branch, analysis_time (starting time of the branch), realized (yes/no) and the value is the weight of the branch. Each starting time, including the first timestep, should have one and only one realized branch. This realized branch is used for the non-stochastic parts of the model with a stochastic timeseries. In this example we have three branches: mid, upper and lower representing the three wind forecasts. The weight will influence the relative weight of each branch in the objective function (model costs). The weights are normalized, so that the total weight is always one in each timestep.
+
+The stochastic wind timeseries are set with the same *profile* parameter `profile` but with a three dimensional map instead of the regular one dimesional map. The tool recognizes a stochastic timeseries from the dimensions of the data. The three dimensions are: branch, analysis_time and time. Here the realized part of the model (t0001-t0024) uses also the branch 'mid', which is one of the forecast branches as well. In the stochastic part, 'mid' is also set to be 'realized'. It is not actually realized (since the stochastic part is not realized), but it helps the model to choose which branch to use when there is no stochastic data available.
+
+The parts of the model that will use stochastic data is chosen with a *group* parameter `include_stochastics`. The units, nodes and connections that are added to this group use stochastic timeseries connected to them (if available). Here we add the unit *wind_plant* to this group. There is a possiblity that to have two wind plants with the same profile, but use the stochastics on only one of them. The other would then use only the realized branch.
+
+An option exists to output the stochastic horizons for debugging your system. This is done with the *model* parameter `output_horizon`. It will cause errors in the calculation of the cost in each solve (the costs of the unrealized branches will be included) so turn it off when you want the final results.
+
+If you change the weights of the stochastic branches, you should see the results change.
+
+![2day stochastics](./2day_stochastics.PNG)
+
+### Rolling horizon stochastics
+**(stochastics.sqlite scenario: 1_week_rolling_wind)**
+
+In this scenario we extend the previous timeline to one week and roll through it one day at a time with additional three day stochastic horizon:
+
+*solve*: `rolling_solve_jump` = 24 and `rolling_solve_horizon` = 96. 
+
+The stochastic data should be given so that it can serve the rolling structure: `rolling_solve_jump` dictates the duration of the initial non-stochastic part of the model horizon. This period needs only data for the 'realized' branch. The stochastic branches will begin only after that and need data only after `rolling_solve_jump` has been reached. So, for every 'analysis_time' there needs to be a time series in each stochastic branch that extends to the end of horizon (as defined by `rolling_solve_horizon`). The branches continue to the end of the horizon without branching again.
+
+For the *solve* parameter `stochastic_branches` this means analysis times (t0001, t0025, t0049, t0073, t0097, t0121 and t0145). t0001 is there only to tell which branch is the realized one.
+
+Otherwise there is no difference to the previous example.
+
+![Rolling Branching](./branching_rolling.PNG)
+
+![1Week stochastics](./1week_stochastics.PNG)
+
+### Multi periodic stochastics
+**(stochastics.sqlite scenario: 2_year_stochastic_invest)**
+
+Here we solve investment run with one realized year and other year as the stochastic horizon. When using stochastics on multiple periods, they should not use the same timeblock as the stocastics are set for a timestep not (period, timestep). This means that the same value would be used for all the periods with this timestep. Instead use consecutive timeblocks from the same timeline. Here the first timeblock has timesteps t0001-t8760 and the second timeblock has the timesteps t8761-t17520.
+
+The `stochastic_branches` has one branching spot at the first timestep of the period2. This example uses the water inflow of the reservoir as the stochastic timeseries. If you run this scenario, you can see that it takes some time. When planning the stochastic data to be used, you should take into account that it will increase the solving time of the model significantly.
+
+
+![2year stochastics](./2year_stochastics.PNG)
 
 ## How to use CPLEX as the solver
 
@@ -905,6 +1066,7 @@ Some of the outputs are optional. Some of these optional outputs are output by d
 - `output_ramp_envelope`: Default, no. Includes seven parameters that form the ramp room envelope. Shows the actual ramp as well as different levels of available ramping  capability in a given node - for both directions, upward and downward. The first level includes ramproom in all the units, except VRE. The second level adds ramping room in VRE units (typically only downward, unless they have been curtailed. Finally, the last level adds potential ramping capability in the connections, which reflects only the ramproom in the connections themselves - the units/nodes behind the connection may or may not have capability to provide that ramp. (Parameter node_ramp_t)
 - `output_connection_flow_separate`: Default, no. Produces the connection flows separately for both directions.
 - `output_unit__node_ramp_t`: Default, no. Produces the ramps of individual units for all timesteps.
+- `output_horizon`: Outputs the timesteps of the horizon outside the realized timesteps. Useful when constructing a stochastic model.
 
 ![Optional outputs](./optional_outputs.PNG)
 

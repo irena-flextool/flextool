@@ -1203,7 +1203,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^(?!has_|^output_results$|^invest_method$|^co2_method$|^output_node_flows$|^output_aggregate_flows$|^share_loss_of_load$)",
+                    "filter_re": "^(?!has_|^output_results$|^invest_method$|^co2_method$|^output_node_flows$|^output_aggregate_flows$|^share_loss_of_load$|^include_stochastics$)",
                     "header": "groupParam"
                 },
                 {
@@ -2604,7 +2604,8 @@
                 },
                 {
                     "map_type": "ParameterValueType",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "1d_map"
                 },
                 {
                     "map_type": "IndexName",
@@ -2614,14 +2615,6 @@
                     "map_type": "ParameterValueIndex",
                     "position": 1,
                     "header": "period"
-                },
-                {
-                    "map_type": "IndexName",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": "hidden"
                 },
                 {
                     "map_type": "ExpandedValue",
@@ -5351,7 +5344,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 0,
-                    "filter_re": "^output_unit__node_flow_t$|^output_connection__node__node_flow_t$|^output_node_balance_t$|^output_ramp_envelope$|^output_unit__node_ramp_t$|^output_connection_flow_separate$",
+                    "filter_re": "^output_unit__node_flow_t$|^output_connection__node__node_flow_t$|^output_node_balance_t$|^output_ramp_envelope$|^output_unit__node_ramp_t$|^output_connection_flow_separate|^output_horizon$",
                     "header": "output"
                 },
                 {
@@ -5476,6 +5469,790 @@
                     "map_type": "ParameterValue",
                     "position": 0,
                     "header": "value"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "solve__stochastic_branches": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "stochastic_branches"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^solve$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^stochastic_branches$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "solve"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 1,
+                    "header": "period"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "branch"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 3,
+                    "header": "start_time"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 4,
+                    "header": "realized"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 5,
+                    "header": "weight"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "groupIncludeStochastics": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "groupIncludeStochastics"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^group$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^include_stochastics$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "group"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValue",
+                    "position": "hidden",
+                    "filter_re": "^yes$"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_node_bt": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pbt_node"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^node$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 1,
+                    "filter_re": "^penalty_down$|^penalty_up$|^self_discharge_loss$|^availability$|^storage_state_reference_value$",
+                    "header": "nodeParam"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "node"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "3d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "branch"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 3,
+                    "header": "time_start"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 4,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 5,
+                    "header": "pt_node"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_node_bt_inflow": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pbt_node_inflow"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^node$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^inflow$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "node"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "3d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 1,
+                    "header": "branch"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "time_start"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 3,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 4,
+                    "header": "pbt_node_inflow"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_reserve__upDown__group_bt": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pbt_reserve__upDown__group"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^reserve__upDown__group$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 3,
+                    "header": "reserveParam"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "reserve"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "upDown"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 2,
+                    "header": "group"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "3d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 4,
+                    "header": "branch"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 5,
+                    "header": "time_start"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 6,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 7,
+                    "header": "pbt_reserve_upDown_group"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_process_bt": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pbt_process"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^unit$|^connection$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 1,
+                    "filter_re": "^efficiency$|^efficiency_at_min_load$|^min_load$|^other_operational_cost$|^availability$",
+                    "header": "processParam"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "3d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "branch"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 3,
+                    "header": "time_start"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 4,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 5,
+                    "header": "pbt_process"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_process__source_bt__unit": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pbt_process_source"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^unit__inputNode$"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 2,
+                    "filter_re": "^other_operational_cost$",
+                    "header": "sourceSinkTimeParam"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "source"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "3d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 3,
+                    "header": "branch"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 4,
+                    "header": "time_start"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 5,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 6,
+                    "header": "pbt_process_source"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_process__sink_bt__unit": {
+            "type": "relationship_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pbt_process_sink"
+                },
+                {
+                    "map_type": "RelationshipClass",
+                    "position": "hidden",
+                    "filter_re": "^unit__outputNode"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipClassObjectClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 2,
+                    "filter_re": "^other_operational_cost$",
+                    "header": "sourceSinkTimeParam"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Relationship",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "RelationshipObject",
+                    "position": 1,
+                    "header": "sink"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "3d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 3,
+                    "header": "branch"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 4,
+                    "header": "time_start"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 5,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 6,
+                    "header": "pbt_process_sink"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_profile_bt": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pbt_profile"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^profile$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "profile"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "3d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 1,
+                    "header": "branch"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "time_start"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 3,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 4,
+                    "header": "pbt_profile"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "timeblockSet_in_use_2d": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "timeblocks_in_use_2d"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^solve$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^period_timeblockSet$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": 0,
+                    "header": "solve"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "2d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 1,
+                    "header": "roll"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "period"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 3,
+                    "header": "timeblocks"
                 }
             ],
             "enabled": true,

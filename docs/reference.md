@@ -68,6 +68,10 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
     - *contains_solve*: Array of solves that are run with after this solve using the realized data of this solve. Read 'How to use Nested Rolling window solves (investments and long term storage)'
     - *fix_storage_periods*: Array of periods where the last storage value of the long term storage node is passed to the contained solve as a target. (Defined using the node parameter `storage_nested_fix_method`)
   
+  - Stochastic parameters:
+
+    - *stochastic_branches*: 4D-map to set up the stochastic branches, their weights and to choose which of them are realized. See 'How to use stochastics' for more information.
+  
   - For commercial solvers:
 
     - *solver_precommand* the commandline text in front of the call for the commercial (CPLEX) solver. For a possibility of reserving a floating licence for the duration of the solve
@@ -322,6 +326,10 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 - `co2_max_period` [tCO2] Annualized maximum limit for emitted CO2 in each period.
 - `co2_max_total` [tCO2] Maximum limit for emitted CO2 in the whole solve.
 
+### Stochastics
+
+- `include_stochastics` Flag to choose if stochastic timeseries are to be used for the units/nodes/connections of this group 
+
 ### Controlling outputs
 
 Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example it can be helpful to group all electricity nodes and show their aggregated output.
@@ -342,6 +350,11 @@ Some of the outputs are optional. They can be removed to speed up the post-proce
 Additionally a model level option to exclude all node, connection and unit level outputs and only leave group and model level results. This will significantly increase the speed of importing data to the result database.
 
 - model: `exclude_entity_outputs`: Default, no. Excludes results on node, unit and connection level, but preserves group level results
+
+A further option is to output everything from the model horizon. This changes the behaviour of a rolling model, since it would otherwise output only the realized part of the model horizon. This option will also output all variables from the stochastic branches when the model uses those. This option is useful for debugging and constructing stochastic/rolling model. Outputting the unrealized part of the model horizon will include unrealized costs in the cost calculations, so costs will be too high and this option should not be used for the final results.
+
+- model: `output_horizon`: Default, no. Produces outputs for the model horizon after `rolling_solve_jump`.
+
 
 ## Reserves
 
