@@ -29,7 +29,7 @@ Setting different solves:
 - [How to create a multi-year model](#how-to-create-a-multi-year-model)
 - [How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model)
 - [How to use Nested Rolling window solves (investments and long-term storage)](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
-- [How to use stochastics (dealing with uncertainty of the future)](#how-to-use-stochastics)
+- [How to use stochastics (representing uncertainty)](#how-to-use-stochastics)
 
 General:
 
@@ -918,67 +918,65 @@ The sample one solve invest also invests too little, as the largest demand-suppl
 
 The split sample investment run produces in this case similar results as the one solve sample run. This is not always the case! Here the only difference between the periods was linearly increased demand.  
 
-## How to use stochastics
+## How to use stochastics (representing uncertainty)
 **(stochastics.sqlite)**
 
-Stochastics are used to represent the uncertainty of the future in the decision making. The main idea of it is to connect multiple scenarios (branches) of the future to the realized timeline. The model then optimizes the system to get the minimum costs of all the branches. Then only the shared realized timeline is output. The branches can be weighted as they can be produced from a distribution. 
+Stochastics are used to represent the uncertainty of the future in the decision making. The main idea of it is to connect multiple scenarios (branches) of the future to the realized timeline. The model then optimizes the system to get the minimize the total cost all the branches (weighted by their probability). Only the  realized timeline, shared between all branches, will be output. 
 
-For the stochastics to have an effect on the results, the system needs variables that affect the future timesteps. These are investment, storage and unit commitment variables. The scenarios should also want use these variables in the realized timeline differently, otherwise there will be no effect on the results. 
+For the stochastics to have an effect on the results, the system needs parameters that change between the stochastic branches. These could be e.g. wind power generation or fuel prices. The model will then have separate variables in every branch for all the decision the model can take ((e.g. invesment, storage state, online, flow). As a consequence, the realization phase will also be dependent on the things that happen in the stochastic branches - weighted by the probablity given to each branch. 
 
 ![Stocahstic system](./branching_1.PNG)
 
-In this example, we show three ways to use stochastics: Single solve, rolling horizon and multiperiodic single solve. They all share the same test system with: 
+In this example, we show three ways to use stochastics: Single solve, rolling horizon and multiperiod single solve. They all share the same test system that includes: 
 
 - A demand node 
-- Coal, gas and wind plants 
-- Hydro plant with reservoir and downriver nodes
+- Coal, gas and wind power plants 
+- Hydro power plant with a reservoir and a downriver nodes
 
 The demand and the downriver nodes have a constant negative inflow. Therefore, the hydro plant capacity is partly in use at all times. The varying timeseries are the wind profile and the water inflow the reservoir. The coal commodity is more expensive than the gas, so the system will try to use the reservoir water to minimize the usage of coal. This will be affected by the forecast of the wind and the forecast of the water inflow. These are the stochastic timeseries in these examples. 
 
-You can have stochastics in multiple timeseries in the same solve, but these will have to share the branches. This means that for example if you have two wind plants with two different stochastic wind profiles with three branches(upper, mid and lower estimates) you need to think if it is best to use only three branches and put both of the upper estimates to the same 'upper' branch or should you use combinatorics to make nine branches. However, note that the tool will not do the combinatorics for you and the solving time will be heavily affected by extra branches.
+You can have stochastics in multiple timeseries in the same solve, but these will have to share the branches. This means that for example if you have two wind plants with two different stochastic wind profiles with three branches (upper, mid and lower estimates) you need to think if it is best to use only three branches and put both of the upper estimates to the same 'upper' branch or should you use combinatorics to make nine branches. However, note that the tool will not do the combinatorics for you and the solving time will be heavily affected by extra branches. Consequently, the usual practice is to present all the stochastics using just e.g. three branches and consider the correlations between the stochastic parameters in the pre-processing of the input data.
 
 Notes about the storage options with stochastics:
 
 - The best options to use are:
 
-  - `Storage_state_start_end_method`: fix_start / fix_start_end with the their values
-  - `storage_solve_horizon_method`: fix_value / fix_price with their values
+  - `Storage_state_start_end_method`: fix_start or fix_start_end (and the their values)
+  - `storage_solve_horizon_method`: fix_value or fix_price (and their values)
 
-- Do not use any of the `storage_binding_methods`, they don't work correctly with stochastics. 
+- Do not use any of the `storage_binding_methods`, they do not work correctly with stochastics (there is no unambigious end state that could circle back to the first time step). 
 
 ![Stocahstic system](./stochastic_system.PNG)
 
 ### Single solve stochastics
 **(stochastics.sqlite scenario: 2_day_stochastic_dispatch)**
 
-In this scenario, one day is realized with an uncertain forecast of the next day. The timeblock length is 48 hours and the branching will happen at the timestep t0025. 
-To set up a stochastic solve, we need three things: The stocahstic branch information, the stochastic timeseries and choosing which parts of the model use stochastic timeseries.
+In this scenario, 24 hours are realized with an uncertain forecast for the next day. The timeblock length is therefore 48 hours and the branching will happen at the timestep t0025. 
+To set up a stochastic solve, we need three things: The stochastic branch information, the stochastic timeseries and choosing which parts of the model use stochastic timeseries.
 
 The information about the branches are set with the *solve* parameter `stochastic_branches`. This is a 4 dimensional map. (Edit -> choose map -> right click -> add columns).
-The columns are: period, branch, analysis_time (starting time of the branch), realized (yes/no) and the value is the weight of the branch. Each starting time, including the first timestep, should have one and only one realized branch. This realized branch is used for the non-stochastic parts of the model with a stochastic timeseries. In this example we have three branches: mid, upper and lower representing the three wind forecasts. The weight is a factor for the costs of this branch. The weights are normalized to sum to one at each starting time.
+The columns are: period, branch, analysis_time (starting time of the branch), realized (yes/no) and the value is the weight of the branch. Each starting time, including the first timestep, should have one and only one realized branch. This realized branch is used for the non-stochastic parts of the model with a stochastic timeseries. In this example we have three branches: mid, upper and lower representing the three wind forecasts. The weight will influence the relative weight of each branch in the objective function (model costs). The weights are normalized, so that the total weight is always one in each timestep.
 
-The stochastic wind timeseries is set with the same *profile* parameter `profile` but with a three dimensional map instead of the normal one dimesional. The tool recognizes a stochastic timeseries from the dimensions of the data. The three dimensions are: branch, analysis_time and time. Here the realized part of the model (t0001-t0024) has the branch mid that we also set as the realized branch for this start time.
+The stochastic wind timeseries are set with the same *profile* parameter `profile` but with a three dimensional map instead of the regular one dimesional map. The tool recognizes a stochastic timeseries from the dimensions of the data. The three dimensions are: branch, analysis_time and time. Here the realized part of the model (t0001-t0024) uses also the branch 'mid', which is one of the forecast branches as well. In the stochastic part, 'mid' is also set to be 'realized'. It is not actually realized (since the stochastic part is not realized), but it helps the model to choose which branch to use when there is no stochastic data available.
 
-The parts of the model that will use stochastic data is chosen with a *group* parameter `include_stochastics`. The units, nodes and connections that are added to this group use stochastic timeseries connected to them if possible. Here we add the unit *wind_plant* to this group. There is a possiblity that to have two wind plants with the same profile, but use the stochastics on only one of them. The other would then use only the realized branch.
+The parts of the model that will use stochastic data is chosen with a *group* parameter `include_stochastics`. The units, nodes and connections that are added to this group use stochastic timeseries connected to them (if available). Here we add the unit *wind_plant* to this group. There is a possiblity that to have two wind plants with the same profile, but use the stochastics on only one of them. The other would then use only the realized branch.
 
-An option exists to output the stochastic horizons for debugging your system. This is done with the *model* parameter `output_horizon`. It will cause problems with solve level cost calculations (they will also have the costs of the branches), so turn it off when you want the final results.
+An option exists to output the stochastic horizons for debugging your system. This is done with the *model* parameter `output_horizon`. It will cause errors in the calculation of the cost in each solve (the costs of the unrealized branches will be included) so turn it off when you want the final results.
 
 If you change the weights of the stochastic branches, you should see the results change.
 
 ![2day stochastics](./2day_stochastics.PNG)
 
 ### Rolling horizon stochastics
-**(stocahstics.sqlite scenario: 1_week_rolling_wind)**
+**(stochastics.sqlite scenario: 1_week_rolling_wind)**
 
 In this scenario we extend the previous timeline to one week and roll through it one day at a time with additional three day stochastic horizon:
 
 *solve*: `rolling_solve_jump` = 24 and `rolling_solve_horizon` = 96. 
 
-Now the branching start times must match the times where the extended horizon starts. There is only one branching spot for each roll. When creating the rolls, the tool finds the first start time that is not the first step of the roll and uses this as the branching spot. The branches will continue to the end of the roll without branching again.
+The stochastic data should be given so that it can serve the rolling structure: `rolling_solve_jump` dictates the duration of the initial non-stochastic part of the model horizon. This period needs only data for the 'realized' branch. The stochastic branches will begin only after that and need data only after `rolling_solve_jump` has been reached. So, for every 'analysis_time' there needs to be a time series in each stochastic branch that extends to the end of horizon (as defined by `rolling_solve_horizon`). The branches continue to the end of the horizon without branching again.
 
 For the *solve* parameter `stochastic_branches` this means analysis times (t0001, t0025, t0049, t0073, t0097, t0121 and t0145). t0001 is there only to tell which branch is the realized one.
-
-The stochastic timeseries need the time data for each of the start times for all the branches.
 
 Otherwise there is no difference to the previous example.
 
