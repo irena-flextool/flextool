@@ -70,7 +70,7 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
   
   - Stochastic parameters:
 
-    - *stochastic_branches*: 4D-map to set up the stochastic branches, their weights and to choose which of them are realized. Read 'How to use stochastics' before using.
+    - *stochastic_branches*: 4D-map to set up the stochastic branches, their weights and to choose which of them are realized. See 'How to use stochastics' for more information.
   
   - For commercial solvers:
 
@@ -328,7 +328,7 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 
 ### Stochastics
 
-- `include_stochastics` Flag to choose if stochastic timeseries are used if associated with the unit/node/connection in this group 
+- `include_stochastics` Flag to choose if stochastic timeseries are to be used for the units/nodes/connections of this group 
 
 ### Controlling outputs
 
@@ -351,9 +351,9 @@ Additionally a model level option to exclude all node, connection and unit level
 
 - model: `exclude_entity_outputs`: Default, no. Excludes results on node, unit and connection level, but preserves group level results
 
-An option to look at the not output horizons is set. This is useful for debugging and constructing stochastic/rolling model. This might affect the solve level costs in the results, so disable this before the final results.
+A further option is to output everything from the model horizon. This changes the behaviour of a rolling model, since it would otherwise output only the realized part of the model horizon. This option will also output all variables from the stochastic branches when the model uses those. This option is useful for debugging and constructing stochastic/rolling model. Outputting the unrealized part of the model horizon will include unrealized costs in the cost calculations, so costs will be too high and this option should not be used for the final results.
 
-- model: `output_horizon`: Default, no. Produces outputs for the extended horizons.
+- model: `output_horizon`: Default, no. Produces outputs for the model horizon after `rolling_solve_jump`.
 
 
 ## Reserves
