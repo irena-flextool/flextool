@@ -711,6 +711,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#stochastics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stochastics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#controlling-outputs" class="md-nav__link">
     <span class="md-ellipsis">
       Controlling outputs
@@ -1228,6 +1237,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#stochastics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stochastics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#controlling-outputs" class="md-nav__link">
     <span class="md-ellipsis">
       Controlling outputs
@@ -1378,6 +1396,12 @@
 <ul>
 <li><em>contains_solve</em>: Array of solves that are run with after this solve using the realized data of this solve. Read 'How to use Nested Rolling window solves (investments and long term storage)'</li>
 <li><em>fix_storage_periods</em>: Array of periods where the last storage value of the long term storage node is passed to the contained solve as a target. (Defined using the node parameter <code>storage_nested_fix_method</code>)</li>
+</ul>
+</li>
+<li>
+<p>Stochastic parameters:</p>
+<ul>
+<li><em>stochastic_branches</em>: 4D-map to set up the stochastic branches, their weights and to choose which of them are realized. See 'How to use stochastics' for more information.</li>
 </ul>
 </li>
 <li>
@@ -1623,6 +1647,10 @@
 <li><code>co2_max_period</code> [tCO2] Annualized maximum limit for emitted CO2 in each period.</li>
 <li><code>co2_max_total</code> [tCO2] Maximum limit for emitted CO2 in the whole solve.</li>
 </ul>
+<h3 id="stochastics">Stochastics</h3>
+<ul>
+<li><code>include_stochastics</code> Flag to choose if stochastic timeseries are to be used for the units/nodes/connections of this group </li>
+</ul>
 <h3 id="controlling-outputs">Controlling outputs</h3>
 <p>Some results are output for groups of nodes. This means that instead of getting output for each node separately, nodes can be grouped and the aggregated results can be examined. For example it can be helpful to group all electricity nodes and show their aggregated output.</p>
 <ul>
@@ -1642,6 +1670,10 @@
 <p>Additionally a model level option to exclude all node, connection and unit level outputs and only leave group and model level results. This will significantly increase the speed of importing data to the result database.</p>
 <ul>
 <li>model: <code>exclude_entity_outputs</code>: Default, no. Excludes results on node, unit and connection level, but preserves group level results</li>
+</ul>
+<p>A further option is to output everything from the model horizon. This changes the behaviour of a rolling model, since it would otherwise output only the realized part of the model horizon. This option will also output all variables from the stochastic branches when the model uses those. This option is useful for debugging and constructing stochastic/rolling model. Outputting the unrealized part of the model horizon will include unrealized costs in the cost calculations, so costs will be too high and this option should not be used for the final results.</p>
+<ul>
+<li>model: <code>output_horizon</code>: Default, no. Produces outputs for the model horizon after <code>rolling_solve_jump</code>.</li>
 </ul>
 <h2 id="reserves">Reserves</h2>
 <p>The user defines reserve categories through <code>reserve</code> object. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. </p>
