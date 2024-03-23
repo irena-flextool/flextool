@@ -1,4 +1,4 @@
-## Release 3.3.0 (__.3.2024)
+## Release 3.3.0 (23.3.2024)
 **Bug fixes**
 
 -	Investments: maxState to only sum over the investments in this node, not all the nodes
@@ -22,8 +22,8 @@
 -	Several outputs to be optional to hasten the data transfer.
 -	Added group flow output parameter `output_aggregate_outputs` to give the flow of the desired nodes in a grouped format
 -	Option for loss of load sharing `share_loss_of_load` between nodes in a group to better describe the system where loss of load is present
--	Button to open the summary file to the workflow
--	Database with ready time settings for the users to start with *time_settings_only.sqlite*
+-	A workflow item to display the summary file from model runs
+-	Database with pre-made time settings for the users to start with *time_settings_only.sqlite*
 -	C02 max total costraint
 -	Default values for: 
   
@@ -35,7 +35,7 @@
 **Documentation**
 
 -	Introduction
--	New better Tutorial
+-	Improved tutorial (including how-tos split of into their own section)
 -	Installation / update instructions
 -	Theory slides
 -	How to section to guide on making specific parts of the model
@@ -61,7 +61,7 @@ Setting different solves:
 
 -	How to run solves in a sequence (investment + dispatch)
 -	How to create a multi-year model
--	How to use stochastics (dealing with uncertainty of the future)
+-	How to use stochastics (represent uncertainty)
 
 General:
 
