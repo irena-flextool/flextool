@@ -26,11 +26,10 @@
 -	Database with pre-made time settings for the users to start with *time_settings_only.sqlite*
 -	C02 max total costraint
 -	Default values for: 
-  
-  -	Penalty values
-  -	Efficiency
-  -	Constraint constant
-  -	Reserve reliability
+    -	Penalty values
+    -	Efficiency
+    -	Constraint constant
+    -	Reserve reliability
 
 **Documentation**
 
