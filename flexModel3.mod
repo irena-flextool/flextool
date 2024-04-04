@@ -757,15 +757,7 @@ set process__method_indirect := {(p, m) in process_method : m in method_indirect
 set process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source := {(p, source, sink) in process_source_sink 
 										   : sum{(p,m) in process_method : m in method_1way} 1
 										   && (p, source) in process_source 
-										   && ( sum{(p, sink2) in process_sink} 1 = 0 || ( sum{(p, source2) in process_source} 1 >= 2) )};  
-set process__sourceIsNode__sink_1way_noSink := {(p, source, sink) in process_source_sink 
-										   : sum{(p,m) in process_method : m in method_1way} 1
-										   && (p, source) in process_source 
-										   && ( sum{(p, sink2) in process_sink} 1 = 0)};       
-set process__sourceIsNode__sink_1way_MoreThan1Source := {(p, source, sink) in process_source_sink 
-										   : sum{(p,m) in process_method : m in method_1way} 1
-										   && (p, source) in process_source 
-										   && ( sum{(p, source2) in process_source} 1 >= 2)};               
+										   && ( sum{(p, sink2) in process_sink} 1 = 0 || ( sum{(p, source2) in process_source} 1 >= 2) )};
 set process__source__sinkIsNode_not2way1var := {(p, source, sink) in process_source_sink : (p, sink) in process_sink 
 	                                       && sum{(p,m) in process_method : m not in method_2way_1var} 1};
 set process__source__sinkIsNode_2way1var := {(p, source, sink) in process_source_sink : (p, sink) in process_sink 
