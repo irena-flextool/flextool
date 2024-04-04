@@ -181,7 +181,7 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 - Technical: `efficiency`, `min_load`, `efficiency_at_min_load`, `min_uptime`, `min_downtime`
 	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time. Calculated for all timesteps: 
   
-      - the sum of output flows <= minimum_load * capacity
+      - the sum of output flows >= minimum_load * capacity
 
 
   - `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time.
@@ -199,8 +199,8 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 - `interest_rate` - [unitless, e.g. 0.05 means 5%] Interest rate for investments. Constant or period.
 - `invest_max_total` - [MW] Maximum capacity investment over all solves. Constant.
 - `invest_max_period` - [MW] Maximum capacity investment for each period. Period.
-- `invest_min_total` - [MW] Maximum capacity investment over all solves. Constant.
-- `invest_min_period` - [MW] Maximum capacity investment for each period. Period.
+- `invest_min_total` - [MW] Minimum capacity investment over all solves. Constant.
+- `invest_min_period` - [MW] Minimum capacity investment for each period. Period.
 - `retire_cost` - [CUR/kW] Retirement cost for new capacity. Constant or period.
 - `retire_max_total` - [MW] Maximum capacity retirement over all solves. Constant.
 - `retire_max_period` - [MW] Maximum capacity retirement for each period. Period.

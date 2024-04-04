@@ -116,6 +116,8 @@ Annualization scales the sum to correspond with full year time series.
 ## Inertia and non-synchronous generation
 
 - `group` object `inertia_t` parameter - [MWs] the amount of inertia (MWs) in the group of nodes in each timestep
+- `group` object `inertia_largest_flow_t` parameter - [MW] The largest individual flow coming into the group of nodes that *has_inertia*
+- `group` object `inertia_unit_node_t` parameter - [MW] the amount of inertia between units and the nodes of the group
 - `group` object `slack_inertia_t` parameter - [MWs] use of slack variable and the associated penalty cost to fulfill the inertia requirement in each timestep
 - `group` object `slack_nonsync_t` parameter - [MWh] use of slack variable and the associated penalty cost to fulfill the non-synchronous share maximum share constraint in each timestep 
 

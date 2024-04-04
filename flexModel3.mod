@@ -2818,13 +2818,13 @@ s.t. minInstant_flow {(g, d, t) in gdt_minInstantFlow} :
 
 s.t. inertia_constraint {g in groupInertia, (d, t) in dt} :
   + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']} 
-    ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
-      + (if p in process_online_integer then v_online_integer[p, d, t]) 
+    ( + (if p in process_online_linear then v_online_linear[p, d, t] * p_entity_unitsize[p]) 
+      + (if p in process_online_integer then v_online_integer[p, d, t] * p_entity_unitsize[p]) 
 	  + (if p not in process_online then v_flow[p, source, sink, d, t] * p_entity_unitsize[p])
 	) * p_process_source[p, source, 'inertia_constant']
   + sum {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node && p_process_sink[p, sink, 'inertia_constant']} 
-    ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
-      + (if p in process_online_integer then v_online_integer[p, d, t]) 
+    ( + (if p in process_online_linear then v_online_linear[p, d, t] * p_entity_unitsize[p]) 
+      + (if p in process_online_integer then v_online_integer[p, d, t] * p_entity_unitsize[p]) 
 	  + (if p not in process_online then v_flow[p, source, sink, d, t] * p_entity_unitsize[p])
     ) * p_process_sink[p, sink, 'inertia_constant']
   + vq_inertia[g, d, t] * pdGroup[g, 'inertia_limit', d]
@@ -4847,14 +4847,64 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
 	for {g in groupInertia}
 	  { printf ',%.8g' 
 		  , + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']} 
-              ( + (if p in process_online then r_process_Online__dt[p, d, t]) 
+              ( + (if p in process_online then r_process_Online__dt[p, d, t] * p_entity_unitsize[p]) 
 	            + (if p not in process_online then v_flow[p, source, sink, d, t] * p_entity_unitsize[p])
 	          ) * p_process_source[p, source, 'inertia_constant']
             + sum {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node && p_process_sink[p, sink, 'inertia_constant']} 
-              ( + (if p in process_online then r_process_Online__dt[p, d, t]) 
+              ( + (if p in process_online then r_process_Online__dt[p, d, t]* p_entity_unitsize[p]) 
 	            + (if p not in process_online then v_flow[p, source, sink, d, t] * p_entity_unitsize[p])
               ) * p_process_sink[p, sink, 'inertia_constant']
   		  >> fn_group_inertia__dt;
+	  }
+  }
+
+printf 'Write group inertia over time for individual entities...\n';
+param fn_unit_inertia__dt symbolic := "output/group__unit__node_inertia__period__t.csv";
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period,time' > fn_unit_inertia__dt;
+    for {g in groupInertia}
+    {
+      for {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']}
+      { printf ',%s', g >> fn_unit_inertia__dt; }
+      for {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node && p_process_sink[p, sink, 'inertia_constant']}
+      { printf ',%s', g >> fn_unit_inertia__dt; }
+    }
+    printf '\n,,' >> fn_unit_inertia__dt;
+    for {g in groupInertia}
+    {
+      for {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']}
+      { printf ',%s', p >> fn_unit_inertia__dt; }
+      for {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node && p_process_sink[p, sink, 'inertia_constant']}
+      { printf ',%s', p >> fn_unit_inertia__dt; }
+    }
+    printf '\n,,' >> fn_unit_inertia__dt;
+    for {g in groupInertia}
+    {
+      for {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']}
+      { printf ',%s', source >> fn_unit_inertia__dt; }
+      for {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node && p_process_sink[p, sink, 'inertia_constant']}
+      { printf ',%s', sink >> fn_unit_inertia__dt; }
+    }
+  }
+for {s in solve_current, (d, t) in dt_realize_dispatch}
+  {
+    printf '\n%s,%s,%s', s, d, t >> fn_unit_inertia__dt;
+	for {g in groupInertia}
+    {
+    for {(p, source, sink) in process_source_sink: (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']}
+      { printf ',%.8g' 
+        , (( + (if p in process_online then r_process_Online__dt[p, d, t] * p_entity_unitsize[p]) 
+            + (if p not in process_online then v_flow[p, source, sink, d, t] * p_entity_unitsize[p])
+          ) * p_process_source[p, source, 'inertia_constant'])
+          >> fn_unit_inertia__dt;
+      }
+    for {(p, source, sink) in process_source_sink: (p, sink) in process_sink && (g, sink) in group_node && p_process_sink[p, sink, 'inertia_constant']}
+        {printf ',%.8g' 
+        , (( + (if p in process_online then r_process_Online__dt[p, d, t] * p_entity_unitsize[p]) 
+            + (if p not in process_online then v_flow[p, source, sink, d, t] * p_entity_unitsize[p])
+          ) * p_process_sink[p, sink, 'inertia_constant'])
+          >> fn_unit_inertia__dt;
+        }
 	  }
   }
 
