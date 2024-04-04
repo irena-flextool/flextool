@@ -758,6 +758,14 @@ set process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source := {(p, source, sin
 										   : sum{(p,m) in process_method : m in method_1way} 1
 										   && (p, source) in process_source 
 										   && ( sum{(p, sink2) in process_sink} 1 = 0 || ( sum{(p, source2) in process_source} 1 >= 2) )};  
+set process__sourceIsNode__sink_1way_noSink := {(p, source, sink) in process_source_sink 
+										   : sum{(p,m) in process_method : m in method_1way} 1
+										   && (p, source) in process_source 
+										   && ( sum{(p, sink2) in process_sink} 1 = 0)};       
+set process__sourceIsNode__sink_1way_MoreThan1Source := {(p, source, sink) in process_source_sink 
+										   : sum{(p,m) in process_method : m in method_1way} 1
+										   && (p, source) in process_source 
+										   && ( sum{(p, source2) in process_source} 1 >= 2)};               
 set process__source__sinkIsNode_not2way1var := {(p, source, sink) in process_source_sink : (p, sink) in process_sink 
 	                                       && sum{(p,m) in process_method : m not in method_2way_1var} 1};
 set process__source__sinkIsNode_2way1var := {(p, source, sink) in process_source_sink : (p, sink) in process_sink 
@@ -1460,6 +1468,20 @@ param p_entity_max_units {e in entity, d in period} :=
     / p_entity_unitsize[e]
 ;
 
+param p_flow_max{(p, source, sink, d, t) in peedt} :=
+  if sum{(p,m) in process__method_indirect} 1 && (p, source) in process_source
+  then
+    + (p_entity_max_capacity[p, d]
+      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
+      + (if (p, 'min_load_efficiency') in process__ct_method then 
+			    ( p_entity_max_capacity[p, d] * pdtProcess_section[p, d, t])
+        )
+      ) / p_entity_unitsize[p] 
+  else
+    (+ p_entity_max_capacity[p, d]
+      / p_entity_unitsize[p])
+;
+
 set process_VRE := {p in process_unit : not (sum{(p, source) in process_source} 1)
                                         && (sum{(p, n, prof, m) in process__node__profile__profile_method : m = 'upper_limit'} 1)};
 
@@ -1476,7 +1498,7 @@ param dq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} default 0
 
 #########################
 # Variable declarations
-var v_flow {(p, source, sink, d, t) in peedt} <= p_entity_max_units[p, d];
+var v_flow {(p, source, sink, d, t) in peedt} <= p_flow_max[p, source, sink, d, t];
 var v_ramp {(p, source, sink) in process_source_sink_ramp, (d, t) in dt} <= p_entity_max_units[p, d];
 var v_reserve {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } >= 0, <= p_entity_max_units[p, d];
 var v_state {n in nodeState, (d, t) in dt} >= 0, <= p_entity_max_units[n, d];
@@ -2244,13 +2266,16 @@ s.t. maxToSink {(p, source, sink) in process__source__sinkIsNode, (d, t) in dt :
 ;
 
 s.t. minToSink {(p, source, sink) in process__source__sinkIsNode_not2way1var, (d, t) in dt : p_process_sink_coefficient[p, sink]} :
-  + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
-  >=
-  + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] * p_process_sink_coefficient[p, sink] else 0)
-  + (if p in process_online_integer then v_online_integer[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] * p_process_sink_coefficient[p, sink] else 0)
+  + v_flow[p, source, sink, d, t] >= 0
 ;
 
-# Force source flows from 1-way processes with more than 1 source to be at least 0 (conversion equation does not do it)
+s.t. minToSink_minload {(p, source, sink) in process__source__sinkIsNode_not2way1var, (d, t) in dt : p_process_sink_coefficient[p, sink] && p in process_online} :
+  + sum{(p, source, sink2) in process__source__sinkIsNode_not2way1var} v_flow[p, source, sink2, d, t] 
+  >=
+  + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_process_sink_coefficient[p, sink] else 0)
+  + (if p in process_online_integer then v_online_integer[p, d, t] * p_process[p, 'min_load'] * p_process_sink_coefficient[p, sink] else 0)
+;
+
 s.t. maxFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source, (d, t) in dt : p_process_source_coefficient[p, source]} :
   + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] * p_process_source_coefficient[p, source] 
   <=
@@ -2273,13 +2298,18 @@ s.t. maxFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSink
     ) 
 ;
 
+# Force source flows from 1-way processes with more than 1 source to be at least 0 (conversion equation does not do it)
 s.t. minFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source, (d, t) in dt : p_process_source_coefficient[p, source]} :
-  + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] * p_process_source_coefficient[p, source]
-  >=
-  + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] else 0)
-  + (if p in process_online_integer then v_online_integer[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] else 0)
+  + v_flow[p, source, sink, d, t] * p_process_source_coefficient[p, source] >= 0
 ;
-  
+
+s.t. minFromSource_minload {(p, source, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source, (d, t) in dt : p_process_source_coefficient[p, source] && p in process_online} :
+  +  sum{(p, source2, sink) in process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source} v_flow[p, source2, sink, d, t] * p_process_source_coefficient[p, source]
+  >=
+  + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] else 0)
+  + (if p in process_online_integer then v_online_integer[p, d, t] * p_process[p, 'min_load'] else 0)
+;
+
 # Special equation to limit the 1variable connection on the negative transfer
 s.t. minToSink_1var {(p, source, sink) in process__source__sinkIsNode_2way1var, (d, t) in dt : p_process_sink_coefficient[p, sink]} :
   + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
@@ -2335,10 +2365,10 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt : p_p
 ;
 
 s.t. minToSource {(p, source, sink) in process__source__sinkIsNode_2way2var, (d, t) in dt : p_process_source_coefficient[p, source]} :
-  + v_flow[p, sink, source, d, t] * p_entity_unitsize[p]
+  + v_flow[p, sink, source, d, t]
   >=
-  + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] * p_process_source_coefficient[p, source] else 0)
-  + (if p in process_online_integer then v_online_integer[p, d, t] * p_process[p, 'min_load'] * p_entity_unitsize[p] * p_process_source_coefficient[p, source] else 0)
+  + (if p in process_online_linear then v_online_linear[p, d, t] * p_process[p, 'min_load'] * p_process_source_coefficient[p, source] else 0)
+  + (if p in process_online_integer then v_online_integer[p, d, t] * p_process[p, 'min_load'] * p_process_source_coefficient[p, source] else 0)
 ;
 
 s.t. maxOnline {p in process_online, (d, t) in dt} :
