@@ -1461,17 +1461,20 @@ param p_entity_max_units {e in entity, d in period} :=
 ;
 
 param p_flow_max{(p, source, sink, d, t) in peedt} :=
-  if sum{(p,m) in process__method_indirect} 1 && (p, source) in process_source
+  if exists{(p, m) in process__method_indirect} && (p, source) in process_source
   then
-    + (p_entity_max_capacity[p, d]
-      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
-      + (if (p, 'min_load_efficiency') in process__ct_method then 
-			    ( p_entity_max_capacity[p, d] * pdtProcess_section[p, d, t])
-        )
-      ) / p_entity_unitsize[p] 
+    + ( if (p, 'min_load_efficiency') in process__ct_method 
+	    then pdtProcess_slope[p, d, t] + pdtProcess_section[p, d, t]
+	    else 1 / pdtProcess[p, 'efficiency', d, t]
+      ) * p_entity_max_units[p, d]
   else
-    (+ p_entity_max_capacity[p, d]
-      / p_entity_unitsize[p])
+    + p_entity_max_units[p, d]
+;
+
+param p_flow_min{(p, source, sink, d, t) in peedt} :=
+  if exists{(p, source, sink) in process__source__sinkIsNode_2way1var}
+  then -p_entity_max_units[p, d]
+  else 0
 ;
 
 set process_VRE := {p in process_unit : not (sum{(p, source) in process_source} 1)
@@ -1490,7 +1493,7 @@ param dq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} default 0
 
 #########################
 # Variable declarations
-var v_flow {(p, source, sink, d, t) in peedt} <= p_flow_max[p, source, sink, d, t];
+var v_flow {(p, source, sink, d, t) in peedt} >= p_flow_min[p, source, sink, d, t], <= p_flow_max[p, source, sink, d, t];
 var v_ramp {(p, source, sink) in process_source_sink_ramp, (d, t) in dt} <= p_entity_max_units[p, d];
 var v_reserve {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } >= 0, <= p_entity_max_units[p, d];
 var v_state {n in nodeState, (d, t) in dt} >= 0, <= p_entity_max_units[n, d];
@@ -2810,15 +2813,15 @@ s.t. minInstant_flow {(g, d, t) in gdt_minInstantFlow} :
 
 s.t. inertia_constraint {g in groupInertia, (d, t) in dt} :
   + sum {(p, source, sink) in process_source_sink : (p, source) in process_source && (g, source) in group_node && p_process_source[p, source, 'inertia_constant']} 
-    ( + (if p in process_online_linear then v_online_linear[p, d, t] * p_entity_unitsize[p]) 
-      + (if p in process_online_integer then v_online_integer[p, d, t] * p_entity_unitsize[p]) 
-	  + (if p not in process_online then v_flow[p, source, sink, d, t] * p_entity_unitsize[p])
-	) * p_process_source[p, source, 'inertia_constant']
+    ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
+      + (if p in process_online_integer then v_online_integer[p, d, t]) 
+	  + (if p not in process_online then v_flow[p, source, sink, d, t])
+	) * p_process_source[p, source, 'inertia_constant'] * p_entity_unitsize[p]
   + sum {(p, source, sink) in process_source_sink : (p, sink) in process_sink && (g, sink) in group_node && p_process_sink[p, sink, 'inertia_constant']} 
-    ( + (if p in process_online_linear then v_online_linear[p, d, t] * p_entity_unitsize[p]) 
-      + (if p in process_online_integer then v_online_integer[p, d, t] * p_entity_unitsize[p]) 
-	  + (if p not in process_online then v_flow[p, source, sink, d, t] * p_entity_unitsize[p])
-    ) * p_process_sink[p, sink, 'inertia_constant']
+    ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
+      + (if p in process_online_integer then v_online_integer[p, d, t]) 
+	  + (if p not in process_online then v_flow[p, source, sink, d, t])
+    ) * p_process_sink[p, sink, 'inertia_constant'] * p_entity_unitsize[p]
   + vq_inertia[g, d, t] * pdGroup[g, 'inertia_limit', d]
   >=
   + pdGroup[g, 'inertia_limit', d]
