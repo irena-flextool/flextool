@@ -13,6 +13,15 @@ authors:
     email: juha.kiviluoma@vtt.fi
     affiliation: VTT
     orcid: 'https://orcid.org/0000-0002-1299-9056'
+  - given-names: Arttu
+    family-names: Tupala
+    email: juha.kiviluoma@vtt.fi
+    affiliation: VTT
+  - given-names: Antti
+    family-names: Soininen
+    email: juha.kiviluoma@vtt.fi
+    affiliation: VTT
+    orcid: 'https://orcid.org/0000-0001-6449-9603'
   - name: International Renewable Energy Agency (IRENA)
     website: 'https://www.irena.org/'
 repository-code: 'https://github.com/irena-flextool/flextool'
