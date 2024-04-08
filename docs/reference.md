@@ -237,7 +237,8 @@ Finally, the retirements work similar to investments using the same `discount_ra
 ### Properties of unit--inputNode and unit--outputNode relationships
 
 - `is_non_synchronous` - Chooses whether the unit is synchronously connected to this node.
-- `coefficient` - [factor] Coefficient to scale the output from a unit to a particular node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints). Constant.
+- `coefficient` - [factor] Coefficient to scale the output from a unit to a particular node or the input from a node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints).
+Note that in the case of unit--outputNode the `coefficient` affects *after* the capacity and the other unit constraints. Constant.
 - `other_operational_cost` - [CUR/MWh] Other operational variable costs for energy flows. Constant or time. 
 - `inertia_constant` - [MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.
 - `ramp_method` - Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).
