@@ -316,9 +316,9 @@ param p_process_sink_coefficient {(p, sink) in process_sink} default 1;
 param p_profile {profile};
 param pt_profile {profile, time};
 
-param p_reserve_upDown_group {reserve, upDown, group, reserveParam} default 0;
+param reserveParam_defaults{rp in reserveParam}:= (if rp in reserveParam_def1 then 1 else if rp == 'penalty_reserve' then 5000 else 0);
+param p_reserve_upDown_group {reserve, upDown, group, rp in reserveParam} default reserveParam_defaults[rp];
 param pt_reserve_upDown_group {reserve, upDown, group, reserveTimeParam, time};
-param reserveParam_defaults{rp in reserveParam}:= (if rp in reserveParam_def1 then 1 else 0);
 param p_process_reserve_upDown_node {p in process, r in reserve, ud in upDown, n in node, rp in reserveParam} default reserveParam_defaults[rp];
 
 param p_process {process, processParam} default 0;
@@ -730,10 +730,12 @@ param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} :
 param pdGroup {g in group, param in groupPeriodParam, d in period} :=
         + if (g, param, d) in group__param__period
 		  then pd_group[g, param, d]
-      else if exists{(c,param, db) in group__param__period : (db,d) in period__branch} 1
+      else if exists{(g, param, db) in group__param__period : (db,d) in period__branch} 1
       then sum{(db, d) in period__branch} pd_group[g, param, db]
-		  else if (g, param) in group__param 
-		  then p_group[g, param]
+		  else if (g, param) in group__param
+      then p_group[g, param]
+      else if param == 'penalty_inertia' || param == 'penalty_capacity_margin' || param == 'penalty_non_synchronous'
+      then 5000
 		  else 0;
 
 set reserve__upDown__group__method_timeseries := {(r, ud, ng, r_m) in reserve__upDown__group__method 
@@ -817,7 +819,7 @@ set process__source__sink__ramp_method :=
 param pdNode {n in node, param in nodePeriodParam, d in period_with_history} :=
         + if (n, param, d) in node__param__period
 		  then pd_node[n, param, d]
-      else if exists{(c, param, db) in node__param__period: (db, d) in period__branch} 1
+      else if exists{(n, param, db) in node__param__period: (db, d) in period__branch} 1
       then sum{(db, d) in period__branch} pd_node[n, param, db]
 		  else p_node[n, param];
 
@@ -5066,7 +5068,6 @@ display w_unit_test;
 
 param w_full := gmtime()-datetime0;
 display w_full;
-display v_flow;
 #display period_first;
 #display period;
 #display period__time_first;
