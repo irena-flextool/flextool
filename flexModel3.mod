@@ -75,13 +75,20 @@ set commodityPeriodParam within commodityParam;
 set nodeParam;
 set nodeParam_def1 within nodeParam;
 set nodePeriodParam;
+set nodePeriodParamRequired within nodePeriodParam;
+set nodePeriodParamInvest within nodePeriodParam;
 set nodeTimeParam within nodeParam;
+set nodeTimeParamRequired within nodeParam;
 set processParam;
 set processParam_def1 within processParam;
 set processPeriodParam;
 set processTimeParam within processParam;
+set processPeriodParamRequired within processPeriodParam;
+set processPeriodParamInvest within processPeriodParam;
+set processTimeParamRequired within processParam;
 set sourceSinkParam;
 set sourceSinkTimeParam within sourceSinkParam;
+set sourceSinkTimeParamRequired within sourceSinkParam;
 set reserveParam;
 set reserveParam_def1 within reserveParam;
 set reserveTimeParam within reserveParam;
@@ -816,14 +823,27 @@ set process__source__sink__ramp_method :=
 		|| (p, sink, m) in process_node_ramp_method
 	};
 
-param pdNode {n in node, param in nodePeriodParam, d in period_with_history} :=
+set node__PeriodParam_in_use :=
+  { n in node, param in nodePeriodParam:
+    param in nodePeriodParamRequired 
+    || ((n in entityInvest || n in entityDivest) && param in nodePeriodParamInvest)
+  };
+
+set node__TimeParam_in_use :=
+  { n in node, param in nodeTimeParam:
+    (n in nodeBalance && param in nodeTimeParamRequired) 
+    || ((n in nodeState) && (param == 'self_discharge_loss' || param == 'availability')) 
+    || ((n, 'use_reference_value') in node__storage_solve_horizon_method && param == 'storage_state_reference_value')
+  };
+
+param pdNode {(n, param) in node__PeriodParam_in_use, d in period_with_history} :=
         + if (n, param, d) in node__param__period
 		  then pd_node[n, param, d]
       else if exists{(n, param, db) in node__param__period: (db, d) in period__branch} 1
       then sum{(db, d) in period__branch} pd_node[n, param, db]
 		  else p_node[n, param];
 
-param pdtNode {n in node, param in nodeTimeParam, (d, t) in dt} :=
+param pdtNode {(n, param) in node__TimeParam_in_use, (d, t) in dt} :=
       + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, param, tb, ts, t) in node__param__branch__time} 1 
       && exists{(g,n) in group_node: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_node[n, param, tb, ts, t]
@@ -844,8 +864,21 @@ param ptNode_inflow {n in node, t in time} :=
 		  then pt_node_inflow[n, t]
 		  else p_node[n, 'inflow'];
 set nodeSelfDischarge :=  {n in nodeState : exists{(d, t) in dt : pdtNode[n, 'self_discharge_loss', d, t]} 1};
-		  
-param pdProcess {p in process, param in processPeriodParam, d in period_with_history} :=
+
+set process__PeriodParam_in_use :=
+  { p in process, param in processPeriodParam:
+    param in processPeriodParamRequired 
+    || ((p in entityInvest || p in entityDivest) && param in processPeriodParamInvest)
+    || (p in process_online && param == 'startup_cost')
+  };
+
+set process_TimeParam_in_use :=
+  { p in process, param in processTimeParam:
+    param in processTimeParamRequired ||
+    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
+  };
+
+param pdProcess {(p, param) in process__PeriodParam_in_use, d in period_with_history} :=
         + if (p, param, d) in process__param__period
 		  then pd_process[p, param, d]
       else if exists{(p, param, db) in process__param__period: (db, d) in period__branch} 1
@@ -853,7 +886,7 @@ param pdProcess {p in process, param in processPeriodParam, d in period_with_his
 		  else if (p, param) in process__param
 		  then p_process[p, param]
 		  else 0;
-param pdtProcess {p in process, param in processTimeParam, (d,t) in dt} :=
+param pdtProcess {(p, param) in process_TimeParam_in_use, (d,t) in dt} :=
       + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, param, tb, ts, t) in process__param__branch__time} 1 
       && exists{(g,p) in group_process: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process[p, param, tb, ts, t]
@@ -908,7 +941,18 @@ param pProcess_source_sink {(p, source, sink, param) in process__source__sink__p
 		  then p_process_sink[p, sink, param]
 		  else 0;
 
-param pdtProcess_source {(p, source) in process_source, param in sourceSinkTimeParam, (d, t) in dt} :=  # : sum{d in period : (d, t) in dt} 1
+set process_source_sourceSinkTimeParam_in_use :=
+  {(p, source) in process_source, param in sourceSinkTimeParam:
+    param in sourceSinkTimeParamRequired ||
+    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
+  };
+set process_sink_sourceSinkTimeParam_in_use :=
+  { (p, sink) in process_sink, param in sourceSinkTimeParam:
+    param in sourceSinkTimeParamRequired ||
+    ((p, 'min_load_efficiency') in process__ct_method && ((param == 'min_load') || (param == 'efficiency_at_min_load')))
+  };
+
+param pdtProcess_source {(p, source, param) in process_source_sourceSinkTimeParam_in_use, (d, t) in dt} :=  # : sum{d in period : (d, t) in dt} 1
       + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, source, param, tb, ts, t) in process__source__param__branch__time} 1 
       && exists{(g,p) in group_process: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_source[p, source, param, tb, ts, t]
@@ -920,7 +964,7 @@ param pdtProcess_source {(p, source) in process_source, param in sourceSinkTimeP
 		  then p_process_source[p, source, param]
 		  else 0;
         
-param pdtProcess_sink {(p, sink) in process_sink, param in sourceSinkTimeParam, (d, t) in dt} :=  #  : sum{d in period : (d, t) in dt} 1
+param pdtProcess_sink {(p, sink, param) in process_sink_sourceSinkTimeParam_in_use, (d, t) in dt} :=  #  : sum{d in period : (d, t) in dt} 1
       + if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (p, sink, param, tb, ts, t) in process__sink__param__branch__time} 1 
       && exists{(g,p) in group_process: g in groupStochastic} 1
       then sum{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch} pbt_process_sink[p, sink, param, tb, ts, t]
