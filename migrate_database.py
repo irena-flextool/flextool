@@ -21,7 +21,7 @@ def migrate_database(database_path):
         version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
     next_version = int(version) + 1
-    new_version = 17
+    new_version = 18
 
     while next_version <= new_version:
         if next_version == 0:
@@ -76,6 +76,13 @@ def migrate_database(database_path):
                               ["group", "include_stochastics", "no", "yes_no", "Includes the stochastic branches to be used for the nodes/units/connections in this group"],
                               ["model", "output_horizon", "no", "yes_no", "Outputs the flows in the horizons. Used for testing the model."]]
             add_parameters_manual(db,new_parameters)
+        elif next_version == 18:
+            new_parameters = [["group", "penalty_inertia", 5000, None, "[CUR/MWs] Penalty for violating the inertia constraint. Constant or period."],
+                              ["group", "penalty_capacity_margin", 5000, None, "[CUR/MWh] Penalty for violating the capacity margin constraint. Constant or period."],
+                              ["group", "penalty_non_synchronous", 5000, None, "[CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period."]]
+            new_relationships = [["reserve__upDown__group", "penalty_reserve", 5000, None, "[CUR/MW] Penalty for violating a reserve constraint. Constant."]]
+            add_parameters_manual(db,new_parameters)
+            add_relationships_manual(db,new_relationships)
         else:
             print("Version invalid")
         next_version += 1 
@@ -116,6 +123,14 @@ def remove_parameters_manual(db,obj_param_names):
 
 def add_parameters_manual(db,new_parameters):
     (num,log) = import_data(db, object_parameters = new_parameters)
+    try:
+        db.commit_session("Added new parameters")
+    except SpineDBAPIError:
+        print("These parameters have been added before, continuing") 
+    return 0
+
+def add_relationships_manual(db, new_relationships):
+    (num,log) = import_data(db, relationship_parameters = new_relationships)
     try:
         db.commit_session("Added new parameters")
     except SpineDBAPIError:

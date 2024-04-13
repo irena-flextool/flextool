@@ -470,6 +470,83 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
+        "Group_flows_sd": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "group_flows"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "header": "group"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^flow_annualized$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": -2
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": 0
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": -3
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": -4
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 1
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 7
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
         "Group_flows_t": {
             "type": "object_parameter_values",
             "mapping": [
@@ -2157,6 +2234,91 @@
             "group_fn": "no_group",
             "use_fixed_table_name": true
         },
+        "Group_unit_node_inertia_sdt": {
+            "type": "object_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "group_unit_node_inertia_t"
+                },
+                {
+                    "map_type": "ObjectClass",
+                    "position": "hidden",
+                    "filter_re": "^group$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^inertia_unit_node_t$"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Object",
+                    "position": -2
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": -1
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": -3
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": -4
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 0
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 1
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 5
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
         "Group_nonsync_slack_sdt": {
             "type": "object_parameter_values",
             "mapping": [
@@ -2343,83 +2505,6 @@
                 {
                     "map_type": "ExpandedValue",
                     "position": 4
-                }
-            ],
-            "enabled": true,
-            "always_export_header": true,
-            "group_fn": "no_group",
-            "use_fixed_table_name": true
-        },
-        "Group_flows_sd": {
-            "type": "object_parameter_values",
-            "mapping": [
-                {
-                    "map_type": "FixedValue",
-                    "position": "table_name",
-                    "value": "group_flows"
-                },
-                {
-                    "map_type": "ObjectClass",
-                    "position": "hidden",
-                    "header": "group"
-                },
-                {
-                    "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "^flow_annualized$"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
-                    "map_type": "Object",
-                    "position": -2
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": 0
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "IndexName",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": -3
-                },
-                {
-                    "map_type": "IndexName",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": -4
-                },
-                {
-                    "map_type": "IndexName",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": 1
-                },
-                {
-                    "map_type": "IndexName",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueIndex",
-                    "position": 2
-                },
-                {
-                    "map_type": "ExpandedValue",
-                    "position": 7
                 }
             ],
             "enabled": true,

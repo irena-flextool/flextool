@@ -179,7 +179,11 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 - Capacity: `existing` (and the investment and retirement parameters below)
 - Technical: `efficiency`, `min_load`, `efficiency_at_min_load`, `min_uptime`, `min_downtime`
-	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time.
+	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time. Calculated for all timesteps: 
+  
+      - the sum of output flows >= minimum_load * capacity
+
+
   - `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time.
 - Economic: `startup_cost`, `fixed_cost` (fuel cost comes through the use of fuel commodities and other variable costs are defined for flows between unit and node, see below)
 
@@ -195,8 +199,8 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 - `interest_rate` - [unitless, e.g. 0.05 means 5%] Interest rate for investments. Constant or period.
 - `invest_max_total` - [MW] Maximum capacity investment over all solves. Constant.
 - `invest_max_period` - [MW] Maximum capacity investment for each period. Period.
-- `invest_min_total` - [MW] Maximum capacity investment over all solves. Constant.
-- `invest_min_period` - [MW] Maximum capacity investment for each period. Period.
+- `invest_min_total` - [MW] Minimum capacity investment over all solves. Constant.
+- `invest_min_period` - [MW] Minimum capacity investment for each period. Period.
 - `retire_cost` - [CUR/kW] Retirement cost for new capacity. Constant or period.
 - `retire_max_total` - [MW] Maximum capacity retirement over all solves. Constant.
 - `retire_max_period` - [MW] Maximum capacity retirement for each period. Period.
@@ -233,7 +237,8 @@ Finally, the retirements work similar to investments using the same `discount_ra
 ### Properties of unit--inputNode and unit--outputNode relationships
 
 - `is_non_synchronous` - Chooses whether the unit is synchronously connected to this node.
-- `coefficient` - [factor] Coefficient to scale the output from a unit to a particular node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints). Constant.
+- `coefficient` - [factor] Coefficient to scale the output from a unit to a particular node or the input from a node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints).
+Note that in the case of unit--outputNode the `coefficient` affects *after* the capacity and the other unit constraints. Constant.
 - `other_operational_cost` - [CUR/MWh] Other operational variable costs for energy flows. Constant or time. 
 - `inertia_constant` - [MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.
 - `ramp_method` - Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).

@@ -8,10 +8,10 @@ This section is divided into two parts:
 Building parts of the model:
 
 - [How to create basic temporal structures for your model](#how-to-create-basic-temporal-structures-for-your-model)
-- [How to create a PV, wind or run-of-river hydro power plant](#How-to-create-a-PV,-wind-or-run---of---river-hydro-power-plant)
-- [How to connect nodes in the same energy network](#How-to-connect-nodes-in-the-same-energy-network)
-- [How to set the demand in a node](#How-to-set-the-demand-in-a-node)
-- [How to add a storage unit (battery)](#How-to-add-a-storage-unit-(battery))
+- [How to create a PV, wind or run-of-river hydro power plant](#how-to-create-a-pv-wind-or-run-of-river-hydro-power-plant)
+- [How to connect nodes in the same energy network](#how-to-connect-nodes-in-the-same-energy-network)
+- [How to set the demand in a node](#how-to-set-the-demand-in-a-node)
+- [How to add a storage unit (battery)](#how-to-add-a-storage-unit-battery)
 - [How to make investments (storage/unit)](#how-to-make-investments-storageunit)
 - [How to create combined heat and power (CHP)](#how-to-create-combined-heat-and-power-chp)
 - [How to create a hydro reservoir](#how-to-create-a-hydro-reservoir)
@@ -29,7 +29,7 @@ Setting different solves:
 - [How to create a multi-year model](#how-to-create-a-multi-year-model)
 - [How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model)
 - [How to use Nested Rolling window solves (investments and long-term storage)](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
-- [How to use stochastics (representing uncertainty)](#how-to-use-stochastics)
+- [How to use stochastics (representing uncertainty)](#how-to-use-stochastics-representing-uncertainty)
 
 General:
 
@@ -214,15 +214,25 @@ The solve will invest only if it has an array of `invest_periods` set, telling t
 
 First, the investment parameters need to be included both for the *battery_inverter* and *battery* objects:
 
-- `invest_method` - the modeller needs to choose between *only_invest*, *only_retire*, *invest_and_retire* or *not_allowed*
+- `invest_method` - the modeller has options to limit the investment and retirement. Options are *not_allowed*, invest, retire or invest and retire. These have the sub options of no limit *invest_no_limit*, limit the amount per period: *invest_period*, limit the total amount invested *invest_total* or limit both the total investment and the investment per period *invest_period_total*. 
+
+  - If the investment is limited, it requires the corresponding maximum/minimum investment (power [MW] or energy [MWh]) to the virtual capacity. This can be set to individual entities or groups of entities:
+    
+    - `invest_max_total`
+    - `invest_max_period`
+    - `invest_min_total`
+    - `invest_min_period`
+    - `retire_max_total`
+    - `retire_max_period`
+    - `retire_min_total`
+    - `retire_min_period`
+ 
 - `invest_cost` - overnight investment cost new capacity [currency/kW] for the *battery_inverter* and [currency/kWh] for the *battery*. Other one can be left empty or zero, since they will be tied together in the next phase. Here we will assume a fixed relation between kW and kWh for this battery technology, but for example flow batteries could have separate investments for storage and charging capacities.
 - `interest_rate` - an interest rate [e.g. 0.05 means 5%] for the technology that is sufficient to cover capital costs. The chosen interest rate should reflect the assumption that in the model economic lifetime equals the technical lifetime.
 - `lifetime` - technical lifetime of the technology to calculate investment annuity (together with the interest rate)
 
 Additional parameters:
 
-- `invest_max_total`: maximum investment (power [MW] or energy [MWh]) to the virtual capacity of a group of units or to the storage capacity of a group of nodes. 
-    - In the same way investment limits can be set for total and period, investment and retirement, min and max
 - `lifetime_method`: Model can either be forced to reinvest when the lifetime ends `reinvest_automatic` or have a choice `reinvest_choice`
 - `salvage_value`: Sets the extra value that can be gained for retiring [CUR/kW]
 - `fixed_cost`: Annual cost for capacity [CUR/kW]
