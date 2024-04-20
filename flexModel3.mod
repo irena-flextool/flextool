@@ -1471,18 +1471,22 @@ param p_positive_inflow{n in node, (d,t) in dt: (n, 'no_inflow') not in node__in
 param p_negative_inflow{n in node, (d,t) in dt} := 
   +(if pdtNodeInflow[n,d,t] < 0 then pdtNodeInflow[n,d,t] else 0);
 
-param p_entity_existing_first_solve {e in entity, d in period} :=
-  + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in process then p_process[e, 'existing'])
-  + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in node then p_node[e, 'existing'])
-  + (if (e, 'reinvest_choice') in entity__lifetime_method && p_model['solveFirst'] && e in process && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + pdEntity_lifetime[e, d_first]) then p_process[e, 'existing'])
-  + (if (e, 'reinvest_choice') in entity__lifetime_method && p_model['solveFirst'] && e in node && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + pdEntity_lifetime[e, d_first]) then p_node[e, 'existing'])
+param p_entity_existing_capacity_first_solve {e in entity, d in period} :=
+  + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in process && not p_process[e, 'virtual_unitsize'] then p_process[e, 'existing'])
+  + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in process && p_process[e, 'virtual_unitsize'] then p_process[e, 'existing'] * p_process[e, 'virtual_unitsize'])
+  + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in node && not p_node[e, 'virtual_unitsize'] then p_node[e, 'existing'])
+  + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in node && p_node[e, 'virtual_unitsize'] then p_node[e, 'existing'] * p_node[e, 'virtual_unitsize'])
+  + (if (e, 'reinvest_choice') in entity__lifetime_method && p_model['solveFirst'] && e in process && not p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + pdEntity_lifetime[e, d_first]) then p_process[e, 'existing'])
+  + (if (e, 'reinvest_choice') in entity__lifetime_method && p_model['solveFirst'] && e in process && p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + pdEntity_lifetime[e, d_first]) then p_process[e, 'existing'] * p_process[e, 'virtual_unitsize'])
+  + (if (e, 'reinvest_choice') in entity__lifetime_method && p_model['solveFirst'] && e in node && not p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + pdEntity_lifetime[e, d_first]) then p_node[e, 'existing'])
+  + (if (e, 'reinvest_choice') in entity__lifetime_method && p_model['solveFirst'] && e in node && p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + pdEntity_lifetime[e, d_first]) then p_node[e, 'existing'] * p_node[e, 'virtual_unitsize'])
 ;
-param p_entity_existing_later_solves {e in entity, d in period} :=
+param p_entity_existing_capacity_later_solves {e in entity, d in period} :=
   + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_existing_capacity[e, d_history]);
   
 param p_entity_all_existing {e in entity, d in period} :=
-  + (if p_model['solveFirst'] then p_entity_existing_first_solve[e, d])
-  + (if not p_model['solveFirst'] then p_entity_existing_later_solves[e, d])
+  + (if p_model['solveFirst'] then p_entity_existing_capacity_first_solve[e, d])
+  + (if not p_model['solveFirst'] then p_entity_existing_capacity_later_solves[e, d])
   - (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
 ;
 
@@ -1498,7 +1502,7 @@ param p_entity_max_capacity {e in entity, d in period} :=
   + if (e, d) in ed_invest_period && e not in e_invest_total then ed_invest_max_period[e, d] else 0
   + if e in e_invest_total && (e, d) not in ed_invest_period then e_invest_max_total[e] else 0
   + if (e, d) in ed_invest_period && e in e_invest_total then max(ed_invest_max_period[e, d], e_invest_max_total[e]) else 0
-  + if (e, 'invest_no_limit') in entity__invest_method then 10000000000 else 0
+  + if (e, 'invest_no_limit') in entity__invest_method then 1000000 else 0    # This may not be enough in all cases, but a very large number could cause numerical issues.
 ;
 
 param p_entity_max_units {e in entity, d in period} :=
@@ -1506,14 +1510,14 @@ param p_entity_max_units {e in entity, d in period} :=
     / p_entity_unitsize[e]
 ;
 
-set process_source_coeff_zero := {(p, source) in process_source: p_process_source_coefficient[p, source] == 0};
-set process_sink_coeff_zero := {(p, sink) in process_sink: p_process_sink_coefficient[p, sink] == 0};
+set process_source_coeff_zero := {(p, source) in process_source: not p_process_source_coefficient[p, source]};
+set process_sink_coeff_zero := {(p, sink) in process_sink: not p_process_sink_coefficient[p, sink]};
 set process_source_sink_coeff_zero := {(p, source, sink) in process_source_sink: (p,source) in process_source_coeff_zero || (p,sink) in process_sink_coeff_zero};
 
 param p_flow_max{(p, source, sink, d, t) in peedt} :=
   if (p, source, sink) in process_source_sink_coeff_zero 
   then
-    + 10000000000
+    + 1000000   # This may not be enough in all cases, but a very large number could cause numerical issues.
   else
     + (
       if exists{(p, m) in process__method_indirect} 1 && (p, source) in process_source
