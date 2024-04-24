@@ -990,7 +990,7 @@ For the *solve* parameter `stochastic_branches` this means analysis times (t0001
 
 Otherwise there is no difference to the previous example.
 
-If one wishes not to include the realized scenario as one of the forecast branches, one should add it as a branch for each analysis time, set realized as "yes", but set the weight to zero. Then it is not included in the forecasts, but when the model rolls forward, the values form this branch can be used as the timeseries values for the realized part before the next branching. The weight of the realized part is always one.
+Realized scenario should not typically be used as a forecast branch in a stochastic model. However, this would happen, if the realized branch has weight other than zero. So, to avoid this, its weight should be set to zero but its realized status to "yes". Then the values from the realized scenario are not included in the forecast branches, but they are used in the realized part of the timeline. This happens because the weight of the realized part of the timeline is always forced to be one (even though its weight has been set to zero).
 
 ![Rolling Branching](./branching_rolling.PNG)
 
