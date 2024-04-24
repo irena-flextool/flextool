@@ -1232,7 +1232,7 @@ class FlexToolRunner:
             for time_branch in time_branches:
                 realfile.write(time_branch+"\n")
          
-    def write_solve_branch__time_branch_list_and_weight(self, complete_solve, active_time_list, solve_branch__time_branch_list, branch_start_time):
+    def write_solve_branch__time_branch_list_and_weight(self, complete_solve, active_time_list, solve_branch__time_branch_list, branch_start_time, period__branch_lists):
         """
         write the the weights and which one of the branches is the realized (used on the realized time and if not stochastic)
         """
@@ -1245,7 +1245,10 @@ class FlexToolRunner:
         with open("solve_data/solve_branch_weight.csv", 'w') as realfile:
             realfile.write("branch,p_branch_weight_input\n")
             for solve_branch__time_branch in solve_branch__time_branch_list:
-                if solve_branch__time_branch[1] in time_branch_weight.keys() and solve_branch__time_branch[0] in active_time_list.keys():
+                #the realized part always has the weight of 1
+                if (solve_branch__time_branch[0], solve_branch__time_branch[0]) in period__branch_lists:
+                    realfile.write(solve_branch__time_branch[0] +","+ '1.0'+"\n")
+                elif solve_branch__time_branch[1] in time_branch_weight.keys() and solve_branch__time_branch[0] in active_time_list.keys():
                     realfile.write(solve_branch__time_branch[0] +","+ time_branch_weight[solve_branch__time_branch[1]]+"\n")  
 
         with open("solve_data/solve_branch__time_branch.csv", 'w') as realfile:
@@ -1556,10 +1559,12 @@ class FlexToolRunner:
             #check that the start times of the solves can be found from the stochastic_branches parameter
             found_start = False
             for row in info:
-                if first_step[1] == row[2]:
+                if first_step[1] == row[2] and "yes" == row[3]:
                     found_start = True
             if found_start == False and len(info) != 0:
-                logging.error("Start time of the solve cannot be found from the stochastic_branches parameter. Check that rolling_jump matches with the branch starts")
+                logging.error("A realized start time of the solve cannot be found from the stochastic_branches parameter. "+
+                              "Check that stochastic_branches has a realized : yes, branch for the start of the solve" +
+                               "and that the possible rolling_jump matches with the branch starts")
                 exit(-1)
             for period, active_time in active_time_list.items():
                 if not branched:
@@ -1591,9 +1596,12 @@ class FlexToolRunner:
                                     self.stochastic_timesteps[solve].append((solve_branch, i[0]))
                             break
                 else:
+                    # if the jump is longer than the period
                     for branch in branches:
                         solve_branch = period + "_" + branch
-                        new_active_time_list[solve_branch] = active_time_list[period]
+                        # if the weight is zero, do not add to the timeline
+                        if float(row[4]) != 0.0:
+                            new_active_time_list[solve_branch] = active_time_list[period]
                         #new_realized_time_list[solve_branch] = realized_time_list[period]
                         period__branch_lists[solve].append((period,solve_branch))
                         solve_branch__time_branch_lists[solve].append((solve_branch, branch))
@@ -1607,10 +1615,12 @@ class FlexToolRunner:
             #find the realized branch for this start time
             for period, active_time in active_time_list.items():
                 found = 0
+                #before branching
                 for row in info:
                     if row[0]==period and row[2] == active_time[0][0] and row[3] == 'yes':
                         found +=1
-                        solve_branch__time_branch_lists[solve].append((period, row[1])) 
+                        solve_branch__time_branch_lists[solve].append((period, row[1]))
+                #after branching
                 if found == 0 and branch_start_time_lists[solve] != None:
                     for row in info:
                         if row[0]==branch_start_time_lists[solve][0] and row[2] == branch_start_time_lists[solve][1] and row[3] == 'yes':
@@ -1834,7 +1844,7 @@ def main():
         runner.write_fix_storage_timesteps(realized_time_lists[solve],complete_solve[solve])
         runner.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
         runner.write_all_branches(period__branch_lists)
-        runner.write_solve_branch__time_branch_list_and_weight(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve])
+        runner.write_solve_branch__time_branch_list_and_weight(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve])
         runner.write_first_and_last_periods(active_time_lists[solve], runner.timeblocks_used_by_solves[complete_solve[solve]])
 
         #check if the upper level fixes storages
