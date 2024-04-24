@@ -2164,13 +2164,13 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
 ;
 
 #Storage state fix quantity for timesteps
-s.t. node_balance_fix_quantity_eq_lower {n in n_fix_storage_quantity, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last}:
+s.t. node_balance_fix_quantity_eq_lower {n in n_fix_storage_quantity, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last && sum{(n,d2,t2) in ndt_fix_storage_quantity: (d, t, t2) in dtt_timeline_matching} 1}:
   + v_state[n,d,t]* p_entity_unitsize[n] 
   = 
   + sum{(d, t, t2) in dtt_timeline_matching} p_fix_storage_quantity[n,d2,t2];
 
 #Storage state fix price for timesteps
-s.t. node_balance_fix_price_eq_lower {n in n_fix_storage_price, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last}:
+s.t. node_balance_fix_price_eq_lower {n in n_fix_storage_price, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last && sum{(n,d2,t2) in ndt_fix_storage_price: (d, t, t2) in dtt_timeline_matching} 1}:
   + v_state[n,d,t]* pdNode[n, 'storage_state_reference_price', d]* p_entity_unitsize[n] 
   = 
   + sum{(d, t, t2) in dtt_timeline_matching} p_fix_storage_price[n,d2,t2];
