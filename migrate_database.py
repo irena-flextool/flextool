@@ -10,7 +10,7 @@ def migrate_database(database_path):
         print("No sqlite file at " + database_path)
         exit(-1)
 
-    db = DatabaseMapping('sqlite:///' + database_path, create = False)
+    db = DatabaseMapping('sqlite:///' + database_path, create = False, upgrade = True)
     sq= db.object_parameter_definition_sq
     settings_parameter = db.query(sq).filter(sq.c.object_class_name == "model").filter(sq.c.parameter_name == "version").one_or_none()
     if settings_parameter is None:
@@ -21,7 +21,7 @@ def migrate_database(database_path):
         version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
     next_version = int(version) + 1
-    new_version = 18
+    new_version = 19
 
     while next_version <= new_version:
         if next_version == 0:
@@ -83,6 +83,8 @@ def migrate_database(database_path):
             new_relationships = [["reserve__upDown__group", "penalty_reserve", 5000, None, "[CUR/MW] Penalty for violating a reserve constraint. Constant."]]
             add_parameters_manual(db,new_parameters)
             add_relationships_manual(db,new_relationships)
+        elif next_version == 19:
+            remove_parameters_manual(db, [["constraint", "is_active"], ["reserve__upDown__unit__node", "is_active"]])
         else:
             print("Version invalid")
         next_version += 1 
@@ -115,7 +117,7 @@ def remove_parameters_manual(db,obj_param_names):
             id_list.append(param.id)
 
     try:
-        db.remove_items(**{'parameter_definition': id_list})
+        db.remove_items('parameter_definition', *id_list)
         db.commit_session("Removed parameters")
     except SpineDBAPIError:
         print("This removal has been done before, continuing")
@@ -212,8 +214,13 @@ def change_optional_output_type(db, filepath):
                 new_output = [(param[0][0], param[0][1], parameter_name, "no", param[0][2])]
                 (num,log) = import_data(db, object_parameter_values = new_output)
     
-    db.remove_items(**{'parameter_definition': [enable_parameter_definition.id,disable_parameter_definition.id]})
-    db.commit_session("Changed optional outputs")
+    if enable_parameter_definition != None:
+        db.remove_items('parameter_definition', *[enable_parameter_definition.id,disable_parameter_definition.id])
+    try:
+        db.commit_session("Changed optional outputs")
+    except SpineDBAPIError:
+        print("This change has been done before, continuing") 
+    return 0
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
