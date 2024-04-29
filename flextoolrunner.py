@@ -56,7 +56,7 @@ class FlexToolRunner:
         self.new_step_durations = self.get_new_step_durations()
         self.original_timeline = defaultdict()
         self.create_timeline_from_timestep_duration()
-        self.first_of_solve = []
+        self.first_of_complete_solve = []
         self.last_of_solve = []
         self.timeblocks_used_by_solves = {**self.get_timeblocks_used_by_solves(), **self.get_2d_timeblocks_used_by_solves()}
         self.invest_periods = self.get_list_of_tuples('input/solve__invest_period.csv') + self.get_2d_map_periods('input/solve__invest_period_2d_map.csv')
@@ -397,26 +397,27 @@ class FlexToolRunner:
                         while True:
                             try:
                                 datain = next(filereader)
+                                timeline_step_duration = None
                                 for timeline in timelines:
                                     new_timeline = self.timelines[timeline]
                                     for timeline_row in new_timeline:
-                                        values = []
-                                        timeline_step_duration = int(float(timeline_row[1]))
-                                        while datain[time_index] != timeline_row[0]:
-                                            datain = next(filereader)
-                                        row = datain[0:time_index + 1]
-                                        if datain[time_index] == timeline_row[0]:
-                                            values.append(float(datain[time_index + 1]))
-                                            for i in range(timeline_step_duration - 1):
-                                                datain = next(filereader)
-                                                values.append(float(datain[time_index + 1]))
+                                        if timeline_row[0] == datain[time_index]:
+                                            timeline_step_duration = int(float(timeline_row[1]))
+                                            break
+                                if timeline_step_duration != None:
+                                    values = []
+                                    row = datain[0:time_index + 1]
+                                    values.append(float(datain[time_index + 1]))
+                                    for i in range(timeline_step_duration - 1):
+                                        datain = next(filereader)
+                                        values.append(float(datain[time_index + 1]))
 
-                                            if timeseries_map[timeseries] == "average":
-                                                out_value = round(sum(values) / len(values), 6)
-                                            else:
-                                                out_value = sum(values)
-                                            row.append(out_value)
-                                            filewriter.writerow(row)
+                                    if timeseries_map[timeseries] == "average":
+                                        out_value = round(sum(values) / len(values), 6)
+                                    else:
+                                        out_value = sum(values)
+                                    row.append(out_value)
+                                    filewriter.writerow(row)
                             except Exception:
                                 break
             #constaint inflow to a longer step size
@@ -1066,7 +1067,7 @@ class FlexToolRunner:
                 for item in period[-1:]:
                     outfile.write(period_name + ',' + item[0] + '\n')
     
-    def write_last_step(self, timeline, filename):
+    def write_last_realized_step(self, timeline, solve, filename):
         """
         write to file the last step of timeline
 
@@ -1077,9 +1078,10 @@ class FlexToolRunner:
             outfile.write('period,step\n')
             out= []
             for period_name, period in timeline.items():
-                for item in period[-1:]:
-                    out = [period_name,item[0]]
-                    outfile.write(out[0] + ',' + out[1] + '\n')
+                if (solve,period_name) in self.realized_periods:
+                    for item in period[-1:]:
+                        out = [period_name,item[0]]
+                        outfile.write(out[0] + ',' + out[1] + '\n')
 
     def write_periods(self, solve, periods, filename):
         """
@@ -1497,7 +1499,13 @@ class FlexToolRunner:
 
             active_time_lists.update(roll_active_time_lists)
             realized_time_lists.update(roll_realized_time_lists)
-            self.first_of_solve.append(roll_solves[0])
+            
+            # used for state start constraints so it should only be in the first solve of the whole nested level
+            if parent_solve__roll[1] != None:
+                if parent_solve__roll[1] in self.first_of_complete_solve:
+                    self.first_of_complete_solve.append(roll_solves[0])
+            else:
+                self.first_of_complete_solve.append(roll_solves[0])
             self.last_of_solve.append(roll_solves[-1])
 
             if contains_solve != None:
@@ -1524,7 +1532,7 @@ class FlexToolRunner:
             complete_solves[solve]= solve #complete_solve is for rolling, so that the rolls inherit the parameters of the solve. If not rolling, the solve is its own complete solve
             active_time_lists[solve] = full_active_time_list
             realized_time_lists[solve]= full_active_time_list
-            self.first_of_solve.append(solve)
+            self.first_of_complete_solve.append(solve)
             self.last_of_solve.append(solve)
 
             if contains_solve != None:
@@ -1839,7 +1847,7 @@ def main():
         runner.write_hole_multiplier(solve, 'solve_data/solve_hole_multiplier.csv')
         runner.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
         runner.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
-        runner.write_last_step(realized_time_lists[solve], 'solve_data/last_realized_timestep.csv')
+        runner.write_last_realized_step(realized_time_lists[solve], complete_solve[solve], 'solve_data/last_realized_timestep.csv')
         runner.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
         runner.write_fix_storage_timesteps(realized_time_lists[solve],complete_solve[solve])
         runner.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
@@ -1859,7 +1867,7 @@ def main():
                 realfile.write("period,step,upper_step\n")
         #if timeline created from new step_duration, all timeseries have to be averaged or summed for the new timestep
         runner.create_averaged_timeseries(complete_solve[solve])
-        if solve in runner.first_of_solve:
+        if solve in runner.first_of_complete_solve:
             first_of_nested_level = True
         else:
             first_of_nested_level = False

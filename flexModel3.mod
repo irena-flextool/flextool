@@ -2153,7 +2153,9 @@ s.t. storage_state_start {n in nodeState, (d, t) in period__time_first
 s.t. storage_state_end {n in nodeState, (d, t) in period__time_last 
      : p_nested_model['solveLast'] 
 	 && d in period_last 
-	 && ((n, 'fix_end') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)} :
+	 && ((n, 'fix_end') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
+   && sum{(d2,d) in period__branch, (n,d2,t2) in ndt_fix_storage_quantity: (d, t, t2) in dtt_timeline_matching} 1 = 0
+   && sum{(d2,d) in period__branch, (n,d2,t2) in ndt_fix_storage_price: (d, t, t2) in dtt_timeline_matching} 1 = 0} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
   + p_node[n,'storage_state_end']
@@ -2183,8 +2185,8 @@ s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in peri
    && (n, 'bind_within_solve') not in node__storage_binding_method
    && (n, 'bind_within_period') not in node__storage_binding_method
    && (n, 'bind_within_timeblock') not in node__storage_binding_method
-   && sum{(d, t, t2) in dtt_timeline_matching: n in n_fix_storage_price} 1 = 0
-   && sum{(d, t, t2) in dtt_timeline_matching: n in n_fix_storage_quantity} 1 = 0)} :
+   && sum{(d2,d) in period__branch, (d, t, t2) in dtt_timeline_matching: n in n_fix_storage_price} 1 = 0
+   && sum{(d2,d) in period__branch, (d, t, t2) in dtt_timeline_matching: n in n_fix_storage_quantity} 1 = 0)} :
   + v_state[n, d, t] * p_entity_unitsize[n]
   =
   + pdtNode[n,'storage_state_reference_value', d, t]
@@ -2198,11 +2200,11 @@ s.t. constraint_greater_than {(c, 'greater_than') in constraint__sense, (d, t) i
   + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_flow_constraint}
     ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
 	      * p_process_node_constraint_flow_coefficient[p, source, c]
-	) * step_duration[d, t]
+	)
   + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_flow_constraint}
-    ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p] * p_entity_unitsize[p]
+    ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
 	      * p_process_node_constraint_flow_coefficient[p, sink, c]
-	) * step_duration[d, t]
+	)
   + sum {(n, c) in node_state_constraint}
     ( + v_state[n, d, t]
 	      * p_node_constraint_state_coefficient[n, c]
@@ -2228,11 +2230,11 @@ s.t. process_constraint_less_than {(c, 'less_than') in constraint__sense, (d, t)
   + sum {(p, source, sink) in process_source_sink : (p, source, c) in process_node_flow_constraint}
     ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
 	      * p_process_node_constraint_flow_coefficient[p, source, c]
-	) * step_duration[d, t]
+	)
   + sum {(p, source, sink) in process_source_sink : (p, sink, c) in process_node_flow_constraint}
     ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
 	      * p_process_node_constraint_flow_coefficient[p, sink, c]
-	) * step_duration[d, t]
+	)
   + sum {(n, c) in node_state_constraint}
     ( + v_state[n, d, t]
 	      * p_node_constraint_state_coefficient[n, c]
@@ -3334,8 +3336,8 @@ param r_costPenalty_inertia_d{g in groupInertia, d in d_realized_period} := sum{
 param r_costPenalty_non_synchronous_d{g in groupNonSync, d in d_realized_period} := sum{(d, t) in dt_realize_dispatch} r_costPenalty_non_synchronous_dt[g, d, t];
 param r_costPenalty_reserve_upDown_d{(r, ud, ng) in reserve__upDown__group, d in d_realized_period} := sum{(d, t) in dt_realize_dispatch} r_costPenalty_reserve_upDown_dt[r, ud, ng, d, t];
 
-param r_costOper_d{d in period} := sum{(d, t) in dt} r_costOper_dt[d, t] * step_duration[d, t];
-param r_costPenalty_d{d in period} := sum{(d, t) in dt} r_costPenalty_dt[d, t] * step_duration[d, t] + sum{g in groupCapacityMargin : d in period_invest} r_costPenalty_capacity_margin_d[g, d];
+param r_costOper_d{d in period} := sum{(d, t) in dt} r_costOper_dt[d, t] ;
+param r_costPenalty_d{d in period} := sum{(d, t) in dt} r_costPenalty_dt[d, t] + sum{g in groupCapacityMargin : d in period_invest} r_costPenalty_capacity_margin_d[g, d];
 param r_costOper_and_penalty_d{d in period} := + r_costOper_d[d] + r_costPenalty_d[d];
 
 param r_costInvestUnit_d{d in period} := sum{(e, d) in ed_invest : e in process_unit} r_cost_entity_invest_d[e, d];
@@ -3488,8 +3490,12 @@ for {(n,'fix_price') in node__storage_nested_fix_method, (d, t) in dt_fix_storag
 
 printf 'Write node state last timestep ..\n';
 param fn_p_roll_continue_state symbolic := "solve_data/p_roll_continue_state.csv";
-printf 'node,p_roll_continue_state\n' > fn_p_roll_continue_state;
-for {n in nodeState, (d, t) in realized_period__time_last: (d,d) in period__branch && (d, t) in dt_realize_dispatch}
+# write over only if in a dispatch roll, storage solve should not create this
+for {n in nodeState, (d, t) in realized_period__time_last}
+  {
+    printf 'node,p_roll_continue_state\n' > fn_p_roll_continue_state;
+  }
+for {n in nodeState, (d, t) in realized_period__time_last}
   {
     printf '%s,%.12g\n', n, v_state[n, d, t].val* p_entity_unitsize[n]  >> fn_p_roll_continue_state;
   }
