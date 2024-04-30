@@ -7,5 +7,8 @@ The previous version of IRENA FlexTool can be found in https://www.irena.org/ene
 
 ## Introduction and installation
 
+> [!NOTE]  
+> Spine Toolbox has received a major upgrade 29th of April 2024. Next time you update FlexTool, [update Spine Toolbox first](https://github.com/spine-tools/Spine-Toolbox#installation). Follow the upgrade instructions of your Toolbox installation method.
+
 Installation, user guide and documentation can be found at: https://irena-flextool.github.io/flextool/.
 User guide and documentation are under development.
