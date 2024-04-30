@@ -64,7 +64,7 @@ class FlexToolRunner:
         self.realized_invest_periods = self.get_list_of_tuples('input/solve__realized_invest_period.csv') + self.get_2d_map_periods('input/solve__realized_invest_period_2d_map.csv')
         self.fix_storage_periods = self.get_list_of_tuples('input/solve__fix_storage_period.csv') + self.get_2d_map_periods('input/solve__fix_storage_period_2d_map.csv')
         #self.write_full_timelines(self.timelines, 'steps.csv')
-    
+
     def get_2d_timeblocks_used_by_solves(self):
 
         with open('input/timeblocks_in_use_2d.csv', 'r') as blk:
@@ -93,6 +93,18 @@ class FlexToolRunner:
                     new_name = datain[0]+"_"+datain[1]
                     self.duplicate_solve(datain[0],new_name)
                     period_list.append((new_name,datain[2]))
+                    new_period_timeblockset_list = []
+                    for solve, period__timeblockset_list in list(self.timeblocks_used_by_solves.items()):
+                        if solve == datain[0]:
+                            for period__timeblockset in period__timeblockset_list:
+                                if period__timeblockset[0] == datain[2]:
+                                    new_period_timeblockset_list.append(period__timeblockset)
+                    if new_name not in self.timeblocks_used_by_solves.keys():
+                        self.timeblocks_used_by_solves[new_name] = new_period_timeblockset_list
+                    else:
+                        for item in new_period_timeblockset_list:
+                            if item not in self.timeblocks_used_by_solves[new_name]:
+                                self.timeblocks_used_by_solves[new_name].append(item)
                 except StopIteration:
                     break
         return period_list
