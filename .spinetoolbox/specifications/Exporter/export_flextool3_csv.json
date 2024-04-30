@@ -913,7 +913,7 @@
             "use_fixed_table_name": true
         },
         "process__reserve__upDown__node": {
-            "type": "entity_parameter_values",
+            "type": "entities",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -942,16 +942,6 @@
                     "position": "hidden"
                 },
                 {
-                    "map_type": "ParameterDefinition",
-                    "position": "hidden",
-                    "filter_re": "is_active"
-                },
-                {
-                    "map_type": "ParameterValueList",
-                    "position": "hidden",
-                    "ignorable": true
-                },
-                {
                     "map_type": "Entity",
                     "position": "hidden"
                 },
@@ -974,19 +964,6 @@
                     "map_type": "Element",
                     "position": 3,
                     "header": "node"
-                },
-                {
-                    "map_type": "Alternative",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValueType",
-                    "position": "hidden"
-                },
-                {
-                    "map_type": "ParameterValue",
-                    "position": "hidden",
-                    "filter_re": "yes"
                 }
             ],
             "enabled": true,
