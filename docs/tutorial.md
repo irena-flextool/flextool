@@ -61,6 +61,10 @@ Next step is to add an object for the first `node` that will be called *west*.
 ![Add object1](./add_object_dialog.png) 
 ![Add object2](./add_object_dialog2.png)
 
+Next, add the *west* node to be active in the *west* `alternative`. This can be done from the `Entity Alternative` sheet. `Entity Alternative` chooses if the entity is part of the alternative or not. (If you are in 0.7 Toolbox, last update before 5/2024, this does not exist. Instead, use parameter `is_active`: yes)
+
+![Add object2](./add_entity_alternative.png)
+
 Then, add parameter data to the newly minted *west* `node`:
 *west* node represents the demand in a part of the system.
 
@@ -68,8 +72,7 @@ Then, add parameter data to the newly minted *west* `node`:
 - There are no electricity generating units and the demand cannot be met by ordinary means. The model will therefore use the upward slack variable and accept the `penalty_up` cost associated with it. This represents the cost of not fulfilling the demand. Also downward `penalty_down` is defined although the model is not using it at this stage. Here values of 9000 and 8000 are used respectively. By default the model uses the value 10 000 for these. Therefore, it is not mandatory to set them, but sometimes these values need to be changed, so understanding how they work is nessesary.
 - Penalties and slack variables are tools of linear optimization. They ensure that the problem is feasable at all timesteps even when the in-out-balance of the nodes is violated. If no real penalty values are known, one should just use large enough numbers, so that the system won't prefer penalty to energy production. In the results, you can see at which timesteps the penalties are used.
 - The parameter `has_balance` is related to this and should be set to *yes*. It forces the node to have a balance on inflow and outflow. If the demand is not fulfilled, balance is forced by the slack variable that will "create" the energy with the penalty associated with it. 
-- The *west* `node` needs to have a parameter called `is_active` with value *yes*. This chooses the *west* `node` and all its parameters to be sent to the model. 
-- All parameters here should be part of the *west* `alternative` (column alternative_name) - they will be used whenever a `scenario` includes the *west* `alternative`. 
+- All parameters here should be part of the *west* `alternative` (column alternative_name) - they will be used whenever a `scenario` includes the *west* `alternative`. The difference between parameter `alternative` and `Entity Alternative` is that the former includes only that specific parameter and the latter includes the entity itself.
 
 ![First_node](./west_node.png)
 
@@ -104,13 +107,18 @@ By running the `Open_summary` tool, a quick summary csv file will open. This sup
 In the second step, a coal unit is added. 
 
 - The first thing is to add a new `alternative` *coal* so that all new data added in this step will become part of the *coal* `alternative`.
-- Then one needs to add the objects:
+
+- Then one needs to add the entities:
 
   - `unit` *coal_plant*
   - `node` *coal_market* 
   - `commodity` *coal*
 
-- And relationships:
+The `unit` *coal_plant* and the `node` *coal_market* need to be added to the *coal* alternative from the `Entity Alternative` sheet.
+
+You might be wondering why `commodity` was not added. The simple answer is that it is active by default. Deeper reason is that it is not a structural entity. It can be part of the model only by being connected to a node. Therefore, it is used only if the node is used.
+
+- Add relationships entities:
 
   - `unit__inputNode` *coal_plant, coal_market* to indicate that the *coal_plant* is using inputs from the *coal_market*
   - `unit__outputNode` *coal_plant, west* to indicate that the *coal_plant* will output electricity to the *west* node
@@ -120,7 +128,6 @@ In the second step, a coal unit is added.
 
   - `efficiency` (e.g. 0.4 for 40% efficiency)
   - `existing` to indicate the existing capacity in the coal_plant (e.g. 500 MW)
-  - `is_active` set to *yes* to include the *coal_plant* in the model
 
 - *coal* `commodity` needs just one parameter for `price` (e.g. 20 €/MWh of fuel)
 - *coal_market* `node` needs to have `is_active` set to *yes* 
@@ -129,6 +136,10 @@ In the second step, a coal unit is added.
 ![Add unit](./add_unit.png)
 
 To see how the results change due to the coal power plant, make a new scenario *coal* that has the `alternatives` *init*, *init_2day-test*, *west* and *coal*. Run the ***Export_to_CSV***, ***FlexTool3*** and ***Import_results*** to get the results to the ***Results*** database. If you start to get too many result `alternatives` in the ***Results*** database (e.g. if you happen to run the same scenario multiple times), you can delete old ones by removing the unwanted `alternatives` (right-click on the `alternative`) and then **committing** the database.
+
+If you now want to only export the results of the *coal* run to excel, you can do this by choosing the Alternative filter and choosing the run you want to export.
+
+![Choosing_alternative](./choose_alternative_to_excel.png)
 
 ### Interlude - visualizing the system in a graph
 In Spine Toolbox, it is possible to visualize your system in a graph, which will show all objects, and the relationships between them.
@@ -148,6 +159,8 @@ Next, a wind power plant is added.
   - `unit` *wind_plant*
   - `profile` *wind_profile* since *wind_plant* does not require a commodity, but instead uses a profile to limit the generation to the available wind.
 
+- Add the `unit` *wind_plant* to the *wind* `Entity Alternative`. Again, the `profile` does not need to be added, because it active by default and is only part of the model if connected by a `unit__node__profile` or `node_profile`.
+
 - Add relationships:
 
   - `unit__node__profile` *wind_plant, west, wind_profile*
@@ -158,7 +171,6 @@ Next, a wind power plant is added.
   - `conversion_method` to choose a method for the conversion process (in this case *constant_efficiency*)
   - `efficiency` for *wind_plant* should be set to 1.
   - `existing` capacity can be set to 1000 MW
-  - `is_active` set to *yes* to include the *wind_plant* in the model
 
 - *wind_profile* needs the the parameter `profile` with a map of values where each time step gets the maximum available capacity factor for that time step (see figure). Again, you can copy this from the init database.
 - *wind_plant, west, wind_profile* relationship needs a parameter `profile_method` with the choice *upper_limit* selected. This means that the *wind_plant* must generate at or below its capacity factor.
@@ -174,17 +186,17 @@ Remember to **commit**, execute and have a look at the results (there should be 
 
  - two new `nodes` (*east* and *north*) 
  - three new `connections` between `nodes` (*east_north*, *west_east* and *west_north*). 
-  
+
+- All new `nodes` and `connections` are added to the `Entity Alternative` *network*
+
 The new nodes are kept simple: 
 
-- they have a `is_active` parameter set to *yes*
 - they have a `has_balance` parameter set to *yes* (to force the node to maintain an energy balance)
 - they have a constant negative `inflow` (i.e. demand)
 - penalty values for violating their energy balance
 
 The three connections have the following parameters:
 
-- they have a `is_active` parameter set to *yes*
 - they have a `existing` parameter to indicate the existing interconnection capacity between the nodes
 - they have a `efficiency` parameter  (e.g. 0.9 for 90% efficiency).
 
