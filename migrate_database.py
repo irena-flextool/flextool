@@ -21,7 +21,7 @@ def migrate_database(database_path):
         version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
     next_version = int(version) + 1
-    new_version = 19
+    new_version = 20
 
     while next_version <= new_version:
         if next_version == 0:
@@ -85,6 +85,8 @@ def migrate_database(database_path):
             add_relationships_manual(db,new_relationships)
         elif next_version == 19:
             remove_parameters_manual(db, [["constraint", "is_active"], ["reserve__upDown__unit__node", "is_active"]])
+        elif next_version == 20:
+            remove_parameters_manual(db, [["connection", "is_active"], ["node", "is_active"], ["unit", "is_active"], ["reserve__upDown__connection", "is_active"]])
         else:
             print("Version invalid")
         next_version += 1 
