@@ -35,6 +35,7 @@ class FlexToolRunner:
         if not os.path.exists("./tests"):
             os.makedirs("./tests")
         # read the data in
+        self.check_version()
         self.timelines = self.get_timelines()
         self.model_solve = self.get_solves()
         self.solve_modes = self.get_solve_modes("solve_mode")
@@ -64,6 +65,22 @@ class FlexToolRunner:
         self.realized_invest_periods = self.get_list_of_tuples('input/solve__realized_invest_period.csv') + self.get_2d_map_periods('input/solve__realized_invest_period_2d_map.csv')
         self.fix_storage_periods = self.get_list_of_tuples('input/solve__fix_storage_period.csv') + self.get_2d_map_periods('input/solve__fix_storage_period_2d_map.csv')
         #self.write_full_timelines(self.timelines, 'steps.csv')
+
+    def check_version(self):
+        with open('input/db_version.csv', 'r') as blk:
+            filereader = csv.reader(blk, delimiter=',')
+            headers = next(filereader)
+            tool_version = 20.0
+            database_version = 0
+            while True:
+                try:
+                    datain = next(filereader)
+                    database_version = datain[0]
+                except StopIteration:
+                    break
+        if float(database_version) < tool_version:
+            logging.error("The input database is in an older version than the tool. Please migrate the database to the new version: python migrate_database.py path_to_database")
+            exit(-1)
 
     def get_2d_timeblocks_used_by_solves(self):
 
@@ -1593,7 +1610,7 @@ class FlexToolRunner:
                     start_times = defaultdict(list)
                     for row in info:
                         if row[0]==period:
-                            start_times[row[2]].append(row[1])
+                            start_times[row[2]].append((row[1], row[4]))
                     for step in active_time:    #branching cannot start from the first step of the solve
                         if step[0] in start_times.keys() and (period,step[0]) != first_step:
                             branched = True
@@ -1605,12 +1622,15 @@ class FlexToolRunner:
                                 new_active_time_list[period] = active_time[0:time_start_ind]
                             if time_start_ind <= len(realized_time):
                                 new_realized_time_list[period] = realized_time[0:time_start_ind]
-                            for branch in start_times[step[0]]:
+                            for branch__weight in start_times[step[0]]:
+                                branch = branch__weight[0]
                                 branches.append(branch)
                                 solve_branch = period + "_" + branch
-                                new_active_time_list[solve_branch] = active_time[time_start_ind:]
+                                # if the weight is zero, do not add to the timeline
+                                if float(branch__weight[1]) != 0.0:
+                                    new_active_time_list[solve_branch] = active_time[time_start_ind:]
+                                    solve_branch__time_branch_lists[solve].append((solve_branch, branch))
                                 period__branch_lists[solve].append((period, solve_branch))
-                                solve_branch__time_branch_lists[solve].append((solve_branch, branch))
                                 #get timesteps
                                 for i in active_time[time_start_ind:]:
                                     self.stochastic_timesteps[solve].append((solve_branch, i[0]))
@@ -1619,9 +1639,6 @@ class FlexToolRunner:
                     # if the jump is longer than the period
                     for branch in branches:
                         solve_branch = period + "_" + branch
-                        # if the weight is zero, do not add to the timeline
-                        if float(row[4]) != 0.0:
-                            new_active_time_list[solve_branch] = active_time_list[period]
                         #new_realized_time_list[solve_branch] = realized_time_list[period]
                         period__branch_lists[solve].append((period,solve_branch))
                         solve_branch__time_branch_lists[solve].append((solve_branch, branch))
