@@ -4,7 +4,7 @@ import os
 import subprocess
 import shutil
 try: 
-    from spinedb_api import import_data, DatabaseMapping
+    from spinedb_api import import_data, DatabaseMapping, SpineDBAPIError
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
 
@@ -65,14 +65,19 @@ def update_flextool(skip_git):
     if not os.path.exists("Results.sqlite"):
         shutil.copy("Results_template.sqlite", "Results.sqlite")
     #update result parameter definitions    
-    db = DatabaseMapping('sqlite:///' + 'Results.sqlite', create = False)
+    db = DatabaseMapping('sqlite:///' + 'Results.sqlite', create = False, upgrade = True)
     #get template JSON. This can be the master or old template if conflicting migrations in between
     with open (result_template_path) as json_file:
         template = json.load(json_file)
     #these update the old descriptions, but wont remove them or change names (the new name is created, but old stays)
     (num,log) = import_data(db, object_parameters = template["object_parameters"])
     (num,log) = import_data(db, relationship_parameters = template["relationship_parameters"])
-    db.commit_session("Updated relationship_parameters, object parameters to the Results.sqlite")
+
+    try:
+        db.commit_session("Updated relationship_parameters, object parameters to the Results.sqlite")
+    except SpineDBAPIError:
+        print("These parameters have been added before, continuing") 
+    return 0
 
 def initialize_result_database(filename,json_path):
 

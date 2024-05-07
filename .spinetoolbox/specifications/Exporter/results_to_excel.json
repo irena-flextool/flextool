@@ -5,7 +5,7 @@
     "description": "",
     "mappings": {
         "Model_cost_total": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -13,7 +13,7 @@
                     "value": "cost_discounted_total"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^model$"
                 },
@@ -28,7 +28,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
@@ -59,7 +59,7 @@
             "use_fixed_table_name": true
         },
         "Model_cost_solve": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -67,7 +67,7 @@
                     "value": "cost_discounted_solve"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^model$"
                 },
@@ -82,7 +82,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
@@ -121,7 +121,7 @@
             "use_fixed_table_name": true
         },
         "Model_cost_period": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -129,7 +129,7 @@
                     "value": "cost"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^model$"
                 },
@@ -144,7 +144,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
@@ -191,7 +191,7 @@
             "use_fixed_table_name": true
         },
         "Model_cost_period_time": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -199,7 +199,7 @@
                     "value": "cost_t"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^model$"
                 },
@@ -214,7 +214,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
@@ -270,7 +270,7 @@
             "use_fixed_table_name": true
         },
         "Group": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -278,7 +278,7 @@
                     "value": "group_summary"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^group$"
                 },
@@ -293,7 +293,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -2
                 },
                 {
@@ -339,7 +339,7 @@
             "use_fixed_table_name": true
         },
         "Group_process_node_flow_sd": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -347,7 +347,7 @@
                     "value": "group_flow_node"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^group$"
                 },
@@ -362,7 +362,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -2
                 },
                 {
@@ -401,7 +401,7 @@
             "use_fixed_table_name": true
         },
         "Group_process_node_flow_sdt": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -409,7 +409,7 @@
                     "value": "group_flow_node_t"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^group$"
                 },
@@ -424,7 +424,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -2
                 },
                 {
@@ -471,7 +471,7 @@
             "use_fixed_table_name": true
         },
         "Group_flows_sd": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -479,7 +479,7 @@
                     "value": "group_flows"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "header": "group"
                 },
@@ -494,7 +494,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -2
                 },
                 {
@@ -548,7 +548,7 @@
             "use_fixed_table_name": true
         },
         "Group_flows_t": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -556,7 +556,7 @@
                     "value": "group_flows_t"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "header": "group"
                 },
@@ -571,7 +571,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -2
                 },
                 {
@@ -633,7 +633,7 @@
             "use_fixed_table_name": true
         },
         "Group_VRE_share_sdt": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -641,7 +641,7 @@
                     "value": "group_VRE_share_t"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^group$"
                 },
@@ -656,7 +656,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -1
                 },
                 {
@@ -702,7 +702,7 @@
             "use_fixed_table_name": true
         },
         "Capacity_3d": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -710,7 +710,7 @@
                     "value": "capacity"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "table_name",
                     "filter_re": "^unit$|^connection$|^node$"
                 },
@@ -725,7 +725,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -2
                 },
                 {
@@ -772,7 +772,7 @@
             "use_fixed_table_name": true
         },
         "Node_price_sdt": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -780,7 +780,7 @@
                     "value": "node_price_t"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^node$"
                 },
@@ -795,7 +795,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -1
                 },
                 {
@@ -842,7 +842,7 @@
             "use_fixed_table_name": true
         },
         "Node_flows_sd": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -850,7 +850,7 @@
                     "value": "node_balance"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^node$"
                 },
@@ -865,7 +865,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": 0
                 },
                 {
@@ -912,7 +912,7 @@
             "use_fixed_table_name": true
         },
         "Node_flows_sdt": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -920,7 +920,7 @@
                     "value": "node_balance_t"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^node$"
                 },
@@ -935,7 +935,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -2
                 },
                 {
@@ -990,7 +990,7 @@
             "use_fixed_table_name": true
         },
         "Node_state_sdt": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -998,7 +998,7 @@
                     "value": "node_state_t"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^node$"
                 },
@@ -1013,7 +1013,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -1
                 },
                 {
@@ -1060,7 +1060,7 @@
             "use_fixed_table_name": true
         },
         "Ramp_limits": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1068,7 +1068,7 @@
                     "value": "ramp_limits_t"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^node$"
                 },
@@ -1083,7 +1083,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -1
                 },
                 {
@@ -1137,7 +1137,7 @@
             "use_fixed_table_name": true
         },
         "Process_co2_sd": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1145,7 +1145,7 @@
                     "value": "process_co2"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden"
                 },
                 {
@@ -1159,7 +1159,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -1
                 },
                 {
@@ -1198,7 +1198,7 @@
             "use_fixed_table_name": true
         },
         "Unit__node__flow_sd": {
-            "type": "relationship_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1206,16 +1206,16 @@
                     "value": "unit__node_flow"
                 },
                 {
-                    "map_type": "RelationshipClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^unit__node$"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
@@ -1229,15 +1229,15 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Relationship",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -1
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -2
                 },
                 {
@@ -1276,7 +1276,7 @@
             "use_fixed_table_name": true
         },
         "Unit__node_flow_sdt": {
-            "type": "relationship_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1284,16 +1284,16 @@
                     "value": "unit__node_flow_t"
                 },
                 {
-                    "map_type": "RelationshipClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^unit__node$"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
@@ -1307,15 +1307,15 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Relationship",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -1
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -2
                 },
                 {
@@ -1362,7 +1362,7 @@
             "use_fixed_table_name": true
         },
         "Unit_cf__node__flow_sd": {
-            "type": "relationship_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1370,16 +1370,16 @@
                     "value": "unit_cf__node_flow"
                 },
                 {
-                    "map_type": "RelationshipClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^unit__node$"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
@@ -1393,15 +1393,15 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Relationship",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -1
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -2
                 },
                 {
@@ -1440,7 +1440,7 @@
             "use_fixed_table_name": true
         },
         "Unit_curtailment_share__node__sd": {
-            "type": "relationship_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1448,16 +1448,16 @@
                     "value": "unit_curtailment__share"
                 },
                 {
-                    "map_type": "RelationshipClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^unit__node$"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
@@ -1471,15 +1471,15 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Relationship",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -1
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -2
                 },
                 {
@@ -1518,7 +1518,7 @@
             "use_fixed_table_name": true
         },
         "Unit_curtailment__node__sdt": {
-            "type": "relationship_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1526,16 +1526,16 @@
                     "value": "unit_curtailment__node_t"
                 },
                 {
-                    "map_type": "RelationshipClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^unit__node$"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
@@ -1549,15 +1549,15 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Relationship",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -1
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -2
                 },
                 {
@@ -1604,7 +1604,7 @@
             "use_fixed_table_name": true
         },
         "Unit_online_sd": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1612,7 +1612,7 @@
                     "value": "unit_online_average"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^unit$"
                 },
@@ -1627,7 +1627,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -1
                 },
                 {
@@ -1666,7 +1666,7 @@
             "use_fixed_table_name": true
         },
         "Unit_online_sdt": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1674,7 +1674,7 @@
                     "value": "unit_online_t"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^unit$"
                 },
@@ -1689,7 +1689,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -2
                 },
                 {
@@ -1736,7 +1736,7 @@
             "use_fixed_table_name": true
         },
         "Unit_startup_cumulative_d": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1744,7 +1744,7 @@
                     "value": "unit_startup_cumulative"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^unit$"
                 },
@@ -1759,7 +1759,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -1
                 },
                 {
@@ -1798,7 +1798,7 @@
             "use_fixed_table_name": true
         },
         "Reserve_sdt": {
-            "type": "relationship_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1806,24 +1806,24 @@
                     "value": "reserve_t"
                 },
                 {
-                    "map_type": "RelationshipClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^unit__reserve__upDown__node$"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
@@ -1837,23 +1837,23 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Relationship",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -1
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -2
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -3
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -4
                 },
                 {
@@ -1900,7 +1900,7 @@
             "use_fixed_table_name": true
         },
         "Connection__node__node__flow_d": {
-            "type": "relationship_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1908,20 +1908,20 @@
                     "value": "connection_flow"
                 },
                 {
-                    "map_type": "RelationshipClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^connection__node__node$"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
@@ -1935,19 +1935,19 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Relationship",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -1
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -2
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -3
                 },
                 {
@@ -1986,7 +1986,7 @@
             "use_fixed_table_name": true
         },
         "Connection__node__node__flow_dt": {
-            "type": "relationship_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -1994,20 +1994,20 @@
                     "value": "connection_flow_t"
                 },
                 {
-                    "map_type": "RelationshipClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^connection__node__node$"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
@@ -2021,19 +2021,19 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Relationship",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -1
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -2
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -3
                 },
                 {
@@ -2080,7 +2080,7 @@
             "use_fixed_table_name": true
         },
         "Connection_cf__node__node__flow_d": {
-            "type": "relationship_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -2088,20 +2088,20 @@
                     "value": "connection_cf"
                 },
                 {
-                    "map_type": "RelationshipClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^connection__node__node$"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipClassObjectClass",
+                    "map_type": "Dimension",
                     "position": "hidden"
                 },
                 {
@@ -2115,19 +2115,19 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Relationship",
+                    "map_type": "Entity",
                     "position": "hidden"
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -1
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -2
                 },
                 {
-                    "map_type": "RelationshipObject",
+                    "map_type": "Element",
                     "position": -3
                 },
                 {
@@ -2166,7 +2166,7 @@
             "use_fixed_table_name": true
         },
         "Group_inertia_sdt": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -2174,7 +2174,7 @@
                     "value": "group_inertia_t"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^group$"
                 },
@@ -2189,7 +2189,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -2
                 },
                 {
@@ -2235,7 +2235,7 @@
             "use_fixed_table_name": true
         },
         "Group_unit_node_inertia_sdt": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -2243,7 +2243,7 @@
                     "value": "group_unit_node_inertia_t"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^group$"
                 },
@@ -2258,7 +2258,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -2
                 },
                 {
@@ -2320,7 +2320,7 @@
             "use_fixed_table_name": true
         },
         "Group_nonsync_slack_sdt": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -2328,7 +2328,7 @@
                     "value": "group_nonsync_slack_t"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^group$"
                 },
@@ -2343,7 +2343,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -1
                 },
                 {
@@ -2389,7 +2389,7 @@
             "use_fixed_table_name": true
         },
         "Group_capacity_margin_slack_sd": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -2397,7 +2397,7 @@
                     "value": "slack_capacity_margin"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^group$"
                 },
@@ -2412,7 +2412,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -1
                 },
                 {
@@ -2450,7 +2450,7 @@
             "use_fixed_table_name": true
         },
         "Discount_factors_period": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
                     "map_type": "FixedValue",
@@ -2458,7 +2458,7 @@
                     "value": "discount_factors"
                 },
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^model$"
                 },
@@ -2472,7 +2472,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": "hidden",
                     "filter_re": "^discount_factors$"
                 },
@@ -2513,10 +2513,10 @@
             "use_fixed_table_name": true
         },
         "Group_process_CO2": {
-            "type": "object_parameter_values",
+            "type": "entity_parameter_values",
             "mapping": [
                 {
-                    "map_type": "ObjectClass",
+                    "map_type": "EntityClass",
                     "position": "hidden",
                     "filter_re": "^group$"
                 },
@@ -2531,7 +2531,7 @@
                     "ignorable": true
                 },
                 {
-                    "map_type": "Object",
+                    "map_type": "Entity",
                     "position": -1
                 },
                 {

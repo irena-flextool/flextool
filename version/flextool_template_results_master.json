@@ -191,7 +191,7 @@
             "inertia_unit_node_t",
             null,
             null,
-            "[MWs] the amount of inertia in the flows between the units and the nodes in the group"
+            "[MWs] the amount of inertia in the flows between the units and the nodes in the group."
         ],
         [
             "group",
