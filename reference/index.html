@@ -1513,11 +1513,20 @@
 <h3 id="main-data-items-for-units">Main data items for units</h3>
 <ul>
 <li>Capacity: <code>existing</code> (and the investment and retirement parameters below)</li>
-<li>Technical: <code>efficiency</code>, <code>min_load</code>, <code>efficiency_at_min_load</code>, <code>min_uptime</code>, <code>min_downtime</code><ul>
-<li><code>min_load</code> - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time.</li>
+<li>
+<p>Technical: <code>efficiency</code>, <code>min_load</code>, <code>efficiency_at_min_load</code>, <code>min_uptime</code>, <code>min_downtime</code></p>
+<ul>
+<li>
+<p><code>min_load</code> - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time. Calculated for all timesteps: </p>
+</li>
+<li>
+<p>the sum of output flows &gt;= minimum_load * capacity</p>
+</li>
 </ul>
 </li>
-<li><code>availability</code> - [e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time.</li>
+<li>
+<p><code>availability</code> - [e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time.</p>
+</li>
 <li>Economic: <code>startup_cost</code>, <code>fixed_cost</code> (fuel cost comes through the use of fuel commodities and other variable costs are defined for flows between unit and node, see below)</li>
 </ul>
 <h3 id="investment-parameters-for-capacity-expansion">Investment parameters for capacity expansion</h3>
@@ -1534,8 +1543,8 @@
 <li><code>interest_rate</code> - [unitless, e.g. 0.05 means 5%] Interest rate for investments. Constant or period.</li>
 <li><code>invest_max_total</code> - [MW] Maximum capacity investment over all solves. Constant.</li>
 <li><code>invest_max_period</code> - [MW] Maximum capacity investment for each period. Period.</li>
-<li><code>invest_min_total</code> - [MW] Maximum capacity investment over all solves. Constant.</li>
-<li><code>invest_min_period</code> - [MW] Maximum capacity investment for each period. Period.</li>
+<li><code>invest_min_total</code> - [MW] Minimum capacity investment over all solves. Constant.</li>
+<li><code>invest_min_period</code> - [MW] Minimum capacity investment for each period. Period.</li>
 <li><code>retire_cost</code> - [CUR/kW] Retirement cost for new capacity. Constant or period.</li>
 <li><code>retire_max_total</code> - [MW] Maximum capacity retirement over all solves. Constant.</li>
 <li><code>retire_max_period</code> - [MW] Maximum capacity retirement for each period. Period.</li>
@@ -1562,7 +1571,8 @@
 <h3 id="properties-of-unit-inputnode-and-unit-outputnode-relationships">Properties of unit--inputNode and unit--outputNode relationships</h3>
 <ul>
 <li><code>is_non_synchronous</code> - Chooses whether the unit is synchronously connected to this node.</li>
-<li><code>coefficient</code> - [factor] Coefficient to scale the output from a unit to a particular node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints). Constant.</li>
+<li><code>coefficient</code> - [factor] Coefficient to scale the output from a unit to a particular node or the input from a node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints).
+Note that in the case of unit--outputNode the <code>coefficient</code> affects <em>after</em> the capacity and the other unit constraints. Constant.</li>
 <li><code>other_operational_cost</code> - [CUR/MWh] Other operational variable costs for energy flows. Constant or time. </li>
 <li><code>inertia_constant</code> - [MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.</li>
 <li><code>ramp_method</code> - Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).</li>

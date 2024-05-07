@@ -1245,10 +1245,10 @@ Each example will either include an example database file that is located in the
 <p>Building parts of the model:</p>
 <ul>
 <li><a href="#how-to-create-basic-temporal-structures-for-your-model">How to create basic temporal structures for your model</a></li>
-<li><a href="#How-to-create-a-PV,-wind-or-run---of---river-hydro-power-plant">How to create a PV, wind or run-of-river hydro power plant</a></li>
-<li><a href="#How-to-connect-nodes-in-the-same-energy-network">How to connect nodes in the same energy network</a></li>
-<li><a href="#How-to-set-the-demand-in-a-node">How to set the demand in a node</a></li>
-<li><a href="#How-to-add-a-storage-unit-(battery)">How to add a storage unit (battery)</a></li>
+<li><a href="#how-to-create-a-pv-wind-or-run-of-river-hydro-power-plant">How to create a PV, wind or run-of-river hydro power plant</a></li>
+<li><a href="#how-to-connect-nodes-in-the-same-energy-network">How to connect nodes in the same energy network</a></li>
+<li><a href="#how-to-set-the-demand-in-a-node">How to set the demand in a node</a></li>
+<li><a href="#how-to-add-a-storage-unit-battery">How to add a storage unit (battery)</a></li>
 <li><a href="#how-to-make-investments-storageunit">How to make investments (storage/unit)</a></li>
 <li><a href="#how-to-create-combined-heat-and-power-chp">How to create combined heat and power (CHP)</a></li>
 <li><a href="#how-to-create-a-hydro-reservoir">How to create a hydro reservoir</a></li>
@@ -1265,7 +1265,7 @@ Each example will either include an example database file that is located in the
 <li><a href="#how-to-create-a-multi-year-model">How to create a multi-year model</a></li>
 <li><a href="#how-to-use-a-rolling-window-for-a-dispatch-model">How to use a rolling window for a dispatch model</a></li>
 <li><a href="#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves (investments and long-term storage)</a></li>
-<li><a href="#how-to-use-stochastics">How to use stochastics (representing uncertainty)</a></li>
+<li><a href="#how-to-use-stochastics-representing-uncertainty">How to use stochastics (representing uncertainty)</a></li>
 </ul>
 <p>General:</p>
 <ul>
@@ -1422,17 +1422,30 @@ In the example, the <em>wind_plant</em> alone is not able to meet the load in al
 <p>The solve will invest only if it has an array of <code>invest_periods</code> set, telling the periods where it is allowed to make investment decisions. In a multi solve investment model (rolling investments) it can be useful to separately set <code>invest_realized_periods</code> so that the investment results get reported only from the chosen periods from each solve (in order to avoid overlapping reporting of investment decisions that are replaced by  investment decisions in later solves). Furthermore, <code>realized_periods</code> will define the solves and periods from which the dispatch results are output into results.</p>
 <p>First, the investment parameters need to be included both for the <em>battery_inverter</em> and <em>battery</em> objects:</p>
 <ul>
-<li><code>invest_method</code> - the modeller needs to choose between <em>only_invest</em>, <em>only_retire</em>, <em>invest_and_retire</em> or <em>not_allowed</em></li>
-<li><code>invest_cost</code> - overnight investment cost new capacity [currency/kW] for the <em>battery_inverter</em> and [currency/kWh] for the <em>battery</em>. Other one can be left empty or zero, since they will be tied together in the next phase. Here we will assume a fixed relation between kW and kWh for this battery technology, but for example flow batteries could have separate investments for storage and charging capacities.</li>
+<li>
+<p><code>invest_method</code> - the modeller has options to limit the investment and retirement. Options are <em>not_allowed</em>, invest, retire or invest and retire. These have the sub options of no limit <em>invest_no_limit</em>, limit the amount per period: <em>invest_period</em>, limit the total amount invested <em>invest_total</em> or limit both the total investment and the investment per period <em>invest_period_total</em>. </p>
+</li>
+<li>
+<p>If the investment is limited, it requires the corresponding maximum/minimum investment (power [MW] or energy [MWh]) to the virtual capacity. This can be set to individual entities or groups of entities:</p>
+<ul>
+<li><code>invest_max_total</code></li>
+<li><code>invest_max_period</code></li>
+<li><code>invest_min_total</code></li>
+<li><code>invest_min_period</code></li>
+<li><code>retire_max_total</code></li>
+<li><code>retire_max_period</code></li>
+<li><code>retire_min_total</code></li>
+<li><code>retire_min_period</code></li>
+</ul>
+</li>
+<li>
+<p><code>invest_cost</code> - overnight investment cost new capacity [currency/kW] for the <em>battery_inverter</em> and [currency/kWh] for the <em>battery</em>. Other one can be left empty or zero, since they will be tied together in the next phase. Here we will assume a fixed relation between kW and kWh for this battery technology, but for example flow batteries could have separate investments for storage and charging capacities.</p>
+</li>
 <li><code>interest_rate</code> - an interest rate [e.g. 0.05 means 5%] for the technology that is sufficient to cover capital costs. The chosen interest rate should reflect the assumption that in the model economic lifetime equals the technical lifetime.</li>
 <li><code>lifetime</code> - technical lifetime of the technology to calculate investment annuity (together with the interest rate)</li>
 </ul>
 <p>Additional parameters:</p>
 <ul>
-<li><code>invest_max_total</code>: maximum investment (power [MW] or energy [MWh]) to the virtual capacity of a group of units or to the storage capacity of a group of nodes. <ul>
-<li>In the same way investment limits can be set for total and period, investment and retirement, min and max</li>
-</ul>
-</li>
 <li><code>lifetime_method</code>: Model can either be forced to reinvest when the lifetime ends <code>reinvest_automatic</code> or have a choice <code>reinvest_choice</code></li>
 <li><code>salvage_value</code>: Sets the extra value that can be gained for retiring [CUR/kW]</li>
 <li><code>fixed_cost</code>: Annual cost for capacity [CUR/kW]</li>
@@ -2026,6 +2039,7 @@ The columns are: period, branch, analysis_time (starting time of the branch), re
 <p>The stochastic data should be given so that it can serve the rolling structure: <code>rolling_solve_jump</code> dictates the duration of the initial non-stochastic part of the model horizon. This period needs only data for the 'realized' branch. The stochastic branches will begin only after that and need data only after <code>rolling_solve_jump</code> has been reached. So, for every 'analysis_time' there needs to be a time series in each stochastic branch that extends to the end of horizon (as defined by <code>rolling_solve_horizon</code>). The branches continue to the end of the horizon without branching again.</p>
 <p>For the <em>solve</em> parameter <code>stochastic_branches</code> this means analysis times (t0001, t0025, t0049, t0073, t0097, t0121 and t0145). t0001 is there only to tell which branch is the realized one.</p>
 <p>Otherwise there is no difference to the previous example.</p>
+<p>Realized scenario should not typically be used as a forecast branch in a stochastic model. However, this would happen, if the realized branch has weight other than zero. So, to avoid this, its weight should be set to zero but its realized status to "yes". Then the values from the realized scenario are not included in the forecast branches, but they are used in the realized part of the timeline. This happens because the weight of the realized part of the timeline is always forced to be one (even though its weight has been set to zero).</p>
 <p><img alt="Rolling Branching" src="../branching_rolling.PNG" /></p>
 <p><img alt="1Week stochastics" src="../1week_stochastics.PNG" /></p>
 <h3 id="multi-periodic-stochastics">Multi periodic stochastics</h3>
