@@ -116,7 +116,7 @@ In the second step, a coal unit is added.
 
 The `unit` *coal_plant* and the `node` *coal_market* need to be added to the *coal* alternative from the `Entity Alternative` sheet.
 
-You might be wondering why `commodity` was not added. The simple answer is that it is active by default. Deeper reason is that it is not a structural entity. It can be part of the model only by being connected to a node. Therefore, it is used only if the node is used.
+You might be wondering why `commodity` does not need to be added to the `Entity Alternative`. The direct reason is that it is active by default. This can be assumed, since it does not matter if a commodity is in a model, but it is not used. It will be used only if the node using the commodity is included in the model.
 
 - Add relationships entities:
 
