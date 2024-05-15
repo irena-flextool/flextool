@@ -6236,6 +6236,39 @@
             "always_export_header": true,
             "group_fn": "no_group",
             "use_fixed_table_name": true
+        },
+        "db_version": {
+            "type": "entity_parameter_default_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "db_version"
+                },
+                {
+                    "map_type": "EntityClass",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden",
+                    "filter_re": "^version$"
+                },
+                {
+                    "map_type": "ParameterDefaultValueType",
+                    "position": "hidden",
+                    "filter_re": "single_value"
+                },
+                {
+                    "map_type": "ParameterDefaultValue",
+                    "position": 0,
+                    "header": "version"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
         }
     }
 }

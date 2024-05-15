@@ -19,6 +19,7 @@
         "input/commodity.csv",
         "input/commodity__node.csv",
         "input/constraint__sense.csv",
+        "input/db_version.csv",
         "input/debug.csv",
         "input/default_values.csv",
         "input/entity.csv",

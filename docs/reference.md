@@ -98,7 +98,8 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
 These parameters will define how the node will behave and use the data it is given (available choices are marked in *italics*):
 
 - `name` - unique name identifier (case sensitive)
-- `is_active` - is the model/node/unit active in a specific scenario: *yes* (if not defined, then not active)
+- `is_active` - is the model/node/unit active in a specific scenario: *yes* (if not defined, then not active).
+Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 - `has_balance` - does the node maintain a balance for inputs and outputs: *yes* (if not defined, then balance is not maintained)
 - `has_storage` - does the node represent a storage and therefore have a state: *yes* (if not defined, then no storage)
 - `invest_method` - Choice of investment method: either *not_allowed* or then a combination of 
@@ -170,7 +171,7 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 ### Defining how the unit functions
 
-- `is_active` to state the alternative where the unit becomes active
+- `is_active` to state the alternative where the unit becomes active. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 - 'conversion_method' to define the way unit converts inputs to outputs 
 - `startup_method` - Choice of startup method. 'Linear' startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. 'Binary' startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups.
 - `minimum_time_method` - Not functional yet. Choice between minimum up- and downtimes (<empty>, *min_downtime*, *min_uptime*, *both*).
@@ -256,7 +257,7 @@ Connections can transfer energy between two nodes. Parameters for the connection
 
 ### Defining how the connection functions
 
-- `is_active` to state the alternative where the connection becomes active
+- `is_active` to state the alternative where the connection becomes active. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 - `transfer_method` to define the way the connection transfers energy between the nodes
 - `startup_method` where *linear* startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. *binary* startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups.
 - `invest_method` to define investment and retirement limits: either *not_allowed* or then a combination of 
@@ -386,7 +387,7 @@ For `reserve__upDown__group` relationships:
 
 For `reserve__upDown__unit__node` relationships:
 
-- `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.
+- `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 - `max_share` - [factor] Maximum ratio for the transfer of reserve from the unit to the node. Constant.
 - `reliability` - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
 - `increase_reserve_ratio` - [factor] The reserve requirement is increased by the flow between the unit and the node multiplied by this ratio. Constant.
@@ -396,7 +397,7 @@ For `reserve__upDown__unit__node` relationships:
 
 For `reserve__upDown__connection__node` relationships:
 
-- `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.
+- `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 - `max_share` - [factor] Maximum ratio for the transfer of reserve to this node. Constant.
 - `reliability` - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
 - `increase_reserve_ratio` - [factor] The reserve is increased by generation from this unit multiplied this ratio. Constant.

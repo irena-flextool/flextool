@@ -73,9 +73,11 @@ Be careful when choosing datatypes! Maps need to be maps not arrays. (In the fut
 These three power plant types don't use any commodities (i.e. fuels), but are instead dependant on a timeseries profile.
 To create these plants one needs an output node, an unit and a profile.
 
+The unit needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+
 The unit only needs parameters:
 
-- `is_active`: *yes*
+- `is_active`: *yes* (if Toolbox 0.7, before 5/2024)
 - `existing`: [The maximum capacity of the plant] 
 Additionally these parameters should be at their default values:
 - `conversion_method`: *constant_efficiency*
@@ -103,9 +105,11 @@ Typically nodes are used to maintain an energy balance and therefore they are us
 - `connection`
 - relationship `connection__node__node` to tie these three together.
 
-The connection needs the parameters:
+The `connection` and `nodes` need to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
 
-- `is_active`: *yes*
+The connection needs parameters:
+
+- `is_active`: *yes* (if Toolbox 0.7, before 5/2024)
 - `existing`: The maximum capacity of the connection [MW]. Applies to both directions.
 - `efficiency`: represents the losses in transferring the energy. Same in both directions.
 
@@ -163,9 +167,13 @@ Examples of all these options are shown in the demand.sqlite.
 In the ***Init*** SQLite database, there is a `scenario` *wind_battery*.
 In the example, the *wind_plant* alone is not able to meet the load in all conditions, but the *battery* will help it to improve the situation.
 
-In FlexTool, only `nodes` can have storage. `Nodes` can therefore be demand nodes, storage nodes or both. To make a storage node one the required parameters are:
+In FlexTool, only `nodes` can have storage. `Nodes` can therefore be demand nodes, storage nodes or both. 
 
-- `is_active`: yes
+The `node` needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+
+To make a storage node one the required parameters are:
+
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `has_balance`: yes
 - `has_storage`: yes
 - `existing`: The maximum storage size of battery as the potential energy [MWh]
@@ -190,9 +198,11 @@ Battery also needs charging and discharging capabilities. These could be present
 
 The `transfer_method` can be used by all types of connections, but in this case it is best to choose *regular*, which tries to avoid simultaneous charging and discharing, but can still do it when the model needs to dissipate energy. *exact* method would prevent that, but it would require integer variables and make the storage computationally much more expensive. Model leakage will be reported in the results (forthcoming).
 
+The `connection` needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+
 The required paremeters of the connection are:
 
-- `is_active`: yes
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `existing`: The capacity of energy transsmission [MW]
 - `transfer_method`: (see above)
 
@@ -238,7 +248,12 @@ Additional parameters:
 - `fixed_cost`: Annual cost for capacity [CUR/kW]
 
 In many cases some of the investment decisions are tied to each other. Here the battery capacity and the connection capacity of the *battery_inverter* will be tied as they are simultaneously limited by the choice of the battery technology to be invested in.
-To model this, a new constraint needs to be created that ties together the storage capacity of the *battery* and the charging/discharging capacity of the *battery_inverter*. A new `constraint` object *battery_tie_kW_kWh* is created and it is given parameters `constant`, `is_active` and `sense`. Constant could be left out, since it is zero, but `is_active` must be defined in order to include the constraint in the *battery_invest* `alternative`. The `sense` of the constraint must be *equal* to enforce the kw/kWh relation.
+
+To model this, a new constraint needs to be created that ties together the storage capacity of the *battery* and the charging/discharging capacity of the *battery_inverter*. 
+
+A new `constraint` object *battery_tie_kW_kWh* is created and added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+
+It is given parameters `constant`, `sense` and `is_active` (if Toolbox 0.7, before 5/2024). Constant could be left out, since it is zero, but `is_active` must be defined in order to include the constraint in the *battery_invest* `alternative`. The `sense` of the constraint must be *equal* to enforce the kw/kWh relation.
 
 Both *battery_inverter* and *battery* need a coefficient to tell the model how they relate to each other. The equation has the capacity variables on the left side of the equation and the constant on the right side.
 
@@ -277,9 +292,11 @@ Finally, FlexTool can actually mix three different types of constraint coefficie
 
 First, a new *heat* `node` is added with the necessary parameters. The `nodes` can be used for energy form of energy or matter, so the heat demand node does not differ from the electricity demand node. 
 
+The *heat* `node` needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+
 The required parameters are:
 
-- `is_active`: yes
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `has_balance`: yes
 - `inflow`: Map for the heat demand (negative) [MW]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
@@ -293,9 +310,9 @@ This CHP plant is an another example where the user defined `constraint` (see th
 
 Electricity and heat outputs are fixed by adding a new `constraint` *coal_chp_fix* where the heat and power co-efficients are fixed. You need to create the two relationships `unit__outputNode`, for *coal_chp--heat* and *coal_chp--west*. As can be seen in the bottom part of the figure below, the `constraint_flow_coefficient` parameter for the *coal_chp--heat* and *coal_chp--west* is set as a map value where the `constraint` name matches with the *coal_chp_fix* `constraint` object name. The values are set so that the constraint equation forces the heat output to be twice as large as the electricity output.
 
-Create constraint  *coal_chp_fix* object with parameters:
+Create constraint *coal_chp_fix*, add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) and add parameters:
 
-- `is_active`: yes
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `sense`: equal
 - `constant`: 0.0
 
@@ -340,9 +357,11 @@ For the other option of converting the volume to potential energy in the reservo
 
 In this implementation of reservoir hydro power, there is an option to spill water from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled water can be seen from the results as the 'downward slack' of the node.
 
+Add the *reservoir* node to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+
 The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
 
-- `is_active`: yes
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `has_balance`: yes
 - `has_storage`: yes
 - `inflow`: Mapping of the incoming water as volume [m^3/h]
@@ -353,9 +372,10 @@ The required parameters of the reservoir node are (node_c and node_t sheets if u
 
 The `unit` is connected to the *reservoir* `node` and the output `node` *demand_node* (unit_c and unit_node_c in excel):
 
+- Add the unit to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
 - The `efficiency` of the plant is the coefficient of transfering an unit of volume to an unit of electricity (using piecewise linear efficiency is naturally possible), here we use 0.57. 
 - Set `existing` capacity [MW]
-- `is_active`: yes 
+- `is_active`: yes  (if Toolbox 0.7, before 5/2024)
 - Create relations `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*demand_node*.
 
 ![Hydro reservoir](./hydro_reservoir.PNG)
@@ -372,7 +392,8 @@ Let's start with the downriver demand.
 
 The downriver node represents the requirement to pass a minimum amount of water through the plant to not dry out the river. The downriver node needs:
 
-- `is_active`: yes
+- To be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `has_balance`: yes
 - `inflow`: Minimum requirement of water flow as the potential power (Map or constant)[m^3/h]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
@@ -384,9 +405,11 @@ The hydro plant now needs to both pass the water to downriver and the electricit
 
 - `efficiency`: 1 + coefficient
 
-Now the unit creates enough stuff to output, but the model can still choose how it will distribute it between the two output nodes. We still need to fix the ratio of output flows. This is done with an user constraint. Here we call this constraint *hydro_split*. The constraint needs parameters:
+Now the unit creates enough stuff to output, but the model can still choose how it will distribute it between the two output nodes. We still need to fix the ratio of output flows. This is done with an user constraint. Here we call this constraint *hydro_split*. First, it needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
 
-- `is_active`: yes
+The constraint needs parameters:
+
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `sense`: equal
 - `constant`: 0
 
@@ -407,9 +430,11 @@ This spill unit has the relations:
 - `unit_inputNode` (*spill_unit*|*reservoir*)
 - `unit_outputNode` (*spill_unit*|*downriver*)
 
+It needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+
 And parameters:
 
-- `is_active`: yes
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `efficiency`: 1
 - `existing`: A large enough number to not be a limit
 
@@ -437,9 +462,11 @@ There are two ways to handle the water to electricity coefficient. Here, we conv
 The unit of the inflow should be the power that can be created from the quantity of the incoming water at maximum efficiency [MW]. In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
 In this implementation of reservoir hydro power, there is an option to spill water (energy) from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled energy can be seen from the results as the 'downward slack' of the node.
 
+The *reservoir* `node` needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+
 The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
 
-- `is_active`: yes
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `has_balance`: yes
 - `has_storage`: yes
 - `inflow`: Mapping of the incoming water as the potential power [MW]
@@ -450,16 +477,17 @@ The required parameters of the reservoir node are (node_c and node_t sheets if u
 
 The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* (unit_c and unit_node_c in excel):
 
+- It needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - The `efficiency` of the unit can be set to 1 as the inflow time series are directly expressed in MWh (using piecewise linear efficiency is naturally possible).
 - Set `existing` capacity [MW]
-- `is_active`: yes 
 - Create relations `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*nodeA*.
 
 ![Hydro reservoir for pump](./hydro_reservoir_for_pump.PNG)
 
-Next create the pump_storage. This is the downstream storage from the hydro plant. Again it should have the parameters as the reservoir:
+Next create the pump_storage. This is the downstream storage from the hydro plant. Again it should be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) and have same the parameters as the reservoir:
 
-- `is_active`: yes
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `has_balance`: yes
 - `has_storage`: yes
 - `existing`: The maximum size of the storage [MWh]. Note that this really represents the mass of the water and it should be converted as the potential of the energy of the reservoir-plant system. So that 1 liter of water has the same energy in both storages.
@@ -476,11 +504,13 @@ The storage level fixes should be the same in both storages (reservoir and pump 
 
 This sets the starting storage levels to be 50%. The binding will also constrain the state of the storage at the end of of each timeblock to be the same as in the beginning of the timeblock.
 
-Then create the pump unit. It only needs three parameters:
+Then create the pump unit and add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+
+It only needs three parameters:
 
 - `efficiency` = 1, The real efficiency of the pump is set elsewhere, so use 1.0 here. 
 - `existing`: The wanted capacity
-- `is_active`: *yes* 
+- `is_active`: *yes* (if Toolbox 0.7, before 5/2024)
 
 Set the relationships as follows:
 
@@ -497,9 +527,9 @@ For the hydro plant:
 
 - `Efficiency`:  2 
 
-Create a new constraint (here *plant_storage_nodeA_split*) and add the parameters:
+Create a new constraint (here *plant_storage_nodeA_split*), add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) and add the parameters:
 
-- `is_active`: yes
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `sense`: equal
 - `constant`: 0.0
 
@@ -522,9 +552,9 @@ This prevents the water amount from increasing as:
 ```
 unit_output_flow = coeff1 * unit_input_flow1 + coeff2 * unit_input_flow2.
 ```
-We still have to make the unit to consume electricity even though it does not affect the unit output directly. This is done by setting a new constraint to tie the flows to the pump unit from pump storage and the nodeA. Add a constraint (here *pump_storage_nodeA_fix*) the with the parameters:
+We still have to make the unit to consume electricity even though it does not affect the unit output directly. This is done by setting a new constraint to tie the flows to the pump unit from pump storage and the nodeA. Add a constraint (here *pump_storage_nodeA_fix*), add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) , and add the parameters:
 
-- `is_active`: yes
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `sense`: equal
 - `constant`: 0.0
 
@@ -551,7 +581,7 @@ Finally, make sure there are *up* and *down* objects in the `UpDown' object clas
 
 Next, the reserve requirement will be defined. A relationship between in the `reserve__upDown__group` class (e.g. *primary--up--electricity*) allows to define the reserve parameters `reserve_method`, `reservation` (i.e. the amount of reserve) and `penalty_reserve` (i.e. the penalty cost in case of lack of reserve). For example, a constant of 10 MW could be used. Even though the name of the `reserve_method` is *timeseries_only*, it can also accept a constant value - it's an exogenous reserve requirement whereas the other two reserve methods are endogenous. Dynamic reserve method calculates the reserve requirement from generation and loads according to user defined factors (`increase_reserve_ratio`). Largest failure method will force enough reserve to cope with a failure of the chosen unit and connection flows.
 
-Parameters from the `reserve__upDown__unit__node` class should be used to define how different units can contribute to different reserves. Parameter `max_share` says how large share of the total capacity of the timestep (existing * efficiency * (profile)) of the unit can contribute to this reserve category (e.g. *coal_plant* may be limited by ramp constraint to provide only 1% of its capacity to an upward primary reserve.) Meanwhile, parameter `reliability` affects what portion of the reserved capacity actually contributes to the reserve (e.g. *wind_plant* may contribute only 80% of its generation to reserve due to uncertainty).
+Parameters from the `reserve__upDown__unit__node` class should be used to define how different units can contribute to different reserves. Note that the entities in this class need to be added to the `Entity Alternative` sheet. Parameter `max_share` says how large share of the total capacity of the timestep (existing * efficiency * (profile)) of the unit can contribute to this reserve category (e.g. *coal_plant* may be limited by ramp constraint to provide only 1% of its capacity to an upward primary reserve.) Meanwhile, parameter `reliability` affects what portion of the reserved capacity actually contributes to the reserve (e.g. *wind_plant* may contribute only 80% of its generation to reserve due to uncertainty).
 
  ![Add a reserve](./reserves.png)
 

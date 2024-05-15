@@ -1,72 +1,96 @@
 {
-    "object_classes": [
+    "entity_classes": [
         [
             "commodity",
+            [],
             "Stuff that is being processed",
-            281351265055225
+            281351265055225,
+            true
         ],
         [
             "connection",
+            [],
             null,
-            280741963428706
+            280741963428706,
+            false
         ],
         [
             "constraint",
+            [],
             null,
-            281107035649330
+            281107035649330,
+            true
         ],
         [
             "group",
+            [],
             null,
-            280655732797761
+            280655732797761,
+            true
         ],
         [
             "model",
+            [],
             "Settings for a model instance",
-            280378317271475
+            280378317271475,
+            true
         ],
         [
             "node",
+            [],
             null,
-            280655732797997
+            280655732797997,
+            false
         ],
         [
             "profile",
+            [],
             null,
-            280376907921198
+            280376907921198,
+            true
         ],
         [
             "reserve",
+            [],
             "Categories for the reservation of capacity",
-            281473533932379
+            281473533932379,
+            true
         ],
         [
             "solve",
+            [],
             null,
-            280378317271532
+            280378317271532,
+            true
         ],
         [
             "timeblockSet",
+            [],
             null,
-            280378317272400
+            280378317272400,
+            true
         ],
         [
             "timeline",
+            [],
             null,
-            280378317271144
+            280378317271144,
+            true
         ],
         [
             "unit",
+            [],
             null,
-            281107035648629
+            281107035648629,
+            false
         ],
         [
             "upDown",
+            [],
             null,
-            280378317271864
-        ]
-    ],
-    "relationship_classes": [
+            280378317271864,
+            true
+        ],
         [
             "commodity__node",
             [
@@ -74,7 +98,8 @@
                 "node"
             ],
             "Properties of commodities in particular nodes",
-            281054070108939
+            281054070108939,
+            true
         ],
         [
             "connection__node",
@@ -83,7 +108,88 @@
                 "node"
             ],
             null,
-            280743406203659
+            280743406203659,
+            true
+        ],
+        [
+            "connection__profile",
+            [
+                "connection",
+                "profile"
+            ],
+            null,
+            280798025740550,
+            true
+        ],
+        [
+            "group__connection",
+            [
+                "group",
+                "connection"
+            ],
+            null,
+            null,
+            true
+        ],
+        [
+            "group__node",
+            [
+                "group",
+                "node"
+            ],
+            null,
+            null,
+            true
+        ],
+        [
+            "group__unit",
+            [
+                "group",
+                "unit"
+            ],
+            null,
+            null,
+            true
+        ],
+        [
+            "node__profile",
+            [
+                "node",
+                "profile"
+            ],
+            null,
+            280798025740550,
+            true
+        ],
+        [
+            "timeblockSet__timeline",
+            [
+                "timeblockSet",
+                "timeline"
+            ],
+            null,
+            null,
+            true
+        ],
+        [
+            "unit__inputNode",
+            [
+                "unit",
+                "node"
+            ],
+            null,
+            280378317271818,
+            true
+        ],
+        [
+            "unit__outputNode",
+            [
+                "unit",
+                "node"
+            ],
+            null,
+            281473533932299,
+            true
         ],
         [
             "connection__node__node",
@@ -93,25 +199,8 @@
                 "node"
             ],
             null,
-            280743406203746
-        ],
-        [
-            "connection__profile",
-            [
-                "connection",
-                "profile"
-            ],
-            null,
-            280798025740550
-        ],
-        [
-            "group__connection",
-            [
-                "group",
-                "connection"
-            ],
-            null,
-            null
+            280743406203746,
+            true
         ],
         [
             "group__connection__node",
@@ -121,25 +210,8 @@
                 "node"
             ],
             null,
-            null
-        ],
-        [
-            "group__node",
-            [
-                "group",
-                "node"
-            ],
             null,
-            null
-        ],
-        [
-            "group__unit",
-            [
-                "group",
-                "unit"
-            ],
-            null,
-            null
+            true
         ],
         [
             "group__unit__node",
@@ -149,16 +221,30 @@
                 "node"
             ],
             null,
-            null
+            null,
+            true
         ],
         [
-            "node__profile",
+            "reserve__upDown__group",
             [
+                "reserve",
+                "upDown",
+                "group"
+            ],
+            null,
+            null,
+            true
+        ],
+        [
+            "unit__node__profile",
+            [
+                "unit",
                 "node",
                 "profile"
             ],
             null,
-            280798025740550
+            280798025740550,
+            true
         ],
         [
             "reserve__upDown__connection__node",
@@ -169,17 +255,8 @@
                 "node"
             ],
             null,
-            null
-        ],
-        [
-            "reserve__upDown__group",
-            [
-                "reserve",
-                "upDown",
-                "group"
-            ],
             null,
-            null
+            false
         ],
         [
             "reserve__upDown__unit__node",
@@ -190,44 +267,8 @@
                 "node"
             ],
             null,
-            null
-        ],
-        [
-            "timeblockSet__timeline",
-            [
-                "timeblockSet",
-                "timeline"
-            ],
             null,
-            null
-        ],
-        [
-            "unit__inputNode",
-            [
-                "unit",
-                "node"
-            ],
-            null,
-            280378317271818
-        ],
-        [
-            "unit__node__profile",
-            [
-                "unit",
-                "node",
-                "profile"
-            ],
-            null,
-            280798025740550
-        ],
-        [
-            "unit__outputNode",
-            [
-                "unit",
-                "node"
-            ],
-            null,
-            281473533932299
+            false
         ]
     ],
     "parameter_value_lists": [
@@ -430,6 +471,18 @@
         [
             "lifetime_methods",
             "reinvest_choice"
+        ],
+        [
+            "load_share_type",
+            "equal"
+        ],
+        [
+            "load_share_type",
+            "inflow_weighted"
+        ],
+        [
+            "load_share_type",
+            "no"
         ],
         [
             "minimum_time_methods",
@@ -658,9 +711,17 @@
         [
             "transfer_methods",
             "variable_cost_only"
+        ],
+        [
+            "yes_no",
+            "yes"
+        ],
+        [
+            "yes_no",
+            "no"
         ]
     ],
-    "object_parameters": [
+    "parameter_definitions": [
         [
             "commodity",
             "co2_content",
@@ -726,13 +787,6 @@
         ],
         [
             "connection",
-            "invest_forced",
-            null,
-            null,
-            "[MW] Capacity that must be invested in a given period. Investment cost will be included in the cost results. Constant or period."
-        ],
-        [
-            "connection",
             "invest_max_period",
             null,
             null,
@@ -775,13 +829,6 @@
         ],
         [
             "connection",
-            "is_active",
-            null,
-            "is_active",
-            "Whether the unit is present in the alternative."
-        ],
-        [
-            "connection",
             "lifetime",
             null,
             null,
@@ -800,13 +847,6 @@
             null,
             null,
             "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant or time."
-        ],
-        [
-            "connection",
-            "retire_forced",
-            null,
-            null,
-            "[MW] Forced retired capacity. Period."
         ],
         [
             "connection",
@@ -872,18 +912,25 @@
             "[MW] Size of single connection - used for integer (lumped) investments."
         ],
         [
+            "connection__node",
+            "constraint_flow_coefficient",
+            null,
+            null,
+            "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow from the connection to a node in user-defined constraints. [flow x coefficient] will be on the left side of the equation."
+        ],
+        [
+            "connection__profile",
+            "profile_method",
+            null,
+            "profile_methods",
+            "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n"
+        ],
+        [
             "constraint",
             "constant",
             0,
             null,
             "A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation."
-        ],
-        [
-            "constraint",
-            "is_active",
-            null,
-            "is_active",
-            "Whether the constraint is active."
         ],
         [
             "constraint",
@@ -904,7 +951,7 @@
             "co2_max_period",
             null,
             null,
-            "[tCO2] Maximum limit for emitted CO2 in each period."
+            "[tCO2] Annualized maximum limit for emitted CO2 in each period."
         ],
         [
             "group",
@@ -947,6 +994,13 @@
             null,
             "has_non_synchronous",
             "A flag whether the group of nodes has the non-synchronous share constraint active."
+        ],
+        [
+            "group",
+            "include_stochastics",
+            "no",
+            "yes_no",
+            "Includes the stochastic branches to be used for the nodes/units/connections in this group"
         ],
         [
             "group",
@@ -1027,10 +1081,17 @@
         ],
         [
             "group",
+            "output_aggregate_flows",
+            null,
+            "output_node_flows",
+            "Used with group_unit_node or group_connection_node to combine the flows when producing the output_node_flows of a node group."
+        ],
+        [
+            "group",
             "output_node_flows",
             null,
             "output_node_flows",
-            "Adds this group name to the unit_node flows for the nodes in this group."
+            "Creates the timewise flow output for this node group (group_flow_t)"
         ],
         [
             "group",
@@ -1042,23 +1103,30 @@
         [
             "group",
             "penalty_capacity_margin",
-            null,
+            5000,
             null,
             "[CUR/MWh] Penalty for violating the capacity margin constraint. Constant or period."
         ],
         [
             "group",
             "penalty_inertia",
-            null,
+            5000,
             null,
             "[CUR/MWs] Penalty for violating the inertia constraint. Constant or period."
         ],
         [
             "group",
             "penalty_non_synchronous",
-            null,
+            5000,
             null,
             "[CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period."
+        ],
+        [
+            "group",
+            "share_loss_of_load",
+            "no",
+            "load_share_type",
+            "Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted"
         ],
         [
             "model",
@@ -1090,6 +1158,13 @@
         ],
         [
             "model",
+            "exclude_entity_outputs",
+            "yes",
+            "optional_output",
+            "Excludes results on node, unit and connection level, but preserves group level results"
+        ],
+        [
+            "model",
             "output_connection__node__node_flow_t",
             "yes",
             "optional_output",
@@ -1101,6 +1176,13 @@
             "no",
             "optional_output",
             "Produces the connection flows separately for both directions."
+        ],
+        [
+            "model",
+            "output_horizon",
+            "no",
+            "yes_no",
+            "Outputs the flows in the horizons. Used for testing the model."
         ],
         [
             "model",
@@ -1132,13 +1214,6 @@
         ],
         [
             "model",
-            "results",
-            null,
-            "results",
-            "Choice of outputs from the model runs."
-        ],
-        [
-            "model",
             "solves",
             null,
             null,
@@ -1147,7 +1222,7 @@
         [
             "model",
             "version",
-            11,
+            19,
             null,
             "Contains database version information."
         ],
@@ -1237,13 +1312,6 @@
         ],
         [
             "node",
-            "invest_forced",
-            null,
-            null,
-            "[MWh] Storage capacity that must be invested in a given period. Investment cost will be included in the cost results even though the model does not have an investment variable. Constant or period."
-        ],
-        [
-            "node",
             "invest_max_period",
             null,
             null,
@@ -1279,13 +1347,6 @@
         ],
         [
             "node",
-            "is_active",
-            null,
-            "is_active",
-            "Whether the node is present in the alternative."
-        ],
-        [
-            "node",
             "lifetime",
             null,
             null,
@@ -1318,13 +1379,6 @@
             10000,
             null,
             "[CUR/MW] Penalty cost for decreasing consumption in the node. Constant or time."
-        ],
-        [
-            "node",
-            "retire_forced",
-            null,
-            null,
-            "[MWh] Forced retired storage capacity. Period."
         ],
         [
             "node",
@@ -1426,17 +1480,17 @@
         ],
         [
             "node",
-            "storate_state_end",
-            null,
-            null,
-            null
-        ],
-        [
-            "node",
             "virtual_unitsize",
             null,
             null,
             "[MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity."
+        ],
+        [
+            "node__profile",
+            "profile_method",
+            null,
+            "profile_methods",
+            "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n"
         ],
         [
             "profile",
@@ -1444,6 +1498,90 @@
             null,
             null,
             "[factor, typically between 0-1]. Availability time series for a fluctuating resource like wind power. Time."
+        ],
+        [
+            "reserve__upDown__connection__node",
+            "increase_reserve_ratio",
+            null,
+            null,
+            "[factor] The reserve requirement is increased by the flow from the connection to the node multiplied by this ratio. Constant."
+        ],
+        [
+            "reserve__upDown__connection__node",
+            "large_failure_ratio",
+            "",
+            null,
+            "[factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant."
+        ],
+        [
+            "reserve__upDown__connection__node",
+            "max_share",
+            0,
+            null,
+            "[factor] Maximum ratio for the transfer of reserve to this node. Constant."
+        ],
+        [
+            "reserve__upDown__connection__node",
+            "reliability",
+            1,
+            null,
+            "[factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant."
+        ],
+        [
+            "reserve__upDown__group",
+            "increase_reserve_ratio",
+            null,
+            null,
+            "[factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant."
+        ],
+        [
+            "reserve__upDown__group",
+            "penalty_reserve",
+            5000,
+            null,
+            "[CUR/MW] Penalty for violating a reserve constraint. Constant."
+        ],
+        [
+            "reserve__upDown__group",
+            "reservation",
+            null,
+            null,
+            "[MW] Amount of reserve to be reserved. Constant or time."
+        ],
+        [
+            "reserve__upDown__group",
+            "reserve_method",
+            null,
+            "reserve_methods",
+            "Choice of reserve method: no_reserve, timeseries_only, dynamic_only, large_failure_only, timeseries_and_dynamic, timeseries_and_large_failure, dynamic_and_large_failure, all"
+        ],
+        [
+            "reserve__upDown__unit__node",
+            "increase_reserve_ratio",
+            null,
+            null,
+            "[factor] The reserve requirement is increased by generation from the unit to the node multiplied by this ratio. Constant."
+        ],
+        [
+            "reserve__upDown__unit__node",
+            "large_failure_ratio",
+            "",
+            null,
+            "[factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant."
+        ],
+        [
+            "reserve__upDown__unit__node",
+            "max_share",
+            null,
+            null,
+            "[factor] Maximum ratio for the transfer of reserve to this node. Constant."
+        ],
+        [
+            "reserve__upDown__unit__node",
+            "reliability",
+            1,
+            null,
+            "[factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant."
         ],
         [
             "solve",
@@ -1531,13 +1669,6 @@
         ],
         [
             "solve",
-            "rolling_start_time",
-            null,
-            null,
-            "(Optional) Timestamp from the timeline that is linked to the timeblockSet used. Starting point of the rolling. If this is not stated, it is assumed to be the first timestep"
-        ],
-        [
-            "solve",
             "solve_mode",
             "single_solve",
             "solve_mode",
@@ -1563,6 +1694,13 @@
             null,
             null,
             "Additional command to execute before calling the solver. Can be used to e.g. reserve a floating license for a commercial solver."
+        ],
+        [
+            "solve",
+            "stochastic_branches",
+            null,
+            null,
+            "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time"
         ],
         [
             "solve",
@@ -1664,13 +1802,6 @@
         ],
         [
             "unit",
-            "invest_forced",
-            null,
-            null,
-            "[MW] Capacity that must be invested in a given period. Investment cost will be included in the cost results. Constant or period."
-        ],
-        [
-            "unit",
             "invest_max_period",
             null,
             null,
@@ -1703,13 +1834,6 @@
             null,
             null,
             "[MW] Minimum investment over all solves. Constant."
-        ],
-        [
-            "unit",
-            "is_active",
-            null,
-            "is_active",
-            "Whether the unit is present in the alternative."
         ],
         [
             "unit",
@@ -1752,13 +1876,6 @@
             null,
             "minimum_time_methods",
             "Not functional yet. Choice between minimum up- and downtimes (<empty>, min_downtime, min_uptime, both)."
-        ],
-        [
-            "unit",
-            "retire_forced",
-            null,
-            null,
-            "[MW] Forced retired capacity. Period."
         ],
         [
             "unit",
@@ -1815,127 +1932,6 @@
             null,
             null,
             "[MW] Size of a single unit - used for integer investments (lumped investments), minimum loads and start-up costs. If not given, assumed from the existing unit capacity."
-        ]
-    ],
-    "relationship_parameters": [
-        [
-            "connection__node",
-            "constraint_flow_coefficient",
-            null,
-            null,
-            "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow from the connection to a node in user-defined constraints. [flow x coefficient] will be on the left side of the equation."
-        ],
-        [
-            "connection__profile",
-            "profile_method",
-            null,
-            "profile_methods",
-            "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n"
-        ],
-        [
-            "node__profile",
-            "profile_method",
-            null,
-            "profile_methods",
-            "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n"
-        ],
-        [
-            "reserve__upDown__connection__node",
-            "increase_reserve_ratio",
-            null,
-            null,
-            "[factor] The reserve requirement is increased by the flow from the connection to the node multiplied by this ratio. Constant."
-        ],
-        [
-            "reserve__upDown__connection__node",
-            "is_active",
-            null,
-            "is_active",
-            "Can the connection provide this reserve to the selected node. Empty indicates not allowed. Use 'yes' to indicate true."
-        ],
-        [
-            "reserve__upDown__connection__node",
-            "large_failure_ratio",
-            "",
-            null,
-            "[factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant."
-        ],
-        [
-            "reserve__upDown__connection__node",
-            "max_share",
-            0,
-            null,
-            "[factor] Maximum ratio for the transfer of reserve to this node. Constant."
-        ],
-        [
-            "reserve__upDown__connection__node",
-            "reliability",
-            1,
-            null,
-            "[factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant."
-        ],
-        [
-            "reserve__upDown__group",
-            "increase_reserve_ratio",
-            null,
-            null,
-            "[factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant."
-        ],
-        [
-            "reserve__upDown__group",
-            "penalty_reserve",
-            null,
-            null,
-            "[CUR/MW] Penalty for violating a reserve constraint. Constant."
-        ],
-        [
-            "reserve__upDown__group",
-            "reservation",
-            null,
-            null,
-            "[MW] Amount of reserve to be reserved. Constant or time."
-        ],
-        [
-            "reserve__upDown__group",
-            "reserve_method",
-            null,
-            "reserve_methods",
-            "Choice of reserve method: no_reserve, timeseries_only, dynamic_only, large_failure_only, timeseries_and_dynamic, timeseries_and_large_failure, dynamic_and_large_failure, all"
-        ],
-        [
-            "reserve__upDown__unit__node",
-            "increase_reserve_ratio",
-            null,
-            null,
-            "[factor] The reserve requirement is increased by generation from the unit to the node multiplied by this ratio. Constant."
-        ],
-        [
-            "reserve__upDown__unit__node",
-            "is_active",
-            null,
-            "is_active",
-            "Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true."
-        ],
-        [
-            "reserve__upDown__unit__node",
-            "large_failure_ratio",
-            "",
-            null,
-            "[factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant."
-        ],
-        [
-            "reserve__upDown__unit__node",
-            "max_share",
-            null,
-            null,
-            "[factor] Maximum ratio for the transfer of reserve to this node. Constant."
-        ],
-        [
-            "reserve__upDown__unit__node",
-            "reliability",
-            1,
-            null,
-            "[factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant."
         ],
         [
             "unit__inputNode",
@@ -2069,84 +2065,6 @@
             null,
             null,
             "[per unit  / minute] Maximum ramp up speed. Constant."
-        ]
-    ],
-    "tools": [
-        [
-            "FlexTool3",
-            ""
-        ]
-    ],
-    "features": [
-        [
-            "connection",
-            "is_active",
-            "is_active",
-            "is_active"
-        ],
-        [
-            "constraint",
-            "is_active",
-            "is_active",
-            "is_active"
-        ],
-        [
-            "node",
-            "is_active",
-            "is_active",
-            "is_active"
-        ],
-        [
-            "unit",
-            "is_active",
-            "is_active",
-            "is_active"
-        ]
-    ],
-    "tool_features": [
-        [
-            "FlexTool3",
-            "connection",
-            "is_active",
-            false
-        ],
-        [
-            "FlexTool3",
-            "constraint",
-            "is_active",
-            false
-        ],
-        [
-            "FlexTool3",
-            "node",
-            "is_active",
-            false
-        ],
-        [
-            "FlexTool3",
-            "unit",
-            "is_active",
-            false
-        ]
-    ],
-    "tool_feature_methods": [
-        [
-            "FlexTool3",
-            "connection",
-            "is_active",
-            "yes"
-        ],
-        [
-            "FlexTool3",
-            "node",
-            "is_active",
-            "yes"
-        ],
-        [
-            "FlexTool3",
-            "unit",
-            "is_active",
-            "yes"
         ]
     ]
 }
