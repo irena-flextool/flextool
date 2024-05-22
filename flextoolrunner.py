@@ -435,11 +435,16 @@ class FlexToolRunner:
                                             break
                                 if timeline_step_duration != None:
                                     values = []
+                                    params = datain[0:time_index]
                                     row = datain[0:time_index + 1]
-                                    values.append(float(datain[time_index + 1]))
-                                    for i in range(timeline_step_duration - 1):
-                                        datain = next(filereader)
-                                        values.append(float(datain[time_index + 1]))
+                                    values.append(float(datain[time_index + 1])),
+                                    if datain[1] != 'storage_state_reference_value':
+                                        for i in range(timeline_step_duration - 1):
+                                            datain = next(filereader)
+                                            if datain[0:time_index] != params:
+                                                logging.error("Cannot find the same timesteps in input data as in timeline for file  " + timeseries + " after " + row[-1])
+                                                exit(-1)
+                                            values.append(float(datain[time_index + 1]))
 
                                     if timeseries_map[timeseries] == "average":
                                         out_value = round(sum(values) / len(values), 6)
@@ -447,6 +452,30 @@ class FlexToolRunner:
                                         out_value = sum(values)
                                     row.append(out_value)
                                     filewriter.writerow(row)
+                                else:
+                                    #find previous timestep that is included and add this to the list
+                                    #this is for the parameters that do not have a value for each timestep
+                                    if datain[1] == 'storage_state_reference_value':
+                                        #get current index:
+                                        counter = 0
+                                        for timestep in self.timelines[self.original_timeline[timeline]]:
+                                            if datain[2] == timestep[0]:
+                                                current_index = counter 
+                                            counter +=1
+                                        found = False
+                                        for timestep in reversed(self.timelines[self.original_timeline[timeline]][0:current_index+1]):
+                                            for timeline_row in new_timeline:
+                                                if timeline_row[0] == timestep[0]:
+                                                    new_index = timeline_row[0]
+                                                    found = True
+                                                    break
+                                            if found:
+                                                break
+                                        if found:
+                                            row = datain[0:time_index]
+                                            row.append(new_index)
+                                            row.append(datain[time_index + 1])
+                                            filewriter.writerow(row)
                             except Exception:
                                 break
             #constaint inflow to a longer step size
@@ -1223,7 +1252,7 @@ class FlexToolRunner:
             for row in period__branch:
                 realfile.write(row[0]+","+row[1]+"\n")
 
-    def write_all_branches(self,period__branch_list):
+    def write_all_branches(self,period__branch_list, solve_branch__time_branch_list):
         """
         write all branches in all solves
         """
@@ -1258,6 +1287,10 @@ class FlexToolRunner:
                             time_branches.append(datain[1])
                     except StopIteration:
                         break
+
+        for solve__branch in solve_branch__time_branch_list:
+            if solve__branch[1] not in time_branches:
+                time_branches.append(solve__branch[1])
         with open("solve_data/time_branch_all.csv", 'w') as realfile:
             realfile.write("time_branch\n")
             for time_branch in time_branches:
@@ -1858,12 +1891,15 @@ def main():
                 exit(-1)
 
     first = True
+    previous_complete_solve = None
     for i, solve in enumerate(all_solves):
         complete_active_time_lists = runner.get_active_time(complete_solve[solve], runner.timeblocks_used_by_solves, runner.timeblocks, runner.timelines, runner.timeblocks__timeline)
+        logging.info("Creating timelines")
         runner.write_full_timelines(runner.stochastic_timesteps[solve], runner.timeblocks_used_by_solves[complete_solve[solve]], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
         runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
         runner.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete = True)
         runner.write_step_jump(jump_lists[solve])
+        logging.info("Creating period data")
         runner.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], 'solve_data/period_with_history.csv')
         runner.write_periods(complete_solve[solve], runner.realized_invest_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
         #assume that if realized_invest_periods is not defined,but the invest_periods and realized_periods are defined, use realized_periods also as the realized_invest_periods
@@ -1877,10 +1913,12 @@ def main():
         runner.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
         runner.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
         runner.write_last_realized_step(realized_time_lists[solve], complete_solve[solve], 'solve_data/last_realized_timestep.csv')
+        logging.info("Create realized timeline")
         runner.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
         runner.write_fix_storage_timesteps(realized_time_lists[solve],complete_solve[solve])
+        logging.info("Possible stochastics")
         runner.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
-        runner.write_all_branches(period__branch_lists)
+        runner.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve])
         runner.write_solve_branch__time_branch_list_and_weight(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve])
         runner.write_first_and_last_periods(active_time_lists[solve], runner.timeblocks_used_by_solves[complete_solve[solve]])
 
@@ -1890,12 +1928,16 @@ def main():
         else:
             storage_fix_values_exist = False
         if storage_fix_values_exist:
+            logging.info("Nested timeline matching")
             runner.write_timeline_matching_map(active_time_lists[parent_roll[solve]], active_time_lists[solve], complete_solve[parent_roll[solve]], complete_solve[solve], period__branch_lists[solve])
         else:
             with open("solve_data/timeline_matching_map.csv", 'w') as realfile:
                 realfile.write("period,step,upper_step\n")
         #if timeline created from new step_duration, all timeseries have to be averaged or summed for the new timestep
-        runner.create_averaged_timeseries(complete_solve[solve])
+        if previous_complete_solve != complete_solve[solve]:
+            logging.info("Aggregating timeline and parameters for the new step size")
+            runner.create_averaged_timeseries(complete_solve[solve])
+        previous_complete_solve = complete_solve[solve]
         if solve in runner.first_of_complete_solve:
             first_of_nested_level = True
         else:
@@ -1917,6 +1959,7 @@ def main():
             runner.write_empty_investment_file()
             runner.write_empty_storage_fix_file()
             runner.write_headers_for_empty_output_files('output/costs_discounted.csv', 'param_costs,costs_discounted')
+        logging.info("Starting model creation")
         exit_status = runner.model_run(complete_solve[solve])
         if exit_status == 0:
             logging.info('Success!')
