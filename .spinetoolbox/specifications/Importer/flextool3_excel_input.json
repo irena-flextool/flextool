@@ -8,7 +8,7 @@
                     "Solve settings": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "solve",
                                 "skip_columns": [
@@ -24,11 +24,11 @@
                                 ]
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -54,7 +54,7 @@
                     "Solve sequence": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "model",
                                 "skip_columns": [
@@ -63,12 +63,12 @@
                                 "read_start_row": 2
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "from_template"
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -109,7 +109,7 @@
                     "Solver arguments": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "solve",
                                 "skip_columns": [
@@ -123,11 +123,11 @@
                                 ]
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -170,16 +170,16 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "timeblockSet"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -220,16 +220,16 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "timeline"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -257,36 +257,36 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "timeblockSet__timeline"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "header",
                                 "value": 0
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "header",
                                 "value": 1
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 0,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             }
                         ]
@@ -298,16 +298,16 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -335,16 +335,16 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -386,7 +386,7 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "node",
                                 "skip_columns": [
@@ -394,11 +394,11 @@
                                 ]
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": -3
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -440,16 +440,16 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "commodity"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -477,7 +477,7 @@
                     "data": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "connection",
                                 "skip_columns": [
@@ -486,11 +486,11 @@
                                 ]
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -516,45 +516,45 @@
                     "relationships": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "connection__node__node",
                                 "read_start_row": 2
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "connection"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 3
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             }
                         ]
@@ -566,16 +566,16 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "connection"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -617,7 +617,7 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "connection",
                                 "skip_columns": [
@@ -625,11 +625,11 @@
                                 ]
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": -3
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -671,7 +671,7 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "profile",
                                 "skip_columns": [
@@ -679,11 +679,11 @@
                                 ]
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": -2
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -726,16 +726,16 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -763,16 +763,16 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -814,7 +814,7 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "unit",
                                 "skip_columns": [
@@ -822,11 +822,11 @@
                                 ]
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": -3
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -868,17 +868,17 @@
                     "Mapping 2": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "constraint",
                                 "read_start_row": 2
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -905,17 +905,17 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "constraint",
                                 "read_start_row": 2
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -942,17 +942,17 @@
                     "Mapping 3": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "constraint",
                                 "read_start_row": 2
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -981,16 +981,16 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "group"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -1018,35 +1018,35 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "group__connection"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "group"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "connection"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 0
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             }
                         ]
@@ -1058,44 +1058,44 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "group__connection__node"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "group"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "connection"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 0
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             }
                         ]
@@ -1107,35 +1107,35 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "group__node"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "group"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 0
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             }
                         ]
@@ -1147,35 +1147,35 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "group__unit"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "group"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 0
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             }
                         ]
@@ -1187,44 +1187,44 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "group__unit__node"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "group"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 0
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             }
                         ]
@@ -1236,57 +1236,57 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "reserve__upDown__connection__node"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "reserve"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "upDown"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "connection"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 3,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 4,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -1314,47 +1314,47 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "reserve__upDown__group"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "reserve"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "upDown"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "group"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 3,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -1382,7 +1382,7 @@
                     "unit_sources": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "reserve__upDown__group",
                                 "skip_columns": [
@@ -1390,39 +1390,39 @@
                                 ]
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "reserve"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "upDown"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "group"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": -2
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": -3
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": -4
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden",
                                 "filter_re": "^source$"
                             },
@@ -1463,7 +1463,7 @@
                     "unit_sinks": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "reserve__upDown__group",
                                 "skip_columns": [
@@ -1471,39 +1471,39 @@
                                 ]
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "reserve"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "upDown"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "group"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": -2
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": -3
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": -4
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -1545,57 +1545,57 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "reserve__upDown__unit__node"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "reserve"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "upDown"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 3,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 4,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -1623,16 +1623,16 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "commodity"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -1674,35 +1674,35 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "commodity__node"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "commodity"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 0
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             }
                         ]
@@ -1714,17 +1714,17 @@
                     "realized_periods": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "solve",
                                 "read_start_row": 2
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -1766,7 +1766,7 @@
                     "solve_data": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "solve",
                                 "skip_columns": [
@@ -1775,11 +1775,11 @@
                                 ]
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -1819,17 +1819,17 @@
                     "invest_periods": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "solve",
                                 "read_start_row": 2
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -1871,17 +1871,17 @@
                     "realized_invest_periods": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "solve",
                                 "read_start_row": 2
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -1923,17 +1923,17 @@
                     "fix_storage_periods": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "solve",
                                 "read_start_row": 2
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -1977,16 +1977,16 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "timeline"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -2028,16 +2028,16 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "group"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -2079,7 +2079,7 @@
                     "sources": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "unit__inputNode",
                                 "skip_columns": [
@@ -2087,30 +2087,30 @@
                                 ]
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": 3,
                                 "filter_re": "^input$"
                             },
@@ -2137,7 +2137,7 @@
                     "sinks": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "unit__outputNode",
                                 "skip_columns": [
@@ -2145,30 +2145,30 @@
                                 ]
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": 3,
                                 "filter_re": "^output$"
                             },
@@ -2197,7 +2197,7 @@
                     "unit_sources": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "unit__inputNode",
                                 "skip_columns": [
@@ -2205,30 +2205,30 @@
                                 ]
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": -3
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": -4
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": -5,
                                 "filter_re": "^input$"
                             },
@@ -2269,7 +2269,7 @@
                     "unit_sinks": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "unit__outputNode",
                                 "skip_columns": [
@@ -2277,30 +2277,30 @@
                                 ]
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": -3
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": -4
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": -5,
                                 "filter_re": "^output$"
                             },
@@ -2343,35 +2343,35 @@
                     "sources": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "unit__inputNode"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": 3,
                                 "filter_re": "^input$"
                             },
@@ -2412,35 +2412,35 @@
                     "sinks": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "unit__outputNode"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": 3,
                                 "filter_re": "^output$"
                             },
@@ -2483,15 +2483,15 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": "hidden"
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             }
                         ]
@@ -2503,15 +2503,15 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": "hidden"
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             }
                         ]
@@ -2523,35 +2523,35 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "node__profile"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "profile"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -2579,35 +2579,35 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "connection__profile"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "connection"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "profile"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -2635,47 +2635,47 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "unit__node__profile"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "profile"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 3,
-                                "import_objects": true
+                                "import_entities": true
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -2708,10 +2708,6 @@
                                 "skip_columns": [
                                     0
                                 ]
-                            },
-                            {
-                                "map_type": "ScenarioAlternative",
-                                "position": -3
                             }
                         ]
                     }
@@ -2727,9 +2723,8 @@
                                 ]
                             },
                             {
-                                "map_type": "ScenarioActiveFlag",
-                                "position": "hidden",
-                                "value": "false"
+                                "map_type": "ScenarioAlternative",
+                                "position": -3
                             }
                         ]
                     }
@@ -2740,35 +2735,35 @@
                     "sources": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "connection__node"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "connection"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -2808,35 +2803,35 @@
                     "sinks": {
                         "mapping": [
                             {
-                                "map_type": "RelationshipClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "connection__node"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "connection"
                             },
                             {
-                                "map_type": "RelationshipClassObjectClass",
+                                "map_type": "Dimension",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Relationship",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "relationship"
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 1
                             },
                             {
-                                "map_type": "RelationshipObject",
+                                "map_type": "Element",
                                 "position": 2
                             },
                             {
-                                "map_type": "RelationshipMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -2878,16 +2873,16 @@
                     "sources": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -2927,16 +2922,16 @@
                     "sinks": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -2978,16 +2973,16 @@
                     "sources": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -3027,16 +3022,16 @@
                     "sinks": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "unit"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -3078,16 +3073,16 @@
                     "sources": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "node"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -3127,16 +3122,16 @@
                     "sinks": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "connection"
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -3178,17 +3173,17 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "solve",
                                 "read_start_row": 2
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": 1
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -3216,18 +3211,18 @@
                     "Mapping 1": {
                         "mapping": [
                             {
-                                "map_type": "ObjectClass",
+                                "map_type": "EntityClass",
                                 "position": "hidden",
                                 "value": "model",
                                 "read_start_row": 2
                             },
                             {
-                                "map_type": "Object",
+                                "map_type": "Entity",
                                 "position": "hidden",
                                 "value": "from_template"
                             },
                             {
-                                "map_type": "ObjectMetadata",
+                                "map_type": "EntityMetadata",
                                 "position": "hidden"
                             },
                             {
@@ -3360,7 +3355,9 @@
             "connection_profile_c": {},
             "unit_node_profile_c": {},
             "scenario": {
-                "row": 1
+                "row": 1,
+                "header": false,
+                "column": 0
             },
             "connection_node_constraint_c": {},
             "node_constraint_c": {},
