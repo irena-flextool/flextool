@@ -355,12 +355,18 @@ set ed_history_realized_read dimen 2 within {e in entity, d in period_with_histo
 param p_entity_period_existing_capacity {e in entity, d in period_with_history};
 param p_entity_period_invested_capacity {e in entity, d in period_with_history};
 
+
+####
+#Stochastic sets and params
+####
 set groupStochastic dimen 1 within {group};
 set solve_branch__time_branch dimen 2 within {branch_all, time_branch_all};
 param p_branch_weight_input {b in branch} default 1;
 #normalize the branches with the same starting time to add up to 1
 param p_branch_weight {b in branch} := 
 p_branch_weight_input[b] /(sum{(d,b2) in period__branch, (b2, ts) in period__time_first: (b,ts) in period__time_first && (d,b) in period__branch} p_branch_weight_input[b2]);
+
+set dt_non_anticipativity := dt_realize_dispatch_input union dt_fix_storage_timesteps;
 
 #stochastic versions of timeseries
 set process__param__branch__time dimen 5 within {process, processTimeParam, time_branch_all, time, time};
@@ -3035,6 +3041,9 @@ s.t. group_loss_share_constraint{(g,n) in group_node, (d,t) in dt: g in group_lo
   + vq_state_up[n,d,t]  * node_capacity_for_scaling[n, d] 
   =  
   + p_state_slack_share[g,n,d,t] * vq_state_up_group[g,d,t] * group_capacity_for_scaling[g,d];
+
+s.t. non_anticipativity_storage{n in nodeState, (d,t) in dt_non_anticipativity, (d,b) in period__branch: d != b && b in period_in_use}:
+      + v_state[n,d,t] = + v_state[n,b,t];
 
 param rest := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect;
 display rest;
