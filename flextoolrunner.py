@@ -1024,7 +1024,7 @@ class FlexToolRunner:
                                 original_period = i[0]
                         if (original_period,original_period) in period__branch and original_period in active_time_list.keys():
                             jump = active_time[j][1] - active_time[-1][1]
-                            step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], period, active_time_list[original_period][-1][0], jump))
+                            step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], period, active_time_list[period][-1][0], jump))
                         elif (original_period,original_period) in period__branch: 
                             #if branching happens in the first timestep of a period
                             #find the last realized period
