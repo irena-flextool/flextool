@@ -56,38 +56,30 @@ x1: which item to use as the x-axis; defaults to the last dimension, e.g. time f
 x2: regroups or categorises the x-axis by this item
 x3: minor x-axis regrouping item; works only if x2 is defined
 """
+
 import re
 import subprocess
 import sys
 import traceback
 from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass, replace
-from datetime import datetime
-from enum import IntEnum, unique
 from io import TextIOWrapper
 from itertools import accumulate, takewhile
 import json
-from operator import attrgetter, itemgetter
+from operator import itemgetter
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import sleep
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, List, Tuple
+from typing import Dict, Iterable, Iterator, Optional, List, Tuple
 import matplotlib
 import numpy as np
-from PySide6.QtCore import QItemSelectionModel, Qt, QTimer
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
-    QDialog,
-    QDialogButtonBox,
-    QLabel,
-    QListWidget,
-    QVBoxLayout,
 )
 from matplotlib.ticker import MaxNLocator
 from sqlalchemy.sql.expression import Alias, and_
 from spinedb_api import convert_containers_to_maps, DatabaseMapping, from_database, Map
-from spinedb_api.db_mapping_base import DatabaseMappingBase
+from spinedb_api.helpers import group_concat
 from spinetoolbox.plotting import (
     combine_data_with_same_indexes,
     convert_indexed_value_to_tree,
@@ -107,14 +99,6 @@ matplotlib.use("Qt5Agg")
 
 BASIC_PLOT_TYPES = {"line", "stacked line", "bar", "stacked bar"}
 ENTITY_KEY_FINGERPRINT = re.compile("^entity_[0-9]+$")
-
-
-@unique
-class EntityType(IntEnum):
-    """Spine database entity type enums."""
-
-    OBJECT = 1
-    RELATIONSHIP = 2
 
 
 @dataclass(frozen=True)
@@ -147,84 +131,222 @@ def make_argument_parser() -> ArgumentParser:
     return parser
 
 
-def reject_objects(objects: List[str], acceptable_objects: List[List[str]]) -> bool:
+def reject_elements(elements: List[str], acceptable_elements: List[List[str]]) -> bool:
     """
     Returns True if any object in objects list is not
     in any corresponding list of acceptable_objects.
     """
-    for object_, acceptables in zip(objects, acceptable_objects):
-        if acceptables and object_ not in acceptables:
+    for element, acceptables in zip(elements, acceptable_elements):
+        if acceptables and element not in acceptables:
             return True
     return False
 
 
-def entity_handling_functions(
-    entity_type: EntityType
-) -> Tuple[
-    Callable[[object], str], Callable[[Any], List[str]], Callable[[Any], List[str]]
-]:
+def entity_class_dimension_sq(db_map: DatabaseMapping) -> Alias:
+    """Subquery for entity class dimensions."""
+    return (
+        db_map.query(
+            db_map.entity_class_dimension_sq.c.entity_class_id,
+            db_map.entity_class_dimension_sq.c.dimension_id,
+            db_map.entity_class_dimension_sq.c.position,
+            db_map.entity_class_sq.c.name.label("dimension_name"),
+        )
+        .filter(
+            db_map.entity_class_dimension_sq.c.dimension_id
+            == db_map.entity_class_sq.c.id
+        )
+        .subquery("entity_class_dimension_sq")
+    )
+
+
+def ext_entity_class_sq(db_map: DatabaseMapping) -> Alias:
+    """Extended subquery for entity class dimensions."""
+    dimension_sq = entity_class_dimension_sq(db_map)
+    return (
+        db_map.query(
+            db_map.entity_class_sq.c.id,
+            db_map.entity_class_sq.c.name,
+            dimension_sq.c.dimension_name,
+            dimension_sq.c.position,
+        )
+        .outerjoin(
+            dimension_sq,
+            db_map.entity_class_sq.c.id == dimension_sq.c.entity_class_id,
+        )
+        .order_by(db_map.entity_class_sq.c.id, dimension_sq.c.position)
+        .subquery("ext_entity_class_sq")
+    )
+
+
+def wide_entity_class_sq(db_map: DatabaseMapping) -> Alias:
+    """Wide subquery for entity classes.
+
+    Includes entity class dimensions.
     """
-    Generates callable suitable for retrieving information
-    from database row of given entity type.
+    ext_class_sq = ext_entity_class_sq(db_map)
+    return (
+        db_map.query(
+            ext_class_sq.c.id,
+            ext_class_sq.c.name,
+            group_concat(ext_class_sq.c.dimension_name, ext_class_sq.c.position).label(
+                "dimension_name_list"
+            ),
+        )
+        .group_by(
+            ext_class_sq.c.id,
+        )
+        .subquery("wide_entity_class_sq")
+    )
+
+
+def entity_element_sq(db_map: DatabaseMapping) -> Alias:
+    """Subquery for entity elements."""
+    return (
+        db_map.query(
+            db_map.entity_element_sq, db_map.entity_sq.c.name.label("element_name")
+        )
+        .filter(db_map.entity_element_sq.c.element_id == db_map.entity_sq.c.id)
+        .subquery("entity_element_sq")
+    )
+
+
+def ext_entity_element_sq(db_map: DatabaseMapping) -> Alias:
+    """Extended subquery for entity elements."""
+    element_sq = entity_element_sq(db_map)
+    return (
+        db_map.query(db_map.entity_sq, element_sq)
+        .outerjoin(
+            element_sq,
+            db_map.entity_sq.c.id == element_sq.c.entity_id,
+        )
+        .order_by(db_map.entity_sq.c.id, element_sq.c.position)
+        .subquery("ext_entity_sq")
+    )
+
+
+def wide_entity_sq(db_map: DatabaseMapping) -> Alias:
+    """Wide subquery for entities.
+
+    Includes entity elements.
     """
-    class_name_fields = {
-        EntityType.OBJECT: "object_class_name",
-        EntityType.RELATIONSHIP: "relationship_class_name",
-    }
-    object_lists = {
-        EntityType.OBJECT: lambda r: [r.object_name],
-        EntityType.RELATIONSHIP: lambda r: r.object_name_list.split(","),
-    }
-    object_labels = {
-        EntityType.OBJECT: lambda r: ["entity_0"],
-        EntityType.RELATIONSHIP: lambda r: [
-            f"entity_{i}" for i in range(len(r.object_class_name_list.split(",")))
-        ],
-    }
-    get_class_name = attrgetter(class_name_fields[entity_type])
-    get_object_names = object_lists[entity_type]
-    get_object_labels = object_labels[entity_type]
-    return get_class_name, get_object_names, get_object_labels
+    ext_entity_sq = ext_entity_element_sq(db_map)
+    return (
+        db_map.query(
+            ext_entity_sq.c.id,
+            ext_entity_sq.c.class_id.label("entity_class_id"),
+            db_map.entity_class_sq.c.name.label("entity_class_name"),
+            ext_entity_sq.c.name,
+            group_concat(ext_entity_sq.c.element_name, ext_entity_sq.c.position).label(
+                "element_name_list"
+            ),
+        )
+        .join(
+            db_map.entity_class_sq,
+            ext_entity_sq.c.class_id == db_map.entity_class_sq.c.id,
+        )
+        .group_by(
+            ext_entity_sq.c.id,
+        )
+        .subquery("wide_entity_sq")
+    )
+
+
+def parameter_definition_sq(db_map: DatabaseMapping) -> Alias:
+    """Subquery for parameter definitions."""
+    return (
+        db_map.query(
+            db_map.parameter_definition_sq.c.name,
+            db_map.parameter_definition_sq.c.description,
+            db_map.entity_class_sq.name.label("entity_class_name"),
+            db_map.parameter_definition_sq.c.default_type,
+            db_map.parameter_definition_sq.c.default_value,
+            db_map.parameter_value_list.c.name.label("parameter_value_list_name"),
+        )
+        .join(
+            db_map.entity_class_sq,
+            db_map.parameter_definition_sq.c.entity_class_id
+            == db_map.entity_class_sq.c.id,
+        )
+        .join(
+            db_map.parameter_value_list_sq,
+            db_map.parameter_definition_sq.c.parameter_value_list_id
+            == db_map.parameter_value_list_sq.c.id,
+        )
+        .subquery("parameter_definition_sq")
+    )
+
+
+def parameter_value_sq(db_map: DatabaseMapping) -> Alias:
+    """Subquery for parameter values."""
+    class_sq = wide_entity_class_sq(db_map)
+    entity_sq = wide_entity_sq(db_map)
+    return (
+        db_map.query(
+            class_sq.c.name.label("entity_class_name"),
+            class_sq.c.dimension_name_list,
+            entity_sq.c.name.label("entity_name"),
+            entity_sq.c.element_name_list,
+            db_map.parameter_definition_sq.c.name.label("parameter_definition_name"),
+            db_map.alternative_sq.c.name.label("alternative_name"),
+            db_map.parameter_value_sq.c.type,
+            db_map.parameter_value_sq.c.value,
+        )
+        .join(entity_sq, class_sq.c.id == entity_sq.c.entity_class_id)
+        .join(
+            db_map.parameter_definition_sq,
+            class_sq.c.id == db_map.parameter_definition_sq.c.entity_class_id,
+        )
+        .join(
+            db_map.parameter_value_sq,
+            and_(
+                entity_sq.c.id == db_map.parameter_value_sq.c.entity_id,
+                db_map.parameter_definition_sq.c.id
+                == db_map.parameter_value_sq.c.parameter_definition_id,
+            ),
+        )
+        .join(
+            db_map.alternative_sq,
+            db_map.parameter_value_sq.c.alternative_id == db_map.alternative_sq.c.id,
+        )
+        .subquery("parameter_value_sq")
+    )
 
 
 def query_parameter_values(
-    entity_type: EntityType,
     filter_conditions: Tuple,
-    accept_objects: Optional[List[List[str]]],
-    db_map: DatabaseMappingBase,
+    accept_elements: Optional[List[List[str]]],
+    db_map: DatabaseMapping,
+    subquery: Alias,
 ) -> TreeNode:
     """Reads parameter values from database."""
     value_tree = TreeNode("entity_class")
-    get_class_name, get_object_names, get_object_labels = entity_handling_functions(
-        entity_type
-    )
-    subquery = {
-        EntityType.OBJECT: db_map.object_parameter_value_sq,
-        EntityType.RELATIONSHIP: db_map.relationship_parameter_value_sq,
-    }[entity_type]
     for row in db_map.query(subquery).filter(and_(*filter_conditions)):
-        objects = get_object_names(row)
-        if (
-            entity_type == EntityType.RELATIONSHIP
-            and accept_objects
-            and reject_objects(objects, accept_objects)
-        ):
+        byname = (
+            row.element_name_list.split(",")
+            if row.element_name_list
+            else [row.entity_name]
+        )
+        if accept_elements and reject_elements(byname, accept_elements):
             continue
-        object_labels = get_object_labels(row)
+        byname_labels = (
+            row.dimension_name_list.split(",")
+            if row.dimension_name_list
+            else [row.entity_class_name]
+        )
         entity_subtree = value_tree.content.setdefault(
-            get_class_name(row), TreeNode("parameter")
-        ).content.setdefault(row.parameter_name, TreeNode(object_labels[0]))
-        for entity, label in zip(objects[:-1], object_labels[1:]):
+            row.entity_class_name, TreeNode("parameter")
+        ).content.setdefault(row.parameter_definition_name, TreeNode(byname_labels[0]))
+        for entity, label in zip(byname[:-1], byname_labels[1:]):
             entity_subtree = entity_subtree.content.setdefault(entity, TreeNode(label))
         alternative_subtree = entity_subtree.content.setdefault(
-            objects[-1], TreeNode("scenario")
+            byname[-1], TreeNode("scenario")
         )
         parameter_value = from_database(row.value, row.type)
         if not isinstance(parameter_value, Map):
             parameter_value = convert_containers_to_maps(parameter_value)
-        alternative_subtree.content[
-            row.alternative_name
-        ] = convert_indexed_value_to_tree(parameter_value)
+        alternative_subtree.content[row.alternative_name] = (
+            convert_indexed_value_to_tree(parameter_value)
+        )
     return value_tree
 
 
@@ -335,7 +457,7 @@ def add_category_spine(
     offset: int,
     category_labels: Dict[str, float],
     category_dividers: List[float],
-    plot_widget: [PlotWidget],
+    plot_widget: PlotWidget,
 ) -> None:
     """Adds a category spine to plot widget."""
     category_axis = plot_widget.canvas.axes.twiny()
@@ -378,50 +500,17 @@ def relabel_x_axis(
     return tick_positions, labels
 
 
-def fetch_entity_class_types(db_map: DatabaseMappingBase) -> Dict[str, EntityType]:
-    """Connects entity class names to whether they are object or relationship classes."""
-    return {
-        row.name: EntityType.OBJECT if row.type_id == 1 else EntityType.RELATIONSHIP
-        for row in db_map.query(db_map.entity_class_sq)
-    }
-
-
-def make_object_filter(
-    object_classes: List[str],
-    objects: List[str],
+def make_entity_filter(
+    entity_classes: List[str],
     parameters: List[str],
-    alternatives: List[str],
     subquery: Alias,
 ) -> Tuple:
-    """Creates object parameter value query filters."""
+    """Creates entity filter for parameter value queries."""
     filters = ()
-    if object_classes:
-        filters = filters + (subquery.c.object_class_name.in_(object_classes),)
-    if objects:
-        filters = filters + (subquery.c.object_name.in_(objects),)
+    if entity_classes:
+        filters = filters + (subquery.c.entity_class_name.in_(entity_classes),)
     if parameters:
-        filters = filters + (subquery.c.parameter_name.in_(parameters),)
-    if alternatives:
-        filters = filters + (subquery.c.alternative_name.in_(alternatives),)
-    return filters
-
-
-def make_relationship_filter(
-    relationship_classes: List[str],
-    parameters: List[str],
-    alternatives: List[str],
-    subquery: Alias,
-) -> Tuple:
-    """Creates relationship parameter value query filters."""
-    filters = ()
-    if relationship_classes:
-        filters = filters + (
-            subquery.c.relationship_class_name.in_(relationship_classes),
-        )
-    if parameters:
-        filters = filters + (subquery.c.parameter_name.in_(parameters),)
-    if alternatives:
-        filters = filters + (subquery.c.alternative_name.in_(alternatives),)
+        filters = filters + (subquery.c.parameter_definition_name.in_(parameters),)
     return filters
 
 
@@ -437,63 +526,23 @@ def collect_entity_lists(plot_selection: Dict) -> List[List[str]]:
 
 def build_parameter_value_tree(
     plot_selection: Dict,
-    db_map: DatabaseMappingBase,
-    selected_scenarios: List[str],
-    entity_class_types: Dict[str, EntityType],
-) -> TreeNode:
+    db_map: DatabaseMapping,
+) -> Optional[TreeNode]:
     """Builds data tree according to given plot settings."""
-    object_parameter_values = None
-    relationship_parameter_values = None
     entity_classes = plot_selection.get("entity_class", [])
-    object_classes = [
-        class_
-        for class_ in entity_classes
-        if entity_class_types.get(class_) == EntityType.OBJECT
-    ]
-    if object_classes:
-        filter_conditions = make_object_filter(
-            object_classes,
-            plot_selection.get("entity_0", []),
-            plot_selection.get("parameter", []),
-            selected_scenarios,
-            db_map.object_parameter_value_sq,
-        )
-        object_parameter_values = query_parameter_values(
-            EntityType.OBJECT, filter_conditions, None, db_map
-        )
-    relationship_classes = [
-        class_
-        for class_ in entity_classes
-        if entity_class_types.get(class_) == EntityType.RELATIONSHIP
-    ]
-    if relationship_classes:
-        filter_conditions = make_relationship_filter(
-            relationship_classes,
-            plot_selection.get("parameter", []),
-            selected_scenarios,
-            db_map.relationship_parameter_value_sq,
-        )
-        acceptable_objects = collect_entity_lists(plot_selection)
-        relationship_parameter_values = query_parameter_values(
-            EntityType.RELATIONSHIP, filter_conditions, acceptable_objects, db_map
-        )
-    if object_parameter_values is not None and object_parameter_values.content:
-        parameter_values = object_parameter_values
-        if (
-            relationship_parameter_values is not None
-            and relationship_parameter_values.content
-        ):
-            merged_content = dict(
-                **parameter_values.content, **relationship_parameter_values.content
-            )
-            return replace(parameter_values, content=merged_content)
-        return parameter_values
-    if (
-        relationship_parameter_values is not None
-        and relationship_parameter_values.content
-    ):
-        return relationship_parameter_values
-    return None
+    if not entity_classes:
+        return None
+    subquery = parameter_value_sq(db_map)
+    filter_conditions = make_entity_filter(
+        entity_classes,
+        plot_selection.get("parameter", []),
+        subquery,
+    )
+    acceptable_elements = collect_entity_lists(plot_selection)
+    parameter_values = query_parameter_values(
+        filter_conditions, acceptable_elements, db_map, subquery
+    )
+    return parameter_values if parameter_values else None
 
 
 def filter_by_data_index(
@@ -716,58 +765,55 @@ def plot_basic(
 
 def check_entity_classes(
     settings: Dict,
-    entity_class_types: Dict[str, EntityType],
+    db_map: DatabaseMapping,
     file: TextIOWrapper = sys.stdout,
 ) -> None:
     """Prints warnings if settings contain unknown entity classes."""
+    entity_class_names = {row.name for row in db_map.query(db_map.entity_class_sq)}
     for plot_settings in settings["plots"]:
         entity_classes = plot_settings["selection"].get("entity_class", [])
         for class_ in entity_classes:
-            if class_ not in entity_class_types:
+            if class_ not in entity_class_names:
                 print(f"entity class '{class_}' not in database; ignoring", file=file)
 
 
-def plot(
-    db_map: DatabaseMapping, selected_scenarios: List[str], settings: Dict
-) -> bool:
+def plot(url: str, settings: Dict) -> bool:
     """Plots data as defined in settings."""
-    did_plot = False
     try:
-        entity_class_types = fetch_entity_class_types(db_map)
-        check_entity_classes(settings, entity_class_types)
-        for plot_number, plot_settings in enumerate(settings["plots"]):
-            plot_selection = plot_settings["selection"]
-            parameter_values = build_parameter_value_tree(
-                plot_selection, db_map, selected_scenarios, entity_class_types
-            )
-            if parameter_values is None:
-                continue
-            data_list = filtered_data_list(plot_selection, parameter_values)
-            if not data_list:
-                print(f"No data for plot settings number {plot_number + 1}")
-                continue
-            plot_type = plot_settings["plot_type"]
-            plot_dimensions = plot_settings["dimensions"]
-            shuffle_instructions = make_shuffle_instructions(plot_dimensions)
-            if shuffle_instructions:
-                data_list = shuffle_dimensions(shuffle_instructions, data_list)
-            for list_chunk in separate(plot_dimensions["separate_window"], data_list):
-                list_chunk = remove_value_index_name_tags(list_chunk)
-                if plot_type in BASIC_PLOT_TYPES:
-                    plot_widget = plot_basic(plot_type, plot_dimensions, list_chunk)
-                elif plot_type == "heatmap":
-                    plot_widget = draw_image(list_chunk)
-                else:
-                    raise RuntimeError(f"unknown plot type '{plot_type}'")
-                plot_widget.use_as_window(None, "FlexTool results - periods")
-                plot_widget.show()
+        did_plot = False
+        with DatabaseMapping(url) as db_map:
+            check_entity_classes(settings, db_map)
+            for plot_number, plot_settings in enumerate(settings["plots"]):
+                plot_selection = plot_settings["selection"]
+                parameter_values = build_parameter_value_tree(plot_selection, db_map)
+                if parameter_values is None:
+                    continue
+                data_list = filtered_data_list(plot_selection, parameter_values)
+                if not data_list:
+                    print(f"No data for plot settings number {plot_number + 1}")
+                    continue
                 did_plot = True
-        return did_plot
+                plot_type = plot_settings["plot_type"]
+                plot_dimensions = plot_settings["dimensions"]
+                shuffle_instructions = make_shuffle_instructions(plot_dimensions)
+                if shuffle_instructions:
+                    data_list = shuffle_dimensions(shuffle_instructions, data_list)
+                for list_chunk in separate(
+                    plot_dimensions["separate_window"], data_list
+                ):
+                    list_chunk = remove_value_index_name_tags(list_chunk)
+                    if plot_type in BASIC_PLOT_TYPES:
+                        plot_widget = plot_basic(plot_type, plot_dimensions, list_chunk)
+                    elif plot_type == "heatmap":
+                        plot_widget = draw_image(list_chunk)
+                    else:
+                        raise RuntimeError(f"unknown plot type '{plot_type}'")
+                    plot_widget.use_as_window(None, "FlexTool results - periods")
+                    plot_widget.show()
+            return did_plot
     except Exception:  # pylint: disable=broad-except
         traceback.print_exc(file=sys.stdout)
-        return did_plot
-    finally:
-        db_map.connection.close()
+    return False
 
 
 def data_index_at(index_name: IndexName, xy_data: XYData) -> str:
@@ -801,69 +847,6 @@ def draw_image(data_list: List[XYData]) -> PlotWidget:
     return plot_widget
 
 
-class SelectScenarioDialog(QDialog):
-    """Dialog that show a list of alternatives."""
-
-    def __init__(self, db_map: DatabaseMapping):
-        super().__init__()
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        list_label = QLabel("Select scenarios:")
-        self._list_view = QListWidget(self)
-        scenarios = []
-        latest_scenario = None
-        latest_time_stamp = None
-        for row in db_map.query(db_map.alternative_sq):
-            scenario = row.name
-            name, _, iso_time_stamp = scenario.rpartition("@")
-            if not name:
-                continue
-            try:
-                time_stamp = datetime.fromisoformat(iso_time_stamp)
-            except ValueError:
-                continue
-            scenarios.append(scenario)
-            if latest_time_stamp is None or time_stamp > latest_time_stamp:
-                latest_time_stamp = time_stamp
-                latest_scenario = scenario
-        scenarios.sort()
-        self._list_view.addItems(scenarios)
-        if latest_scenario is not None:
-            self._list_view.setCurrentRow(
-                scenarios.index(latest_scenario),
-                QItemSelectionModel.SelectionFlag.ClearAndSelect,
-            )
-        self._list_view.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection
-        )
-        self._list_view.selectionModel().selectionChanged.connect(
-            lambda selected, deselected: self._set_ok_button_enabled()
-        )
-        self._button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            self,
-        )
-        self._button_box.accepted.connect(self.accept)
-        self._button_box.accepted.connect(self.close)
-        self._button_box.rejected.connect(self.reject)
-        self._button_box.rejected.connect(self.close)
-        layout = QVBoxLayout(self)
-        layout.addWidget(list_label)
-        layout.addWidget(self._list_view)
-        layout.addWidget(self._button_box)
-        self.resize(512, self.size().height())
-
-    def get_selected(self) -> List[str]:
-        """Returns selected alternatives."""
-        indexes = self._list_view.selectionModel().selectedIndexes()
-        return [self._list_view.itemFromIndex(i).text() for i in indexes]
-
-    def _set_ok_button_enabled(self) -> None:
-        """Enables the OK button only when at least one scenario has been selected."""
-        self._button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(
-            self._list_view.selectionModel().hasSelection()
-        )
-
-
 def start_subprocess(args: Namespace) -> None:
     """Restarts the script as subprocess and waits for the application to start."""
     with TemporaryDirectory() as temp_dir:
@@ -894,16 +877,15 @@ def notify_via_file(notification_file: str) -> None:
 
 def start_plotting(
     args: Namespace,
-    db_map: DatabaseMapping,
-    select_scenario_dialog: SelectScenarioDialog,
-) -> None:
+    url: str,
+) -> bool:
     """Launches plotting."""
     with open(args.settings, encoding="utf-8") as settings_file:
         settings = json.load(settings_file)
-    selected_scenarios = select_scenario_dialog.get_selected()
-    did_plot = plot(db_map, selected_scenarios, settings)
+    did_plot = plot(url, settings)
     if not did_plot:
         print("Nothing to plot.")
+    return did_plot
 
 
 def main() -> None:
@@ -920,13 +902,9 @@ def main() -> None:
     if app is None:
         app = QApplication()
     app.setApplicationName("FlexTool results")
-    db_map = DatabaseMapping(args.url)
-    select_scenario_dialog = SelectScenarioDialog(db_map)
-    select_scenario_dialog.accepted.connect(
-        lambda: start_plotting(args, db_map, select_scenario_dialog)
-    )
-    select_scenario_dialog.rejected.connect(app.quit)
-    select_scenario_dialog.show()
+    did_plot = start_plotting(args, args.url)
+    if not did_plot:
+        return
     return_code = app.exec()
     if return_code != 0:
         raise RuntimeError(f"Unexpected exit status {return_code}")
