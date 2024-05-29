@@ -154,7 +154,7 @@ set nodePeriodParam := annual_flow, peak_inflow, fixed_cost, interest_rate, inve
                  invest_max_period, invest_min_period, lifetime,
                  retire_forced, retire_max_period, retire_min_period, virtual_unitsize,
 				 storage_state_reference_price;
-set nodePeriodParamRequired := annual_flow, peak_inflow, fixed_cost, lifetime;
+set nodePeriodParamRequired := annual_flow, peak_inflow, fixed_cost, lifetime, storage_state_reference_price;
 set nodePeriodParamInvest := interest_rate, invest_cost, salvage_value,
                  invest_max_period, invest_min_period,
                  retire_forced, retire_max_period, retire_min_period, virtual_unitsize;
