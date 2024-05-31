@@ -1816,10 +1816,11 @@ minimize total_cost:
                                             * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']  * p_discount_factor_operations_yearly[d] / complete_period_share_of_year[d]
 
   - sum {n in nodeState, (d, t) in period__time_last : (n, 'use_reference_price') in node__storage_solve_horizon_method && d in period_last}
-    #+ pdNode[n, 'storage_state_reference_price', d]
+    (#+ pdNode[n, 'storage_state_reference_price', d]
     + p_storage_state_reference_price[n,d]
         * v_state[n, d, t] * p_entity_unitsize[n]
-		* step_duration[d, t] * p_discount_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
+		 * p_discount_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
+    )
   + sum {e in entity, d in period_in_use}  # This is constant term and will be dropped by the solver. Here for completeness.
     + p_entity_all_existing[e, d]
       * ( + (if e in node then pdNode[e, 'fixed_cost', d] * 1000)
@@ -2172,10 +2173,20 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
 ;
 
 #Storage state fix quantity for timesteps
-s.t. node_balance_fix_quantity_eq_lower {n in n_fix_storage_quantity, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last && sum{(n,d2,t2) in ndt_fix_storage_quantity: (d, t, t2) in dtt_timeline_matching} 1}:
-  + v_state[n,d,t]* p_entity_unitsize[n] 
+#s.t. node_balance_fix_quantity_eq_lower {n in n_fix_storage_quantity, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last && sum{(n,d2,t2) in ndt_fix_storage_quantity: (d, t, t2) in dtt_timeline_matching} 1}:
+#  + v_state[n,d,t]* p_entity_unitsize[n] 
+#  = 
+#  + sum{(d, t, t2) in dtt_timeline_matching} p_fix_storage_quantity[n,d2,t2];
+
+#Storage usage fix for timesteps 
+
+s.t. storage_usage_fix{n in n_fix_storage_quantity, (d,t) in period__time_last, (d2,d) in period__branch: 
+      d in period_last && sum{(n,d2,t2) in ndt_fix_storage_quantity: (d, t, t2) in dtt_timeline_matching} 1}:
+  + sum{(p, n, sink) in process_source_sink, (d3,t3) in dt: d3 == d || d3 == d2} v_flow[p, n, sink, d3, t3] * p_entity_unitsize[p]
+  - sum{(p, source, n) in process_source_sink, (d3,t3) in dt: d3 == d || d3 == d2} v_flow[p, source, n, d3, t3] * p_entity_unitsize[p]
   = 
-  + sum{(d, t, t2) in dtt_timeline_matching} p_fix_storage_quantity[n,d2,t2];
+  + sum{(d3, t3, t2) in dtt_timeline_matching: d3 == d || d3 == d2} p_fix_storage_quantity[n,d2,t2]
+  ;
 
 #Storage state fix price for timesteps
 #s.t. node_balance_fix_price_eq_lower {n in n_fix_storage_price, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last && sum{(n,d2,t2) in ndt_fix_storage_price: (d, t, t2) in dtt_timeline_matching} 1}:
@@ -3052,8 +3063,14 @@ s.t. group_loss_share_constraint{(g,n) in group_node, (d,t) in dt: g in group_lo
   =  
   + p_state_slack_share[g,n,d,t] * vq_state_up_group[g,d,t] * group_capacity_for_scaling[g,d];
 
-s.t. non_anticipativity_storage{n in nodeState, (d,t) in dt_non_anticipativity, (d,b) in period__branch: d != b && b in period_in_use}:
-      + v_state[n,d,t] = + v_state[n,b,t];
+s.t. non_anticipativity_storage_use{n in nodeState, (d,b) in period__branch, (p, source, sink) in process_source_sink, (d,t) in dt_non_anticipativity:
+      d != b && b in period_in_use && exists{(g,n) in group_node: g in groupStochastic} 1 && (n = source || n = sink)}:
+        #+ sum{(p, n, sink) in process_source_sink, (d3,t3) in dt: d3 == d || d3 == d2} v_flow[p, n, sink, d3, t3] * p_entity_unitsize[p]
+        #- sum{(p, source, n) in process_source_sink, (d3,t3) in dt: d3 == d || d3 == d2} v_flow[p, source, n, d3, t3] * p_entity_unitsize[p]
+        v_flow[p, source, sink, d, t]
+        =
+        v_flow[p, source, sink, b, t]
+        ;
 
 param rest := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect;
 display rest;
@@ -3446,6 +3463,11 @@ param r_group_node_down_penalties__dt{g in groupOutputNodeFlows, (d,t) in dt_rea
 param r_group_node_down_penalties__d{g in groupOutputNodeFlows, d in d_realized_period} :=
   + sum{(d, t) in dt_realize_dispatch} r_group_node_down_penalties__dt[g, d, t];
 
+param r_storage_usage_dt{n in nodeState, (d,t) in dt_fix_storage_timesteps}:=
+  + sum{(p,n,sink) in process_source_sink_alwaysProcess} r_process__source__sink_Flow__dt[p, n, sink, d, t] * p_entity_unitsize[p]
+  - sum{(p,source,n) in process_source_sink_alwaysProcess} r_process__source__sink_Flow__dt[p, source, n, d, t] * p_entity_unitsize[p]
+  ;
+  
 param fn_entity_period_existing_capacity symbolic := "solve_data/p_entity_period_existing_capacity.csv";
 printf 'entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n' > fn_entity_period_existing_capacity;
 for {(e, d) in ed_history_realized union {e in entity, d in d_realize_invest}}
@@ -3481,7 +3503,8 @@ for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear als
   }
 for {(n,'fix_quantity') in node__storage_nested_fix_method, (d, t) in dt_fix_storage_timesteps}
   {
-    printf '%s,%s,%s,%.12g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]>> fn_fix_quantity_nodeState__dt;
+    #printf '%s,%s,%s,%.12g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]>> fn_fix_quantity_nodeState__dt;
+    printf '%s,%s,%s,%.12g\n', d, t, n, r_storage_usage_dt[n,d,t] >> fn_fix_quantity_nodeState__dt;
   }
 
 printf 'Write node state price for fixed timesteps ..\n';
@@ -3492,10 +3515,10 @@ for {i in 1..1 : p_model['solveFirst']}
 for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear also after before each time values are outputted, to avoid duplicates
   { printf 'period,step,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
   }
-for {c in solve_current,(n,'fix_price') in node__storage_nested_fix_method, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt: (d, t) in dt_fix_storage_timesteps}
+for {c in solve_current, (n,'fix_price') in node__storage_nested_fix_method, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt: (d, t) in dt_fix_storage_timesteps}
   {
     #printf '%s,%s,%s,%.12g\n', d, t, n, v_state[n, d, t].val * p_entity_unitsize[n]*pdNode[n, 'storage_state_reference_price', d]>> fn_fix_price_nodeState__dt;
-    printf '%s,%s,%s,%.12g\n', d, t, n,  -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d]  / scale_the_objective >> fn_fix_price_nodeState__dt;
+    printf '%s,%s,%s,%.12g\n', d, t, n,  -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective >> fn_fix_price_nodeState__dt;
   }
 
 printf 'Write node state last timestep ..\n';

@@ -1423,9 +1423,11 @@ class FlexToolRunner:
     def write_timeline_matching_map(self, upper_active_time_list, lower_active_time_list, upper_solve, lower_solve, period__branch):
         matching_map = OrderedDict()
         for period, lower_active_time in lower_active_time_list.items():
-            period_last = (period, lower_active_time[-1][0])
-            previous_timestep = self.find_previous_timestep(upper_active_time_list, period_last, lower_solve, upper_solve, period__branch)
-            matching_map[period_last] = previous_timestep
+            #period_last = (period, lower_active_time[-1][0])
+            for timestep in lower_active_time:
+                period_timestep = (period, timestep[0])
+                previous_timestep = self.find_previous_timestep(upper_active_time_list, period_timestep, lower_solve, upper_solve, period__branch)
+                matching_map[period_timestep] = previous_timestep
 
         with open("solve_data/timeline_matching_map.csv", 'w') as realfile:
             realfile.write("period,step,upper_step\n")
