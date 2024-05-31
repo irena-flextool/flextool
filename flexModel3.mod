@@ -2184,7 +2184,8 @@ s.t. storage_usage_fix{n in n_fix_storage_quantity, (d,t) in period__time_last, 
       d in period_last && sum{(n,d2,t2) in ndt_fix_storage_quantity: (d, t, t2) in dtt_timeline_matching} 1}:
   + sum{(p, n, sink) in process_source_sink, (d3,t3) in dt: d3 == d || d3 == d2} v_flow[p, n, sink, d3, t3] * p_entity_unitsize[p]
   - sum{(p, source, n) in process_source_sink, (d3,t3) in dt: d3 == d || d3 == d2} v_flow[p, source, n, d3, t3] * p_entity_unitsize[p]
-  = 
+  - vq_state_down[n, d, t] * node_capacity_for_scaling[n, d]
+  <= 
   + sum{(d3, t3, t2) in dtt_timeline_matching: d3 == d || d3 == d2} p_fix_storage_quantity[n,d2,t2]
   ;
 
@@ -3067,9 +3068,11 @@ s.t. non_anticipativity_storage_use{n in nodeState, (d,b) in period__branch, (p,
       d != b && b in period_in_use && exists{(g,n) in group_node: g in groupStochastic} 1 && (n = source || n = sink)}:
         #+ sum{(p, n, sink) in process_source_sink, (d3,t3) in dt: d3 == d || d3 == d2} v_flow[p, n, sink, d3, t3] * p_entity_unitsize[p]
         #- sum{(p, source, n) in process_source_sink, (d3,t3) in dt: d3 == d || d3 == d2} v_flow[p, source, n, d3, t3] * p_entity_unitsize[p]
-        v_flow[p, source, sink, d, t]
+        +v_flow[p, source, sink, d, t]
+        #- vq_state_down[n, d, t] * node_capacity_for_scaling[n, d]
         =
-        v_flow[p, source, sink, b, t]
+        +v_flow[p, source, sink, b, t]
+        #- vq_state_down[n, b, t] * node_capacity_for_scaling[n, b]
         ;
 
 param rest := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect;
@@ -3463,10 +3466,11 @@ param r_group_node_down_penalties__dt{g in groupOutputNodeFlows, (d,t) in dt_rea
 param r_group_node_down_penalties__d{g in groupOutputNodeFlows, d in d_realized_period} :=
   + sum{(d, t) in dt_realize_dispatch} r_group_node_down_penalties__dt[g, d, t];
 
-param r_storage_usage_dt{n in nodeState, (d,t) in dt_fix_storage_timesteps}:=
-  + sum{(p,n,sink) in process_source_sink_alwaysProcess} r_process__source__sink_Flow__dt[p, n, sink, d, t] * p_entity_unitsize[p]
-  - sum{(p,source,n) in process_source_sink_alwaysProcess} r_process__source__sink_Flow__dt[p, source, n, d, t] * p_entity_unitsize[p]
-  ;
+param r_storage_usage_dt{(n,'fix_quantity') in node__storage_nested_fix_method, (d, t) in dt_fix_storage_timesteps}:=
+    + sum{(p, n, sink) in process_source_sink_alwaysProcess} r_process__source__sink_Flow__dt[p, n, sink, d, t]
+    - sum{(p, source, n) in process_source_sink_alwaysProcess} r_process__source__sink_Flow__dt[p, source, n, d, t]
+    - vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d]
+    ;
   
 param fn_entity_period_existing_capacity symbolic := "solve_data/p_entity_period_existing_capacity.csv";
 printf 'entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n' > fn_entity_period_existing_capacity;
