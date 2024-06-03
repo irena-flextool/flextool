@@ -824,25 +824,38 @@ class FlexToolRunner:
             
             elif solver == "cplex": #or gurobi
                 if current_solve not in self.solver_precommand.keys():
-                    s_wrapper = ''
+                    if solver == "cplex":
+                        if current_solve not in self.solver_arguments.keys():
+                            cplex_step = ['cplex', '-c', 'read flexModel3.mps','opt', 'write flexModel3_cplex.sol', 'quit']  + sys.argv[1:]
+                        else:
+                            cplex_step = ['cplex', '-c', 'read flexModel3.mps']
+                            cplex_step += self.solver_arguments[current_solve]
+                            cplex_step += ['opt', 'write flexModel3_cplex.sol', 'quit']
+                            cplex_step += sys.argv[1:]
+
+                        completed = subprocess.run(cplex_step)
+                        if completed.returncode != 0:
+                            logging.error(f'Cplex solver failed: {completed.returncode}')
+                            exit(completed.returncode) 
+                        
+                        completed = self.cplex_to_glpsol("flexModel3_cplex.sol","flexModel3.sol")
                 else:
                     s_wrapper = self.solver_precommand[current_solve]
+                    if solver == "cplex":
+                        if current_solve not in self.solver_arguments.keys():
+                            cplex_step = [s_wrapper, 'cplex', '-c', 'read flexModel3.mps','opt', 'write flexModel3_cplex.sol', 'quit']  + sys.argv[1:]
+                        else:
+                            cplex_step = [s_wrapper, 'cplex', '-c', 'read flexModel3.mps']
+                            cplex_step += self.solver_arguments[current_solve]
+                            cplex_step += ['opt', 'write flexModel3_cplex.sol', 'quit']
+                            cplex_step += sys.argv[1:]
 
-                if solver == "cplex":
-                    if current_solve not in self.solver_arguments.keys():
-                        cplex_step = [s_wrapper, 'cplex', '-c', 'read flexModel3.mps','opt', 'write flexModel3_cplex.sol', 'quit']  + sys.argv[1:]
-                    else:
-                        cplex_step = [s_wrapper, 'cplex', '-c', 'read flexModel3.mps']
-                        cplex_step += self.solver_arguments[current_solve]
-                        cplex_step += ['opt', 'write flexModel3_cplex.sol', 'quit']
-                        cplex_step += sys.argv[1:]
-
-                    completed = subprocess.run(cplex_step)
-                    if completed.returncode != 0:
-                        logging.error(f'Cplex solver failed: {completed.returncode}')
-                        exit(completed.returncode) 
-                    
-                    completed = self.cplex_to_glpsol("flexModel3_cplex.sol","flexModel3.sol")
+                        completed = subprocess.run(cplex_step)
+                        if completed.returncode != 0:
+                            logging.error(f'Cplex solver failed: {completed.returncode}')
+                            exit(completed.returncode) 
+                        
+                        completed = self.cplex_to_glpsol("flexModel3_cplex.sol","flexModel3.sol")
 
 
             highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r',
