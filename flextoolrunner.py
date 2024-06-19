@@ -1211,6 +1211,8 @@ class FlexToolRunner:
             firstfile.write("node, period, step, ndt_fix_storage_price\n")
         with open("solve_data/fix_storage_quantity.csv", 'w') as firstfile:
             firstfile.write("node, period, step, ndt_fix_storage_quantity\n")
+        with open("solve_data/fix_storage_usage.csv", 'w') as firstfile:
+            firstfile.write("node, period, step, ndt_fix_storage_usage\n")
         with open("solve_data/p_roll_continue_state.csv", 'w') as firstfile:
             firstfile.write("node, p_roll_continue_state\n")
 
@@ -1966,6 +1968,7 @@ def main():
         if storage_fix_values_exist:
             shutil.copy("solve_data/fix_storage_quantity_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_quantity.csv")
             shutil.copy("solve_data/fix_storage_price_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_price.csv")
+            shutil.copy("solve_data/fix_storage_usage_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_usage.csv")
 
         runner.write_solve_status(first_of_nested_level,last_of_nested_level, nested = True)
         last = i == len(solves) - 1
@@ -1986,6 +1989,7 @@ def main():
         if any(complete_solve[solve] == solve_period[0] for solve_period in runner.fix_storage_periods):
             shutil.copy("solve_data/fix_storage_quantity.csv","solve_data/fix_storage_quantity_"+ complete_solve[solve]+".csv")
             shutil.copy("solve_data/fix_storage_price.csv", "solve_data/fix_storage_price_"+ complete_solve[solve]+".csv")
+            shutil.copy("solve_data/fix_storage_usage.csv","solve_data/fix_storage_usage_"+ complete_solve[solve]+".csv")
 
     #produce periodic data as post-process for rolling window solves
     post_process_results = False
