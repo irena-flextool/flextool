@@ -21,7 +21,7 @@ def migrate_database(database_path):
         version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
     next_version = int(version) + 1
-    new_version = 20
+    new_version = 21
 
     while next_version <= new_version:
         if next_version == 0:
@@ -87,6 +87,9 @@ def migrate_database(database_path):
             remove_parameters_manual(db, [["constraint", "is_active"], ["reserve__upDown__unit__node", "is_active"]])
         elif next_version == 20:
             remove_parameters_manual(db, [["connection", "is_active"], ["node", "is_active"], ["unit", "is_active"], ["reserve__upDown__connection", "is_active"]])
+        elif next_version == 21:
+            new_value_list = [["storage_nested_fix_method","fix_nothing"],["storage_nested_fix_method","fix_quantity"],["storage_nested_fix_method","fix_price"], ["storage_nested_fix_method","fix_usage"]]
+            add_value_list_manual(db,new_value_list)
         else:
             print("Version invalid")
         next_version += 1 
