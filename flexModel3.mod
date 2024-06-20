@@ -1832,18 +1832,18 @@ minimize total_cost:
 		)
 	  * p_discount_factor_operations_yearly[d] * pd_branch_weight[d]
   + sum {(e, d) in ed_invest} 
-    + pd_branch_weight[d]
-      * v_invest[e, d]
+    # Currently investment happens only on the realized branch and the rest get them as existing.
+    # Only one period investment is supported with stochastics
+    # The branch weight should be added if this is changed.
+      + v_invest[e, d]
       * p_entity_unitsize[e]
       * ed_entity_annual_discounted[e, d]
   - sum {(e, d) in ed_divest} 
-    + pd_branch_weight[d]
-      * v_divest[e, d]
+      + v_divest[e, d]
       * p_entity_unitsize[e]
       * ed_entity_annual_divest_discounted[e, d]
   + sum {g in groupCapacityMargin, d in period_invest}
-    + pd_branch_weight[d]
-    * vq_capacity_margin[g, d] * group_capacity_for_scaling[g, d]
+    + vq_capacity_margin[g, d] * group_capacity_for_scaling[g, d]
 	  * pdGroup[g, 'penalty_capacity_margin', d]
 	  * p_discount_factor_operations_yearly[d]
 ) * scale_the_objective
@@ -3170,6 +3170,21 @@ s.t. non_anticipativity_storage_use{n in nodeState, (d,b) in period__branch, (d,
           ) * step_duration[b, t]
         ;
 
+s.t. non_anticipativity_online_integer{p in process_online_integer, (d,b) in period__branch, (d,t) in dt_non_anticipativity}:
+  + v_online_integer[p,d,t] 
+  = 
+  + v_online_integer[p,b,t] 
+;
+s.t. non_anticipativity_online_linear{p in process_online_linear, (d,b) in period__branch, (d,t) in dt_non_anticipativity}:
+  + v_online_linear[p,d,t] 
+  = 
+  + v_online_linear[p,b,t] 
+;
+s.t. non_anticipativity_reserve{(p, r, ud, n) in process_reserve_upDown_node_active, (d,b) in period__branch, (d,t) in dt_non_anticipativity: sum{(r, ud, g) in reserve__upDown__group} 1}: 
+  + v_reserve[p, r, ud, n, d, t]
+  =
+  + v_reserve[p, r, ud, n, b, t]
+;
 param rest := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect;
 display rest;
 
