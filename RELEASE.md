@@ -1,3 +1,31 @@
+## Release 3.3.1 (24.6.2024)
+**Bug fixes**
+- Several bugs related to the migration to Spine Toolbox 0.8.
+- CPLEX call without pre_command fixed
+- Timeline aggregarion without all timesteps
+- User constraint including capacity fixed to include unitsize
+- User constraint including flows fixed to include step_duration
+- Creating multiple invests with 2D maps fixed
+- Update_flextool.py/ migrate_database.py crashing if nothing to commit 
+- Nested structure:
+  - Pass end state only from dispatch level
+  - Storage fix_quantity overrides other storage options
+- Capacity limit includes the efficiency
+- Min_load to work with multiple inputs/outputs¨
+- Inertia with MIP units added missing unitsize
+- 
+
+**New features**
+
+- Added non-anticipatory constraint to stochastic branches. The brnaches now start from the first timestep.
+- Storage_reference_value: Now possible to set seperately for multiple end times as time step map.
+- Nested structure storage_nested_fix_method: 
+  - Added fix_usage
+  - Fix_price changed to set the price to the objective function of the lower level solve
+- Entity alternative replaces is_active parameter
+- Output of inertia seperately for units
+- Default penalty values for reserve, inertia, capacity margin and non-synchronous limits
+
 ## Release 3.3.0 (23.3.2024)
 **Bug fixes**
 

@@ -154,7 +154,7 @@ set nodePeriodParam := annual_flow, peak_inflow, fixed_cost, interest_rate, inve
                  invest_max_period, invest_min_period, lifetime,
                  retire_forced, retire_max_period, retire_min_period, virtual_unitsize,
 				 storage_state_reference_price;
-set nodePeriodParamRequired := annual_flow, peak_inflow, fixed_cost, lifetime;
+set nodePeriodParamRequired := annual_flow, peak_inflow, fixed_cost, lifetime, storage_state_reference_price;
 set nodePeriodParamInvest := interest_rate, invest_cost, salvage_value,
                  invest_max_period, invest_min_period,
                  retire_forced, retire_max_period, retire_min_period, virtual_unitsize;
@@ -195,7 +195,7 @@ set storage_binding_method := bind_within_timeblock bind_within_period bind_with
 set storage_binding_method_default := bind_forward_only;
 set storage_start_end_method := fix_start fix_end fix_start_end fix_nothing;
 set storage_solve_horizon_method := free use_reference_value use_reference_price;
-set storage_nested_fix_method := no fix_quantity fix_price;
+set storage_nested_fix_method := fix_nothing fix_quantity fix_price fix_usage;
 set reserve_method := no_reserve timeseries_only dynamic_only both;
 
 set def_optional_outputs :=

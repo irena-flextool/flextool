@@ -70,7 +70,7 @@ class FlexToolRunner:
         with open('input/db_version.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
-            tool_version = 20.0
+            tool_version = 21.0
             database_version = 0
             while True:
                 try:
@@ -1036,23 +1036,23 @@ class FlexToolRunner:
                             if i[1] == period:
                                 original_period = i[0]
                         if (original_period,original_period) in period__branch and original_period in active_time_list.keys():
-                            jump = active_time[j][1] - active_time_list[original_period][-1][1]
-                            step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], original_period, active_time_list[original_period][-1][0], jump))
+                            jump = active_time[j][1] - active_time[-1][1]
+                            step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], period, active_time_list[period][-1][0], jump))
                         elif (original_period,original_period) in period__branch: 
                             #if branching happens in the first timestep of a period
                             #find the last realized period
                             past = False
-                            previous_realized_period = None
-                            for solve_period, a_t in reversed(active_time_list.items()):
-                                if past:
-                                    if (solve_period, solve_period) in period__branch:
-                                        previous_realized_period = solve_period
-                                        break
-                                else:
-                                    if solve_period == period:
-                                        past = True
-                            jump = active_time[j][1] - active_time_list[previous_realized_period][-1][1]
-                            step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], previous_realized_period, active_time_list[previous_realized_period][-1][0], jump))   
+                            #previous_realized_period = None
+                            #for solve_period, a_t in reversed(active_time_list.items()):
+                            #    if past:
+                            #        if (solve_period, solve_period) in period__branch:
+                            #            previous_realized_period = solve_period
+                            #            break
+                            #    else:
+                            #        if solve_period == period:
+                            #            past = True
+                            jump = active_time[j][1] - active_time[-1][1]
+                            step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], period, active_time_list[period][-1][0], jump))   
                         else:
                             #if branch continuing in the next period
                             #find the previous branch with the same time_branch
@@ -1224,6 +1224,8 @@ class FlexToolRunner:
             firstfile.write("node, period, step, ndt_fix_storage_price\n")
         with open("solve_data/fix_storage_quantity.csv", 'w') as firstfile:
             firstfile.write("node, period, step, ndt_fix_storage_quantity\n")
+        with open("solve_data/fix_storage_usage.csv", 'w') as firstfile:
+            firstfile.write("node, period, step, ndt_fix_storage_usage\n")
         with open("solve_data/p_roll_continue_state.csv", 'w') as firstfile:
             firstfile.write("node, p_roll_continue_state\n")
 
@@ -1298,6 +1300,9 @@ class FlexToolRunner:
                         datain = next(filereader)
                         if datain[1] not in time_branches:
                             time_branches.append(datain[1])
+                        if datain[1] == "":
+                            logging.error("Empty branch name in timeseries: "+ filename + " , check that there is no empty row at the end of the array")
+                            exit(-1)
                     except StopIteration:
                         break
 
@@ -1333,7 +1338,7 @@ class FlexToolRunner:
             for solve_branch__time_branch in solve_branch__time_branch_list:
                 realfile.write(solve_branch__time_branch[0]+","+solve_branch__time_branch[1]+"\n")
 
-    def write_first_and_last_periods(self, active_time_list, period__timeblocks_in_this_solve):
+    def write_first_and_last_periods(self, active_time_list, period__timeblocks_in_this_solve, period__branch_list):
         """
         write first and last periods (timewise) for the solve
         Assumes that the periods in right order in active_time_list, but gets the multiple branches as last
@@ -1346,20 +1351,32 @@ class FlexToolRunner:
         for period in active_time_list.keys():
             if active_time_list[period][-1][0] == time_step_last and period != period_last[0]:
                 period_last.append(period)
-
-        with open("solve_data/period_first_of_solve.csv", 'w') as realfile:
-            realfile.write("period\n")
-            realfile.write(period_first_of_solve+"\n")
         
         with open("solve_data/period_last.csv", 'w') as realfile:
             realfile.write("period\n")
             for period in period_last:
                 realfile.write(period +"\n")
+        
+        period_first_of_solve_list = []
+        for period__branch in period__branch_list:
+            if period__branch[0] == period_first_of_solve:
+                period_first_of_solve_list.append(period__branch[1])
+        
+        with open("solve_data/period_first_of_solve.csv", 'w') as realfile:
+            realfile.write("period\n")
+            for period in period_first_of_solve_list:
+                realfile.write(period+"\n")
+
         period_first = period__timeblocks_in_this_solve[0][0]
+        period_first_list = []
+        for period__branch in period__branch_list:
+            if period__branch[0] == period_first:
+                period_first_list.append(period__branch[1])
 
         with open("solve_data/period_first.csv", 'w') as realfile:
             realfile.write("period\n")
-            realfile.write(period_first+"\n")
+            for period in period_first_list:
+                realfile.write(period+"\n")
 
         
     #these exist to connect timesteps from two different timelines or aggregated versions of one
@@ -1424,9 +1441,11 @@ class FlexToolRunner:
     def write_timeline_matching_map(self, upper_active_time_list, lower_active_time_list, upper_solve, lower_solve, period__branch):
         matching_map = OrderedDict()
         for period, lower_active_time in lower_active_time_list.items():
-            period_last = (period, lower_active_time[-1][0])
-            previous_timestep = self.find_previous_timestep(upper_active_time_list, period_last, lower_solve, upper_solve, period__branch)
-            matching_map[period_last] = previous_timestep
+            #period_last = (period, lower_active_time[-1][0])
+            for timestep in lower_active_time:
+                period_timestep = (period, timestep[0])
+                previous_timestep = self.find_previous_timestep(upper_active_time_list, period_timestep, lower_solve, upper_solve, period__branch)
+                matching_map[period_timestep] = previous_timestep
 
         with open("solve_data/timeline_matching_map.csv", 'w') as realfile:
             realfile.write("period,step,upper_step\n")
@@ -1633,6 +1652,7 @@ class FlexToolRunner:
             active_time_list = active_time_lists[solve]
             realized_time_list = realized_time_lists[solve]
             branched = False
+            next_analysis_found = False
             branches = []
             branch_start_time_lists[solve] = None
             for period, active_time in active_time_list.items():
@@ -1650,37 +1670,33 @@ class FlexToolRunner:
                                "and that the possible rolling_jump matches with the branch starts")
                 exit(-1)
             for period, active_time in active_time_list.items():
+                realized_end = None
                 if not branched:
                     period__branch_lists[solve].append((period, period))
                     #get all start times
                     start_times = defaultdict(list)
                     for row in info:
                         if row[0]==period:
-                            start_times[row[2]].append((row[1], row[4]))
-                    for step in active_time:    #branching cannot start from the first step of the solve
-                        if step[0] in start_times.keys() and (period,step[0]) != first_step:
+                            start_times[row[2]].append((row[1], row[4], row[3]))
+                    for step in active_time:
+                        if step[0] in start_times.keys():
                             branched = True
                             branch_start_time_lists[solve] = (period,step[0])
-                            realized_time = realized_time_list[period]
-                            time_start_ind = active_time.index(step)
-                            #realized ends at the start of first branch
-                            if time_start_ind > 0: 
-                                new_active_time_list[period] = active_time[0:time_start_ind]
-                            if time_start_ind <= len(realized_time):
-                                new_realized_time_list[period] = realized_time[0:time_start_ind]
-                            for branch__weight in start_times[step[0]]:
-                                branch = branch__weight[0]
+                            new_active_time_list[period] = active_time
+                            new_realized_time_list[period] = realized_time_list[period]
+                            for branch__weight__real in start_times[step[0]]:
+                                branch = branch__weight__real[0]
                                 branches.append(branch)
                                 solve_branch = period + "_" + branch
                                 # if the weight is zero, do not add to the timeline
-                                if float(branch__weight[1]) != 0.0:
-                                    new_active_time_list[solve_branch] = active_time[time_start_ind:]
+                                if float(branch__weight__real[1]) != 0.0 and branch != period and branch__weight__real[2] != "yes":
+                                    new_active_time_list[solve_branch] = active_time[0:]
                                     solve_branch__time_branch_lists[solve].append((solve_branch, branch))
                                 period__branch_lists[solve].append((period, solve_branch))
                                 #get timesteps
-                                for i in active_time[time_start_ind:]:
+                                for i in active_time[0:]:
                                     self.stochastic_timesteps[solve].append((solve_branch, i[0]))
-                            break
+                            break   
                 else:
                     # if the jump is longer than the period
                     for branch in branches:
@@ -1933,7 +1949,7 @@ def main():
         runner.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
         runner.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve])
         runner.write_solve_branch__time_branch_list_and_weight(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve])
-        runner.write_first_and_last_periods(active_time_lists[solve], runner.timeblocks_used_by_solves[complete_solve[solve]])
+        runner.write_first_and_last_periods(active_time_lists[solve], runner.timeblocks_used_by_solves[complete_solve[solve]], period__branch_lists[solve])
 
         #check if the upper level fixes storages
         if complete_solve[solve] in runner.contains_solves.values() and any(complete_solve[parent_roll[solve]] == solve_period[0] for solve_period in runner.fix_storage_periods): # check that the parent_roll exists and has storage fixing
@@ -1963,6 +1979,7 @@ def main():
         if storage_fix_values_exist:
             shutil.copy("solve_data/fix_storage_quantity_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_quantity.csv")
             shutil.copy("solve_data/fix_storage_price_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_price.csv")
+            shutil.copy("solve_data/fix_storage_usage_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_usage.csv")
 
         runner.write_solve_status(first_of_nested_level,last_of_nested_level, nested = True)
         last = i == len(solves) - 1
@@ -1983,6 +2000,7 @@ def main():
         if any(complete_solve[solve] == solve_period[0] for solve_period in runner.fix_storage_periods):
             shutil.copy("solve_data/fix_storage_quantity.csv","solve_data/fix_storage_quantity_"+ complete_solve[solve]+".csv")
             shutil.copy("solve_data/fix_storage_price.csv", "solve_data/fix_storage_price_"+ complete_solve[solve]+".csv")
+            shutil.copy("solve_data/fix_storage_usage.csv","solve_data/fix_storage_usage_"+ complete_solve[solve]+".csv")
 
     #produce periodic data as post-process for rolling window solves
     post_process_results = False

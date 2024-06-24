@@ -178,7 +178,7 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 ### Main data items for units
 
-- Capacity: `existing` (and the investment and retirement parameters below)
+- Capacity: `existing`, the maximum sum of outputs flows, (and the investment and retirement parameters below)
 - Technical: `efficiency`, `min_load`, `efficiency_at_min_load`, `min_uptime`, `min_downtime`
 	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time. Calculated for all timesteps: 
   

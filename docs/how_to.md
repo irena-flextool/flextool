@@ -384,7 +384,7 @@ The `unit` is connected to the *reservoir* `node` and the output `node` *demand_
 **(scenario: hydro_with_downriver_spill_unit)**
 **(scenario: river_system)**
 
-In this example, we create a hydro system with multiple reseroirs and downriver water demand. Here the water in the reservoir is represented as volume and the conversion to electricity is done in the units.
+In this example, we create a hydro system with multiple reseroirs and downriver water demand. Here the the reservoir content is represented as volume of water (m3) and the conversion factor to electricity (MWh) is expressed in the hydro power plant parameters. This could also be done the other way around where the reservoir content is expressed as energy (MWh). Especially in a cascading river system it is better to use the first approach.
 
 The reservoir and demand node are the same as above. The `penalty_down` of the reservoir now needs to be the other than 0 as the spilled water needs to flow to the downriver node
 
@@ -423,7 +423,7 @@ These create the constraint:
 -flow_to_demand_node + 0.57 flow_to_downriver = 0
 ```
 
-The capacity of an unit limits both outputs. Here the flow to downriver is larger than to the demand node. The capacity of the unit should be the electrical capacity divided by the water to electricity coefficient. With the electrical capacity of 500MW and water to elecricity coefficient of 0.57 the capacity of the unit becomes 878. Now at full power, 878 units of water flow to downriver and 500MW of electricity flow to the demand node.
+The capacity of an unit is the sum of outputs. With the electrical capacity of 500MW and water to elecricity coefficient of 0.57 the water flow capacity is 878 (m^3). Making the total unit capacity 1378 (m^3 / MW). Now at full power, 878 units of water flow to downriver and 500MW of electricity flow to the demand node.
 
 To add a spill option to the reservoir we need to create another unit. This is because just making extra water disappear with the `penalty_down`: 0, will not transfer this water to the downriver node to fulfil its needs. 
 This spill unit has the relations:
@@ -866,7 +866,12 @@ Each of these have their pros and cons:
 
 The investment decisions with less information are always less optimal than with complete solves. Therefore, when they are passed to the dispatch solve, it will in some cases cause penalties in the results when the invested portfolio is not sufficient to meet the demand at all times.
 
-The long term storage solve can be implemented using a lower resolution solve. The storage state values from the storage solves will be used to fix the storage value (or price) at the end of each dispatch solve. This means that on the last step of the roll (or the period), the storage quantity (or price) will have to match the quantity (or price) in the storage solve. The `rolling_jump` and `rolling_horizon` in the storage solve have to be longer than in the dispatch solve. You can set which storages are included as "long term storages" whose value will be transferred to the dispatch solve.
+The long term storage solve can be implemented using a lower resolution solve. The storage state behaviour from the storage solve is used as a target for the dispatch solve. There are three options for doing this: 
+- *fix_quantity* creates a constraint that forces the end storage state to be the same as in the storage solve at this timestep.
+- *fix_usage* does the same but not taking into account the inflow or slacks. Forces the summed usage of the storage during the dispatch solve to be the same as during the same time span in the storage solve. This avoids infeasibilities when modelling inflow stochastics in comparison to the *fix_quantity*.
+- *fix_price* takes the dual marginal price from the storage solve at the end timestep of the dispatch solve and uses it in the objective function to give a value to the stored energy at the end of the horizon. 
+
+The `rolling_jump` and `rolling_horizon` in the storage solve have to be longer than in the dispatch solve. You can set which storages are included as "long term storages" whose value will be transferred to the dispatch solve.
 
 To create a nested solve sequence, you need two or three `solve` objects. Either the investment solve or the storage solve can be left out. When using nested solve sequence, the sequence is not set with the `model`: `solves` parameter. Only the topmost solve is put there. Instead, the nested levels are set by the `solve` parameter `contains_solve`: *solve_name*. The investment solve is always on the top followed by the storage solve and dispatch solve:
 
@@ -876,7 +881,7 @@ To create a nested solve sequence, you need two or three `solve` objects. Either
 To create a storage solve:
 
 - `solve` parameter `fix_storage_period`: Array of periods where the storage values are fixed in the lower solve. Should be the same as `realized_periods` for the dispatch solve.
-- `node` parameter `storage_nested_fix_method`: *fix_quantity* or *fix_price*, includes this storage to be fixed. *fix_price* requires *storage_state_reference_price* to be set.
+- `node` parameter `storage_nested_fix_method`: *fix_quantity*, *fix_price* or *fix_usage*
 
 To create an investment_solve:
 
@@ -961,13 +966,13 @@ The split sample investment run produces in this case similar results as the one
 ## How to use stochastics (representing uncertainty)
 **(stochastics.sqlite)**
 
-Stochastics are used to represent the uncertainty of the future in the decision making. The main idea of it is to connect multiple scenarios (branches) of the future to the realized timeline. The model then optimizes the system to get the minimize the total cost all the branches (weighted by their probability). Only the  realized timeline, shared between all branches, will be output. 
+Stochastics are used to represent the uncertainty of the future in the decision making. The main idea is to represent the distribution of possible futures by discrete scenarios (branches). These are all connected to the same starting point with the realized branch. A non-anticipatory constraint forces the branches to share the decisions that affect multiple timesteps with the realized branch during the realized part of the horizon. These decisions are investments, storage usage and online status of units. The model then optimizes the system to get the minimize the total cost all the branches (weighted by their probability). Only the realized timeline of the realized branch, will be output. The realized branch can continue to the end of the horizon (and be also a forecast) or just to the end of the realized part as in the picture.
 
-For the stochastics to have an effect on the results, the system needs parameters that change between the stochastic branches. These could be e.g. wind power generation or fuel prices. The model will then have separate variables in every branch for all the decision the model can take ((e.g. invesment, storage state, online, flow). As a consequence, the realization phase will also be dependent on the things that happen in the stochastic branches - weighted by the probablity given to each branch. 
+![Stochastic system](./non-anticipatory.png)
 
-![Stocahstic system](./branching_1.PNG)
+For the stochastics to have an effect on the results, the system needs parameters that change between the stochastic branches. These could be e.g. wind power generation or fuel prices. The model will then have separate variables in every branch for all the decision the model can take (e.g. invesment, storage state, online, flow). As a consequence, the realization phase will also be dependent on the things that happen in the stochastic branches - weighted by the probablity given to each branch. Only one period investment stochastic models are supported currently.
 
-In this example, we show three ways to use stochastics: Single solve, rolling horizon and multiperiod single solve. They all share the same test system that includes: 
+In this example, we show two ways to use stochastics: Single solve, rolling horizon. They all share the same test system that includes: 
 
 - A demand node 
 - Coal, gas and wind power plants 
@@ -1014,27 +1019,16 @@ In this scenario we extend the previous timeline to one week and roll through it
 
 *solve*: `rolling_solve_jump` = 24 and `rolling_solve_horizon` = 96. 
 
-The stochastic data should be given so that it can serve the rolling structure: `rolling_solve_jump` dictates the duration of the initial non-stochastic part of the model horizon. This period needs only data for the 'realized' branch. The stochastic branches will begin only after that and need data only after `rolling_solve_jump` has been reached. So, for every 'analysis_time' there needs to be a time series in each stochastic branch that extends to the end of horizon (as defined by `rolling_solve_horizon`). The branches continue to the end of the horizon without branching again.
+The stochastic data should be given so that it can serve the rolling structure: `rolling_solve_jump` dictates the duration of the realized part of each solve and the interval of forecast updates. So, for every 'analysis_time' there needs to be a time series in each stochastic branch that extends to the end of horizon (as defined by `rolling_solve_horizon`). The branches continue to the end of the horizon without branching again. The realized scenario should not typically be used as a forecast branch in a stochastic model. This is why its horizon is shorter than the others.
 
-For the *solve* parameter `stochastic_branches` this means analysis times (t0001, t0025, t0049, t0073, t0097, t0121 and t0145). t0001 is there only to tell which branch is the realized one.
+For the *solve* parameter `stochastic_branches` this means analysis times (t0001, t0025, t0049, t0073, t0097, t0121 and t0145)
 
 Otherwise there is no difference to the previous example.
 
-Realized scenario should not typically be used as a forecast branch in a stochastic model. However, this would happen, if the realized branch has weight other than zero. So, to avoid this, its weight should be set to zero but its realized status to "yes". Then the values from the realized scenario are not included in the forecast branches, but they are used in the realized part of the timeline. This happens because the weight of the realized part of the timeline is always forced to be one (even though its weight has been set to zero).
 
-![Rolling Branching](./branching_rolling.PNG)
+![Rolling Branching](./rolling_non-anticipatory.png)
 
 ![1Week stochastics](./1week_stochastics.PNG)
-
-### Multi periodic stochastics
-**(stochastics.sqlite scenario: 2_year_stochastic_invest)**
-
-Here we solve investment run with one realized year and other year as the stochastic horizon. When using stochastics on multiple periods, they should not use the same timeblock as the stocastics are set for a timestep not (period, timestep). This means that the same value would be used for all the periods with this timestep. Instead use consecutive timeblocks from the same timeline. Here the first timeblock has timesteps t0001-t8760 and the second timeblock has the timesteps t8761-t17520.
-
-The `stochastic_branches` has one branching spot at the first timestep of the period2. This example uses the water inflow of the reservoir as the stochastic timeseries. If you run this scenario, you can see that it takes some time. When planning the stochastic data to be used, you should take into account that it will increase the solving time of the model significantly.
-
-
-![2year stochastics](./2year_stochastics.PNG)
 
 ## How to use CPLEX as the solver
 
