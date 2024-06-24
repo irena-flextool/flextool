@@ -70,7 +70,7 @@ class FlexToolRunner:
         with open('input/db_version.csv', 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
-            tool_version = 20.0
+            tool_version = 21.0
             database_version = 0
             while True:
                 try:
