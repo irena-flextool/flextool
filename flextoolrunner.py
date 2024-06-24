@@ -1287,6 +1287,9 @@ class FlexToolRunner:
                         datain = next(filereader)
                         if datain[1] not in time_branches:
                             time_branches.append(datain[1])
+                        if datain[1] == "":
+                            logging.error("Empty branch name in timeseries: "+ filename + " , check that there is no empty row at the end of the array")
+                            exit(-1)
                     except StopIteration:
                         break
 
@@ -1661,24 +1664,19 @@ class FlexToolRunner:
                     start_times = defaultdict(list)
                     for row in info:
                         if row[0]==period:
-                            start_times[row[2]].append((row[1], row[4]))
-                    for step in active_time:                    #branching cannot start from the first step of the solve
-                        if step[0] in start_times.keys() and (period,step[0]) != first_step:       # and (period,step[0]) != first_step:
+                            start_times[row[2]].append((row[1], row[4], row[3]))
+                    for step in active_time:
+                        if step[0] in start_times.keys():
                             branched = True
                             branch_start_time_lists[solve] = (period,step[0])
-                            realized_time = realized_time_list[period]
-                            time_start_ind = active_time.index(step)
-                            #realized ends at the start of first branch
-                            if time_start_ind > 0: 
-                                new_active_time_list[period] = active_time[0:time_start_ind]
-                            if time_start_ind <= len(realized_time):
-                                new_realized_time_list[period] = realized_time[0:time_start_ind]
-                            for branch__weight in start_times[step[0]]:
-                                branch = branch__weight[0]
+                            new_active_time_list[period] = active_time
+                            new_realized_time_list[period] = realized_time_list[period]
+                            for branch__weight__real in start_times[step[0]]:
+                                branch = branch__weight__real[0]
                                 branches.append(branch)
                                 solve_branch = period + "_" + branch
                                 # if the weight is zero, do not add to the timeline
-                                if float(branch__weight[1]) != 0.0 and branch != period:
+                                if float(branch__weight__real[1]) != 0.0 and branch != period and branch__weight__real[2] != "yes":
                                     new_active_time_list[solve_branch] = active_time[0:]
                                     solve_branch__time_branch_lists[solve].append((solve_branch, branch))
                                 period__branch_lists[solve].append((period, solve_branch))
