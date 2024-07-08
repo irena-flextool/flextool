@@ -7,7 +7,7 @@ Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/
 - Create new Python environment [Also possible to use existing, up-to-date, Spine Toolbox environment]
 
 ```shell
-conda create -n flextool python=3.8
+conda create -n flextool python=3.9
 ```
 
 - Activate the environment
@@ -29,7 +29,7 @@ conda install git
 git clone https://github.com/irena-flextool/flextool
 ```
 
-Install Spine Toolbox [Can be skipped if using existing Toolbox environment]
+Install Spine Toolbox [Can be skipped if using existing Toolbox installation using any of the methods presented in https://github.com/Spine-project/Spine-Toolbox#installation]
 
 - Clone the Toolbox repository
 

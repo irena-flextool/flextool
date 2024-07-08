@@ -2649,10 +2649,6 @@
                                 "skip_columns": [
                                     0
                                 ]
-                            },
-                            {
-                                "map_type": "ScenarioAlternative",
-                                "position": -3
                             }
                         ]
                     }
@@ -2666,6 +2662,10 @@
                                 "skip_columns": [
                                     0
                                 ]
+                            },
+                            {
+                                "map_type": "ScenarioAlternative",
+                                "position": -3
                             }
                         ]
                     }
@@ -3296,7 +3296,9 @@
             "connection_profile_c": {},
             "unit_node_profile_c": {},
             "scenario": {
-                "row": 1
+                "row": 1,
+                "header": false,
+                "column": 0
             },
             "connection_node_constraint_c": {},
             "node_constraint_c": {},

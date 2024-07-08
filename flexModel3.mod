@@ -2284,12 +2284,14 @@ s.t. constraint_greater_than {(c, 'greater_than') in constraint__sense, (d, t) i
 	    - sum{(n, d_divest) in nd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d]
 	  )
 	  * p_node_constraint_capacity_coefficient[n, c]
+    * p_entity_unitsize[n]
 	)
   + sum {(p, c) in process_capacity_constraint : d in period_invest}
     ( ( + sum{(p, d_invest, d) in edd_invest} v_invest[p, d]
 	    - sum{(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d]
 	  )
 	  * p_process_constraint_capacity_coefficient[p, c]
+    * p_entity_unitsize[p]
 	)
   >=
   + p_constraint_constant[c]
@@ -2314,12 +2316,14 @@ s.t. process_constraint_less_than {(c, 'less_than') in constraint__sense, (d, t)
 	    - sum{(n, d_divest) in nd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d]
 	  )
 	  * p_node_constraint_capacity_coefficient[n, c]
+    * p_entity_unitsize[n]
 	)
   + sum {(p, c) in process_capacity_constraint : d in period_invest}
     ( ( + sum{(p, d_invest, d) in edd_invest} v_invest[p, d]
 	    - sum{(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d]
 	  )
 	  * p_process_constraint_capacity_coefficient[p, c]
+    * p_entity_unitsize[p]
 	)
   <=
   + p_constraint_constant[c]
@@ -2344,12 +2348,14 @@ s.t. process_constraint_equal {(c, 'equal') in constraint__sense, (d, t) in dt} 
 	    - sum{(n, d_divest) in nd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d]
 	  )
 	  * p_node_constraint_capacity_coefficient[n, c]
+    * p_entity_unitsize[n]
 	)
   + sum {(p, c) in process_capacity_constraint : d in period_invest}
     ( ( + sum{(p, d_invest, d) in edd_invest} v_invest[p, d]
 	    - sum{(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d]
 	  )
 	  * p_process_constraint_capacity_coefficient[p, c]
+    * p_entity_unitsize[p]
 	)
   =
   + p_constraint_constant[c]
