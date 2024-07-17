@@ -1488,8 +1488,7 @@
                 },
                 {
                     "map_type": "ParameterValueType",
-                    "position": "hidden",
-                    "filter_re": "2d_map"
+                    "position": "hidden"
                 },
                 {
                     "map_type": "IndexName",
@@ -1506,6 +1505,14 @@
                 {
                     "map_type": "ParameterValueIndex",
                     "position": 1
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2
                 },
                 {
                     "map_type": "ExpandedValue",
