@@ -80,7 +80,7 @@ class FlexToolRunner:
                     break
         if float(database_version) < tool_version:
             logging.error("The input database is in an older version than the tool. Please migrate the database to the new version: python migrate_database.py path_to_database")
-            exit(-1)
+            sys.exit(-1)
 
     def get_2d_timeblocks_used_by_solves(self):
 
@@ -340,7 +340,7 @@ class FlexToolRunner:
             
             if self.solve_modes[solve] == 'rolling_window' and (horizon == 0 or jump == 0):
                 logging.error("When using rolling_window solve mode, rolling_solve_horizon and rolling_solve_jump must defined and not be 0")
-                exit(-1)
+                sys.exit(-1)
             rolling_times[solve] = [jump,horizon,duration]
 
         return rolling_times
@@ -409,7 +409,7 @@ class FlexToolRunner:
                 if timeline not in timelines:
                     if len(timelines) != 0:
                         logging.error("Error: More than one timeline in the solve or the same timeline with different step durations in different timeblockSets")
-                        exit(-1)
+                        sys.exit(-1)
                     timelines.append(timeline)
             for timeseries in timeseries_map.keys():
                 with open('input/'+ timeseries,'r') as blk:
@@ -443,7 +443,7 @@ class FlexToolRunner:
                                             datain = next(filereader)
                                             if datain[0:time_index] != params:
                                                 logging.error("Cannot find the same timesteps in input data as in timeline for file  " + timeseries + " after " + row[-1])
-                                                exit(-1)
+                                                sys.exit(-1)
                                             values.append(float(datain[time_index + 1]))
 
                                     if timeseries_map[timeseries] == "average":
@@ -778,14 +778,14 @@ class FlexToolRunner:
             completed = subprocess.run(only_glpsol)
             if completed.returncode != 0:
                 logging.error(f'glpsol failed: {completed.returncode}')
-                exit(completed.returncode)
+                sys.exit(completed.returncode)
             
             #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
             with open('glpsol_solution.txt','r') as inf_file:
                 inf_content = inf_file.read() 
                 if 'INFEASIBLE' in inf_content:
                     logging.error(f"The model is infeasible. Check the constraints.")
-                    exit(1)
+                    sys.exit(1)
 
         elif solver == "highs" or solver == "cplex":
             highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat',
@@ -793,7 +793,7 @@ class FlexToolRunner:
             completed = subprocess.run(highs_step1)
             if completed.returncode != 0:
                 logging.error(f'glpsol mps writing failed: {completed.returncode}')
-                exit(completed.returncode)
+                sys.exit(completed.returncode)
             print("GLPSOL wrote the problem as MPS file\n")
 
             #check if the problem has columns(nodes)
@@ -801,7 +801,7 @@ class FlexToolRunner:
                 mps_content = mps_file.read() 
                 if 'Columns:    0' in mps_content:
                     logging.error(f"The problem has no columns. Check that the model has nodes.")
-                    exit(-1)
+                    sys.exit(-1)
 
 
             if solver == "highs":
@@ -812,7 +812,7 @@ class FlexToolRunner:
                 completed = subprocess.run(highs_step2)
                 if completed.returncode != 0:
                     logging.error(f'Highs solver failed: {completed.returncode}')
-                    exit(completed.returncode)
+                    sys.exit(completed.returncode)
                 print("HiGHS solved the problem\n")
                 
                 #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
@@ -820,7 +820,7 @@ class FlexToolRunner:
                     inf_content = inf_file.read() 
                     if 'Model   status      : Infeasible' in inf_content:
                         logging.error(f"The model is infeasible. Check the constraints.")
-                        exit(1)
+                        sys.exit(1)
             
             elif solver == "cplex": #or gurobi
                 if current_solve not in self.solver_precommand.keys():
@@ -836,7 +836,7 @@ class FlexToolRunner:
                         completed = subprocess.run(cplex_step)
                         if completed.returncode != 0:
                             logging.error(f'Cplex solver failed: {completed.returncode}')
-                            exit(completed.returncode) 
+                            sys.exit(completed.returncode) 
                         
                         completed = self.cplex_to_glpsol("flexModel3_cplex.sol","flexModel3.sol")
                 else:
@@ -853,7 +853,7 @@ class FlexToolRunner:
                         completed = subprocess.run(cplex_step)
                         if completed.returncode != 0:
                             logging.error(f'Cplex solver failed: {completed.returncode}')
-                            exit(completed.returncode) 
+                            sys.exit(completed.returncode) 
                         
                         completed = self.cplex_to_glpsol("flexModel3_cplex.sol","flexModel3.sol")
 
@@ -865,7 +865,7 @@ class FlexToolRunner:
                 print("GLPSOL wrote the results into csv files\n")
         else:
             logging.error(f"Unknown solver '{solver}'. Currently supported options: highs, glpsol, cplex.")
-            exit(-1)
+            sys.exit(-1)
         return completed.returncode
 
     def cplex_to_glpsol(self,cplexfile,solutionfile): 
@@ -874,7 +874,7 @@ class FlexToolRunner:
             tree = ET.parse(cplexfile)
         except (OSError):
             logging.error('The CPLEX solver does not produce a solution file if the problem is infeasible. Check the constraints, more info at cplex.log')
-            exit(-1)
+            sys.exit(-1)
         root = tree.getroot()
 
         if root.find('header').get('solutionStatusString') == "optimal":
@@ -961,7 +961,7 @@ class FlexToolRunner:
                 glpsol_file.write("e o f")
         else:
             logging.error(f"Optimality could not be reached. Check the flexModel3_cplex.sol file for more")
-            exit(1)
+            sys.exit(1)
         
         return 0
 
@@ -992,7 +992,7 @@ class FlexToolRunner:
                                                 break
         if len(active_time.keys()) == 0:
             logging.error(current_solve + " could not connect to a timeline. Check that object solve has period_timeblockSet [Map], correct realized_periods [Array], objects timeblockSet [Map] and timeline [Map] are defined and that relation timeblockSet_timeline exists")
-            exit(-1)
+            sys.exit(-1)
         return active_time
 
     def make_step_jump(self, active_time_list, period__branch, solve_branch__time_branch_list):
@@ -1302,7 +1302,7 @@ class FlexToolRunner:
                             time_branches.append(datain[1])
                         if datain[1] == "":
                             logging.error("Empty branch name in timeseries: "+ filename + " , check that there is no empty row at the end of the array")
-                            exit(-1)
+                            sys.exit(-1)
                     except StopIteration:
                         break
 
@@ -1499,7 +1499,7 @@ class FlexToolRunner:
                             last_index=[period,i]
         if started == False:
             logging.error("Start point not found")
-            exit(-1)
+            sys.exit(-1)
         # if there is start of the roll but not end, the end is the last index of the active time
         diff = len(starts)-len(horizons)
         for i in range(0,diff):
@@ -1668,7 +1668,7 @@ class FlexToolRunner:
                 logging.error("A realized start time of the solve cannot be found from the stochastic_branches parameter. "+
                               "Check that stochastic_branches has a realized : yes, branch for the start of the solve" +
                                "and that the possible rolling_jump matches with the branch starts")
-                exit(-1)
+                sys.exit(-1)
             for period, active_time in active_time_list.items():
                 realized_end = None
                 if not branched:
@@ -1727,7 +1727,7 @@ class FlexToolRunner:
                             solve_branch__time_branch_lists[solve].append((period, row[1]))
                 if (branch_start_time_lists[solve] != None and found == 0) or found > 1:
                     logging.error("Each period should have one and only one realized branch. Found: " + str(found) + "\n")
-                    exit(-1)
+                    sys.exit(-1)
             realized_time_lists[solve] = new_realized_time_list
             active_time_lists[solve] = new_active_time_list
             jump_lists[solve] = self.make_step_jump(new_active_time_list, period__branch_lists[solve], solve_branch__time_branch_lists[solve])
@@ -1917,7 +1917,7 @@ def main():
         for period in active_time_lists[solve]:
             if (period,period) in period__branch_lists[solve] and not any(period== sublist[0] for sublist in solve_period_history[complete_solve[solve]]):
                 logging.error("The years_represented is defined, but not to all of the periods in the solve")
-                exit(-1)
+                sys.exit(-1)
 
     first = True
     previous_complete_solve = None
@@ -1995,7 +1995,7 @@ def main():
             logging.info('Success!')
         else:
             logging.error(f'Error: {exit_status}')
-            exit(-1)
+            sys.exit(-1)
         #if multiple storage solve levels, save the storage fix of this level:
         if any(complete_solve[solve] == solve_period[0] for solve_period in runner.fix_storage_periods):
             shutil.copy("solve_data/fix_storage_quantity.csv","solve_data/fix_storage_quantity_"+ complete_solve[solve]+".csv")
