@@ -175,20 +175,20 @@ def change_optional_output_type(db, filepath):
 
     sq= db.entity_parameter_value_sq
     sq_def = db.object_parameter_definition_sq
-    enable_parameter_query = db.query(sq).filter(sq.c.object_class_name == "model").filter(sq.c.parameter_name == "enable_optional_outputs").all()
-    disable_parameter_query = db.query(sq).filter(sq.c.object_class_name == "model").filter(sq.c.parameter_name == "disable_optional_outputs").all()
+    enable_parameter_query = db.query(sq).filter(sq.c.object_class_name == "model").filter(sq.c.parameter_name == "enable_optional_outputs")
+    disable_parameter_query = db.query(sq).filter(sq.c.object_class_name == "model").filter(sq.c.parameter_name == "disable_optional_outputs")
     enable_parameter_definition =  db.query(sq_def).filter(sq_def.c.object_class_name == "model").filter(sq_def.c.parameter_name == "enable_optional_outputs").one_or_none()
     disable_parameter_definition =  db.query(sq_def).filter(sq_def.c.object_class_name == "model").filter(sq_def.c.parameter_name == "disable_optional_outputs").one_or_none()
 
     paramset_enable = []
     paramset_disable = []
     for param in enable_parameter_query:
-        enable_optional_outputs = from_database(param._asdict()['value'].decode(), "array").values
+        enable_optional_outputs = from_database(param.value, param.type).values
         meta = [param.entity_class_name, param.entity_name, param.alternative_name]
         paramset_enable.append((meta,enable_optional_outputs))
 
     for param in disable_parameter_query:
-        disable_optional_outputs = from_database(param._asdict()['value'].decode(), "array").values
+        disable_optional_outputs = from_database(param.value, param.type).values
         meta = [param.entity_class_name, param.entity_name, param.alternative_name]
         paramset_disable.append((meta,disable_optional_outputs))
 
