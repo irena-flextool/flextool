@@ -1,13 +1,14 @@
 ## Installing Spine Toolbox and IRENA FlexTool on a local computer
 
 Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/N3qB0rzxPYw).
+Currently python versions 3.9 or higher are supported.
 
 - Install [Miniconda](https://docs.conda.io/en/latest/miniconda.html) (or Anaconda)  [Can be ignored if already installed]
 - Start Anaconda prompt
 - Create new Python environment [Also possible to use existing, up-to-date, Spine Toolbox environment]
 
 ```shell
-conda create -n flextool python=3.9
+conda create -n flextool python=3.11
 ```
 
 - Activate the environment
