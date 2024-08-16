@@ -280,7 +280,7 @@
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
-                    "filter_re": "single_value"
+                    "filter_re": "float|str|bool"
                 },
                 {
                     "map_type": "ParameterValue",
@@ -333,7 +333,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -1200,7 +1201,7 @@
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
-                    "filter_re": "single_value"
+                    "filter_re": "float|str|bool"
                 },
                 {
                     "map_type": "ParameterValue",
@@ -1316,7 +1317,7 @@
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
-                    "filter_re": "single_value"
+                    "filter_re": "float|str|bool"
                 },
                 {
                     "map_type": "ParameterValue",
@@ -1394,7 +1395,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -1515,7 +1517,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!time)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -1593,7 +1596,7 @@
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
-                    "filter_re": "single_value"
+                    "filter_re": "float|str|bool"
                 },
                 {
                     "map_type": "ParameterValue",
@@ -1718,7 +1721,7 @@
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
-                    "filter_re": "single_value"
+                    "filter_re": "float|str|bool"
                 },
                 {
                     "map_type": "ParameterValue",
@@ -1784,7 +1787,7 @@
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
-                    "filter_re": "single_value"
+                    "filter_re": "float|str|bool"
                 },
                 {
                     "map_type": "ParameterValue",
@@ -1813,7 +1816,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^invest_forced$|^invest_max_period$|^invest_min_period$|^retire_forced$|^retire_max_period$|^retire_min_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$|^other_operational_cost$",
+                    "filter_re": "^invest_forced$|^invest_max_period$|^invest_min_period$|^retire_forced$|^retire_max_period$|^retire_min_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$|^other_operational_cost$|^existing$",
                     "header": "processParam"
                 },
                 {
@@ -1872,7 +1875,7 @@
                 {
                     "map_type": "ParameterDefinition",
                     "position": 1,
-                    "filter_re": "^annual_flow$|^peak_inflow$|^invest_forced$|^invest_max_period$|^invest_min_period$|^retire_forced$|^retire_max_period$|^retire_min_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$|^storage_state_reference_price$",
+                    "filter_re": "^annual_flow$|^peak_inflow$|^invest_forced$|^invest_max_period$|^invest_min_period$|^retire_forced$|^retire_max_period$|^retire_min_period$|^invest_cost$|^salvage_value$|^interest_rate$|^lifetime$|^fixed_cost$|^storage_state_reference_price$|^availability$",
                     "header": "nodeParam"
                 },
                 {
@@ -1896,7 +1899,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!time)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -1978,7 +1982,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!time)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -2031,7 +2036,7 @@
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
-                    "filter_re": "single_value"
+                    "filter_re": "float|str|bool"
                 },
                 {
                     "map_type": "ParameterValue",
@@ -2101,7 +2106,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -2176,7 +2182,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -2381,7 +2388,7 @@
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
-                    "filter_re": "single_value"
+                    "filter_re": "float|str|bool"
                 },
                 {
                     "map_type": "ParameterValue",
@@ -2432,7 +2439,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -3739,7 +3747,7 @@
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
-                    "filter_re": "single_value"
+                    "filter_re": "float|str|bool"
                 },
                 {
                     "map_type": "ParameterValue",
@@ -3805,7 +3813,7 @@
                 {
                     "map_type": "ParameterValueType",
                     "position": "hidden",
-                    "filter_re": "single_value"
+                    "filter_re": "float|str|bool"
                 },
                 {
                     "map_type": "ParameterValue",
@@ -5086,7 +5094,7 @@
                 {
                     "map_type": "ParameterDefaultValueType",
                     "position": "hidden",
-                    "filter_re": "single_value"
+                    "filter_re": "float|str|bool"
                 },
                 {
                     "map_type": "ParameterDefaultValue",
@@ -5138,7 +5146,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -5641,7 +5650,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -5893,7 +5903,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -5986,7 +5997,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -6079,7 +6091,8 @@
                 },
                 {
                     "map_type": "IndexName",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
                 },
                 {
                     "map_type": "ParameterValueIndex",
@@ -6257,12 +6270,338 @@
                 {
                     "map_type": "ParameterDefaultValueType",
                     "position": "hidden",
-                    "filter_re": "single_value"
+                    "filter_re": "float|str|bool"
                 },
                 {
                     "map_type": "ParameterDefaultValue",
                     "position": 0,
                     "header": "version"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_process__sink_d__unit": {
+            "type": "entity_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pd_process_sink"
+                },
+                {
+                    "map_type": "EntityClass",
+                    "position": "hidden",
+                    "filter_re": "^unit__outputNode$"
+                },
+                {
+                    "map_type": "Dimension",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Dimension",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 2,
+                    "filter_re": "^other_operational_cost$",
+                    "header": "sourceSinkPeriodParam"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Entity",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Element",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "Element",
+                    "position": 1,
+                    "header": "sink"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "1d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden",
+                    "filter_re": "^(?!time)"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 3,
+                    "header": "period"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 4,
+                    "header": "pd_process_sink"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_process__source_d__unit": {
+            "type": "entity_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pd_process_source"
+                },
+                {
+                    "map_type": "EntityClass",
+                    "position": "hidden",
+                    "filter_re": "^unit__inputNode$"
+                },
+                {
+                    "map_type": "Dimension",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Dimension",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 2,
+                    "filter_re": "^other_operational_cost$",
+                    "header": "sourceSinkPeriodParam"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Entity",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "Element",
+                    "position": 0,
+                    "header": "process"
+                },
+                {
+                    "map_type": "Element",
+                    "position": 1,
+                    "header": "source"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "1d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden",
+                    "filter_re": "^(?!time)"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 3,
+                    "header": "period"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 4,
+                    "header": "pd_process_source"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_commodity_t": {
+            "type": "entity_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pt_commodity"
+                },
+                {
+                    "map_type": "EntityClass",
+                    "position": "hidden",
+                    "filter_re": "^commodity$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 1,
+                    "filter_re": "^price$",
+                    "header": "commodityParam"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Entity",
+                    "position": 0,
+                    "header": "commodity"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "1d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 3,
+                    "header": "pt_commodity"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_group_t": {
+            "type": "entity_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pt_group"
+                },
+                {
+                    "map_type": "EntityClass",
+                    "position": "hidden",
+                    "filter_re": "^group$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": 1,
+                    "header": "groupParam"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Entity",
+                    "position": 0,
+                    "header": "group"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "1d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden",
+                    "filter_re": "^(?!period)"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 2,
+                    "header": "time"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 3,
+                    "header": "pt_group"
+                }
+            ],
+            "enabled": true,
+            "always_export_header": true,
+            "group_fn": "no_group",
+            "use_fixed_table_name": true
+        },
+        "p_profile_d": {
+            "type": "entity_parameter_values",
+            "mapping": [
+                {
+                    "map_type": "FixedValue",
+                    "position": "table_name",
+                    "value": "pd_profile"
+                },
+                {
+                    "map_type": "EntityClass",
+                    "position": "hidden",
+                    "filter_re": "^profile$"
+                },
+                {
+                    "map_type": "ParameterDefinition",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueList",
+                    "position": "hidden",
+                    "ignorable": true
+                },
+                {
+                    "map_type": "Entity",
+                    "position": 0,
+                    "header": "profile"
+                },
+                {
+                    "map_type": "Alternative",
+                    "position": "hidden"
+                },
+                {
+                    "map_type": "ParameterValueType",
+                    "position": "hidden",
+                    "filter_re": "1d_map"
+                },
+                {
+                    "map_type": "IndexName",
+                    "position": "hidden",
+                    "filter_re": "^(?!time)"
+                },
+                {
+                    "map_type": "ParameterValueIndex",
+                    "position": 1,
+                    "header": "period"
+                },
+                {
+                    "map_type": "ExpandedValue",
+                    "position": 2,
+                    "header": "pd_profile"
                 }
             ],
             "enabled": true,

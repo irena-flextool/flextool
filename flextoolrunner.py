@@ -1147,11 +1147,11 @@ class FlexToolRunner:
         with open(filename, 'w') as outfile:
             # prepend with a header
             outfile.write('period,step\n')
-            out= []
+            out = []
             for period_name, period in timeline.items():
-                if (solve,period_name) in self.realized_periods:
+                if (solve, period_name) in self.realized_periods[-1]:
                     for item in period[-1:]:
-                        out = [period_name,item[0]]
+                        out = [period_name, item[0]]
                         outfile.write(out[0] + ',' + out[1] + '\n')
 
     def write_periods(self, solve, periods, filename):

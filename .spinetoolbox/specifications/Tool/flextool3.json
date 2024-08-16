@@ -82,6 +82,8 @@
         "input/pd_group.csv",
         "input/pd_node.csv",
         "input/pd_process.csv",
+        "input/pd_process_sink.csv",
+        "input/pd_process_source.csv",
         "input/process.csv",
         "input/process__ct_method.csv",
         "input/process__node__profile__profile_method.csv",
