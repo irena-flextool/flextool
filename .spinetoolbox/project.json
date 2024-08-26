@@ -146,8 +146,7 @@
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Init": {
-                            "scenario_filter": {
-                            }
+                            "scenario_filter": {}
                         }
                     },
                     "auto_online": false,
@@ -170,8 +169,7 @@
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Results": {
-                            "scenario_filter": {
-                            }
+                            "scenario_filter": {}
                         }
                     },
                     "auto_online": false,
@@ -257,6 +255,47 @@
                     "known_filters": {
                         "db_url@Input_data": {
                             "scenario_filter": {
+                                "aggregate": true,
+                                "aggregate_binary": true,
+                                "aggregate_full_year": true,
+                                "aggregate_invest": true,
+                                "aggregate_linear": true,
+                                "aggregate_linear_full_year": true,
+                                "existing": true,
+                                "existing_full_year": true,
+                                "invest": true,
+                                "invest_CorRES": true,
+                                "invest_high_gas": true,
+                                "invest_high_gas_CorRES": true,
+                                "invest_high_gas_battery": true,
+                                "invest_high_gas_battery_CorRES": true,
+                                "invest_high_gas_battery_trans": true,
+                                "invest_high_gas_battery_trans_CorRES": true,
+                                "new": true
+                            },
+                            "alternative_filter": {
+                                "Adrar": true,
+                                "Aoulef": true,
+                                "CorRES_wind_timeseries": true,
+                                "In_Salah": true,
+                                "Kabertene": true,
+                                "Reggane": true,
+                                "Tamentit": true,
+                                "Timimoun": true,
+                                "Z_Kounta": true,
+                                "aggregate": true,
+                                "aggregate_binary": true,
+                                "aggregate_linear": true,
+                                "battery": true,
+                                "full_year": true,
+                                "high_gas_price": true,
+                                "individual": true,
+                                "init": true,
+                                "invest": true,
+                                "invest_Kabertene_wind": true,
+                                "invest_transmission": true,
+                                "network": true,
+                                "selected_days": true
                             }
                         }
                     },
@@ -280,8 +319,7 @@
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Results": {
-                            "scenario_filter": {
-                            }
+                            "scenario_filter": {}
                         }
                     },
                     "auto_online": false,
@@ -373,7 +411,7 @@
                 "database": {
                     "type": "path",
                     "relative": true,
-                    "path": "Input_data.sqlite"
+                    "path": "Input_data_Algerian_case_study_PIAT_CorRES.sqlite"
                 },
                 "schema": ""
             }

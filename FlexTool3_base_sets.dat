@@ -40,6 +40,7 @@ set fork_method_no := fork_no;
 set ramp_cost_method := ramp_cost both;
 set ramp_limit_method := ramp_limit both;
 
+set node_type := balance_within_period;
 
 set method :=
   method_1way_1var_off
@@ -126,16 +127,19 @@ set commodityPeriodParam := price;
 set processParam := efficiency existing fixed_cost interest_rate invest_cost salvage_value
                     invest_max_period invest_max_total lifetime
 					invest_min_period invest_min_total
+					cumulative_max_capacity cumulative_min_capacity
                     retire_forced retire_max_period retire_max_total retire_min_total other_operational_cost 
 					efficiency_at_min_load min_load min_downtime min_uptime
 					startup_cost virtual_unitsize availability;
 set processPeriodParam := fixed_cost interest_rate invest_cost salvage_value
                     invest_max_period invest_min_period
+					cumulative_max_capacity cumulative_min_capacity
 					lifetime other_operational_cost startup_cost
                     retire_forced retire_max_period retire_min_period, existing;
 set processPeriodParamRequired :=  fixed_cost other_operational_cost lifetime existing;
 set processPeriodParamInvest := interest_rate invest_cost salvage_value
                     invest_max_period invest_min_period
+					cumulative_max_capacity cumulative_min_capacity
                     retire_forced retire_max_period retire_min_period;
 set processTimeParam := efficiency efficiency_at_min_load min_load other_operational_cost availability;
 set processTimeParamRequired := efficiency other_operational_cost availability;
@@ -148,17 +152,20 @@ set sourceSinkPeriodParamRequired := efficiency, other_operational_cost;
 set nodeParam := annual_flow, peak_inflow, existing, fixed_cost, inflow, interest_rate, invest_cost, salvage_value,
                  invest_max_total, invest_min_total, lifetime,
 				 invest_max_period, invest_min_period, retire_max_period, retire_min_period,
+				 cumulative_max_capacity, cumulative_min_capacity,
                  penalty_down, penalty_up, retire_forced, retire_min_total, 
 				 retire_max_total, self_discharge_loss, virtual_unitsize,
 				 storage_state_start, storage_state_end, storage_state_reference_value,
 				 storage_state_reference_price, availability;
 set nodePeriodParam := annual_flow, peak_inflow, fixed_cost, interest_rate, invest_cost, salvage_value,
                  invest_max_period, invest_min_period, lifetime,
+				 cumulative_max_capacity, cumulative_min_capacity,
                  retire_forced, retire_max_period, retire_min_period, virtual_unitsize,
-				 storage_state_reference_price, existing;
-set nodePeriodParamRequired := annual_flow, peak_inflow, fixed_cost, lifetime, storage_state_reference_price, existing;
+				 storage_state_reference_price, existing, penalty_up, penalty_down;
+set nodePeriodParamRequired := annual_flow, peak_inflow, fixed_cost, lifetime, storage_state_reference_price, existing, penalty_up, penalty_down;
 set nodePeriodParamInvest := interest_rate, invest_cost, salvage_value,
                  invest_max_period, invest_min_period,
+				 cumulative_max_capacity, cumulative_min_capacity,
                  retire_forced, retire_max_period, retire_min_period, virtual_unitsize;
 set nodeTimeParam := inflow, penalty_down, penalty_up, self_discharge_loss, availability, storage_state_reference_value;
 set nodeTimeParamRequired := inflow, penalty_down, penalty_up;
@@ -169,7 +176,8 @@ set reserveParam_def1 := reliability;
 set reserveTimeParam := reservation;
 set invest_method := not_allowed, invest_no_limit, invest_period, invest_total, invest_period_total, 
                   retire_no_limit, retire_period, retire_total, retire_period_total, 
-				  invest_retire_no_limit, invest_retire_period, invest_retire_total, invest_retire_period_total;
+				  invest_retire_no_limit, invest_retire_period, invest_retire_total, invest_retire_period_total,
+				  cumulative_limits;
 set lifetime_method := reinvest_automatic, reinvest_choice;
 set lifetime_method_default := reinvest_automatic;
 set co2_method := no_method, price, period, total, price_period, price_total, period_total, price_period_total;

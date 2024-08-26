@@ -45,6 +45,7 @@
         "input/nodeBalance.csv",
         "input/nodeState.csv",
         "input/node__inflow_method.csv",
+        "input/node__node_type.csv",
         "input/node__profile__profile_method.csv",
         "input/node__storage_binding_method.csv",
         "input/node__storage_nested_fix_method.csv",
