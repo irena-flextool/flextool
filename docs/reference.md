@@ -105,6 +105,7 @@ Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative`
 - `invest_method` - Choice of investment method: either *not_allowed* or then a combination of 
     - *invest* and/or *retire* 
     - investment limits for each *period* and/or for all periods (*total*) or *no_limit* 
+    - *cumulative_limits* considers investments, retirements and existing together, requires `cumulative_max_capacity` and/or `cumulative_min_capacity`
 - `inflow_method` - choice how to treat inflow time series
     - *use_original* - does not scale the original time series (no value defaults here)
     - *no_inflow* - ignores any inserted inflow time series
@@ -120,7 +121,7 @@ Input data is set with the following parameters:
 
 - `inflow` - [MWh] Inflow into the node (negative is outflow). Constant or time series.
 - `annual_flow` - [MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.
-- `existing` - [MWh] Existing storage capacity (requires `has_storage`). Constant.
+- `existing` - [MWh] Existing storage capacity (requires `has_storage`). Constant or period.
 - `invest_cost` - [CUR/kWh] Investment cost for new storage capacity. Constant or period.
 - `salvage_value` - [CUR/kWh] Salvage value of the storage. Constant or period.
 - `lifetime` - [years] Life time of the storage unit represented by the node. Constant or period.
@@ -129,9 +130,11 @@ Input data is set with the following parameters:
 - `invest_max_period` - [MWh] Maximum storage investment for each period. Period.
 - `invest_min_total` - [MWh] Minimum storage investment over all solves. Constant.
 - `invest_min_period` - [MWh] Minimum storage investment for each period. Period.
+- `cumulative_max_capacity` - [MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
+- `cumulative_min_capacity` - [MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
 - `fixed_cost` - [CUR/kWh] Annual fixed cost for storage. Constant or period.
-- `penalty_up` - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time. Default value is 10 000, but this can be changed from the database.
-- `penalty_down` - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time. Default value is 10 000, but this can be changed from the database.
+- `penalty_up` - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time. Default value is 10 000, but this can be changed from the database. Constant or period.
+- `penalty_down` - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time. Default value is 10 000, but this can be changed from the database. Constant or period.
 - `virtual_unitsize` - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.
 - `self_discharge_loss` - [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.
 - `availablity` - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.
@@ -178,7 +181,7 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 ### Main data items for units
 
-- Capacity: `existing`, the maximum sum of outputs flows, (and the investment and retirement parameters below)
+- Capacity: `existing`, the maximum sum of outputs flows, (and the investment and retirement parameters below). Constant or period.
 - Technical: `efficiency`, `min_load`, `efficiency_at_min_load`, `min_uptime`, `min_downtime`
 	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time. Calculated for all timesteps: 
   
@@ -193,6 +196,7 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 - `invest_method` - Choice of investment method: either *not_allowed* or then a combination of 
     - *invest* and/or *retire* 
     - investment limits for each *period* and/or for all periods (*total*) or *no_limit* 
+    - *cumulative_limits* considers investments, retirements and existing together, requires `cumulative_max_capacity` and/or `cumulative_min_capacity`
 - `lifetime_method` to choose how the investments behave after unit runs out of lifetime. Automatic reinvestment (reinvest_automatic - default) causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost until the end of model horizon without further choice by the model. Choice of reinvestment (reinvest_choice) removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built. If there is a need to remove the possibility to invest after lifetime, then the investment limits can be used.
 - `invest_cost` - [CUR/kW] Investment cost for new capacity. Constant or period.
 - `salvage_value` - [CUR/kW] Salvage value of the unit capacity. Constant or period.
@@ -207,6 +211,8 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 - `retire_max_period` - [MW] Maximum capacity retirement for each period. Period.
 - `retire_min_total` - [MW] Minimum capacity retirement over all solves. Constant.
 - `retire_min_period` - [MW] Minimum capacity retirement for each period. Period.
+- `cumulative_max_capacity` - [MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
+- `cumulative_min_capacity` - [MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
 - `fixed_cost` - [CUR/kW] Annual fixed cost for capacity. Constant or period. 
 - `virtual_unitsize` - [MWh] Size of a single unit - used for integer investments (lumped investments). If not given, assumed from the existing capacity.
 
@@ -240,7 +246,7 @@ Finally, the retirements work similar to investments using the same `discount_ra
 - `is_non_synchronous` - Chooses whether the unit is synchronously connected to this node.
 - `coefficient` - [factor] Coefficient to scale the output from a unit to a particular node or the input from a node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints).
 Note that in the case of unit--outputNode the `coefficient` affects *after* the capacity and the other unit constraints. Constant.
-- `other_operational_cost` - [CUR/MWh] Other operational variable costs for energy flows. Constant or time. 
+- `other_operational_cost` - [CUR/MWh] Other operational variable costs for energy flows. Constant, period or time. 
 - `inertia_constant` - [MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.
 - `ramp_method` - Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).
 - `ramp_cost` - [CUR/MW] Cost of ramping the unit. Constant.
@@ -263,6 +269,7 @@ Connections can transfer energy between two nodes. Parameters for the connection
 - `invest_method` to define investment and retirement limits: either *not_allowed* or then a combination of 
     - *invest* and/or *retire* 
     - investment limits for each *period* and/or for all periods (*total*) or *no_limit* 
+    - *cumulative_limits* considers investments, retirements and existing together, requires `cumulative_max_capacity` and/or `cumulative_min_capacity`
 - `lifetime_method` to choose how the investments behave after unit runs out of lifetime. Automatic reinvestment (reinvest_automatic - default) causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost until the end of model horizon without further choice by the model. Choice of reinvestment (reinvest_choice) removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built. If there is a need to remove the possibility to invest after lifetime, then the investment limits can be used.
 
 ### Main data items for connections
@@ -270,7 +277,7 @@ Connections can transfer energy between two nodes. Parameters for the connection
 - `existing` - [MW] Existing capacity. Constant.
 - `efficiency` - [factor, typically between 0-1] Efficiency of a connection. Constant or time.
 - `constraint_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be added to the left side of the constraint equation. Invest and divest variables are not multiplied by unitsize.
-- `other_operational_cost` - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant or time.
+- `other_operational_cost` - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period or time.
 - `fixed_cost` - [CUR/kW] Annual fixed cost. Constant or period.
 - `invest_cost` - [CUR/kW] Investment cost for new 'virtual' capacity. Constant or period.
 - `interest_rate` - [e.g. 0.05 equals 5%] Interest rate for investments. Constant or period.

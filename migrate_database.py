@@ -21,7 +21,7 @@ def migrate_database(database_path):
         version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
     next_version = int(version) + 1
-    new_version = 21
+    new_version = 22
 
     while next_version <= new_version:
         if next_version == 0:
@@ -90,6 +90,25 @@ def migrate_database(database_path):
         elif next_version == 21:
             new_value_list = [["storage_nested_fix_method","fix_nothing"],["storage_nested_fix_method","fix_quantity"],["storage_nested_fix_method","fix_price"], ["storage_nested_fix_method","fix_usage"]]
             add_value_list_manual(db,new_value_list)
+        elif next_version == 22:
+            db.add_update_item("parameter_value_list", name = "node_type")
+            add_value_list_manual(db,[["node_type","balance_within_period"],["invest_methods","cumulative_limits"]])
+            db.add_update_item("parameter_definition", entity_class_name= "node", name= "node_type", parameter_type_list = None, parameter_value_list_name = "node_type", description = "Selection for the node to have period balance, instead of time step balance.")
+            db.add_update_item("parameter_definition", entity_class_name= "node", name= "cumulative_max_capacity", parameter_type_list = None, description = "[MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.")
+            db.add_update_item("parameter_definition", entity_class_name= "node", name= "cumulative_min_capacity", parameter_type_list = None, description = "[MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.")
+            db.add_update_item("parameter_definition", entity_class_name= "connection", name= "cumulative_max_capacity", parameter_type_list = None, description = "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.")
+            db.add_update_item("parameter_definition", entity_class_name= "connection", name= "cumulative_min_capacity", parameter_type_list = None, description = "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.")
+            db.add_update_item("parameter_definition", entity_class_name= "unit", name= "cumulative_max_capacity", parameter_type_list = None, description = "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.")
+            db.add_update_item("parameter_definition", entity_class_name= "unit", name= "cumulative_min_capacity", parameter_type_list = None, description = "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.")
+            db.update_item("parameter_definition", entity_class_name= "node", name= "existing", description = "[MWh] Existing storage capacity. Constant or Period")
+            db.update_item("parameter_definition", entity_class_name= "connection", name= "existing", description = "[MW] Existing capacity. Constant or Period")
+            db.update_item("parameter_definition", entity_class_name= "unit", name= "existing", description = "[MW] Existing capacity. Constant or Period")
+            db.update_item("parameter_definition", entity_class_name= "node", name= "penalty_up", description = "[CUR/MW] Penalty cost for decreasing consumption in the node. Constant, Period or Time.")
+            db.update_item("parameter_definition", entity_class_name= "node", name= "penalty_down", description = "[CUR/MW] Penalty cost for increasing consumption in the node. Constant, Period or Time.")
+            db.update_item("parameter_definition", entity_class_name= "unit__outputNode", name= "other_operational_cost", description = "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.")
+            db.update_item("parameter_definition", entity_class_name= "unit__inputNode", name= "other_operational_cost", description = "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.")
+            db.update_item("parameter_definition", entity_class_name= "connection", name= "other_operational_cost", description = "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time.")
+            db.commit_session("Added cumulative investments")
         else:
             print("Version invalid")
         next_version += 1 
