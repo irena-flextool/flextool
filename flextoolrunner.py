@@ -1138,7 +1138,7 @@ class FlexToolRunner:
                 for item in period[-1:]:
                     outfile.write(period_name + ',' + item[0] + '\n')
     
-    def write_last_realized_step(self, timeline, solve, filename):
+    def write_last_realized_step(self, realized_timeline, solve, filename):
         """
         write to file the last step of timeline
 
@@ -1148,11 +1148,15 @@ class FlexToolRunner:
             # prepend with a header
             outfile.write('period,step\n')
             out = []
-            for period_name, period in timeline.items():
-                if (solve, period_name) in self.realized_periods[-1]:
-                    for item in period[-1:]:
-                        out = [period_name, item[0]]
-                        outfile.write(out[0] + ',' + out[1] + '\n')
+            has_realized_period = False
+            for period_name, period in realized_timeline.items():
+                if (solve, period_name) in self.realized_periods:
+                    last_realized_period = (period_name,period)
+                    has_realized_period = True
+            if has_realized_period: 
+                for item in last_realized_period[1][-1:]:
+                    out = [period_name, item[0]]
+                    outfile.write(out[0] + ',' + out[1] + '\n')
 
     def write_periods(self, solve, periods, filename):
         """
