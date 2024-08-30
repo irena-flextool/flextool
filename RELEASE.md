@@ -1,16 +1,21 @@
 ** Release 3.8.0 (29.8.2024)
 **Bug fixes**
+
 - Excel input file to use entity_alternative
 - unit_curtailment_share fix to Excel input
 
 **New features**
+
 - Existing capacity can be set for periods
 - Cumulative limits for investments in nodes, units and connections
 - New node_type that has period limit for inflow
 - New highs solver version
+- All parameter now have valid types. These are not enforced, but Spine Toolbox highlights parameters with a wrong type.
+
 
 ## Release 3.7.0 (24.6.2024)
 **Bug fixes**
+
 - Several bugs related to the migration to Spine Toolbox 0.8.
 - CPLEX call without pre_command fixed
 - Timeline aggregarion without all timesteps
@@ -40,11 +45,13 @@
 
 ## Release 3.5.0 (29.4.2024)
 **Bug fixes**
+
 - Stochastic and rolling weights
 
 
 ## Release 3.4.0 (13.4.2024)
 **Bug fixes**
+
 - Inertia with MIP units added missing unitsize
 - Result ordering improvements
 - Fixing how flow variables are limited
