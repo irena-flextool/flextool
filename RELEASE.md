@@ -1,4 +1,15 @@
-## Release 3.3.1 (24.6.2024)
+** Release 3.8.0 (29.8.2024)
+**Bug fixes**
+- Excel input file to use entity_alternative
+- unit_curtailment_share fix to Excel input
+
+**New features**
+- Existing capacity can be set for periods
+- Cumulative limits for investments in nodes, units and connections
+- New node_type that has period limit for inflow
+- New highs solver version
+
+## Release 3.7.0 (24.6.2024)
 **Bug fixes**
 - Several bugs related to the migration to Spine Toolbox 0.8.
 - CPLEX call without pre_command fixed
@@ -10,10 +21,6 @@
 - Nested structure:
   - Pass end state only from dispatch level
   - Storage fix_quantity overrides other storage options
-- Capacity limit includes the efficiency
-- Min_load to work with multiple inputs/outputs¨
-- Inertia with MIP units added missing unitsize
-- 
 
 **New features**
 
@@ -22,9 +29,34 @@
 - Nested structure storage_nested_fix_method: 
   - Added fix_usage
   - Fix_price changed to set the price to the objective function of the lower level solve
+
+
+## Release 3.6.0 (15.5.2024)
+**New features**
+
+- Upgraded FlexTool to Spine Toolbox v0.8
 - Entity alternative replaces is_active parameter
+
+
+## Release 3.5.0 (29.4.2024)
+**Bug fixes**
+- Stochastic and rolling weights
+
+
+## Release 3.4.0 (13.4.2024)
+**Bug fixes**
+- Inertia with MIP units added missing unitsize
+- Result ordering improvements
+- Fixing how flow variables are limited
+- Min_load to work with multiple inputs/outputs¨
+- Capacity limit includes the efficiency
+
+**New features**
+
 - Output of inertia seperately for units
 - Default penalty values for reserve, inertia, capacity margin and non-synchronous limits
+- Large model data processing speed-ups
+
 
 ## Release 3.3.0 (23.3.2024)
 **Bug fixes**

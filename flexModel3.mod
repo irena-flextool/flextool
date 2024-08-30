@@ -1765,7 +1765,7 @@ check {(d,t) in period__time_first: exists{(r, ud, g, param, tb, ts, t2) in rese
 printf'Checking that existing capacity is less than cumulative_max_capacity\n';
 check {(e, d) in ed_invest_cumulative}:
   p_entity_all_existing[e, d] <= ed_cumulative_max_capacity[e, d];
-display edd_history;
+
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
 minimize total_cost:
@@ -5420,7 +5420,7 @@ display w_full;
 #display {p in process_online, (d, t) in dt : (d, t) in test_dt} : r_process_Online__dt[p, d, t];
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
 #display {n in nodeBalance union nodeBalancePeriod, (d, t) in dt : (d, t) in test_dt}: pdtNodeInflow[n, d, t];
-display {n in nodeBalance union nodeBalancePeriod, (d, t) in dt : (d, t) in test_dt}: pdtNode[n, 'penalty_up', d, t];
+#display {n in nodeBalance union nodeBalancePeriod, (d, t) in dt : (d, t) in test_dt}: pdtNode[n, 'penalty_up', d, t];
 #display {n in nodeBalance union nodeBalancePeriod, (d, t) in dt : (d, t) in test_dt}: pdtNode[n, 'availability', d, t];
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val * p_entity_unitsize[n];
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p];
