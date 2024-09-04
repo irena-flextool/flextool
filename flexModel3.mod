@@ -3345,9 +3345,12 @@ param r_process__source__sink_Flow__dt{(p, source, sink) in process_source_sink_
   + sum {(p, m) in process_method : m in method_nvar} (
       + v_flow[p, source, sink, d, t].val * p_entity_unitsize[p]
 	)
-  + sum {(p,m) in process_method: m in method_2way_1var && (p,source,sink) in process_source_toSink}(
-      + v_flow[p, source, sink, d, t].val * p_entity_unitsize[p]
-  )
+  + sum {(p, source, sink2) in process_source_sink : (p, 'method_2way_1var_off') in process_method && (p, source, sink) in process_source_toProcess_direct} ( 
+      + v_flow[p, source, sink2, d, t].val * p_entity_unitsize[p]
+	)
+  + sum {(p, source2, sink) in process_source_sink : (p, 'method_2way_1var_off') in process_method && (p, source, sink) in process_process_toSink_direct} (
+      + v_flow[p, source2, sink, d, t].val * p_entity_unitsize[p]
+    )
 ;
 param r_process__source__sink_Flow__d{(p, source, sink) in process_source_sink_alwaysProcess, d in d_realized_period}:=
   + sum{(d, t) in dt_realize_dispatch} r_process__source__sink_Flow__dt[p, source, sink, d, t];

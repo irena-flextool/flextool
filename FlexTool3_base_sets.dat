@@ -223,12 +223,12 @@ set param_costs := "unit investment/retirement","connection investment/retiremen
 
 #set test_t := t0001;
 #set test_dt := (23year, t000001) (23year, t000002) (23year, t026205);
-#set test_dt := (p2020, t0001) (p2020, t0004) (p2020, t0040);
+set test_dt := (p2020, t0001) (p2020, t0004) (p2020, t0040);
 #set test_dt := (p2020, t2589) (p2020, t2590) (p2020, t2591);
 #set test_dt := (p2020, t0001) (p2020, t0009) (p2020, t0015) (p2020, t0020) (p2020, t0024);
 
 #set test_dt := (per1, t0002) (per1, t0015) (branch1, t0015) (branch2, t0015) (branch1, t0024) (branch2, t0024) (branch3, t0024);
-set test_dt := (1990, "2000-01-01T00:00:00") (1990, "2000-04-01T00:00:00");
+#set test_dt := (1990, "2000-01-01T00:00:00") (1990, "2000-04-01T00:00:00");
 
 param scale_the_objective := 1E-6;
 
