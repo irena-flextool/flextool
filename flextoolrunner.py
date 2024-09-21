@@ -773,8 +773,14 @@ class FlexToolRunner:
         except KeyError:
             logging.warning(f"No solver defined for {current_solve}. Defaulting to highs.")
             solver = "highs"
+        if sys.platform.startswith("linux"):
+            glpsol_file = "./glpsol"
+            highs_file = "./highs"
+        elif sys.platform.startswith("win32"):
+            glpsol_file = "glpsol"
+            highs_file = "highs"
         if solver == "glpsol":
-            only_glpsol = ['./glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg','-w', 'glpsol_solution.txt'] + sys.argv[1:]
+            only_glpsol = [glpsol_file, '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg','-w', 'glpsol_solution.txt'] + sys.argv[1:]
             completed = subprocess.run(only_glpsol)
             if completed.returncode != 0:
                 logging.error(f'glpsol failed: {completed.returncode}')
@@ -788,8 +794,7 @@ class FlexToolRunner:
                     sys.exit(1)
 
         elif solver == "highs" or solver == "cplex":
-            completed = subprocess.run("ls")
-            highs_step1 = ['./glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat',
+            highs_step1 = [glpsol_file, '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat',
                            '--wfreemps', 'flexModel3.mps'] + sys.argv[1:]
             completed = subprocess.run(highs_step1)
             if completed.returncode != 0:
@@ -806,7 +811,7 @@ class FlexToolRunner:
 
 
             if solver == "highs":
-                highs_step2 = ['./highs', 'flexModel3.mps', '--options_file=highs.opt'] + \
+                highs_step2 = [highs_file, 'flexModel3.mps', '--options_file=highs.opt'] + \
                               [''.join(['--presolve='] + [self.highs_presolve.get(current_solve, "on")])] + \
                               [''.join(['--solver='] + [self.highs_method.get(current_solve, "choose")])] + \
                               [''.join(['--parallel='] + [self.highs_parallel.get(current_solve, "off")])]
@@ -859,7 +864,7 @@ class FlexToolRunner:
                         completed = self.cplex_to_glpsol("flexModel3_cplex.sol","flexModel3.sol")
 
 
-            highs_step3 = ['./glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r',
+            highs_step3 = [glpsol_file, '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r',
                         'flexModel3.sol'] + sys.argv[1:]
             completed = subprocess.run(highs_step3)
             if completed.returncode == 0:
