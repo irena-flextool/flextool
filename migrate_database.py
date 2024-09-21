@@ -109,9 +109,7 @@ def migrate_database(database_path):
             db.update_item("parameter_definition", entity_class_name= "unit__inputNode", name= "other_operational_cost", description = "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.")
             db.update_item("parameter_definition", entity_class_name= "connection", name= "other_operational_cost", description = "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time.")
             db.update_item("parameter_definition", entity_class_name= "solve", name= "solve_mode", description = "A single_solve or rolling_window for a set of rolling optimisation windows solved in a sequence.")
-            new_type_list = get_parameter_type_list()
-            db.add_update_items("parameter_definition", *new_type_list)
-            db.commit_session("Added cumulative investments and parameter value types")
+            db.commit_session("Added cumulative investments")
         else:
             print("Version invalid")
         next_version += 1 
