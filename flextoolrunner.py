@@ -775,7 +775,7 @@ class FlexToolRunner:
             solver = "highs"
         if solver == "glpsol":
             only_glpsol = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '--cbg','-w', 'glpsol_solution.txt'] + sys.argv[1:]
-            completed = subprocess.run(only_glpsol)
+            completed = subprocess.run(only_glpsol, shell=True)
             if completed.returncode != 0:
                 logging.error(f'glpsol failed: {completed.returncode}')
                 sys.exit(completed.returncode)
@@ -790,7 +790,7 @@ class FlexToolRunner:
         elif solver == "highs" or solver == "cplex":
             highs_step1 = ['glpsol', '--check', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat',
                            '--wfreemps', 'flexModel3.mps'] + sys.argv[1:]
-            completed = subprocess.run(highs_step1)
+            completed = subprocess.run(highs_step1, shell=True)
             if completed.returncode != 0:
                 logging.error(f'glpsol mps writing failed: {completed.returncode}')
                 sys.exit(completed.returncode)
@@ -809,7 +809,7 @@ class FlexToolRunner:
                     + self.highs_presolve.get(current_solve, "on") + " --solver=" \
                     + self.highs_method.get(current_solve, "choose") + " --parallel=" \
                     + self.highs_parallel.get(current_solve, "off")
-                completed = subprocess.run(highs_step2)
+                completed = subprocess.run(highs_step2, shell=True)
                 if completed.returncode != 0:
                     logging.error(f'Highs solver failed: {completed.returncode}')
                     sys.exit(completed.returncode)
@@ -833,7 +833,7 @@ class FlexToolRunner:
                             cplex_step += ['opt', 'write flexModel3_cplex.sol', 'quit']
                             cplex_step += sys.argv[1:]
 
-                        completed = subprocess.run(cplex_step)
+                        completed = subprocess.run(cplex_step, shell=True)
                         if completed.returncode != 0:
                             logging.error(f'Cplex solver failed: {completed.returncode}')
                             sys.exit(completed.returncode) 
@@ -850,7 +850,7 @@ class FlexToolRunner:
                             cplex_step += ['opt', 'write flexModel3_cplex.sol', 'quit']
                             cplex_step += sys.argv[1:]
 
-                        completed = subprocess.run(cplex_step)
+                        completed = subprocess.run(cplex_step, shell=True)
                         if completed.returncode != 0:
                             logging.error(f'Cplex solver failed: {completed.returncode}')
                             sys.exit(completed.returncode) 
@@ -860,7 +860,7 @@ class FlexToolRunner:
 
             highs_step3 = ['glpsol', '--model', 'flexModel3.mod', '-d', 'FlexTool3_base_sets.dat', '-r',
                         'flexModel3.sol'] + sys.argv[1:]
-            completed = subprocess.run(highs_step3)
+            completed = subprocess.run(highs_step3, shell=True)
             if completed.returncode == 0:
                 print("GLPSOL wrote the results into csv files\n")
         else:
