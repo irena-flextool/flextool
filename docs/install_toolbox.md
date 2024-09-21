@@ -1,7 +1,7 @@
 ## Installing Spine Toolbox and IRENA FlexTool on a local computer
 
 Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/N3qB0rzxPYw).
-Currently python versions 3.9 or higher are supported.
+Currently python versions 3.9 or higher are supported. These instructions are for Windows, see Linux and Mac at the bottom.
 
 - Install [Miniconda](https://docs.conda.io/en/latest/miniconda.html) (or Anaconda)  [Can be ignored if already installed]
 - Start Anaconda prompt
@@ -131,3 +131,10 @@ Update of IRENA FlexTool to the latest version is done as follows:
 - `git pull`
 Then do the update_flextool discribed above to migrate the databases:
 - `python update_flextool.py`
+
+
+## Installing for Linux or Mac
+
+FlexTool repository contains executables for highs and glpsol also for x64 Linux and it should work. Install Toolbox first, maybe by creating a new venv for the Toolbox and FlexTool - you can follow the spirit of the instructions above even though commands will be somewhat different. If your Linux runs on another architecture or you have a Mac, then we haven't tested those. 
+
+Other Linux architecture's could work, but get correct binaries for highs from https://github.com/JuliaBinaryWrappers/HiGHSstatic_jll.jl/releases and compile glpsol from https://github.com/mingodad/GLPK/ (FlexTool uses some of the improvements made to GLPK in this fork). Then replace the binaries in the FlexTool root folder. Mac version might require small changes to the code (especially flextoolrunner.py) in addition to the correct binaries. Spine Toolbox works also on Mac, but apparently has some graphical glitches (21st Sep. 2024 - hopefully will be fixed at some point).
