@@ -55,7 +55,7 @@ python -m pip install --upgrade pip
 ```shell
 python -m pip install -r requirements.txt
 ```
-In case of problems when installing Spine Toolbox, more instructions are available at: https://github.com/Spine-project/Spine-Toolbox#installation
+In case of problems when installing Spine Toolbox, more instructions are available at: [https://github.com/Spine-project/Spine-Toolbox#installation](https://github.com/Spine-project/Spine-Toolbox#installation)
 
 Generate databases from templates:
 
@@ -64,7 +64,7 @@ Generate databases from templates:
 ```shell
 cd ../flextool
 ```
-- Run update_flextool.py script. This will generate the Input_data.sqlite and Results.sqlite from their templates. These are not directly in the repository to avoid future overwrites. Update_flextool.py can also be used later when one wants to update the tool.  
+- Run update_flextool.py script. This will generate the Input_data.sqlite and Results.sqlite from their templates. These are not directly in the repository to avoid future overwrites. Update_flextool.py can also be used later when one wants to update the tool (see below). If you use just git to update, your databases will not be migrated in case there has been an update to FlexTool data structures.
 
 ```shell
 python update_flextool.py
@@ -109,7 +109,7 @@ Update IRENA FlexTool:
 - `python update_flextool.py`
 - This will pull the new version of the tool as well as migrating the input databases to the new version without destroying the data. Making a backup copy of the input data is still a good practice. The input_data_template.sqlite should not be used directly but by making a copy of it. 
     - The updated databases are: 
-        - The database chosen as the input data in the tool!!!
+        - The database chosen as the input data in the tool!! But no other databases you might have - those can be updated separately, see below.
         - init.sqlite
         - input_data_template.sqlite
         - time_settings_only.sqlite
@@ -137,4 +137,4 @@ Then do the update_flextool discribed above to migrate the databases:
 
 FlexTool repository contains executables for highs and glpsol also for x64 Linux and it should work. Install Toolbox first, maybe by creating a new venv for the Toolbox and FlexTool - you can follow the spirit of the instructions above even though commands will be somewhat different. If your Linux runs on another architecture or you have a Mac, then we haven't tested those. 
 
-Other Linux architecture's could work, but get correct binaries for highs from https://github.com/JuliaBinaryWrappers/HiGHSstatic_jll.jl/releases and compile glpsol from https://github.com/mingodad/GLPK/ (FlexTool uses some of the improvements made to GLPK in this fork). Then replace the binaries in the FlexTool root folder. Mac version might require small changes to the code (especially flextoolrunner.py) in addition to the correct binaries. Spine Toolbox works also on Mac, but apparently has some graphical glitches (21st Sep. 2024 - hopefully will be fixed at some point).
+Other Linux architecture's could work, but get correct binaries for highs from https://github.com/JuliaBinaryWrappers/HiGHSstatic_jll.jl/releases and compile glpsol from https://github.com/mingodad/GLPK/ (FlexTool uses some of the improvements made to GLPK in this fork). Then replace the binaries in the FlexTool root folder. This will cause conflicts when next time updating FlexTool using the instructions above. You need to resolve those conflicts, maybe by using `git restore .` before the update and re-copying the binaries after the update. Mac version might require small changes to the code (especially flextoolrunner.py) in addition to the correct binaries. Spine Toolbox works also on Mac, but apparently has some graphical glitches (21st Sep. 2024 - hopefully will be fixed at some point).
