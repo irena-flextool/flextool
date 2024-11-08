@@ -130,7 +130,6 @@ You might be wondering why `commodity` does not need to be added to the `Entity 
   - `existing` to indicate the existing capacity in the coal_plant (e.g. 500 MW)
 
 - *coal* `commodity` needs just one parameter for `price` (e.g. 20 €/MWh of fuel)
-- *coal_market* `node` needs to have `is_active` set to *yes* 
 - All these new parameters should be now part of the *coal* `alternative`. 
 
 ![Add unit](./add_unit.png)
