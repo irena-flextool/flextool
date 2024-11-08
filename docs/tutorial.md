@@ -44,7 +44,7 @@ First make a copy of the database and name it *tutorial.sqlite*. (In the future 
 
 Open the ***Input data*** database by double-clicking it in the Spine Toolbox workflow.
 
-The test system is built using `alternatives`. Alternative is a subset of the system than one can include to a `scenario` that is optimized by Flextool. For example when adding a wind plant, all the objects and relationships related to only the wind plant should be under their own alternative, so that the wind plant can be included or excluded form the `scenario` seamlessly.
+The test system is built using `alternatives`. Alternative is a subset of the system than one can include to a `scenario` that is optimized by Flextool. For example when adding a wind plant, all the entities related to only the wind plant should be under their own alternative, so that the wind plant can be included or excluded form the `scenario` seamlessly.
 
 - Each step will add a new `alternative`, and the data it contains, on top of the previous ones. 
 - The first `alternative` will be called *west* to hold the data for the first `node` in the model.
@@ -52,11 +52,11 @@ The test system is built using `alternatives`. Alternative is a subset of the sy
 
 ![Add alternative](./add_alternative.png)
 
-Next step is to add an object for the first `node` that will be called *west*. 
+Next step is to add an entity for the first `node` that will be called *west*. 
 
-- Right-click on the `node` object class in the object tree to select 'Add objects'. 
+- Right-click on the `node` class in the entity tree to select 'Add entities'. 
 - Use the dialog to add the *west* `node` and click ok. See the figures below.
-- Later other objects will need to be added in the same manner - as well as relationships between objects.
+- Later other entities will need to be added in the same manner.
 
 ![Add object1](./add_object_dialog.png) 
 ![Add object2](./add_object_dialog2.png)
@@ -76,7 +76,7 @@ Then, add parameter data to the newly minted *west* `node`:
 
 ![First_node](./west_node.png)
 
-The new objects and parameters have now been staged. Even though it looks like they are in the database, they really are not - they need to be **committed** first. This can be done from the menu of the Database Editor (there is a *commit* command) or by pressing *ctrl-enter*. One should write an informative commit message about the changes that have been made. All commits, and the data they have affected, can be seen later from the *history* menu item.
+The new entities and parameters have now been staged. Even though it looks like they are in the database, they really are not - they need to be **committed** first. This can be done from the menu of the Database Editor (there is a *commit* command) or by pressing *ctrl-enter*. One should write an informative commit message about the changes that have been made. All commits, and the data they have affected, can be seen later from the *history* menu item.
 
 ### Interlude - creating a scenario and running the model
 
@@ -118,7 +118,7 @@ The `unit` *coal_plant* and the `node` *coal_market* need to be added to the *co
 
 You might be wondering why `commodity` does not need to be added to the `Entity Alternative`. The direct reason is that it is active by default. This can be assumed, since it does not matter if a commodity is in a model, but it is not used. It will be used only if the node using the commodity is included in the model.
 
-- Add relationships entities:
+- Add entities:
 
   - `unit__inputNode` *coal_plant, coal_market* to indicate that the *coal_plant* is using inputs from the *coal_market*
   - `unit__outputNode` *coal_plant, west* to indicate that the *coal_plant* will output electricity to the *west* node
@@ -142,9 +142,9 @@ If you now want to only export the results of the *coal* run to excel, you can d
 ![Choosing_alternative](./choose_alternative_to_excel.png)
 
 ### Interlude - visualizing the system in a graph
-In Spine Toolbox, it is possible to visualize your system in a graph, which will show all objects, and the relationships between them.
+In Spine Toolbox, it is possible to visualize your system in a graph, which will show all entities, and how they are related to each other.
 To open this visualization mode, open the ***Input data*** database. In the top right corner, click on the menu. Select ***Graph*** in the *View* section.
-You may visualize all objects by selecting *root* in the *Object tree*, or choose specifically the objects you want to display by selecting them in the *Object tree* (maintain ctrl to select multiple objects).
+You may visualize all entities by selecting *root* in the *Entity tree*, or choose specifically the entities you want to display by selecting them in the *Entity tree* (maintain ctrl to select multiple entities).
 
 ![Graph_view](./graph_view.png)
 ![Graph_view_example](./graph_view_example.png)
@@ -154,17 +154,15 @@ You may visualize all objects by selecting *root* in the *Object tree*, or choos
 Next, a wind power plant is added.
 
 - Add a new `alternative` *wind*
-- Add objects:
+- Add entities:
 
   - `unit` *wind_plant*
   - `profile` *wind_profile* since *wind_plant* does not require a commodity, but instead uses a profile to limit the generation to the available wind.
-
-- Add the `unit` *wind_plant* to the *wind* `Entity Alternative`. Again, the `profile` does not need to be added, because it active by default and is only part of the model if connected by a `unit__node__profile` or `node_profile`.
-
-- Add relationships:
-
+    
   - `unit__node__profile` *wind_plant, west, wind_profile*
   - `unit__outputNode` *wind_plant, west*
+
+- Add the `unit` *wind_plant* to the *wind* `Entity Alternative`. Again, the `profile` does not need to be added, because it active by default and is only part of the model if connected by a `unit__node__profile` or `node_profile`.
 
 - *wind_plant* needs the following parameters (all set for the *wind* alternative):
 
@@ -173,7 +171,7 @@ Next, a wind power plant is added.
   - `existing` capacity can be set to 1000 MW
 
 - *wind_profile* needs the the parameter `profile` with a map of values where each time step gets the maximum available capacity factor for that time step (see figure). Again, you can copy this from the init database.
-- *wind_plant, west, wind_profile* relationship needs a parameter `profile_method` with the choice *upper_limit* selected. This means that the *wind_plant* must generate at or below its capacity factor.
+- *wind_plant, west, wind_profile* entity needs a parameter `profile_method` with the choice *upper_limit* selected. This means that the *wind_plant* must generate at or below its capacity factor.
 
 You can now create a new scenario *wind*,  that has the `alternatives` *init*, *west*, *coal* and *wind*.
 Remember to **commit**, execute and have a look at the results (there should be no more penalty values used, since the coal and wind plant can together meet the demand in all hours).
@@ -200,7 +198,7 @@ The three connections have the following parameters:
 - they have a `existing` parameter to indicate the existing interconnection capacity between the nodes
 - they have a `efficiency` parameter  (e.g. 0.9 for 90% efficiency).
 
-It is also necessary to create the relationships `connection__node__node` for *east_north | east | north*, *west_north | west | north* and *west_east | west | east*.
+It is also necessary to create the entities `connection__node__node` for *east_north | east | north*, *west_north | west | north* and *west_east | west | east*.
 
 The *north* `node` has the lowest upward penalty, so the model will prefer to use that whenever the *coal* and *wind* units cannot meet all the demand. Sometimes the `existing` capacity of the new `connections` will not be sufficient to carry all the needed power, since both generators are producing to the *west* `node`. **Commit**, execute and explore.
 
