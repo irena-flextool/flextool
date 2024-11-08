@@ -18,11 +18,14 @@ IRENA FlexTool is an energy systems optimisation model developed for power and e
 
 # Monthly user support telcos
 
-The monthly user support telco is held on the last Monday of each month at 12-13 UTC (skipping December and July). (Notice that time is according to UTC and in places where day-light saving time is applied, the time of the meeting may change between winter/summer) Each 1 h session starts with a ~15 min presentation on simple IRENA FlexTool demos or tutorials, followed by 45 min Q&A session
+The monthly user support telco is held on the last Monday of each month at 12-13 UTC (skipping December and July). (Notice that time is according to UTC and in places where day-light saving time is applied, the time of the meeting may change between winter/summer) Each 1 h session starts with a ~15 min presentation on simple IRENA FlexTool demos or tutorials, followed by 45 min Q&A session.
 
-[Teams link](https://teams.microsoft.com/l/meetup-join/19%3ameeting_MmIzZWMxYzktODMzNi00ODdjLWJlM2MtYzQ0Y2U4NDlhNTAz%40thread.v2/0?context=%7b%22Tid%22%3a%2268d6b592-5008-43b5-9b04-23bec4e86cf7%22%2c%22Oid%22%3a%226510eb43-ff7f-4f42-93ca-0302a115cd48%22%7d)
+[Teams link](https://teams.microsoft.com/l/meetup-join/19%3ameeting_MmRkYzAyNzktOTVhZS00NzAyLWI5OTItZTg4ZjhlM2I3NDc5%40thread.v2/0?context=%7b%22Tid%22%3a%2268d6b592-5008-43b5-9b04-23bec4e86cf7%22%2c%22Oid%22%3a%225138c2b5-7b5a-472e-9793-addd3b524ae7%22%7d)
 
-Please contact nelli.putkonen@vtt.fi for an Outlook calendar invitation
+Please contact anni.niemi@vtt.fi for an Outlook calendar invitation.
+
+Recordings and presentations of the past support calls can be found from [here](https://drive.google.com/drive/folders/1cqEqCRpAEjZ24by3BjiWSxPv6cXed7Ib).
+
 
 
 # Background for the FlexTool modelling approach
