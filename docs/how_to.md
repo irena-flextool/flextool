@@ -47,19 +47,19 @@ The names of these alternatives hint at the intended use of each timeline. Even 
 
 ![Time_settings](./time_settings.png)
 
-To define a temporal structure for a model instance, you need to create the following objects and relationships:
+To define a temporal structure for a model instance, you need to create the following entities:
 
-- `timeline` object called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains, in the first column, the name of each timestep (e.g. *t0001* or *2022-01-01-01*) and, in the second column, the length of the timestep in hours (e.g. *1.0*). The timestep names here must match the timestep names in other time series like `inflow` or `profile`. Here all of the three options use the same full year timeline i.e. timesteps from t0001 to t8760 with a step size of one hour.
-- `timeblockset` objects called *full-year*, *2day* and *5week*. Each of them need a map-type parameter `block_duration` to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps: (*t0001*, *8760*) for the *full-year* and (*t4001* and *48.0*) for the 48h. The timeline is larger than the 48 hours, but this way the solver uses 48 hours specified. The *5week* needs five starting points
+- `timeline` entity called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains, in the first column, the name of each timestep (e.g. *t0001* or *2022-01-01-01*) and, in the second column, the length of the timestep in hours (e.g. *1.0*). The timestep names here must match the timestep names in other time series like `inflow` or `profile`. Here all of the three options use the same full year timeline i.e. timesteps from t0001 to t8760 with a step size of one hour.
+- `timeblockset` entities called *full-year*, *2day* and *5week*. Each of them need a map-type parameter `block_duration` to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps: (*t0001*, *8760*) for the *full-year* and (*t4001* and *48.0*) for the 48h. The timeline is larger than the 48 hours, but this way the solver uses 48 hours specified. The *5week* needs five starting points
 *t2521*, *t4538*, *t5041*, *t7057* and *t8233* with all having the length of *168.0*
-- `timeblockset` needs to be connected to the timeline. This is done by adding the `timeblockset__timeline` relationships (*full-year*| *y2020*), (*2day*| *y2020*), (*5weeks*| *y2020*). From the `relationship tree` right-click on the `timeblockset__timeline` relationship class to 'Add relationships...'.
-- `solve` objects called *full-year-dispatch*, *2day-dispatch* and *5week-invest*. In addition, they need the following parameters:
+- `timeblockset` needs to be connected to the timeline. This is done by adding the `timeblockset__timeline` entities (*full-year*| *y2020*), (*2day*| *y2020*), (*5weeks*| *y2020*). 
+- `solve` entities called *full-year-dispatch*, *2day-dispatch* and *5week-invest*. In addition, they need the following parameters:
 
   - a map-type parameter `period_timeblockSet` to define the timeblockset to be used by each period. Here each of the three use their `timeblockSet` to describe the same period *p2020*. The first column of the map has the period: *p2020* and the second column the `timeblockSet`: *full-year*, *2day* or *5week*
-  - an array-type parameter `realized_periods` to define the periods that are realised from the `solve` named by the object (the first column of an array is an index number starting with *0*, the second column contains the period to be realized in the results: *p2020* for all the solves here)
+  - an array-type parameter `realized_periods` to define the periods that are realised from the `solve` named by the entity (the first column of an array is an index number starting with *0*, the second column contains the period to be realized in the results: *p2020* for all the solves here)
   - a parameter `solve_mode`, to be set to *single_solve* in these examples
 
-- Finally, a `model` object will define the solves to be included in a one model instance. They are defined in the array parameter `solves`. For these examples, the model name is *flextool* and for each `solve` the name of the `solve` should be given in the `solves` array (distinguished by the alternative): *full-year-dispatch*, *2day-dispatch* or *5week-invest*.
+- Finally, a `model` entity will define the solves to be included in a one model instance. They are defined in the array parameter `solves`. For these examples, the model name is *flextool* and for each `solve` the name of the `solve` should be given in the `solves` array (distinguished by the alternative): *full-year-dispatch*, *2day-dispatch* or *5week-invest*.
 
 Be careful when choosing datatypes! Maps need to be maps not arrays. (In the future, an update is coming to toolbox to ensure compliance.) 
 
@@ -77,20 +77,20 @@ The unit needs to be added to an alternative in the `Entity Alternative` sheet (
 
 The unit only needs parameters:
 
-- `is_active`: *yes* (if Toolbox 0.7, before 5/2024)
 - `existing`: [The maximum capacity of the plant] 
 Additionally these parameters should be at their default values:
 - `conversion_method`: *constant_efficiency*
 - `efficiency`: 1
+- `is_active`: *yes* (if Toolbox 0.7, before 5/2024)
 
-The `profile` object only has one parameter: `profile`. It is a timeseries map which tells what fraction of the capacity the plant can produce at each timestep.
+The `profile` entity only has one parameter: `profile`. It is a timeseries map which tells what fraction of the capacity the plant can produce at each timestep.
 
-The relationships 
+The other entities 
 
 - `unit__outputnode`: (plant|output node) and 
 - `unit__node__profile`: (plant|output node|profile) need to be both created.
 
-The `unit__node__profile` relationship needs a parameter `profile_method` that has three options: `upper_limit`, `lower_limit` and `exact`. It states how the profile is considered. In most cases the `upper_limit` option should be used as it allows the plant to curtail the production if there is more supply than demand. Otherwise the output node might have to use `downward_penalty` to spill energy.
+The `unit__node__profile` entity needs a parameter `profile_method` that has three options: `upper_limit`, `lower_limit` and `exact`. It states how the profile is considered. In most cases the `upper_limit` option should be used as it allows the plant to curtail the production if there is more supply than demand. Otherwise the output node might have to use `downward_penalty` to spill energy.
 
 The same profile can be used for multiple `unit__outputnode`s (and that is why the profile is not a unit parameter but its own entity).
 
@@ -103,15 +103,15 @@ Typically nodes are used to maintain an energy balance and therefore they are us
 
 - two `nodes` 
 - `connection`
-- relationship `connection__node__node` to tie these three together.
+- `connection__node__node` to tie these three together.
 
 The `connection` and `nodes` need to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
 
 The connection needs parameters:
 
-- `is_active`: *yes* (if Toolbox 0.7, before 5/2024)
 - `existing`: The maximum capacity of the connection [MW]. Applies to both directions.
 - `efficiency`: represents the losses in transferring the energy. Same in both directions.
+- `is_active`: *yes* (if Toolbox 0.7, before 5/2024)
 
 Optional parameters:
 
@@ -173,12 +173,12 @@ The `node` needs to be added to an alternative in the `Entity Alternative` sheet
 
 To make a storage node one the required parameters are:
 
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `has_balance`: yes
 - `has_storage`: yes
 - `existing`: The maximum storage size of battery as the potential energy [MWh]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: a large number to prefer not creating energy from nowhere
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 Additional parameters:
 
@@ -202,15 +202,15 @@ The `connection` needs to be added to an alternative in the `Entity Alternative`
 
 The required paremeters of the connection are:
 
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `existing`: The capacity of energy transsmission [MW]
 - `transfer_method`: (see above)
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 Additional parameters:
 
 - `efficiency`: by default 1
 
-Finally `connection_node_node` relationship is needed between inverter, the battery and the demand node (west). 
+Finally `connection_node_node` is needed between inverter, the battery and the demand node (west). 
 
 ![Add a battery](./battery.png)
 
@@ -222,7 +222,7 @@ Here we will use the previous battery scenario to represent the investment optio
 
 The solve will invest only if it has an array of `invest_periods` set, telling the periods where it is allowed to make investment decisions. In a multi solve investment model (rolling investments) it can be useful to separately set `invest_realized_periods` so that the investment results get reported only from the chosen periods from each solve (in order to avoid overlapping reporting of investment decisions that are replaced by  investment decisions in later solves). Furthermore, `realized_periods` will define the solves and periods from which the dispatch results are output into results.
 
-First, the investment parameters need to be included both for the *battery_inverter* and *battery* objects:
+First, the investment parameters need to be included both for the *battery_inverter* and *battery* entities:
 
 - `invest_method` - the modeller has options to limit the investment and retirement. Options are *not_allowed*, invest, retire or invest and retire. These have the sub options of no limit *invest_no_limit*, limit the amount per period: *invest_period*, limit the total amount invested *invest_total* or limit both the total investment and the investment per period *invest_period_total*. 
 
@@ -251,9 +251,9 @@ In many cases some of the investment decisions are tied to each other. Here the 
 
 To model this, a new constraint needs to be created that ties together the storage capacity of the *battery* and the charging/discharging capacity of the *battery_inverter*. 
 
-A new `constraint` object *battery_tie_kW_kWh* is created and added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+A new `constraint` entity *battery_tie_kW_kWh* is created and added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
 
-It is given parameters `constant`, `sense` and `is_active` (if Toolbox 0.7, before 5/2024). Constant could be left out, since it is zero, but `is_active` must be defined in order to include the constraint in the *battery_invest* `alternative`. The `sense` of the constraint must be *equal* to enforce the kw/kWh relation.
+It is given parameters `constant`, `sense` and `is_active` (if Toolbox 0.7, before 5/2024). Constant could be left out, since it is zero. The `sense` of the constraint must be *equal* to enforce the kw/kWh relation.
 
 Both *battery_inverter* and *battery* need a coefficient to tell the model how they relate to each other. The equation has the capacity variables on the left side of the equation and the constant on the right side.
 
@@ -266,9 +266,9 @@ When the `constraint_capacity_coefficient` for *battery* is set at 1 and for the
 
 ```1 x *battery* = 8 x *battery_inverter*, which can be true only if *battery_inverter* is 1/8 of *battery*```
 
-`constraint_capacity_coefficient` is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the object to participate in multiple constraints.
+`constraint_capacity_coefficient` is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the ientity to participate in multiple constraints.
 
-Finally, FlexTool can actually mix three different types of constraint coefficients: `constraint_capacity_coefficient`, `constraint_state_coefficient` and `constraint_flow_coefficient` allowing the user to create custom constraints between any types of objects in the model for the main variables in the model (*flow*, *state* as well as *invest* and *divest*). So, the equation above is in full form:
+Finally, FlexTool can actually mix three different types of constraint coefficients: `constraint_capacity_coefficient`, `constraint_state_coefficient` and `constraint_flow_coefficient` allowing the user to create custom constraints between any types of entities in the model for the main variables in the model (*flow*, *state* as well as *invest* and *divest*). So, the equation above is in full form:
 
 ```
   + sum_i [constraint_capacity_coefficient(i) * invested_capacity]
@@ -296,11 +296,11 @@ The *heat* `node` needs to be added to an alternative in the `Entity Alternative
 
 The required parameters are:
 
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `has_balance`: yes
 - `inflow`: Map for the heat demand (negative) [MW]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: a large number to prefer not creating energy from nowhere
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 The heating systems tend to have some level of storage capability, so one could also add storage parameters to the node as well, but here they are not used.
 
@@ -308,13 +308,13 @@ Then the *coal_chp* `unit` is made with a high `efficiency` parameter, since CHP
 
 This CHP plant is an another example where the user defined `constraint` (see the last equation in the previous example) is used to achieve the desired behaviour. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plant the relation is more complicated - there is an allowed operating area between heat and power. Both can be represented in FlexTool, but here a backpressure example is given. An extraction plant would require two or more *greater_than* and/or *lesser_than* `constraints` to define an operating area.
 
-Electricity and heat outputs are fixed by adding a new `constraint` *coal_chp_fix* where the heat and power co-efficients are fixed. You need to create the two relationships `unit__outputNode`, for *coal_chp--heat* and *coal_chp--west*. As can be seen in the bottom part of the figure below, the `constraint_flow_coefficient` parameter for the *coal_chp--heat* and *coal_chp--west* is set as a map value where the `constraint` name matches with the *coal_chp_fix* `constraint` object name. The values are set so that the constraint equation forces the heat output to be twice as large as the electricity output.
+Electricity and heat outputs are fixed by adding a new `constraint` *coal_chp_fix* where the heat and power co-efficients are fixed. You need to create the two entities `unit__outputNode`, for *coal_chp--heat* and *coal_chp--west*. As can be seen in the bottom part of the figure below, the `constraint_flow_coefficient` parameter for the *coal_chp--heat* and *coal_chp--west* is set as a map value where the `constraint` name matches with the *coal_chp_fix* `constraint` entity name. The values are set so that the constraint equation forces the heat output to be twice as large as the electricity output.
 
 Create constraint *coal_chp_fix*, add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) and add parameters:
 
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `sense`: equal
 - `constant`: 0.0
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 Create `unit_outputNode` (coal_chp|heat):
 
@@ -361,7 +361,6 @@ Add the *reservoir* node to an alternative in the `Entity Alternative` sheet (if
 
 The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
 
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `has_balance`: yes
 - `has_storage`: yes
 - `inflow`: Mapping of the incoming water as volume [m^3/h]
@@ -369,14 +368,15 @@ The required parameters of the reservoir node are (node_c and node_t sheets if u
 - `penalty_up`: a larger number than with the demand node to not allow creating extra water if not enough electricity is being created
 - `penalty_down`: 0 or a large number (spilling or not)
 - a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeblock* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*, which will pick the storage level at the end of each solve from the time series provided as a reference (*storage_state_reference_value*).
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 The `unit` is connected to the *reservoir* `node` and the output `node` *demand_node* (unit_c and unit_node_c in excel):
 
 - Add the unit to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
 - The `efficiency` of the plant is the coefficient of transfering an unit of volume to an unit of electricity (using piecewise linear efficiency is naturally possible), here we use 0.57. 
 - Set `existing` capacity [MW]
+- Create entities `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*demand_node*.
 - `is_active`: yes  (if Toolbox 0.7, before 5/2024)
-- Create relations `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*demand_node*.
 
 ![Hydro reservoir](./hydro_reservoir.PNG)
 
@@ -393,11 +393,11 @@ Let's start with the downriver demand.
 The downriver node represents the requirement to pass a minimum amount of water through the plant to not dry out the river. The downriver node needs:
 
 - To be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `has_balance`: yes
 - `inflow`: Minimum requirement of water flow as the potential power (Map or constant)[m^3/h]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: 0, this makes the requirement to be at least the amount of water as the demand, not the equal to it
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 The hydro plant unit now also needs the relation `unit_outputNode`: *hydro_plant*|*downriver* . 
 
@@ -409,9 +409,9 @@ Now the unit creates enough stuff to output, but the model can still choose how 
 
 The constraint needs parameters:
 
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `sense`: equal
 - `constant`: 0
+-  `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 As we are fixing the output flows, the we need to add the flows with their coefficients to this constraint. This is done with the unit_outputNode parameter `constraint_flow_coefficient`:
 
@@ -426,7 +426,7 @@ These create the constraint:
 The capacity of an unit is the sum of outputs. With the electrical capacity of 500MW and water to elecricity coefficient of 0.57 the water flow capacity is 878 (m^3). Making the total unit capacity 1378 (m^3 / MW). Now at full power, 878 units of water flow to downriver and 500MW of electricity flow to the demand node.
 
 To add a spill option to the reservoir we need to create another unit. This is because just making extra water disappear with the `penalty_down`: 0, will not transfer this water to the downriver node to fulfil its needs. 
-This spill unit has the relations:
+This spill unit has to be in entities:
 - `unit_inputNode` (*spill_unit*|*reservoir*)
 - `unit_outputNode` (*spill_unit*|*downriver*)
 
@@ -434,9 +434,9 @@ It needs to be added to an alternative in the `Entity Alternative` sheet (if Too
 
 And parameters:
 
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `efficiency`: 1
 - `existing`: A large enough number to not be a limit
+-  `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 ![Hydro reservoir with downriver](./hydro_reservoir_with_downriver.PNG)
 
@@ -466,7 +466,6 @@ The *reservoir* `node` needs to be added to an alternative in the `Entity Altern
 
 The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
 
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `has_balance`: yes
 - `has_storage`: yes
 - `inflow`: Mapping of the incoming water as the potential power [MW]
@@ -474,25 +473,26 @@ The required parameters of the reservoir node are (node_c and node_t sheets if u
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: 0 or a large number (spilling or not)
 - a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeblock* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*, which will pick the storage level at the end of each solve from the time series provided as a reference (*storage_state_reference_value*).
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* (unit_c and unit_node_c in excel):
 
 - It needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - The `efficiency` of the unit can be set to 1 as the inflow time series are directly expressed in MWh (using piecewise linear efficiency is naturally possible).
 - Set `existing` capacity [MW]
-- Create relations `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*nodeA*.
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
+- Create entities `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*nodeA*.
 
 ![Hydro reservoir for pump](./hydro_reservoir_for_pump.PNG)
 
 Next create the pump_storage. This is the downstream storage from the hydro plant. Again it should be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) and have same the parameters as the reservoir:
 
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `has_balance`: yes
 - `has_storage`: yes
 - `existing`: The maximum size of the storage [MWh]. Note that this really represents the mass of the water and it should be converted as the potential of the energy of the reservoir-plant system. So that 1 liter of water has the same energy in both storages.
 - `penalty_up`: a large number to avoid creating energy from nowhere
-- `penalty_down`: 0 
+- `penalty_down`: 0
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 In this example database, we have both a closed system and a river system. The difference is that in the closed system the inflow is zero in both reservoir and pump_storage. In river system we have the incoming water for the reservoir as in the reservoir example. In the downstream pump storage, we implement an outflow as the negative inflow representing the minimum amount of water that has to flow out of the system at each timestep to not dry out the river. The `penalty_down` is set as 0 to allow it let more water go when it needs to, otherwise the storages will keep filling up if the incoming water is larger than the minimum outgoing water.
 
@@ -512,7 +512,7 @@ It only needs three parameters:
 - `existing`: The wanted capacity
 - `is_active`: *yes* (if Toolbox 0.7, before 5/2024)
 
-Set the relationships as follows:
+Set the entities as follows:
 
 - `unit_outputNode` for (hydro_plant | nodeA), (hydro_plant | pump_storage ), (hydro_pump | reservoir)
 - `unit_inputNode` for (hydro_plant | reservoir), (hydro_pump | pump_storage), (hydro_pump | nodeA)
@@ -529,9 +529,9 @@ For the hydro plant:
 
 Create a new constraint (here *plant_storage_nodeA_split*), add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) and add the parameters:
 
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `sense`: equal
 - `constant`: 0.0
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 And for the `unit_outputNodes`:
 
@@ -554,9 +554,9 @@ unit_output_flow = coeff1 * unit_input_flow1 + coeff2 * unit_input_flow2.
 ```
 We still have to make the unit to consume electricity even though it does not affect the unit output directly. This is done by setting a new constraint to tie the flows to the pump unit from pump storage and the nodeA. Add a constraint (here *pump_storage_nodeA_fix*), add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) , and add the parameters:
 
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - `sense`: equal
 - `constant`: 0.0
+- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 And setting parameters for `unit_inputNode`:
 
@@ -576,10 +576,10 @@ The `constraint_flow_coefficient` for pump_input should therefore be (1/efficien
 ## How to add a reserve
 **(init.sqlite: scenario network_coal_wind_reserve)**
 
-In FlexTool, reserves are defined for a group of nodes. If there is a need to have a reserve requirement for a single node, it needs its own group. Therefore, when creating a reserve, the first step is to add a new `group` (e.g. *electricity*) with all member nodes (e.g. *west*, *east* and *north*) using the `group__node` relationship class. Then, a new reserve categories can be added (e.g. *primary*) to the `reserve` object class. 
-Finally, make sure there are *up* and *down* objects in the `UpDown' object class. These are hard-coded names in FlexTool and need to be used when creating reserves.
+In FlexTool, reserves are defined for a group of nodes. If there is a need to have a reserve requirement for a single node, it needs its own group. Therefore, when creating a reserve, the first step is to add a new `group` (e.g. *electricity*) with all member nodes (e.g. *west*, *east* and *north*) using the `group__node` entity. Then, a new reserve categories can be added (e.g. *primary*) to the `reserve` entity. 
+Finally, make sure there are *up* and *down* entities in the `UpDown' entity. These are hard-coded names in FlexTool and need to be used when creating reserves.
 
-Next, the reserve requirement will be defined. A relationship between in the `reserve__upDown__group` class (e.g. *primary--up--electricity*) allows to define the reserve parameters `reserve_method`, `reservation` (i.e. the amount of reserve) and `penalty_reserve` (i.e. the penalty cost in case of lack of reserve). For example, a constant of 10 MW could be used. Even though the name of the `reserve_method` is *timeseries_only*, it can also accept a constant value - it's an exogenous reserve requirement whereas the other two reserve methods are endogenous. Dynamic reserve method calculates the reserve requirement from generation and loads according to user defined factors (`increase_reserve_ratio`). Largest failure method will force enough reserve to cope with a failure of the chosen unit and connection flows.
+Next, the reserve requirement will be defined. An entity between the `reserve__upDown__group` class (e.g. *primary--up--electricity*) allows to define the reserve parameters `reserve_method`, `reservation` (i.e. the amount of reserve) and `penalty_reserve` (i.e. the penalty cost in case of lack of reserve). For example, a constant of 10 MW could be used. Even though the name of the `reserve_method` is *timeseries_only*, it can also accept a constant value - it's an exogenous reserve requirement whereas the other two reserve methods are endogenous. Dynamic reserve method calculates the reserve requirement from generation and loads according to user defined factors (`increase_reserve_ratio`). Largest failure method will force enough reserve to cope with a failure of the chosen unit and connection flows.
 
 Parameters from the `reserve__upDown__unit__node` class should be used to define how different units can contribute to different reserves. Note that the entities in this class need to be added to the `Entity Alternative` sheet. Parameter `max_share` says how large share of the total capacity of the timestep (existing * efficiency * (profile)) of the unit can contribute to this reserve category (e.g. *coal_plant* may be limited by ramp constraint to provide only 1% of its capacity to an upward primary reserve.) Meanwhile, parameter `reliability` affects what portion of the reserved capacity actually contributes to the reserve (e.g. *wind_plant* may contribute only 80% of its generation to reserve due to uncertainty).
 
@@ -614,7 +614,7 @@ The input is required at different ouput levels is shown in the figure below, wh
 
 ![Min load figure](./Minimum_load.png)
 
-Next we will add ramp limits. With the ramping limits, the user can force the change of a flow from a unit to be below a certain value each timestep. The ramping is an attribute of the flow. Therefore it does not require the minimum load behaviour and its parameters are added to the `unit_outputNode` relationship:
+Next we will add ramp limits. With the ramping limits, the user can force the change of a flow from a unit to be below a certain value each timestep. The ramping is an attribute of the flow. Therefore it does not require the minimum load behaviour and its parameters are added to the `unit_outputNode` entity:
 
 - `ramp_method`: ramp_cost, ramp_limit or both. Only ramp limit is currently implemented (August 2023).
 - `ramp_speed_up`: Limit on how fast the plant can ramp up. (fraction of unit / min) ie. Value 0.01 allows the change of 60% of capacity per hour. 
@@ -629,7 +629,7 @@ Next we will add ramp limits. With the ramping limits, the user can force the ch
 ***init - west - coal - co2_price - co2_limit***
 
 Carbon dioxide emissions are added to FlexTool by associating relevant `commodities` (e.g. *coal*) with a `co2_content` parameter (CO2 content (tons per MWh) of energy contained in the fuel). 
-The other CO2 parameters are handeled through a group of nodes (Here *coal_price* or *coal_limit* `groups`). Therefore one needs to create a group and add all the nodes that supply these commodities (eg. coal_market) to a group with a `group_node` relationship. (Here the relationship *co2_price--coal_market*)
+The other CO2 parameters are handeled through a group of nodes (Here *coal_price* or *coal_limit* `groups`). Therefore one needs to create a group and add all the nodes that supply these commodities (eg. coal_market) to a group with a `group_node` entity. (Here the entity *co2_price--coal_market*)
 To set a price one needs to create set the co2_method parameter to *price* (constant) and create the `co2_price` parameter with the desired value. This price is added to the price of the commodity. 
 
 Alternatively one can set a limit on the co2 used by setting the `co2_method` parameter to *period* or *total* and setting the `co2_max_period` (periodic map [tCO2]) parameter or `co2_max_total` (constant [tCO2]) parameter. 
@@ -645,9 +645,9 @@ There methods can be combined by setting the `co2_method` to *price_period*, *pr
 
 Non-synchronous limit is a property of a `group` of nodes. It states that the non-synchronous flow to the group of nodes cannot exceed a set share of the input flows at any timestep. To demonstrate this, we have set a system with a coal plant, a wind plant and a single demand node. However, it can be done to a group of nodes with unlimited number of plants or connections connected. So, one can limit the non-synchronous share of individual nodes or of the whole system. The flows between the nodes of the group are excluded.
 
-The non-synchronous limit is set to a `group` of nodes with one or multiple members. Note: These are set to the group with `group_node` relationship, not with `group_node_unit` relationship!
+The non-synchronous limit is set to a `group` of nodes with one or multiple members. Note: These are set to the group with `group_node` entity, not with `group_node_unit` entity!
 
-Create a group (here *nodeA_group*) and set a `group_node` relationship (nodeA_group |nodeA). Then add parameters:
+Create a group (here *nodeA_group*) and set a `group_node` entity (nodeA_group |nodeA). Then add parameters:
 
 - `has_non_synchronous`: yes
 - `non_synchronous_limit`: 0.5
@@ -670,7 +670,7 @@ Here the (wind_plant|nodeA) relation has the `is_non_synchronous` parameter and 
 
 A connection with `transfer_method`: *no_losses_no_variables* between a node included in a group with a non-synchronous limit and a node outside of the group is not allowed. The flow in this kind of a connection is presented with a single variable, which would not function correctly with the non-synchronous limit constraints (there is a non-linearity at zero that requires two variables). 
 
-If you want to see the individual flows in the results you can create separate `groups` for the flows and add `group_unit_node` relations to it. To produce the flow results, the groups need the parameter.
+If you want to see the individual flows in the results you can create separate `groups` for the flows and add `group_unit_node` entities to it. To produce the flow results, the groups need the parameter.
 
 - `output_results`: yes 
 
@@ -740,7 +740,7 @@ Note that the picture has two `model`: *solves* parameters defined one for each 
 
 ## How to create a multi-year model
 
-A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. This means that all periods can use the same timeblockset *5weeks* from the same timeline *y2020*, but one can also make separate timelines for each year, if data is available for this. The `inflow` time series are scaled to match the value in `annual_flow` that is mapped for each period. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be a `discount_rate` parameter set for the `model` object *flexTool* if something else than the model default of 5% (0.05 value) is to be used.
+A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. This means that all periods can use the same timeblockset *5weeks* from the same timeline *y2020*, but one can also make separate timelines for each year, if data is available for this. The `inflow` time series are scaled to match the value in `annual_flow` that is mapped for each period. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be a `discount_rate` parameter set for the `model` entity *flexTool* if something else than the model default of 5% (0.05 value) is to be used.
 
 ![Multi-year inflow](./multi_year_inflow.PNG)
 
@@ -749,7 +749,7 @@ A multi-year model could be solved at one go (multi_year_one_solve) or by rollin
 ### Multi year with one solve
 **(init.sqlite scenario: multi_year_one_solve)**
 
-In this example, one solve is used for all the four periods. All the four periods need to be added to the solve arrays `invest_periods` and `realized_periods`. Here the same timeblock is used for all the four periods, so only difference between them is the increasing inflow set above. The parameters that need to be added to the `solve` object:
+In this example, one solve is used for all the four periods. All the four periods need to be added to the solve arrays `invest_periods` and `realized_periods`. Here the same timeblock is used for all the four periods, so only difference between them is the increasing inflow set above. The parameters that need to be added to the `solve` entity:
 
 - `years_represented` parameter is used by the model to calculate the discounting factors for the periods in the model (often future years). It should state the number of years each period will be representing. For example, a period for 2025 could represent the years 2025-2029 if its `years_represented` is set to 5. Any investments would be taking place at the start of 2025 and discounted to the beginning of 2025, but the operational costs would accrue from each year in 2025-2029 each with a different discounting factor (decreasing based on the interest rate).
 - `invest_periods` the periods in which the model is allowed to make investments.
@@ -765,7 +765,7 @@ If the solving time gets too big, there is an option to split the timeline into 
 
 When dealing with investments the splitting only works if the different periods are similar, in most cases complete years. If the first solve is really windy, it would invest too much on wind which wouldn't produce enough energy in later solves and then it would need to invest again to something else. It can also be challenging to consider lifetimes. If the option of retiring is allowed, it might retire something that is needed for later solves. In this example, the periods are complete years and the only difference between periods is increased demand.
 
-The model rolls through several solves and therefore, the `model` object *flexTool* has four values in the `solves` array. Each value represents one solve and it's position in the sequence of solves. The next figure illustrates the realization (blue) and foresight horizons (grey). The first solve will solve both the year 2020 and year 2025, but it will only output the year 2020. The next will solve both 2025 and 2030 but only output 2025.
+The model rolls through several solves and therefore, the `model` entity *flexTool* has four values in the `solves` array. Each value represents one solve and it's position in the sequence of solves. The next figure illustrates the realization (blue) and foresight horizons (grey). The first solve will solve both the year 2020 and year 2025, but it will only output the year 2020. The next will solve both 2025 and 2030 but only output 2025.
 
 ![One vs multi solve](./one_multi_solve.png)
 
@@ -779,7 +779,7 @@ Next figure shows the values needed to define one solve (out of the four solves 
 
 Note the the `solve_mode`: *rolling_window* is not used! This is not for investment runs (without nesting) as it rolls freely, and investments should only be made at the start of the period. This example is called 'manual rolling' later when those are discussed.
 
-In the init.sqlite, the solve objects have solver parameters: `highs_method`, `highs_parallel` and `highs_presolve`. They only affect the speed and not the results, but usually the default values are good enough and the user should only change them if they understand how the solvers work.
+In the init.sqlite, the solve entities have solver parameters: `highs_method`, `highs_parallel` and `highs_presolve`. They only affect the speed and not the results, but usually the default values are good enough and the user should only change them if they understand how the solvers work.
 
 ![Solve data](./data_for_one_solve.png)
 
@@ -817,7 +817,7 @@ Investments should not be used with this free rolling solve (`solve_mode`: *roll
 
 Short term storages also are operated less optimally in a rolling window model. There is a positive side to this as well, since perfect foresight linear optimization models are 'too optimal'. They don't reflect the forecast errors present in real life. So, a rolling window model might operate a bit more *realistically* than a *single_solve* model. A *single_solve* model can consider things happening far in the future when setting the storage level at present, even though in reality that information is not available. So, the total cost of a *rolling_window* model should always be higher than the total cost from a complete *single_solve* model that has perfect information.
 
-To set a dispatch rolling window model you need to set the object `solve` parameters:
+To set a dispatch rolling window model you need to set the entity `solve` parameters:
 
 - `solve_mode`: *rolling_window*
 - `rolling_jump`: Hours, the desired length of the solve interval
@@ -873,7 +873,7 @@ The long term storage solve can be implemented using a lower resolution solve. T
 
 The `rolling_jump` and `rolling_horizon` in the storage solve have to be longer than in the dispatch solve. You can set which storages are included as "long term storages" whose value will be transferred to the dispatch solve.
 
-To create a nested solve sequence, you need two or three `solve` objects. Either the investment solve or the storage solve can be left out. When using nested solve sequence, the sequence is not set with the `model`: `solves` parameter. Only the topmost solve is put there. Instead, the nested levels are set by the `solve` parameter `contains_solve`: *solve_name*. The investment solve is always on the top followed by the storage solve and dispatch solve:
+To create a nested solve sequence, you need two or three `solve` entities. Either the investment solve or the storage solve can be left out. When using nested solve sequence, the sequence is not set with the `model`: `solves` parameter. Only the topmost solve is put there. Instead, the nested levels are set by the `solve` parameter `contains_solve`: *solve_name*. The investment solve is always on the top followed by the storage solve and dispatch solve:
 
 - *investment_solve* `solve` parameter `contains_solve`: *storage_solve_name* 
 - *storage_solve* `solve` parameter `contains_solve`: *dispatch_solve_name*
@@ -889,7 +889,7 @@ To create an investment_solve:
 - `solve` parameter `realized_invest_periods`: Array of periods where the model will realize investment decisions to the lower solves and results.
 - `solve` parameter `realized_periods`: Should not be used in this solve! You don't want the dispatch results from this solve, but from the dispatch solve.
 
-In addition, the rolling dispatch solve should be created as in the *How to use rolling window solve for dispatch*. To set a dispatch rolling window model you need to set the object `solve` parameters:
+In addition, the rolling dispatch solve should be created as in the *How to use rolling window solve for dispatch*. To set a dispatch rolling window model you need to set the entity `solve` parameters:
 
 - `solve_mode`: *rolling_window*
 - `rolling_jump`: Hours, the desired length of the solve interval
@@ -939,9 +939,9 @@ To create an investment solve sequence, you have two options:
 
 If you have many splits, this option can get tedious and prone to mistakes.
 
-The other option is to use only one investment `solve` object:
+The other option is to use only one investment `solve` entity:
 
-- The `invest_periods` and `realized_invest_periods` should then be set with a 2D map where the first column tells the solve (you don't have to create separate `solve` objects for these) and the second column tells the period. To get a 2D map, choose the parameter type as *Map* and then right click the table and choose *Insert column after/before*. The value column does not matter. The model will generate these solves, with the periods given. Note that the solve names should match in both 2D-maps.  
+- The `invest_periods` and `realized_invest_periods` should then be set with a 2D map where the first column tells the solve (you don't have to create separate `solve` entities for these) and the second column tells the period. To get a 2D map, choose the parameter type as *Map* and then right click the table and choose *Insert column after/before*. The value column does not matter. The model will generate these solves, with the periods given. Note that the solve names should match in both 2D-maps.  
 
 You can use the same lower level solve with each the investment solves as the lower level solves will exclude the periods that are not included in either of the upper level realized periods: `realized_invest_periods` or `fix_storage_periods`. So, the lower level solve should have all the periods that it is used for in any the solves.
 
@@ -1076,11 +1076,11 @@ All flows that are part of a group that has **output_aggregate_flows** set to *y
 "How to database" (**aggregate_output.sqlite**) aggregates results for the *nodeA* and *nodeB*. Both of the nodes have a wind power plant and nodeA has a coal power plant. The demand is divided to the electricity, heat and irrigiation needs. This means that, 
 besides an internal demand (**inflow**), both nodes output to the heat node while *node*A also outputs to the irrigation node. Additionally the nodes are connected to each other and the *node_country_y1*. The *nodeA* is connected to the *node_country_x1* and *nodeB* is connected to the *node_country_x2*. 
 
-For the sake of the example, we are only interested in the *nodeA* and *nodeB*. Therefore, `group` *focus_nodes* is created and the nodes are added to it with `group__node` relationships. To simplify the results, the flows from the two wind plants are aggregated as one. Same applies to the heat pumps. This is done by creating the `group`s *wind_aggregated* and *heat_aggregated*. The flows are added to the group with the `group_unit_node` relationship. 
+For the sake of the example, we are only interested in the *nodeA* and *nodeB*. Therefore, `group` *focus_nodes* is created and the nodes are added to it with `group__node` entities. To simplify the results, the flows from the two wind plants are aggregated as one. Same applies to the heat pumps. This is done by creating the `group`s *wind_aggregated* and *heat_aggregated*. The flows are added to the group with the `group_unit_node` entity. 
 
 Note that here the `node` has to be either *nodeA* or *nodeB*, not the heat node! E.g. the nodes from the *wind_aggregated* `group_unit_node` are tied to the nodes from the *focus_nodes* `group_node` only when they share same nodes (e.g. *wind_aggregated__wind_plant_1__nodeA* and *focus_nodes__nodeA* have *nodeA* in common). The `group_unit_node` can include other flows but only the ones that are have a node that is inside the *focus_nodes* group are included in the result table under the *focus_nodes* group.
 
-Connections are simplified by creating groups *connections_country_x* and *connections_country_y* and adding the relevant connections with `group_connection_node` relationship. Again the `node` has to be either *nodeA* or *nodeB* to be included in the results.
+Connections are simplified by creating groups *connections_country_x* and *connections_country_y* and adding the relevant connections with `group_connection_node` entity. Again the `node` has to be either *nodeA* or *nodeB* to be included in the results.
 
 ![Output aggregate flows graph](./output_flows_graph.PNG)
 
