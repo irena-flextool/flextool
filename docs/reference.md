@@ -50,7 +50,7 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
   - *period_timeblockset*: map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name.
   - *realized_periods*: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve
   - *realized_invest_periods* Array of the periods that will realize the investment decisions. If this is not defined when the invest_periods exist, the realized_periods are used to realize the invests as well
-  - *invest_periods*: array of periods where investements are allowed in this solve (applies only to objects that can be invested in)
+  - *invest_periods*: array of periods where investements are allowed in this solve (applies only to entities that can be invested in)
   - *years_represented*: Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years.
   - *solver*: choice of a solver ('highs'(default), 'glpsol', 'cplex' (requires a licence))
   - *highs_method*: HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.
@@ -88,7 +88,7 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
   - *timestep_duration*: a map with *timestep_name* as an index and *duration* as a value.
   - *timeline_duration_in_years* Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.
 
-- `timeblockset__timeline`: defines which timeline object particular timeblockset is using.
+- `timeblockset__timeline`: defines which timeline entity particular timeblockset is using.
 
 
 ## Nodes
@@ -98,8 +98,6 @@ Timeblocks pick one or more sections from the `timeline` to form a `timeblockset
 These parameters will define how the node will behave and use the data it is given (available choices are marked in *italics*):
 
 - `name` - unique name identifier (case sensitive)
-- `is_active` - is the model/node/unit active in a specific scenario: *yes* (if not defined, then not active).
-Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 - `has_balance` - does the node maintain a balance for inputs and outputs: *yes* (if not defined, then balance is not maintained)
 - `has_storage` - does the node represent a storage and therefore have a state: *yes* (if not defined, then no storage)
 - `invest_method` - Choice of investment method: either *not_allowed* or then a combination of 
@@ -112,6 +110,8 @@ Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative`
     - *scale_to_annual_flow* - will scale the time series to match the `annual_flow` so that the sum of inflow is multiplied by 8760/`hours_in_solve`
     - *scale_in_proprotion* - calculates a scaling factor by dividing `annual_flow` with the sum of time series inflow (after it has been annualized using `timeline_duration_in_years`)
 	- *scale_to_annual_and_peak_flow* - scales the time series to match the 'annual_flow' target while transforming the time series to match the highest load with the 'peak_inflow'
+ - `is_active` - is the model/node/unit active in a specific scenario: *yes* (if not defined, then not active).
+Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 
 ![image.png](./nodes.png)
 
@@ -170,14 +170,14 @@ There are three methods associated with storage start and end values: `storage_b
 
 ## Units
 
-Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine), but the can also have multiple inputs and/or outputs (e.g. combined heat and power plant). The input nodes are defined with the relationship `unit--inputNode` while the output nodes are defined through the relationship `unit--outputNode`.
+Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine), but the can also have multiple inputs and/or outputs (e.g. combined heat and power plant). The input nodes are defined with the entity `unit--inputNode` while the output nodes are defined through the entity `unit--outputNode`.
 
 ### Defining how the unit functions
 
-- `is_active` to state the alternative where the unit becomes active. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 - 'conversion_method' to define the way unit converts inputs to outputs 
 - `startup_method` - Choice of startup method. 'Linear' startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. 'Binary' startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups.
 - `minimum_time_method` - Not functional yet. Choice between minimum up- and downtimes (<empty>, *min_downtime*, *min_uptime*, *both*).
+- `is_active` to state the alternative where the unit becomes active. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 
 ### Main data items for units
 
@@ -225,7 +225,7 @@ Each asset that can be invested in should have `invest_cost`, `lifetime` and `in
 
 `invest_cost` * `interest_rate` / { 1 - [ 1 / ( 1 + `interest_rate` ) ] ^ `lifetime` } + `fixed_cost`
 
-The next step is to consider discounting - future is valued less than the present. There is a model-wide assumption for the `discount_rate`. By default it is 0.05 (i.e. 5%), but it can be changed through the `discount_rate` parameter set for the *flexTool* `model` object. Discount factor for every period in the model is calculated from the `discount_rate` using the `years_represented` parameter of each `solve`, which how many years the period represents. Values for `years_represented` are used to calculate how many `years_from_solve_start` each year is. The formula is:
+The next step is to consider discounting - future is valued less than the present. There is a model-wide assumption for the `discount_rate`. By default it is 0.05 (i.e. 5%), but it can be changed through the `discount_rate` parameter set for the *flexTool* `model` entity. Discount factor for every period in the model is calculated from the `discount_rate` using the `years_represented` parameter of each `solve`, which how many years the period represents. Values for `years_represented` are used to calculate how many `years_from_solve_start` each year is. The formula is:
 
 [ 1 / ( 1 + `discount_rate` ) ] ^ `years_from_solve_start`
 
@@ -235,13 +235,13 @@ The model has a model horizon based on the `years_represented` parameters. The m
  
 Finally, the retirements work similar to investments using the same `discount_rate` and `interest_rate` parameters but with `salvage_value` as the benefit from retiring the unit.
 
-### Relationship of a unit to a node and determination of the type of relationship
+### Entities between units and nodes 
 
 - If the unit’s outputs are flowing into the node, the node acts as output for the unit.
 - If the unit’s inputs are flowing out of the node (into the unit), the node acts as input for the unit.
 - Not all units necessary have both an input and an output node. E.g. VRE generators have only output nodes and their generation is driven by profiles
 
-### Properties of unit--inputNode and unit--outputNode relationships
+### Properties of unit--inputNode and unit--outputNode entities
 
 - `is_non_synchronous` - Chooses whether the unit is synchronously connected to this node.
 - `coefficient` - [factor] Coefficient to scale the output from a unit to a particular node or the input from a node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints).
@@ -255,15 +255,14 @@ Note that in the case of unit--outputNode the `coefficient` affects *after* the 
 
 ### Units constrained by profiles
 
-Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` object with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile` object is given a `profile` time series (or it can also be a constant). One needs to use `node__profile`, `unit__node__profile` or `connection__profile` to apply the profile to specific energy flow (or storage state in the case of `node__profile`).
+Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` entity with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile` entity is given a `profile` time series (or it can also be a constant). One needs to use `node__profile`, `unit__node__profile` or `connection__profile` to apply the profile to specific energy flow (or storage state in the case of `node__profile`).
 
 ## Connections
 
-Connections can transfer energy between two nodes. Parameters for the connection are defined in the `connection` object, but the two `nodes` it connects are defined by establishing a relationship between `connection--leftNode--rightNode`.
+Connections can transfer energy between two nodes. Parameters for the connection are defined in the `connection` entity, but the two `nodes` it connects are defined by establishing an entity between `connection--leftNode--rightNode`.
 
 ### Defining how the connection functions
 
-- `is_active` to state the alternative where the connection becomes active. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 - `transfer_method` to define the way the connection transfers energy between the nodes
 - `startup_method` where *linear* startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. *binary* startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups.
 - `invest_method` to define investment and retirement limits: either *not_allowed* or then a combination of 
@@ -271,6 +270,7 @@ Connections can transfer energy between two nodes. Parameters for the connection
     - investment limits for each *period* and/or for all periods (*total*) or *no_limit* 
     - *cumulative_limits* considers investments, retirements and existing together, requires `cumulative_max_capacity` and/or `cumulative_min_capacity`
 - `lifetime_method` to choose how the investments behave after unit runs out of lifetime. Automatic reinvestment (reinvest_automatic - default) causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost until the end of model horizon without further choice by the model. Choice of reinvestment (reinvest_choice) removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built. If there is a need to remove the possibility to invest after lifetime, then the investment limits can be used.
+- `is_active` to state the alternative where the connection becomes active. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 
 ### Main data items for connections
 
@@ -293,7 +293,7 @@ These are the same as for units, see [here](#Investment parameters for capacity 
 
 ## Commodities
 
-Some `nodes` can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a `price` and be connected to those `nodes` that serve (or buy) that particular `commodity` at the given `price`. In other words, `commodity` is separate from `node` so that the user can use the same `commodity` properties for multiple nodes. Commodities can also have a `co2_content`. The `commodity` and its `nodes` are connected by establishin a new relationship between the `commodity` and each of its `nodes` (e.g. *coal--coal_market*).
+Some `nodes` can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a `price` and be connected to those `nodes` that serve (or buy) that particular `commodity` at the given `price`. In other words, `commodity` is separate from `node` so that the user can use the same `commodity` properties for multiple nodes. Commodities can also have a `co2_content`. The `commodity` and its `nodes` are connected by establishing a new entity between the `commodity` and each of its `nodes` (e.g. *coal--coal_market*).
 
 - `price` - [CUR/MWh or other unit] Price of the commodity. Constant or period.
 - `co2_content` - [CO2 ton per MWh] Constant.
@@ -302,7 +302,7 @@ Some `nodes` can act as a source or a sink of commodities instead of forcing a b
 
 ## Groups
 
-Groups are used to make constraints that apply to a group of nodes, units and/or connections. A group is defined by creating a group object and then creating a relationship between the group and its members. The membership relationship classes are `group__node`, `group__unit`, `group__connection`, `group__unit__node`, `group__connection__node` and `reserve__upDown__group`. The choice of group members depends on what the group is trying to achieve. For instance a group that limits investments could have a set of `units` included in the group.
+Groups are used to make constraints that apply to a group of nodes, units and/or connections. A group is defined by creating a group entity and then creating an entity between the group and its members. The membership entity classes are `group__node`, `group__unit`, `group__connection`, `group__unit__node`, `group__connection__node` and `reserve__upDown__group`. The choice of group members depends on what the group is trying to achieve. For instance a group that limits investments could have a set of `units` included in the group.
 
 ### Capacity limits for nodes, units and connections
 
@@ -371,11 +371,11 @@ A further option is to output everything from the model horizon. This changes th
 
 ## Reserves
 
-The user defines reserve categories through `reserve` object. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. 
+The user defines reserve categories through `reserve` entity. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. 
 
 - Timeseries requires that the user provides a pre-defined time series for the amount of reserve to be procured in each time step. 
 - Large_failure requires that the user defines the energy flows that could be the largest failure in the system. The highest possible failure (flow multiplied by `large_failure_ratio`) in each timestep will then set the reserve requirement for that timestep. 
-- Dynamic means that there is a requirement based on user chosen energy flows - each participating flow is multipled by `increase_reserve_ratio` and then summed to form the reserve requirement. This can be useful for covering variability within timesteps. Also demand variability can be included through `increase_reserve_ratio` parameter in `reserve__upDown__group` relationship.
+- Dynamic means that there is a requirement based on user chosen energy flows - each participating flow is multipled by `increase_reserve_ratio` and then summed to form the reserve requirement. This can be useful for covering variability within timesteps. Also demand variability can be included through `increase_reserve_ratio` parameter in `reserve__upDown__group` entity.
 
 When the same reserve category (e.g. primary upward) has more than one of these (timeseries, large_failure and dynamic) in use, then the largest requirement will apply for that timestep. If they are separated into different reserves, then they need to be fulfilled separately.
 
@@ -383,7 +383,7 @@ Reserve requirement is defined for groups of nodes. This means that multiple nod
 
 ### Reserve groups
 
-For `reserve__upDown__group` relationships:
+For `reserve__upDown__group` entities:
 
 - `reserve_method` - Choice of reserve method (timeseries, large_failure, dynamic or their combination).
 - `reservation` - [MWh] Amount of reserve required. Constant or time.
@@ -392,25 +392,25 @@ For `reserve__upDown__group` relationships:
 
 ### Reserve provision by units
 
-For `reserve__upDown__unit__node` relationships:
+For `reserve__upDown__unit__node` entities:
 
-- `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 - `max_share` - [factor] Maximum ratio for the transfer of reserve from the unit to the node. Constant.
 - `reliability` - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
 - `increase_reserve_ratio` - [factor] The reserve requirement is increased by the flow between the unit and the node multiplied by this ratio. Constant.
 - `large_failure_ratio` - [factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.
+- `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 
 ### Reserve transfer by connections
 
-For `reserve__upDown__connection__node` relationships:
+For `reserve__upDown__connection__node` entities:
 
-- `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 - `max_share` - [factor] Maximum ratio for the transfer of reserve to this node. Constant.
 - `reliability` - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
 - `increase_reserve_ratio` - [factor] The reserve is increased by generation from this unit multiplied this ratio. Constant.
 - `large_failure_ratio` - [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the connection (multiplied by this ratio). Constant.
+- `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 
-## Additional objects for further functionality
+## Additional entities for further functionality
 
 - `constraint`: to create user defined constraints between flow, state, and capacity variables (for nodes, units and connections)
 
