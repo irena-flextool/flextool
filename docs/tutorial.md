@@ -63,7 +63,7 @@ Next step is to add an entity for the first `node` that will be called *west*.
 
 Next, add the *west* node to be active in the *west* `alternative`. This can be done from the `Entity Alternative` sheet. `Entity Alternative` chooses if the entity is part of the alternative or not. (If you are in 0.7 Toolbox, last update before 5/2024, this does not exist. Instead, use parameter `is_active`: yes)
 
-![Add object2](./add_entity_alternative.png)
+![Add object3](./entity_alternative.png)
 
 Then, add parameter data to the newly minted *west* `node`:
 *west* node represents the demand in a part of the system.
