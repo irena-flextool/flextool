@@ -858,23 +858,23 @@ Video tutorial for Building a small test system can be watched <a href="https://
 <img alt="Choose a database" src="../choosing_database.png" /></p>
 <h3 id="1st-step-a-node-with-no-units">1st step - a node with no units</h3>
 <p>Open the <strong><em>Input data</em></strong> database by double-clicking it in the Spine Toolbox workflow.</p>
-<p>The test system is built using <code>alternatives</code>. Alternative is a subset of the system than one can include to a <code>scenario</code> that is optimized by Flextool. For example when adding a wind plant, all the objects and relationships related to only the wind plant should be under their own alternative, so that the wind plant can be included or excluded form the <code>scenario</code> seamlessly.</p>
+<p>The test system is built using <code>alternatives</code>. Alternative is a subset of the system than one can include to a <code>scenario</code> that is optimized by Flextool. For example when adding a wind plant, all the entities related to only the wind plant should be under their own alternative, so that the wind plant can be included or excluded form the <code>scenario</code> seamlessly.</p>
 <ul>
 <li>Each step will add a new <code>alternative</code>, and the data it contains, on top of the previous ones. </li>
 <li>The first <code>alternative</code> will be called <em>west</em> to hold the data for the first <code>node</code> in the model.</li>
 <li>The alternative is added in the 'Alternative tree' widget of the 'Spine Database Editor', see figure below.</li>
 </ul>
 <p><img alt="Add alternative" src="../add_alternative.png" /></p>
-<p>Next step is to add an object for the first <code>node</code> that will be called <em>west</em>. </p>
+<p>Next step is to add an entity for the first <code>node</code> that will be called <em>west</em>. </p>
 <ul>
-<li>Right-click on the <code>node</code> object class in the object tree to select 'Add objects'. </li>
+<li>Right-click on the <code>node</code> class in the entity tree to select 'Add entities'. </li>
 <li>Use the dialog to add the <em>west</em> <code>node</code> and click ok. See the figures below.</li>
-<li>Later other objects will need to be added in the same manner - as well as relationships between objects.</li>
+<li>Later other entities will need to be added in the same manner.</li>
 </ul>
 <p><img alt="Add object1" src="../add_object_dialog.png" /> 
 <img alt="Add object2" src="../add_object_dialog2.png" /></p>
 <p>Next, add the <em>west</em> node to be active in the <em>west</em> <code>alternative</code>. This can be done from the <code>Entity Alternative</code> sheet. <code>Entity Alternative</code> chooses if the entity is part of the alternative or not. (If you are in 0.7 Toolbox, last update before 5/2024, this does not exist. Instead, use parameter <code>is_active</code>: yes)</p>
-<p><img alt="Add object2" src="./add_entity_alternative.png" /></p>
+<p><img alt="Add object3" src="./entity_alternative.png" /></p>
 <p>Then, add parameter data to the newly minted <em>west</em> <code>node</code>:
 <em>west</em> node represents the demand in a part of the system.</p>
 <ul>
@@ -885,7 +885,7 @@ Video tutorial for Building a small test system can be watched <a href="https://
 <li>All parameters here should be part of the <em>west</em> <code>alternative</code> (column alternative_name) - they will be used whenever a <code>scenario</code> includes the <em>west</em> <code>alternative</code>. The difference between parameter <code>alternative</code> and <code>Entity Alternative</code> is that the former includes only that specific parameter and the latter includes the entity itself.</li>
 </ul>
 <p><img alt="First_node" src="../west_node.png" /></p>
-<p>The new objects and parameters have now been staged. Even though it looks like they are in the database, they really are not - they need to be <strong>committed</strong> first. This can be done from the menu of the Database Editor (there is a <em>commit</em> command) or by pressing <em>ctrl-enter</em>. One should write an informative commit message about the changes that have been made. All commits, and the data they have affected, can be seen later from the <em>history</em> menu item.</p>
+<p>The new entities and parameters have now been staged. Even though it looks like they are in the database, they really are not - they need to be <strong>committed</strong> first. This can be done from the menu of the Database Editor (there is a <em>commit</em> command) or by pressing <em>ctrl-enter</em>. One should write an informative commit message about the changes that have been made. All commits, and the data they have affected, can be seen later from the <em>history</em> menu item.</p>
 <h3 id="interlude-creating-a-scenario-and-running-the-model">Interlude - creating a scenario and running the model</h3>
 <p>Even though the model is very simple and will not do anything interesting, it can be executed. It is first necessary to create the scenario to be executed. Scenarios are created from <code>alternatives</code> in the Scenario tree widget of the Database Editor. In the figure below, a <code>scenario</code> called <em>Test-scenario</em> is created that should contain <code>alternatives</code> <em>west</em>, <em>init</em> and <em>init_2day-test</em> in order to have both a node and a model structure included in the model. The new <code>scenario</code> must also be <strong>committed</strong>, before it can be used. A new scenario should be added after each step in the tutorial process. </p>
 <p><img alt="Add scenario" src="../add_scenario.png" /></p>
@@ -917,7 +917,7 @@ Video tutorial for Building a small test system can be watched <a href="https://
 <p>You might be wondering why <code>commodity</code> does not need to be added to the <code>Entity Alternative</code>. The direct reason is that it is active by default. This can be assumed, since it does not matter if a commodity is in a model, but it is not used. It will be used only if the node using the commodity is included in the model.</p>
 <ul>
 <li>
-<p>Add relationships entities:</p>
+<p>Add entities:</p>
 </li>
 <li>
 <p><code>unit__inputNode</code> <em>coal_plant, coal_market</em> to indicate that the <em>coal_plant</em> is using inputs from the <em>coal_market</em></p>
@@ -938,7 +938,6 @@ Video tutorial for Building a small test system can be watched <a href="https://
 <li>
 <p><em>coal</em> <code>commodity</code> needs just one parameter for <code>price</code> (e.g. 20 €/MWh of fuel)</p>
 </li>
-<li><em>coal_market</em> <code>node</code> needs to have <code>is_active</code> set to <em>yes</em> </li>
 <li>All these new parameters should be now part of the <em>coal</em> <code>alternative</code>. </li>
 </ul>
 <p><img alt="Add unit" src="../add_unit.png" /></p>
@@ -946,9 +945,9 @@ Video tutorial for Building a small test system can be watched <a href="https://
 <p>If you now want to only export the results of the <em>coal</em> run to excel, you can do this by choosing the Alternative filter and choosing the run you want to export.</p>
 <p><img alt="Choosing_alternative" src="../choose_alternative_to_excel.png" /></p>
 <h3 id="interlude-visualizing-the-system-in-a-graph">Interlude - visualizing the system in a graph</h3>
-<p>In Spine Toolbox, it is possible to visualize your system in a graph, which will show all objects, and the relationships between them.
+<p>In Spine Toolbox, it is possible to visualize your system in a graph, which will show all entities, and how they are related to each other.
 To open this visualization mode, open the <strong><em>Input data</em></strong> database. In the top right corner, click on the menu. Select <strong><em>Graph</em></strong> in the <em>View</em> section.
-You may visualize all objects by selecting <em>root</em> in the <em>Object tree</em>, or choose specifically the objects you want to display by selecting them in the <em>Object tree</em> (maintain ctrl to select multiple objects).</p>
+You may visualize all entities by selecting <em>root</em> in the <em>Entity tree</em>, or choose specifically the entities you want to display by selecting them in the <em>Entity tree</em> (maintain ctrl to select multiple entities).</p>
 <p><img alt="Graph_view" src="../graph_view.png" />
 <img alt="Graph_view_example" src="../graph_view_example.png" /></p>
 <h3 id="3rd-step-add-a-wind-power-plant">3rd step - add a wind power plant</h3>
@@ -956,7 +955,7 @@ You may visualize all objects by selecting <em>root</em> in the <em>Object tree<
 <ul>
 <li>Add a new <code>alternative</code> <em>wind</em></li>
 <li>
-<p>Add objects:</p>
+<p>Add entities:</p>
 </li>
 <li>
 <p><code>unit</code> <em>wind_plant</em></p>
@@ -965,16 +964,13 @@ You may visualize all objects by selecting <em>root</em> in the <em>Object tree<
 <p><code>profile</code> <em>wind_profile</em> since <em>wind_plant</em> does not require a commodity, but instead uses a profile to limit the generation to the available wind.</p>
 </li>
 <li>
-<p>Add the <code>unit</code> <em>wind_plant</em> to the <em>wind</em> <code>Entity Alternative</code>. Again, the <code>profile</code> does not need to be added, because it active by default and is only part of the model if connected by a <code>unit__node__profile</code> or <code>node_profile</code>.</p>
-</li>
-<li>
-<p>Add relationships:</p>
-</li>
-<li>
 <p><code>unit__node__profile</code> <em>wind_plant, west, wind_profile</em></p>
 </li>
 <li>
 <p><code>unit__outputNode</code> <em>wind_plant, west</em></p>
+</li>
+<li>
+<p>Add the <code>unit</code> <em>wind_plant</em> to the <em>wind</em> <code>Entity Alternative</code>. Again, the <code>profile</code> does not need to be added, because it active by default and is only part of the model if connected by a <code>unit__node__profile</code> or <code>node_profile</code>.</p>
 </li>
 <li>
 <p><em>wind_plant</em> needs the following parameters (all set for the <em>wind</em> alternative):</p>
@@ -989,7 +985,7 @@ You may visualize all objects by selecting <em>root</em> in the <em>Object tree<
 <li>
 <p><em>wind_profile</em> needs the the parameter <code>profile</code> with a map of values where each time step gets the maximum available capacity factor for that time step (see figure). Again, you can copy this from the init database.</p>
 </li>
-<li><em>wind_plant, west, wind_profile</em> relationship needs a parameter <code>profile_method</code> with the choice <em>upper_limit</em> selected. This means that the <em>wind_plant</em> must generate at or below its capacity factor.</li>
+<li><em>wind_plant, west, wind_profile</em> entity needs a parameter <code>profile_method</code> with the choice <em>upper_limit</em> selected. This means that the <em>wind_plant</em> must generate at or below its capacity factor.</li>
 </ul>
 <p>You can now create a new scenario <em>wind</em>,  that has the <code>alternatives</code> <em>init</em>, <em>west</em>, <em>coal</em> and <em>wind</em>.
 Remember to <strong>commit</strong>, execute and have a look at the results (there should be no more penalty values used, since the coal and wind plant can together meet the demand in all hours).</p>
@@ -1016,7 +1012,7 @@ Remember to <strong>commit</strong>, execute and have a look at the results (the
 <li>they have a <code>existing</code> parameter to indicate the existing interconnection capacity between the nodes</li>
 <li>they have a <code>efficiency</code> parameter  (e.g. 0.9 for 90% efficiency).</li>
 </ul>
-<p>It is also necessary to create the relationships <code>connection__node__node</code> for <em>east_north | east | north</em>, <em>west_north | west | north</em> and <em>west_east | west | east</em>.</p>
+<p>It is also necessary to create the entities <code>connection__node__node</code> for <em>east_north | east | north</em>, <em>west_north | west | north</em> and <em>west_east | west | east</em>.</p>
 <p>The <em>north</em> <code>node</code> has the lowest upward penalty, so the model will prefer to use that whenever the <em>coal</em> and <em>wind</em> units cannot meet all the demand. Sometimes the <code>existing</code> capacity of the new <code>connections</code> will not be sufficient to carry all the needed power, since both generators are producing to the <em>west</em> <code>node</code>. <strong>Commit</strong>, execute and explore.</p>
 <p><img alt="Add network" src="../add_network.png" /></p>
 <h3 id="more-functionality">More functionality</h3>

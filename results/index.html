@@ -811,7 +811,7 @@
 </ul>
 <h2 id="costs">Costs</h2>
 <ul>
-<li><code>model</code> object <code>cost_annualized</code> parameter - M[CUR] (millions of user chosen currency) includes annualized total cost as well as annualized costs divided into </li>
+<li><code>model</code> entity <code>cost_annualized</code> parameter - M[CUR] (millions of user chosen currency) includes annualized total cost as well as annualized costs divided into </li>
 <li><em>unit investment/retirement</em> - M[CUR] cost of investing in unit capacity or benefits from salvaging unit capacity</li>
 <li><em>connection investment/retirement</em> - M[CUR] cost of investing in connection capacity or benefits from salvaging connection capacity</li>
 <li><em>storage investment/retirement</em> - M[CUR] cost of investing in storage capacity or benefits from salvaging storage capacity</li>
@@ -826,99 +826,99 @@
 <li><em>capacity margin penalty</em> - M[CUR] cost of not meeting the capacity margin constraint</li>
 <li><em>upward reserve penalty</em> - M[CUR] cost of not meeting the upward reserve constraint</li>
 <li><em>downward reserve penalty</em> - M[CUR] cost of not meeting the downward reserve constraint</li>
-<li><code>model</code> object <code>cost_t</code> parameter - M[CUR] similar as above but costs given for each timestep (no investment/retirement costs)</li>
-<li><code>model</code> object <code>cost_discounted_solve</code> paramater - M[CUR] Costs for the solve considering discounting and years presented (scaled to all years presented). Divided like in <code>cost_annualized</code></li>
-<li><code>model</code> object <code>cost_discounted_total</code> parameter - M[CUR] Total costs for all the solves considering discounting and years presented (scaled to all years presented). Divided like in <code>cost_annualized</code></li>
+<li><code>model</code> entity <code>cost_t</code> parameter - M[CUR] similar as above but costs given for each timestep (no investment/retirement costs)</li>
+<li><code>model</code> entity <code>cost_discounted_solve</code> paramater - M[CUR] Costs for the solve considering discounting and years presented (scaled to all years presented). Divided like in <code>cost_annualized</code></li>
+<li><code>model</code> entity <code>cost_discounted_total</code> parameter - M[CUR] Total costs for all the solves considering discounting and years presented (scaled to all years presented). Divided like in <code>cost_annualized</code></li>
 </ul>
 <h2 id="prices">Prices</h2>
 <ul>
-<li><code>node</code> object <code>price_t</code> parameter - [CUR/MWh] each node that maintains an energy balance provides a price time series based on the marginal value of the balance constraint</li>
+<li><code>node</code> entity <code>price_t</code> parameter - [CUR/MWh] each node that maintains an energy balance provides a price time series based on the marginal value of the balance constraint</li>
 </ul>
 <h2 id="energy-flows">Energy flows</h2>
 <ul>
-<li><code>unit__node</code> relationship <code>flow_annualized</code> parameter - [MWh] cumulative flow from the node (if node is input) or to the node (if node is output) annualized.
+<li><code>unit__node</code> entity <code>flow_annualized</code> parameter - [MWh] cumulative flow from the node (if node is input) or to the node (if node is output) annualized.
 Annualization scales the sum to correspond with full year time series.</li>
-<li><code>unit__node</code> relationship <code>flow_t</code> parameter - [MW] flow from the node (if node is input) or to the node (if node is output)</li>
-<li><code>connection__node__node</code> relationship <code>flow_annualized</code> parameter - [MWh] cumulative flow through the connection (left to right is positive) annualized</li>
-<li><code>connection__node__node</code> relationship <code>flow_t</code> parameter - [MW] flow through the connection (left to right is positive)</li>
+<li><code>unit__node</code> entity <code>flow_t</code> parameter - [MW] flow from the node (if node is input) or to the node (if node is output)</li>
+<li><code>connection__node__node</code> entity <code>flow_annualized</code> parameter - [MWh] cumulative flow through the connection (left to right is positive) annualized</li>
+<li><code>connection__node__node</code> entity <code>flow_t</code> parameter - [MW] flow through the connection (left to right is positive)</li>
 </ul>
 <h3 id="optional-output-output_connetion_flows_separate">Optional output: output_connetion_flows_separate</h3>
 <ul>
-<li><code>connection__node__node</code> relationship <code>flow_to_first_node_annualized</code> parameter - [MWh] annualized cumulative flow through the connection only to the left (first) node.</li>
-<li><code>connection__node__node</code> relationship <code>flow_to_second_node_annualized</code> parameter - [MWh] annualized cumulative flow through the connection only to the right (second) node.</li>
-<li><code>connection__node__node</code> relationship <code>flow_to_first_node_t</code> parameter - [MW] flow through the connection to the left (first) node.</li>
-<li><code>connection__node__node</code> relationship <code>flow_to_second_node_t</code> parameter - [MW] flow through the connection to the right (second) node.</li>
+<li><code>connection__node__node</code> entity <code>flow_to_first_node_annualized</code> parameter - [MWh] annualized cumulative flow through the connection only to the left (first) node.</li>
+<li><code>connection__node__node</code> entity <code>flow_to_second_node_annualized</code> parameter - [MWh] annualized cumulative flow through the connection only to the right (second) node.</li>
+<li><code>connection__node__node</code> entity <code>flow_to_first_node_t</code> parameter - [MW] flow through the connection to the left (first) node.</li>
+<li><code>connection__node__node</code> entity <code>flow_to_second_node_t</code> parameter - [MW] flow through the connection to the right (second) node.</li>
 </ul>
 <h2 id="capacity-factors">Capacity factors</h2>
 <ul>
-<li><code>unit__node</code> relationship <code>cf</code> parameter - [per unit] average capacity factor of the flow, i.e. the utilization rate of the flow from/to the unit. Average of flow [MWh/h] divided by capacity [MW] of the input or output to the unit.</li>
-<li><code>connection</code> relationship <code>cf</code> parameter - [per unit] average capacity factor of the flow, i.e. the utilization rate of the connection where flows in both directions are considered as utilization. Average of the absolute flow [MWh/h] divided by the capacity of the connection.</li>
+<li><code>unit__node</code> entity <code>cf</code> parameter - [per unit] average capacity factor of the flow, i.e. the utilization rate of the flow from/to the unit. Average of flow [MWh/h] divided by capacity [MW] of the input or output to the unit.</li>
+<li><code>connection</code> entity <code>cf</code> parameter - [per unit] average capacity factor of the flow, i.e. the utilization rate of the connection where flows in both directions are considered as utilization. Average of the absolute flow [MWh/h] divided by the capacity of the connection.</li>
 </ul>
 <h2 id="energy-balance-in-nodes">Energy balance in nodes</h2>
 <ul>
-<li><code>node</code> object <code>balance</code> parameter - [MWh] cumulative inputs (positive) and outputs (negative) to the node from all the possible sources (<em>from_units</em>, <em>from_connection</em>, <em>to_units</em>, <em>to_connections</em>, <em>state change</em> over the period, <em>self discharge</em> during the period, <em>upward slack</em> for involuntary demand reduction and <em>downward slack</em> for involuntary demand increase)</li>
-<li><code>node</code> object <code>balance_t</code> parameter - [MW] same as above, but for each timestep</li>
-<li><code>node</code> object <code>state_t</code> parameter - [MWh] storage state of the node in each timestep</li>
+<li><code>node</code> entity <code>balance</code> parameter - [MWh] cumulative inputs (positive) and outputs (negative) to the node from all the possible sources (<em>from_units</em>, <em>from_connection</em>, <em>to_units</em>, <em>to_connections</em>, <em>state change</em> over the period, <em>self discharge</em> during the period, <em>upward slack</em> for involuntary demand reduction and <em>downward slack</em> for involuntary demand increase)</li>
+<li><code>node</code> entity <code>balance_t</code> parameter - [MW] same as above, but for each timestep</li>
+<li><code>node</code> entity <code>state_t</code> parameter - [MWh] storage state of the node in each timestep</li>
 </ul>
 <h2 id="unit-online-and-startup">Unit online and startup</h2>
 <ul>
-<li><code>unit</code> object <code>online_average</code> parameter - [count] average online status of the unit (average number of units online during the period)</li>
-<li><code>unit</code> object <code>online_t</code> parameter - [count] online status of the unit (number of units online in each timestep)</li>
-<li><code>unit</code> object <code>startup_cumulative</code> parameter - [count] cumulative number of unit startups during the period</li>
+<li><code>unit</code> entity <code>online_average</code> parameter - [count] average online status of the unit (average number of units online during the period)</li>
+<li><code>unit</code> entity <code>online_t</code> parameter - [count] online status of the unit (number of units online in each timestep)</li>
+<li><code>unit</code> entity <code>startup_cumulative</code> parameter - [count] cumulative number of unit startups during the period</li>
 </ul>
 <h1 id="unit-curtailment">Unit curtailment</h1>
 <ul>
-<li><code>unit</code> object <code>curtailment_share</code> parameter - [0-1] Share of curtailed production from potential production for periods</li>
-<li><code>unit</code> object <code>curtailment_t</code> parameter - [MW] curtailed flow to the node</li>
+<li><code>unit</code> entity <code>curtailment_share</code> parameter - [0-1] Share of curtailed production from potential production for periods</li>
+<li><code>unit</code> entity <code>curtailment_t</code> parameter - [MW] curtailed flow to the node</li>
 </ul>
 <h2 id="group-results">Group results</h2>
 <ul>
-<li><code>group</code> object <code>indicator</code> parameter - gives a set of results for all <code>node</code> members of the <code>group</code></li>
+<li><code>group</code> entity <code>indicator</code> parameter - gives a set of results for all <code>node</code> members of the <code>group</code></li>
 <li><em>sum of annualized inflows</em> - [MWh] sum of <code>inflow</code> to the node which has been annualized (scaled to correspond to a year of timesteps)</li>
 <li><em>VRE share</em> - [0-1] how much the flows from VRE sources (inputs using  'upper limit' profile) are of the inflow</li>
 <li><em>curtailed VRE share</em> - [0-1] how much the unused flows from VRE sources would have been of the inflow</li>
 <li><em>upward slack share</em> - [0-1] upward slack in relation to the inflow</li>
 <li><em>downward slack share</em> - [0-1] downward slack in relation to the inflow</li>
-<li><code>group</code> object <code>flow_annualized</code> parameter - [MWh] produces grouped and annualized flow results of the <code>node</code> members of the <code>group</code></li>
-<li><code>group</code> object <code>flow_t</code> parameter - [MW] produces grouped flow results to the <code>node</code> members of the <code>group</code></li>
-<li><code>group</code> object <code>sum_flow_annualized</code> parameter [MWh] Annualized sum of flows in the group (members from group__connection__node and group__unit__node). Annualization scales the sum to correspond with full year time series.</li>
-<li><code>group</code> object <code>sum_flow_t</code> parameter [MW] Sum of flows in the group (members from group__connection__node and group__unit__node).</li>
-<li><code>group</code> object <code>VRE_share_t</code> parameter - [0-1]  how much the flows from VRE sources (inputs using  'upper limit' profile) are of the inflow for each timestep</li>
+<li><code>group</code> entity <code>flow_annualized</code> parameter - [MWh] produces grouped and annualized flow results of the <code>node</code> members of the <code>group</code></li>
+<li><code>group</code> entity <code>flow_t</code> parameter - [MW] produces grouped flow results to the <code>node</code> members of the <code>group</code></li>
+<li><code>group</code> entity <code>sum_flow_annualized</code> parameter [MWh] Annualized sum of flows in the group (members from group__connection__node and group__unit__node). Annualization scales the sum to correspond with full year time series.</li>
+<li><code>group</code> entity <code>sum_flow_t</code> parameter [MW] Sum of flows in the group (members from group__connection__node and group__unit__node).</li>
+<li><code>group</code> entity <code>VRE_share_t</code> parameter - [0-1]  how much the flows from VRE sources (inputs using  'upper limit' profile) are of the inflow for each timestep</li>
 </ul>
 <h2 id="capacity-and-investment-results">Capacity and investment results</h2>
 <ul>
-<li><code>unit</code>, <code>connection</code> and <code>node</code> objects <code>capacity</code> parameter - [MW or MWh] include the following parameters</li>
+<li><code>unit</code>, <code>connection</code> and <code>node</code> entities <code>capacity</code> parameter - [MW or MWh] include the following parameters</li>
 <li><em>existing</em> - [MW or MWh] capacity that was assumed to exist in the beginning of the solve</li>
 <li><em>invested</em> - [MW or MWh] capacity the model decided to invest for the given period</li>
 <li><em>retired</em> - [MW or MWh] capacity the model decided to retire in the beginning of the given period</li>
 <li><em>total</em> - [MW or MWh] sum of <em>existing</em>, <em>invested</em> and <em>retired</em> capacities</li>
-<li><code>unit</code>, <code>connection</code> and <code>node</code> objects <code>invest_marginal</code> parameter - [CUR/MW or MWh] marginal cost to invest in one more MW or MWh of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per MW or MWh; positive value means the cost is higher than the benefit by the stated amount per MW or MWh)</li>
+<li><code>unit</code>, <code>connection</code> and <code>node</code> entities <code>invest_marginal</code> parameter - [CUR/MW or MWh] marginal cost to invest in one more MW or MWh of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per MW or MWh; positive value means the cost is higher than the benefit by the stated amount per MW or MWh)</li>
 <li><code>group</code> parameter <code>slack_capacity_margin</code> - [MW or MWh] use of slack variable and the associated penalty cost to meet the capacity margin requirement in the period</li>
 <li><code>group</code> parameter <code>slack_capacity_margin</code> - use of slack variable and the associated penalty cost to meet the capacity margin requirement in the period</li>
 </ul>
 <h2 id="co2-emissions">CO2 emissions</h2>
 <ul>
-<li><code>group</code> object <code>CO2_annualized</code> parameter - [Mt] how many million tons of CO2 annualized the units and connections in this group have generated (by using commodity with CO2 content) or removed.</li>
-<li><code>unit</code> object <code>CO2_annualized</code> parameter - [Mt] how many million tons of CO2 annualized the unit has generated (by using commodity with CO2 content) or removed</li>
+<li><code>group</code> entity <code>CO2_annualized</code> parameter - [Mt] how many million tons of CO2 annualized the units and connections in this group have generated (by using commodity with CO2 content) or removed.</li>
+<li><code>unit</code> entity <code>CO2_annualized</code> parameter - [Mt] how many million tons of CO2 annualized the unit has generated (by using commodity with CO2 content) or removed</li>
 </ul>
 <h2 id="reserves">Reserves</h2>
 <ul>
-<li><code>unit__reserve__upDown__node</code> relationship <code>reservation_t</code> parameter - [MW] how much upward or downward reserve particular unit was providing to a particular node in given timestep</li>
-<li><code>unit__reserve__upDown__node</code> relationship <code>reservation_average</code> parameter - [MW] how much upward or downward reserve particular unit was providing to a particular node in average during the period</li>
-<li><code>group__reserve__upDown</code> relationship <code>slack_reserve_t</code> parameter - [MW] use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement in each timestep</li>
-<li><code>group__reserve__upDown</code> relationship <code>slack_reserve</code> parameter - [MW] cumulative use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement during the period</li>
+<li><code>unit__reserve__upDown__node</code> entity <code>reservation_t</code> parameter - [MW] how much upward or downward reserve particular unit was providing to a particular node in given timestep</li>
+<li><code>unit__reserve__upDown__node</code> entity <code>reservation_average</code> parameter - [MW] how much upward or downward reserve particular unit was providing to a particular node in average during the period</li>
+<li><code>group__reserve__upDown</code> entity <code>slack_reserve_t</code> parameter - [MW] use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement in each timestep</li>
+<li><code>group__reserve__upDown</code> entity <code>slack_reserve</code> parameter - [MW] cumulative use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement during the period</li>
 </ul>
 <h2 id="inertia-and-non-synchronous-generation">Inertia and non-synchronous generation</h2>
 <ul>
-<li><code>group</code> object <code>inertia_t</code> parameter - [MWs] the amount of inertia (MWs) in the group of nodes in each timestep</li>
-<li><code>group</code> object <code>inertia_largest_flow_t</code> parameter - [MW] The largest individual flow coming into the group of nodes that <em>has_inertia</em></li>
-<li><code>group</code> object <code>inertia_unit_node_t</code> parameter - [MW] the amount of inertia between units and the nodes of the group</li>
-<li><code>group</code> object <code>slack_inertia_t</code> parameter - [MWs] use of slack variable and the associated penalty cost to fulfill the inertia requirement in each timestep</li>
-<li><code>group</code> object <code>slack_nonsync_t</code> parameter - [MWh] use of slack variable and the associated penalty cost to fulfill the non-synchronous share maximum share constraint in each timestep </li>
+<li><code>group</code> entity <code>inertia_t</code> parameter - [MWs] the amount of inertia (MWs) in the group of nodes in each timestep</li>
+<li><code>group</code> entity <code>inertia_largest_flow_t</code> parameter - [MW] The largest individual flow coming into the group of nodes that <em>has_inertia</em></li>
+<li><code>group</code> entity <code>inertia_unit_node_t</code> parameter - [MW] the amount of inertia between units and the nodes of the group</li>
+<li><code>group</code> entity <code>slack_inertia_t</code> parameter - [MWs] use of slack variable and the associated penalty cost to fulfill the inertia requirement in each timestep</li>
+<li><code>group</code> entity <code>slack_nonsync_t</code> parameter - [MWh] use of slack variable and the associated penalty cost to fulfill the non-synchronous share maximum share constraint in each timestep </li>
 </ul>
 <h2 id="ramps">Ramps</h2>
 <ul>
-<li><code>node</code> object <code>ramp_t</code> parameter - includes seven parameters that form the ramp room envelope (how much there is additional room to ramp in a give node)</li>
+<li><code>node</code> entity <code>ramp_t</code> parameter - includes seven parameters that form the ramp room envelope (how much there is additional room to ramp in a give node)</li>
 <li><em>ramp</em> - [MW] the actual ramp in the node from previous timestep to this timestep</li>
 <li><em>units_up</em> - [MW] additional room for upward ramps from non-VRE units connected to the node</li>
 <li><em>VRE_up</em> - [MW] adds upward ramp room from VRE units on top of the ramp room from non-VRE units</li>
@@ -926,7 +926,7 @@ Annualization scales the sum to correspond with full year time series.</li>
 <li><em>units_down</em> - [MW] additional room for downward ramps from non-VRE units connected to the node </li>
 <li><em>VRE_down</em> - [MW] adds downward ramp room from VRE units on top of the ramp room from non-VRE units</li>
 <li><em>connections_down</em> - [MW] adds downward ramp room from connections on top of the previous ramp rooms (does not consider whether the connected node has ramp room, but is simply the available capacity in the connection)</li>
-<li><code>unit__node</code> relationship <code>ramp_t</code> parameter - [MW] shows ramping of particular input or output flow between a unit and a node for each time step</li>
+<li><code>unit__node</code> entity <code>ramp_t</code> parameter - [MW] shows ramping of particular input or output flow between a unit and a node for each time step</li>
 </ul>
 <h2 id="slack-and-penalty-values">Slack and penalty values</h2>
 <p>Slack and penalty values are listed in various places above (costs, energy balance, reserves, inertia and non-sychronous generation).</p>

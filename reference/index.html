@@ -578,18 +578,18 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#relationship-of-a-unit-to-a-node-and-determination-of-the-type-of-relationship" class="md-nav__link">
+  <a href="#entities-between-units-and-nodes" class="md-nav__link">
     <span class="md-ellipsis">
-      Relationship of a unit to a node and determination of the type of relationship
+      Entities between units and nodes
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#properties-of-unit-inputnode-and-unit-outputnode-relationships" class="md-nav__link">
+  <a href="#properties-of-unit-inputnode-and-unit-outputnode-entities" class="md-nav__link">
     <span class="md-ellipsis">
-      Properties of unit--inputNode and unit--outputNode relationships
+      Properties of unit--inputNode and unit--outputNode entities
     </span>
   </a>
   
@@ -772,9 +772,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#additional-objects-for-further-functionality" class="md-nav__link">
+  <a href="#additional-entities-for-further-functionality" class="md-nav__link">
     <span class="md-ellipsis">
-      Additional objects for further functionality
+      Additional entities for further functionality
     </span>
   </a>
   
@@ -1102,18 +1102,18 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#relationship-of-a-unit-to-a-node-and-determination-of-the-type-of-relationship" class="md-nav__link">
+  <a href="#entities-between-units-and-nodes" class="md-nav__link">
     <span class="md-ellipsis">
-      Relationship of a unit to a node and determination of the type of relationship
+      Entities between units and nodes
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#properties-of-unit-inputnode-and-unit-outputnode-relationships" class="md-nav__link">
+  <a href="#properties-of-unit-inputnode-and-unit-outputnode-entities" class="md-nav__link">
     <span class="md-ellipsis">
-      Properties of unit--inputNode and unit--outputNode relationships
+      Properties of unit--inputNode and unit--outputNode entities
     </span>
   </a>
   
@@ -1296,9 +1296,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#additional-objects-for-further-functionality" class="md-nav__link">
+  <a href="#additional-entities-for-further-functionality" class="md-nav__link">
     <span class="md-ellipsis">
-      Additional objects for further functionality
+      Additional entities for further functionality
     </span>
   </a>
   
@@ -1370,7 +1370,7 @@
 </li>
 <li><em>realized_periods</em>: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve</li>
 <li><em>realized_invest_periods</em> Array of the periods that will realize the investment decisions. If this is not defined when the invest_periods exist, the realized_periods are used to realize the invests as well</li>
-<li><em>invest_periods</em>: array of periods where investements are allowed in this solve (applies only to objects that can be invested in)</li>
+<li><em>invest_periods</em>: array of periods where investements are allowed in this solve (applies only to entities that can be invested in)</li>
 <li><em>years_represented</em>: Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years.</li>
 <li><em>solver</em>: choice of a solver ('highs'(default), 'glpsol', 'cplex' (requires a licence))</li>
 <li><em>highs_method</em>: HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.</li>
@@ -1424,7 +1424,7 @@
 <p><em>timeline_duration_in_years</em> Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.</p>
 </li>
 <li>
-<p><code>timeblockset__timeline</code>: defines which timeline object particular timeblockset is using.</p>
+<p><code>timeblockset__timeline</code>: defines which timeline entity particular timeblockset is using.</p>
 </li>
 </ul>
 <h2 id="nodes">Nodes</h2>
@@ -1432,8 +1432,6 @@
 <p>These parameters will define how the node will behave and use the data it is given (available choices are marked in <em>italics</em>):</p>
 <ul>
 <li><code>name</code> - unique name identifier (case sensitive)</li>
-<li><code>is_active</code> - is the model/node/unit active in a specific scenario: <em>yes</em> (if not defined, then not active).
-Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alternative</code> sheet.</li>
 <li><code>has_balance</code> - does the node maintain a balance for inputs and outputs: <em>yes</em> (if not defined, then balance is not maintained)</li>
 <li><code>has_storage</code> - does the node represent a storage and therefore have a state: <em>yes</em> (if not defined, then no storage)</li>
 <li><code>invest_method</code> - Choice of investment method: either <em>not_allowed</em> or then a combination of <ul>
@@ -1450,6 +1448,8 @@ Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alterna
 <li><em>scale_to_annual_and_peak_flow</em> - scales the time series to match the 'annual_flow' target while transforming the time series to match the highest load with the 'peak_inflow'</li>
 </ul>
 </li>
+<li><code>is_active</code> - is the model/node/unit active in a specific scenario: <em>yes</em> (if not defined, then not active).
+Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alternative</code> sheet.</li>
 </ul>
 <p><img alt="image.png" src="../nodes.png" /></p>
 <h3 id="data-for-nodes">Data for nodes</h3>
@@ -1500,13 +1500,13 @@ Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alterna
 <li><code>storage_nested_fix_method</code>: Set this storage as a long term storage, which end state is passed to the lower level solves as a target. <em>Fix_price</em> requires <code>storage_state_reference_price</code></li>
 </ul>
 <h2 id="units">Units</h2>
-<p>Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine), but the can also have multiple inputs and/or outputs (e.g. combined heat and power plant). The input nodes are defined with the relationship <code>unit--inputNode</code> while the output nodes are defined through the relationship <code>unit--outputNode</code>.</p>
+<p>Units convert energy (or matter) from one form to another (e.g. open cycle gas turbine), but the can also have multiple inputs and/or outputs (e.g. combined heat and power plant). The input nodes are defined with the entity <code>unit--inputNode</code> while the output nodes are defined through the entity <code>unit--outputNode</code>.</p>
 <h3 id="defining-how-the-unit-functions">Defining how the unit functions</h3>
 <ul>
-<li><code>is_active</code> to state the alternative where the unit becomes active. Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alternative</code> sheet.</li>
 <li>'conversion_method' to define the way unit converts inputs to outputs </li>
 <li><code>startup_method</code> - Choice of startup method. 'Linear' startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. 'Binary' startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups.</li>
 <li><code>minimum_time_method</code> - Not functional yet. Choice between minimum up- and downtimes (<empty>, <em>min_downtime</em>, <em>min_uptime</em>, <em>both</em>).</li>
+<li><code>is_active</code> to state the alternative where the unit becomes active. Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alternative</code> sheet.</li>
 </ul>
 <h3 id="main-data-items-for-units">Main data items for units</h3>
 <ul>
@@ -1558,18 +1558,18 @@ Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alterna
 <h3 id="discount-calculations">Discount calculations</h3>
 <p>Each asset that can be invested in should have <code>invest_cost</code>, <code>lifetime</code> and <code>interest_rate</code> parameters set and could have an optional <code>fixed_cost</code>. These are used to calculate the annuity of the investment. Annuity is used to annualize the investment cost, since FlexTool scales all costs (operational, investment and fixed) to annual level in order to make them comparable. Annuity is calculated as follows:</p>
 <p><code>invest_cost</code> * <code>interest_rate</code> / { 1 - [ 1 / ( 1 + <code>interest_rate</code> ) ] ^ <code>lifetime</code> } + <code>fixed_cost</code></p>
-<p>The next step is to consider discounting - future is valued less than the present. There is a model-wide assumption for the <code>discount_rate</code>. By default it is 0.05 (i.e. 5%), but it can be changed through the <code>discount_rate</code> parameter set for the <em>flexTool</em> <code>model</code> object. Discount factor for every period in the model is calculated from the <code>discount_rate</code> using the <code>years_represented</code> parameter of each <code>solve</code>, which how many years the period represents. Values for <code>years_represented</code> are used to calculate how many <code>years_from_solve_start</code> each year is. The formula is:</p>
+<p>The next step is to consider discounting - future is valued less than the present. There is a model-wide assumption for the <code>discount_rate</code>. By default it is 0.05 (i.e. 5%), but it can be changed through the <code>discount_rate</code> parameter set for the <em>flexTool</em> <code>model</code> entity. Discount factor for every period in the model is calculated from the <code>discount_rate</code> using the <code>years_represented</code> parameter of each <code>solve</code>, which how many years the period represents. Values for <code>years_represented</code> are used to calculate how many <code>years_from_solve_start</code> each year is. The formula is:</p>
 <p>[ 1 / ( 1 + <code>discount_rate</code> ) ] ^ <code>years_from_solve_start</code></p>
 <p>Operational costs are also discounted using the same <code>discount_rate</code>. However, with operational costs it is assumed that they take place on average at the middle of the year whereas investment costs are assumed to take place at the beginning of the year (they are available for the whole year). These can be tweaked with the <code>discount_offset_investments</code> and <code>discount_offset_operations</code> parameters (given in years). Please note that given this formulation, <strong><code>invest_cost</code> should be the overnight built cost</strong> (as is typical in energy system modelling, the model does not assume any construction time - the financing costs of the construction period need to be included in your cost assumptions).</p>
 <p>The model has a model horizon based on the <code>years_represented</code> parameters. The model will not include discounted investment annuities after the model horizon (in other words, the investments are 'returned' at the end of the model horizon). Naturally also operational costs are included only until the end of the model horizon. </p>
 <p>Finally, the retirements work similar to investments using the same <code>discount_rate</code> and <code>interest_rate</code> parameters but with <code>salvage_value</code> as the benefit from retiring the unit.</p>
-<h3 id="relationship-of-a-unit-to-a-node-and-determination-of-the-type-of-relationship">Relationship of a unit to a node and determination of the type of relationship</h3>
+<h3 id="entities-between-units-and-nodes">Entities between units and nodes</h3>
 <ul>
 <li>If the unit’s outputs are flowing into the node, the node acts as output for the unit.</li>
 <li>If the unit’s inputs are flowing out of the node (into the unit), the node acts as input for the unit.</li>
 <li>Not all units necessary have both an input and an output node. E.g. VRE generators have only output nodes and their generation is driven by profiles</li>
 </ul>
-<h3 id="properties-of-unit-inputnode-and-unit-outputnode-relationships">Properties of unit--inputNode and unit--outputNode relationships</h3>
+<h3 id="properties-of-unit-inputnode-and-unit-outputnode-entities">Properties of unit--inputNode and unit--outputNode entities</h3>
 <ul>
 <li><code>is_non_synchronous</code> - Chooses whether the unit is synchronously connected to this node.</li>
 <li><code>coefficient</code> - [factor] Coefficient to scale the output from a unit to a particular node or the input from a node. Can be used e.g. to change unit of measurement or to remove the flow by using zero as the coefficient (the flow variable can still be used in user constraints).
@@ -1582,12 +1582,11 @@ Note that in the case of unit--outputNode the <code>coefficient</code> affects <
 <li><code>ramp_speed_down</code> - [per unit / minute] Maximum ramp down speed. Constant.</li>
 </ul>
 <h3 id="units-constrained-by-profiles">Units constrained by profiles</h3>
-<p>Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a <code>profile</code> object with a <code>profile_method</code>, thats state whether the profile forces an <em>upper_limit</em>, <em>lower_limit</em> or <em>equal</em>ity. Finally <code>profile</code> object is given a <code>profile</code> time series (or it can also be a constant). One needs to use <code>node__profile</code>, <code>unit__node__profile</code> or <code>connection__profile</code> to apply the profile to specific energy flow (or storage state in the case of <code>node__profile</code>).</p>
+<p>Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a <code>profile</code> entity with a <code>profile_method</code>, thats state whether the profile forces an <em>upper_limit</em>, <em>lower_limit</em> or <em>equal</em>ity. Finally <code>profile</code> entity is given a <code>profile</code> time series (or it can also be a constant). One needs to use <code>node__profile</code>, <code>unit__node__profile</code> or <code>connection__profile</code> to apply the profile to specific energy flow (or storage state in the case of <code>node__profile</code>).</p>
 <h2 id="connections">Connections</h2>
-<p>Connections can transfer energy between two nodes. Parameters for the connection are defined in the <code>connection</code> object, but the two <code>nodes</code> it connects are defined by establishing a relationship between <code>connection--leftNode--rightNode</code>.</p>
+<p>Connections can transfer energy between two nodes. Parameters for the connection are defined in the <code>connection</code> entity, but the two <code>nodes</code> it connects are defined by establishing an entity between <code>connection--leftNode--rightNode</code>.</p>
 <h3 id="defining-how-the-connection-functions">Defining how the connection functions</h3>
 <ul>
-<li><code>is_active</code> to state the alternative where the connection becomes active. Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alternative</code> sheet.</li>
 <li><code>transfer_method</code> to define the way the connection transfers energy between the nodes</li>
 <li><code>startup_method</code> where <em>linear</em> startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. <em>binary</em> startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups.</li>
 <li><code>invest_method</code> to define investment and retirement limits: either <em>not_allowed</em> or then a combination of <ul>
@@ -1597,6 +1596,7 @@ Note that in the case of unit--outputNode the <code>coefficient</code> affects <
 </ul>
 </li>
 <li><code>lifetime_method</code> to choose how the investments behave after unit runs out of lifetime. Automatic reinvestment (reinvest_automatic - default) causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost until the end of model horizon without further choice by the model. Choice of reinvestment (reinvest_choice) removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built. If there is a need to remove the possibility to invest after lifetime, then the investment limits can be used.</li>
+<li><code>is_active</code> to state the alternative where the connection becomes active. Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alternative</code> sheet.</li>
 </ul>
 <h3 id="main-data-items-for-connections">Main data items for connections</h3>
 <ul>
@@ -1616,14 +1616,14 @@ Note that in the case of unit--outputNode the <code>coefficient</code> affects <
 <h3 id="investment-parameters-for-connections">Investment parameters for connections</h3>
 <p>These are the same as for units, see <a href="#Investment parameters for capacity expansion">here</a></p>
 <h2 id="commodities">Commodities</h2>
-<p>Some <code>nodes</code> can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a <code>price</code> and be connected to those <code>nodes</code> that serve (or buy) that particular <code>commodity</code> at the given <code>price</code>. In other words, <code>commodity</code> is separate from <code>node</code> so that the user can use the same <code>commodity</code> properties for multiple nodes. Commodities can also have a <code>co2_content</code>. The <code>commodity</code> and its <code>nodes</code> are connected by establishin a new relationship between the <code>commodity</code> and each of its <code>nodes</code> (e.g. <em>coal--coal_market</em>).</p>
+<p>Some <code>nodes</code> can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a <code>price</code> and be connected to those <code>nodes</code> that serve (or buy) that particular <code>commodity</code> at the given <code>price</code>. In other words, <code>commodity</code> is separate from <code>node</code> so that the user can use the same <code>commodity</code> properties for multiple nodes. Commodities can also have a <code>co2_content</code>. The <code>commodity</code> and its <code>nodes</code> are connected by establishing a new entity between the <code>commodity</code> and each of its <code>nodes</code> (e.g. <em>coal--coal_market</em>).</p>
 <ul>
 <li><code>price</code> - [CUR/MWh or other unit] Price of the commodity. Constant or period.</li>
 <li><code>co2_content</code> - [CO2 ton per MWh] Constant.</li>
 </ul>
 <p><img alt="image-1.png" src="../commodities.PNG" /></p>
 <h2 id="groups">Groups</h2>
-<p>Groups are used to make constraints that apply to a group of nodes, units and/or connections. A group is defined by creating a group object and then creating a relationship between the group and its members. The membership relationship classes are <code>group__node</code>, <code>group__unit</code>, <code>group__connection</code>, <code>group__unit__node</code>, <code>group__connection__node</code> and <code>reserve__upDown__group</code>. The choice of group members depends on what the group is trying to achieve. For instance a group that limits investments could have a set of <code>units</code> included in the group.</p>
+<p>Groups are used to make constraints that apply to a group of nodes, units and/or connections. A group is defined by creating a group entity and then creating an entity between the group and its members. The membership entity classes are <code>group__node</code>, <code>group__unit</code>, <code>group__connection</code>, <code>group__unit__node</code>, <code>group__connection__node</code> and <code>reserve__upDown__group</code>. The choice of group members depends on what the group is trying to achieve. For instance a group that limits investments could have a set of <code>units</code> included in the group.</p>
 <h3 id="capacity-limits-for-nodes-units-and-connections">Capacity limits for nodes, units and connections</h3>
 <ul>
 <li><code>invest_method</code> - the choice of method how to limit or force investments in capacity [MW or MWh] of the group members</li>
@@ -1688,16 +1688,16 @@ Note that in the case of unit--outputNode the <code>coefficient</code> affects <
 <li>model: <code>output_horizon</code>: Default, no. Produces outputs for the model horizon after <code>rolling_solve_jump</code>.</li>
 </ul>
 <h2 id="reserves">Reserves</h2>
-<p>The user defines reserve categories through <code>reserve</code> object. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. </p>
+<p>The user defines reserve categories through <code>reserve</code> entity. Reserves are reservations of capacity (either upward or downward) and that capacity will not therefore be available for other use (flowing energy or commodities). There are three different ways how a reserve requirement can be calculated: timeseries, large_failure and dynamic. </p>
 <ul>
 <li>Timeseries requires that the user provides a pre-defined time series for the amount of reserve to be procured in each time step. </li>
 <li>Large_failure requires that the user defines the energy flows that could be the largest failure in the system. The highest possible failure (flow multiplied by <code>large_failure_ratio</code>) in each timestep will then set the reserve requirement for that timestep. </li>
-<li>Dynamic means that there is a requirement based on user chosen energy flows - each participating flow is multipled by <code>increase_reserve_ratio</code> and then summed to form the reserve requirement. This can be useful for covering variability within timesteps. Also demand variability can be included through <code>increase_reserve_ratio</code> parameter in <code>reserve__upDown__group</code> relationship.</li>
+<li>Dynamic means that there is a requirement based on user chosen energy flows - each participating flow is multipled by <code>increase_reserve_ratio</code> and then summed to form the reserve requirement. This can be useful for covering variability within timesteps. Also demand variability can be included through <code>increase_reserve_ratio</code> parameter in <code>reserve__upDown__group</code> entity.</li>
 </ul>
 <p>When the same reserve category (e.g. primary upward) has more than one of these (timeseries, large_failure and dynamic) in use, then the largest requirement will apply for that timestep. If they are separated into different reserves, then they need to be fulfilled separately.</p>
 <p>Reserve requirement is defined for groups of nodes. This means that multiple nodes can have a common reserve requirement (but it is also possible to make a group with only one node). One node can be in multiple groups and therefore subject to multiple overlapping reserve requirements. Only units can generate reserve, but connections can move reserve from one node to another (therefore, there is no impact if the nodes are in the same reserve group, but it can be useful to import reserve from outside the group).</p>
 <h3 id="reserve-groups">Reserve groups</h3>
-<p>For <code>reserve__upDown__group</code> relationships:</p>
+<p>For <code>reserve__upDown__group</code> entities:</p>
 <ul>
 <li><code>reserve_method</code> - Choice of reserve method (timeseries, large_failure, dynamic or their combination).</li>
 <li><code>reservation</code> - [MWh] Amount of reserve required. Constant or time.</li>
@@ -1705,24 +1705,24 @@ Note that in the case of unit--outputNode the <code>coefficient</code> affects <
 <li><code>increase_reserve_ratio</code> - [factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.</li>
 </ul>
 <h3 id="reserve-provision-by-units">Reserve provision by units</h3>
-<p>For <code>reserve__upDown__unit__node</code> relationships:</p>
+<p>For <code>reserve__upDown__unit__node</code> entities:</p>
 <ul>
-<li><code>is_active</code> - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true. Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alternative</code> sheet.</li>
 <li><code>max_share</code> - [factor] Maximum ratio for the transfer of reserve from the unit to the node. Constant.</li>
 <li><code>reliability</code> - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.</li>
 <li><code>increase_reserve_ratio</code> - [factor] The reserve requirement is increased by the flow between the unit and the node multiplied by this ratio. Constant.</li>
 <li><code>large_failure_ratio</code> - [factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.</li>
+<li><code>is_active</code> - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true. Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alternative</code> sheet.</li>
 </ul>
 <h3 id="reserve-transfer-by-connections">Reserve transfer by connections</h3>
-<p>For <code>reserve__upDown__connection__node</code> relationships:</p>
+<p>For <code>reserve__upDown__connection__node</code> entities:</p>
 <ul>
-<li><code>is_active</code> - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true. Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alternative</code> sheet.</li>
 <li><code>max_share</code> - [factor] Maximum ratio for the transfer of reserve to this node. Constant.</li>
 <li><code>reliability</code> - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.</li>
 <li><code>increase_reserve_ratio</code> - [factor] The reserve is increased by generation from this unit multiplied this ratio. Constant.</li>
 <li><code>large_failure_ratio</code> - [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the connection (multiplied by this ratio). Constant.</li>
+<li><code>is_active</code> - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true. Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alternative</code> sheet.</li>
 </ul>
-<h2 id="additional-objects-for-further-functionality">Additional objects for further functionality</h2>
+<h2 id="additional-entities-for-further-functionality">Additional entities for further functionality</h2>
 <ul>
 <li><code>constraint</code>: to create user defined constraints between flow, state, and capacity variables (for nodes, units and connections)</li>
 </ul>
