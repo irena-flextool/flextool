@@ -1,95 +1,114 @@
 ## Installing Spine Toolbox and IRENA FlexTool on a local computer
 
-Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/N3qB0rzxPYw).
-Currently python versions 3.9 or higher are supported. These instructions are for Windows, see Linux and Mac at the bottom.
+Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/N3qB0rzxPYw). This is bit old, but should still work. The instructions below are somewhat simpler. These instructions are for Windows, see Linux and Mac at the bottom.
 
-- Install [Miniconda](https://docs.conda.io/en/latest/miniconda.html) (or Anaconda)  [Can be ignored if already installed]
-- Start Anaconda prompt
-- Create new Python environment [Also possible to use existing, up-to-date, Spine Toolbox environment]
+- Install Python (3.9 - 3.12 supported as of 15.11.2024) from the Python website or from your favourite app manager (e.g. Windows store). Or use existing installation if available.
 
-```shell
-conda create -n flextool python=3.11
-```
+> [! NOTE]
+> If you have existing Python in the PATH (try `python --version` in a terminal) and it is not a supported version, then you need to install another Python and call it with a full path (unless you replace the old Python with the new in the PATH).
 
+- Start a terminal (e.g. type `cmd` in Windows search)
+- 'cd' to a directory where you want to have FlexTool's virtual environment directory (Python packages FlexTool needs). If you are not familiar with terminals, just `cd full_path_to_the_directory`, where that full path can be copied from a file manager.
+- Make a virtual environment for FlexTool by
+
+    ```shell
+    python -m venv flextool-venv
+    ```
+
+- Activate the newly created environment (and remember to activate it always when starting FlexTool)
+
+    ```shell
+    flextool-venv\Scripts\activate
+    ```
+
+- Get Flextool:
+  - Option 1, easy but harder to keep up-to-date:
+    - Download a [zip file](https://github.com/irena-flextool/flextool/archive/refs/heads/master.zip).
+    - Unzip to a location of your choice.
+  - Option 2, install using git (and use it to keep FlexTool up-to-date):
+    - Download and install from https://git-scm.com/downloads or using app manager (not in Windows Store though)
+    - 'cd' to a directory where you want Flextool's directory to be located (this could be the same location as for flextool-venv).
+    - Then
+
+    ```shell
+    git clone https://github.com/irena-flextool/flextool.git
+    ```
+
+- 'cd' to the FlexTool root (main) directory (unless there already)
+- Install requirements by
+
+    ```shell
+    python -m pip install -r requirements.txt --timeout=10000
+    ```
+
+- Please note, the `timeout` argument is necessary only if you are on a slow internet connection
+- Create basic files that FlexTool needs (`skip-git` argument is needed if you did not install git
+
+    ```shell
+    python update_flextool-py --skip-git
+    ```
+
+- Start Spine Toolbox (can take a small while)
+
+    ```shell
+    spinetoolbox
+    ```
+
+## Starting IRENA FlexTool
+
+- Start a terminal (e.g. type 'cmd' in Windows search)
+- 'cd' to directory where the virtual environment directory for flextool is (assumed below to be 'flextool-venv', but modify as needed)
 - Activate the environment
 
-```shell
-conda activate flextool
-```
-
-- Install Git to the environment [Also possible to use existing Git installation]
-
-```shell
-conda install git
-```
-
-- `cd` to a directory into which both FlexTool and Spine Toolbox will make their own folders
-- Clone the FlexTool Git repository
-
-```shell
-git clone https://github.com/irena-flextool/flextool
-```
-
-Install Spine Toolbox [Can be skipped if using existing Toolbox installation using any of the methods presented in https://github.com/Spine-project/Spine-Toolbox#installation]
-
-- Clone the Toolbox repository
-
-```shell
-git clone https://github.com/Spine-project/Spine-Toolbox.git
-```
-
-- cd to the freshly created folder
-
-```shell
-cd Spine-Toolbox
-```
-
-- Make sure Pip is up-to-date
-
-```shell
-python -m pip install --upgrade pip
-```
-
-- Install packages required by Toolbox
-
-```shell
-python -m pip install -r requirements.txt
-```
-In case of problems when installing Spine Toolbox, more instructions are available at: [https://github.com/Spine-project/Spine-Toolbox#installation](https://github.com/Spine-project/Spine-Toolbox#installation)
-
-Generate databases from templates:
-
-- `cd` back to the flextool repository folder. Most likely:
-
-```shell
-cd ../flextool
-```
-- Run update_flextool.py script. This will generate the Input_data.sqlite and Results.sqlite from their templates. These are not directly in the repository to avoid future overwrites. Update_flextool.py can also be used later when one wants to update the tool (see below). If you use just git to update, your databases will not be migrated in case there has been an update to FlexTool data structures.
-
-```shell
-python update_flextool.py
-```
-
-## Starting IRENA FlexTool in Spine Toolbox
-
-1. Open a conda prompt.
-2. Activate the environment
-
-    ```
-    conda activate flextool
+    ```shell
+    flextool-venv\Scripts\activate
     ```
 
-3. Launch Spine Toolbox
+- Launch Spine Toolbox
 
-    ```
+    ```shell
     python -m spinetoolbox
     ```
 
-4. Open FlexTool3 project in Spine Toolbox (Choose the flextool *folder* from File > Open project dialog)
+- Open FlexTool3 project in Spine Toolbox (Choose the flextool *folder* from File > Open project dialog by navigating to the folder where FlexTool itself is installed)
 
 ## Updating IRENA FlexTool
 
-### Updates for version 3.1.4 or later:
+### Updates when using venv (virtual environment, as instructed above since 15.11.2024)
+
+- Start by updating Spine Toolbox
+  - Activate environment as [above](#starting-irena-flextool)
+  - Then upgrade Spine Toolbox
+
+   ```Shell
+   python -m pip install --upgrade spinetoolbox
+   ```
+
+
+- Then, to update FlexTool
+- 'cd' to flextool directory
+
+   ```Shell
+   python update_flextool.py
+   ```
+
+- This will not work if you don't have git installed. In that case, you need to download the latest [zip file](https://github.com/irena-flextool/flextool/archive/refs/heads/master.zip), unzip it to the FlexTool folder (overwriting existing files) and then
+  
+   ```Shell
+   python update_flextool.py --skip-git
+   ```
+
+- If this fails, see [below](upgrade-troubleshooting)
+- This update will pull the new version of the tool as well as migrating the input databases to the new version without destroying the data. Making a backup copy of the input data is still a good practice. The input_data_template.sqlite should not be used directly but by making a copy of it. 
+    - The updated databases are: 
+        - The database chosen as the input data in the tool!! But no other databases you might have - those can be updated separately, see below.
+        - init.sqlite
+        - input_data_template.sqlite
+        - time_settings_only.sqlite
+        - how to example databases
+
+
+### Updates when using anaconda/miniconda (this was the installation instruction until 15.11.2024):
 
 - Start anaconda/miniconda prompt
 - `conda activate flextool` (or whatever is your conda environment name for IRENA FlexTool)
@@ -107,19 +126,14 @@ Update IRENA FlexTool:
 
 - cd to the FlexTool directory
 - `python update_flextool.py`
-- This will pull the new version of the tool as well as migrating the input databases to the new version without destroying the data. Making a backup copy of the input data is still a good practice. The input_data_template.sqlite should not be used directly but by making a copy of it. 
+- If this fails, see [below](upgrade-troubleshooting)
+- This update will pull the new version of the tool as well as migrating the input databases to the new version without destroying the data. Making a backup copy of the input data is still a good practice. The input_data_template.sqlite should not be used directly but by making a copy of it. 
     - The updated databases are: 
         - The database chosen as the input data in the tool!! But no other databases you might have - those can be updated separately, see below.
         - init.sqlite
         - input_data_template.sqlite
         - time_settings_only.sqlite
         - how to example databases
-- If the git complains about merge conflicts, it is probably due to you modifying the template files. Use `git restore .`  and `git pull `. This will restore ALL the files downloaded from the repository to their original states. Then repeat `python update_flextool.py`
-- The Results.sqlite will only get additive changes, as we do not want to destroy your data. This causes old parameter definitions to linger in the database. You can remove them by replacing the database with a copy of the Results_template.sqlite that is kept up to date.
-
-- One can also migrate other input databases to the new version by calling:
-    - `python migrate_database.py *absolute_path_to_database*` or
-    - `python migrate_database.py database_name.sqlite` if in the main flextool folder
 
 ### Old version (release 3.1.3 or earlier):
 Update of IRENA FlexTool to the latest version is done as follows:
@@ -132,6 +146,14 @@ Update of IRENA FlexTool to the latest version is done as follows:
 Then do the update_flextool discribed above to migrate the databases:
 - `python update_flextool.py`
 
+### Upgrade troubleshooting
+
+- If the git complains about merge conflicts, it is probably due to you modifying the template files. Use `git restore .`  and `git pull `. This will restore ALL the files downloaded from the repository to their original states. Then repeat `python update_flextool.py`
+- The Results.sqlite will only get additive changes, as we do not want to destroy your data. This causes old parameter definitions to linger in the database. You can remove them by replacing the database with a copy of the Results_template.sqlite that is kept up to date.
+
+- One can also migrate other input databases to the new version by calling:
+    - `python migrate_database.py *absolute_path_to_database*` or
+    - `python migrate_database.py database_name.sqlite` if in the main flextool folder
 
 ## Installing for Linux or Mac
 
