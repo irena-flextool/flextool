@@ -25,7 +25,7 @@ Building parts of the model:
 
 Setting different solves:
 
-- [How to run solves in a sequence (investment + dispatch)](#how-to-run-solves-in-a-sequence-investment--dispatch)
+- [How to run solves in a sequence (investment + dispatch)](#how-to-run-solves-in-a-sequence-investment-dispatch)
 - [How to create a multi-year model](#how-to-create-a-multi-year-model)
 - [How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model)
 - [How to use Nested Rolling window solves (investments and long-term storage)](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
@@ -43,7 +43,7 @@ General:
 
 FlexTool allows to build models for different kinds of purposes and has therefore a flexible temporal structure, which requires some learning at first. To get you started, this how-to creates three different timelines: a full year, a 48h timeline and a timeline with five one-week periods to represent a full year. To be able to choose which of these are used in a given scenario, three alternatives are created: init, init_2day-test, init_5week-invest. 
 
-The names of these alternatives hint at the intended use of each timeline. Even when you are building a large model with a long timeline, it is better to use a short 48 hour timeline for testing purposes when building the model. Using five one-week periods, i.e. "a representative periods", in an investment model is a method to reduce the model size and consequently solve time. More about that in [How to run solves in a sequence (investment + dispatch)](#how-to-run-solves-in-a-sequence-investment--dispatch)
+The names of these alternatives hint at the intended use of each timeline. Even when you are building a large model with a long timeline, it is better to use a short 48 hour timeline for testing purposes when building the model. Using five one-week periods, i.e. "a representative periods", in an investment model is a method to reduce the model size and consequently solve time. More about that in [How to run solves in a sequence (investment + dispatch)](#how-to-run-solves-in-a-sequence-investment-dispatch)
 
 ![Time_settings](./time_settings.png)
 
@@ -847,7 +847,7 @@ Nested solve sequences can first solve the investments and long-term storage lev
 When to use nested solves?
 
 - Dispatch model is taking too long to solve, but simple rolling window solve would not represent the long-term storages correctly. (Nesting without the investment solve)
-- Investment model takes too long to solve, even with manual rolling [How to create a multi-year model](#How-to-create-a-multi-year-model). With nesting you can have smaller rolls for dispatch solve than the investment solve. (Nesting without the storage solve)
+- Investment model takes too long to solve, even with manual rolling [How to create a multi-year model](#how-to-create-a-multi-year-model). With nesting you can have smaller rolls for dispatch solve than the investment solve. (Nesting without the storage solve)
 - Investment model takes too long and you have long term storages to consider. (Three level nesting, graph below)
 
 ![Nested graph](./Nested_graph.PNG)
@@ -856,7 +856,7 @@ However, the obvious issue is that investment and storage solves cannot be solve
 
 1. Use lower resolution (longer timesteps). This can work quite well for a long-term storage.
 2. Use representative periods from the full timeline when performing investments. There is a large body of literature and methods on how to pick the representative weeks.
-3. Split the investment timeline (myopic investments) by manually creating a solve sequence for the investment solves like in: [How to create a multi-year model](#How-to-create-a-multi-year-model) section. This can be combined with the first or second option. 
+3. Split the investment timeline (myopic investments) by manually creating a solve sequence for the investment solves like in: [How to create a multi-year model](#how-to-create-a-multi-year-model) section. This can be combined with the first or second option. 
 
 Each of these have their pros and cons:
 
@@ -897,7 +897,7 @@ In addition, the rolling dispatch solve should be created as in the *How to use 
 - `rolling_duration`: (Optional) Hours, the length of the combined outputs. If not set, the whole timeline is used.
 - `realized_periods`: Array of periods that are realized
 
-The other model parameters apply to *all* of the solves. Therefore, the considerations of the storage value binding that were discussed in the [How to use a rolling window for a dispatch model](#How-to-use-a-rolling-window-for-a-dispatch-model) should be taken into account here as well.
+The other model parameters apply to *all* of the solves. Therefore, the considerations of the storage value binding that were discussed in the [How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model) should be taken into account here as well.
 
 - Storage levels can be fixed with `storage_solve_horizon_method`: *use_reference_value* or *use_reference_price*, these will fix the end of each horizon not each jump.
 - `storage_start_end_method` fixes the starts and/or ends of each solve level, meaning the first step of the first roll and the last step of the last roll.
@@ -935,7 +935,7 @@ The tutorial contains an example of representaive periods under alternative *5we
 
 To create an investment solve sequence, you have two options:
 
-- Create manually a series of solves and set the `invest_periods` and `realized_invest_periods` individually for the solves. [How to create a multi-year model](#How-to-create-a-multi-year-model) has an example of this with the difference that here you use `realized_invest_periods` instead of `realized_periods` and that each of the higher level solves requires the `contains_solve` parameter. 
+- Create manually a series of solves and set the `invest_periods` and `realized_invest_periods` individually for the solves. [How to create a multi-year model](#how-to-create-a-multi-year-model) has an example of this with the difference that here you use `realized_invest_periods` instead of `realized_periods` and that each of the higher level solves requires the `contains_solve` parameter. 
 
 If you have many splits, this option can get tedious and prone to mistakes.
 

@@ -98,7 +98,7 @@ Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/
    python update_flextool.py --skip-git
    ```
 
-- If this fails, see [below](upgrade-troubleshooting)
+- If this fails, see [below](#upgrade-troubleshooting)
 - This update will pull the new version of the tool as well as migrating the input databases to the new version without destroying the data. Making a backup copy of the input data is still a good practice. The input_data_template.sqlite should not be used directly but by making a copy of it. 
     - The updated databases are: 
         - The database chosen as the input data in the tool!! But no other databases you might have - those can be updated separately, see below.
@@ -126,7 +126,7 @@ Update IRENA FlexTool:
 
 - cd to the FlexTool directory
 - `python update_flextool.py`
-- If this fails, see [below](upgrade-troubleshooting)
+- If this fails, see [below](#upgrade-troubleshooting)
 - This update will pull the new version of the tool as well as migrating the input databases to the new version without destroying the data. Making a backup copy of the input data is still a good practice. The input_data_template.sqlite should not be used directly but by making a copy of it. 
     - The updated databases are: 
         - The database chosen as the input data in the tool!! But no other databases you might have - those can be updated separately, see below.

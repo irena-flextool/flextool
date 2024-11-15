@@ -6,7 +6,7 @@ Elemental entities (one dimensional):
 - [`unit`](#units): power plants or other conversion devices that take one or more inputs and turn them into one or more outputs
 - [`connection`](#connections): transmission lines or other transfer connections between nodes
 - [`commodity`](#commodities): fuels or other commodities that are either purchased or sold at a price outside of the model scope
-- [`profile`](#profiles): timeseries that can be used to constraint the behaviour of units, connections or storages
+- [`profile`](#units-constrained-by-profiles): timeseries that can be used to constraint the behaviour of units, connections or storages
 - [`reserve`](#reserves): reserve categories to withhold capacity to cope with issues outside of model scope
 
 Entities with two or more dimensions:
@@ -289,7 +289,7 @@ Connections can transfer energy between two nodes. Parameters for the connection
 
 ### Investment parameters for connections
 
-These are the same as for units, see [here](#Investment parameters for capacity expansion)
+These are the same as for units, see [here](#investment-parameters-for-capacity-expansion)
 
 ## Commodities
 
