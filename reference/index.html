@@ -20,7 +20,7 @@
       
       
       <link rel="icon" href="../irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.39">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.44">
     
     
       
@@ -28,7 +28,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.8c3ca2c6.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.0253249f.min.css">
       
       
 
@@ -1329,7 +1329,7 @@
 <li><a href="#units"><code>unit</code></a>: power plants or other conversion devices that take one or more inputs and turn them into one or more outputs</li>
 <li><a href="#connections"><code>connection</code></a>: transmission lines or other transfer connections between nodes</li>
 <li><a href="#commodities"><code>commodity</code></a>: fuels or other commodities that are either purchased or sold at a price outside of the model scope</li>
-<li><a href="#profiles"><code>profile</code></a>: timeseries that can be used to constraint the behaviour of units, connections or storages</li>
+<li><a href="#units-constrained-by-profiles"><code>profile</code></a>: timeseries that can be used to constraint the behaviour of units, connections or storages</li>
 <li><a href="#reserves"><code>reserve</code></a>: reserve categories to withhold capacity to cope with issues outside of model scope</li>
 </ul>
 <p>Entities with two or more dimensions:</p>
@@ -1614,7 +1614,7 @@ Note that in the case of unit--outputNode the <code>coefficient</code> affects <
 <li><code>availability</code> - [e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant or time.</li>
 </ul>
 <h3 id="investment-parameters-for-connections">Investment parameters for connections</h3>
-<p>These are the same as for units, see <a href="#Investment parameters for capacity expansion">here</a></p>
+<p>These are the same as for units, see <a href="#investment-parameters-for-capacity-expansion">here</a></p>
 <h2 id="commodities">Commodities</h2>
 <p>Some <code>nodes</code> can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a <code>price</code> and be connected to those <code>nodes</code> that serve (or buy) that particular <code>commodity</code> at the given <code>price</code>. In other words, <code>commodity</code> is separate from <code>node</code> so that the user can use the same <code>commodity</code> properties for multiple nodes. Commodities can also have a <code>co2_content</code>. The <code>commodity</code> and its <code>nodes</code> are connected by establishing a new entity between the <code>commodity</code> and each of its <code>nodes</code> (e.g. <em>coal--coal_market</em>).</p>
 <ul>
@@ -1779,7 +1779,7 @@ Note that in the case of unit--outputNode the <code>coefficient</code> affects <
     <script id="__config" type="application/json">{"base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.525ec568.min.js"></script>
+      <script src="../assets/javascripts/bundle.83f73b43.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       

@@ -20,7 +20,7 @@
       
       
       <link rel="icon" href="../irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.39">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.44">
     
     
       
@@ -28,7 +28,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.8c3ca2c6.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.0253249f.min.css">
       
       
 
@@ -1237,7 +1237,7 @@ Each example will either include an example database file that is located in the
 </ul>
 <p>Setting different solves:</p>
 <ul>
-<li><a href="#how-to-run-solves-in-a-sequence-investment--dispatch">How to run solves in a sequence (investment + dispatch)</a></li>
+<li><a href="#how-to-run-solves-in-a-sequence-investment-dispatch">How to run solves in a sequence (investment + dispatch)</a></li>
 <li><a href="#how-to-create-a-multi-year-model">How to create a multi-year model</a></li>
 <li><a href="#how-to-use-a-rolling-window-for-a-dispatch-model">How to use a rolling window for a dispatch model</a></li>
 <li><a href="#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves (investments and long-term storage)</a></li>
@@ -1253,7 +1253,7 @@ Each example will either include an example database file that is located in the
 <h2 id="how-to-create-basic-temporal-structures-for-your-model">How to create basic temporal structures for your model</h2>
 <p><strong>(time_settings_only.sqlite)</strong></p>
 <p>FlexTool allows to build models for different kinds of purposes and has therefore a flexible temporal structure, which requires some learning at first. To get you started, this how-to creates three different timelines: a full year, a 48h timeline and a timeline with five one-week periods to represent a full year. To be able to choose which of these are used in a given scenario, three alternatives are created: init, init_2day-test, init_5week-invest. </p>
-<p>The names of these alternatives hint at the intended use of each timeline. Even when you are building a large model with a long timeline, it is better to use a short 48 hour timeline for testing purposes when building the model. Using five one-week periods, i.e. "a representative periods", in an investment model is a method to reduce the model size and consequently solve time. More about that in <a href="#how-to-run-solves-in-a-sequence-investment--dispatch">How to run solves in a sequence (investment + dispatch)</a></p>
+<p>The names of these alternatives hint at the intended use of each timeline. Even when you are building a large model with a long timeline, it is better to use a short 48 hour timeline for testing purposes when building the model. Using five one-week periods, i.e. "a representative periods", in an investment model is a method to reduce the model size and consequently solve time. More about that in <a href="#how-to-run-solves-in-a-sequence-investment-dispatch">How to run solves in a sequence (investment + dispatch)</a></p>
 <p><img alt="Time_settings" src="../time_settings.png" /></p>
 <p>To define a temporal structure for a model instance, you need to create the following entities:</p>
 <ul>
@@ -1892,7 +1892,7 @@ Additionally some of the units, connections or storages will need investment par
 <p>When to use nested solves?</p>
 <ul>
 <li>Dispatch model is taking too long to solve, but simple rolling window solve would not represent the long-term storages correctly. (Nesting without the investment solve)</li>
-<li>Investment model takes too long to solve, even with manual rolling <a href="#How-to-create-a-multi-year-model">How to create a multi-year model</a>. With nesting you can have smaller rolls for dispatch solve than the investment solve. (Nesting without the storage solve)</li>
+<li>Investment model takes too long to solve, even with manual rolling <a href="#how-to-create-a-multi-year-model">How to create a multi-year model</a>. With nesting you can have smaller rolls for dispatch solve than the investment solve. (Nesting without the storage solve)</li>
 <li>Investment model takes too long and you have long term storages to consider. (Three level nesting, graph below)</li>
 </ul>
 <p><img alt="Nested graph" src="../Nested_graph.PNG" /></p>
@@ -1900,7 +1900,7 @@ Additionally some of the units, connections or storages will need investment par
 <ol>
 <li>Use lower resolution (longer timesteps). This can work quite well for a long-term storage.</li>
 <li>Use representative periods from the full timeline when performing investments. There is a large body of literature and methods on how to pick the representative weeks.</li>
-<li>Split the investment timeline (myopic investments) by manually creating a solve sequence for the investment solves like in: <a href="#How-to-create-a-multi-year-model">How to create a multi-year model</a> section. This can be combined with the first or second option. </li>
+<li>Split the investment timeline (myopic investments) by manually creating a solve sequence for the investment solves like in: <a href="#how-to-create-a-multi-year-model">How to create a multi-year model</a> section. This can be combined with the first or second option. </li>
 </ol>
 <p>Each of these have their pros and cons:</p>
 <ul>
@@ -1938,7 +1938,7 @@ Additionally some of the units, connections or storages will need investment par
 <li><code>rolling_duration</code>: (Optional) Hours, the length of the combined outputs. If not set, the whole timeline is used.</li>
 <li><code>realized_periods</code>: Array of periods that are realized</li>
 </ul>
-<p>The other model parameters apply to <em>all</em> of the solves. Therefore, the considerations of the storage value binding that were discussed in the <a href="#How-to-use-a-rolling-window-for-a-dispatch-model">How to use a rolling window for a dispatch model</a> should be taken into account here as well.</p>
+<p>The other model parameters apply to <em>all</em> of the solves. Therefore, the considerations of the storage value binding that were discussed in the <a href="#how-to-use-a-rolling-window-for-a-dispatch-model">How to use a rolling window for a dispatch model</a> should be taken into account here as well.</p>
 <ul>
 <li>Storage levels can be fixed with <code>storage_solve_horizon_method</code>: <em>use_reference_value</em> or <em>use_reference_price</em>, these will fix the end of each horizon not each jump.</li>
 <li><code>storage_start_end_method</code> fixes the starts and/or ends of each solve level, meaning the first step of the first roll and the last step of the last roll.</li>
@@ -1968,7 +1968,7 @@ Other reason might be that both dispatch and storage solves are aggregated with 
 <p><img alt="New step duration" src="../5weeks.PNG" /></p>
 <p>To create an investment solve sequence, you have two options:</p>
 <ul>
-<li>Create manually a series of solves and set the <code>invest_periods</code> and <code>realized_invest_periods</code> individually for the solves. <a href="#How-to-create-a-multi-year-model">How to create a multi-year model</a> has an example of this with the difference that here you use <code>realized_invest_periods</code> instead of <code>realized_periods</code> and that each of the higher level solves requires the <code>contains_solve</code> parameter. </li>
+<li>Create manually a series of solves and set the <code>invest_periods</code> and <code>realized_invest_periods</code> individually for the solves. <a href="#how-to-create-a-multi-year-model">How to create a multi-year model</a> has an example of this with the difference that here you use <code>realized_invest_periods</code> instead of <code>realized_periods</code> and that each of the higher level solves requires the <code>contains_solve</code> parameter. </li>
 </ul>
 <p>If you have many splits, this option can get tedious and prone to mistakes.</p>
 <p>The other option is to use only one investment <code>solve</code> entity:</p>
@@ -2170,7 +2170,7 @@ besides an internal demand (<strong>inflow</strong>), both nodes output to the h
     <script id="__config" type="application/json">{"base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.525ec568.min.js"></script>
+      <script src="../assets/javascripts/bundle.83f73b43.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       
