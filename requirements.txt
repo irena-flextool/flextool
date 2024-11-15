@@ -1,0 +1,4 @@
+# FlexTool uses Spine Toolbox as a GUI and does some calculations with Pandas
+
+pandas
+spinetoolbox
