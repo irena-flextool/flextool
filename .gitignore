@@ -16,3 +16,4 @@ results/
 *.sol
 __pycache__
 .idea/
+site/

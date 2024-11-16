@@ -11,48 +11,48 @@ Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/
 - 'cd' to a directory where you want to have FlexTool's virtual environment directory (Python packages FlexTool needs). If you are not familiar with terminals, just `cd full_path_to_the_directory`, where that full path can be copied from a file manager.
 - Make a virtual environment for FlexTool by
 
-    ```shell
-    python -m venv flextool-venv
-    ```
+```
+python -m venv flextool-venv
+```
 
 - Activate the newly created environment (and remember to activate it always when starting FlexTool)
 
-    ```shell
-    flextool-venv\Scripts\activate
-    ```
+```
+flextool-venv\Scripts\activate
+```
 
 - Get Flextool:
-  - Option 1, easy but harder to keep up-to-date:
-    - Download a [zip file](https://github.com/irena-flextool/flextool/archive/refs/heads/master.zip).
-    - Unzip to a location of your choice.
-  - Option 2, install using git (and use it to keep FlexTool up-to-date):
-    - Download and install from https://git-scm.com/downloads or using app manager (not in Windows Store though)
-    - 'cd' to a directory where you want Flextool's directory to be located (this could be the same location as for flextool-venv).
-    - Then
+    - Option 1, easy but harder to keep up-to-date:
+        - Download a [zip file](https://github.com/irena-flextool/flextool/archive/refs/heads/master.zip).
+        - Unzip to a location of your choice.
+    - Option 2, install using git (and use git later when keeping FlexTool up-to-date):
+        - Download and install from [https://git-scm.com/downloads](https://git-scm.com/downloads) or using app manager (not available in Windows Store)
+        - 'cd' to a directory where you want Flextool's directory to be located (this could be the same location as for flextool-venv).
+        - Lastly
 
-    ```shell
-    git clone https://github.com/irena-flextool/flextool.git
-    ```
+```
+git clone https://github.com/irena-flextool/flextool.git
+```
 
 - 'cd' to the FlexTool root (main) directory (unless there already)
 - Install requirements by
 
-    ```shell
-    python -m pip install -r requirements.txt --timeout=10000
-    ```
+```
+python -m pip install -r requirements.txt --timeout=10000
+```
 
 - Please note, the `timeout` argument is necessary only if you are on a slow internet connection
-- Create basic files that FlexTool needs (`skip-git` argument is needed if you did not install git
+- Create basic files that FlexTool needs (`skip-git` argument is needed if you did not install git)
 
-    ```shell
-    python update_flextool-py --skip-git
-    ```
+```
+python update_flextool-py --skip-git
+```
 
 - Start Spine Toolbox (can take a small while)
 
-    ```shell
-    spinetoolbox
-    ```
+```
+spinetoolbox
+```
 
 ## Starting IRENA FlexTool
 
@@ -60,43 +60,43 @@ Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/
 - 'cd' to directory where the virtual environment directory for flextool is (assumed below to be 'flextool-venv', but modify as needed)
 - Activate the environment
 
-    ```shell
-    flextool-venv\Scripts\activate
-    ```
+```
+flextool-venv\Scripts\activate
+```
 
 - Launch Spine Toolbox
 
-    ```shell
-    python -m spinetoolbox
-    ```
+```
+python -m spinetoolbox
+```
 
-- Open FlexTool3 project in Spine Toolbox (Choose the flextool *folder* from File > Open project dialog by navigating to the folder where FlexTool itself is installed)
+- Open FlexTool3 project in Spine Toolbox (Choose the flextool *directory* from File > Open project dialog by navigating to the directory where FlexTool itself is installed)
 
 ## Updating IRENA FlexTool
 
 ### Updates when using venv (virtual environment, as instructed above since 15.11.2024)
 
 - Start by updating Spine Toolbox
-  - Activate environment as [above](#starting-irena-flextool)
-  - Then upgrade Spine Toolbox
+    - Activate environment as [above](#starting-irena-flextool)
+    - Then upgrade Spine Toolbox
 
-   ```Shell
-   python -m pip install --upgrade spinetoolbox
-   ```
+```
+python -m pip install --upgrade spinetoolbox
+```
 
 
 - Then, to update FlexTool
 - 'cd' to flextool directory
 
-   ```Shell
-   python update_flextool.py
-   ```
+```
+python update_flextool.py
+```
 
-- This will not work if you don't have git installed. In that case, you need to download the latest [zip file](https://github.com/irena-flextool/flextool/archive/refs/heads/master.zip), unzip it to the FlexTool folder (overwriting existing files) and then
+- This will not work if you don't have git installed. In that case, you need to download the latest [zip file](https://github.com/irena-flextool/flextool/archive/refs/heads/master.zip), unzip it to the FlexTool directory (overwriting existing files) and then
   
-   ```Shell
-   python update_flextool.py --skip-git
-   ```
+```
+python update_flextool.py --skip-git
+```
 
 - If this fails, see [below](#upgrade-troubleshooting)
 - This update will pull the new version of the tool as well as migrating the input databases to the new version without destroying the data. Making a backup copy of the input data is still a good practice. The input_data_template.sqlite should not be used directly but by making a copy of it. 
@@ -115,7 +115,7 @@ Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/
 
 If using Spine Toolbox, start by updating Spine Toolbox:
 
-- cd to the repository folder Spine-Toolbox, where you cloned it. 
+- cd to the directory of Spine-Toolbox, where you cloned it. 
 For example `cd C:\Users\YourUser\Documents\Spine-Toolbox`
 - `git pull`
 - `python -m pip install -U -r requirements.txt`
@@ -152,11 +152,11 @@ Then do the update_flextool discribed above to migrate the databases:
 - The Results.sqlite will only get additive changes, as we do not want to destroy your data. This causes old parameter definitions to linger in the database. You can remove them by replacing the database with a copy of the Results_template.sqlite that is kept up to date.
 
 - One can also migrate other input databases to the new version by calling:
-    - `python migrate_database.py *absolute_path_to_database*` or
-    - `python migrate_database.py database_name.sqlite` if in the main flextool folder
+    - `python migrate_database.py path_to_database/database_name.sqlite` or
+    - `python migrate_database.py database_name.sqlite` if in the main flextool directory
 
 ## Installing for Linux or Mac
 
 FlexTool repository contains executables for highs and glpsol also for x64 Linux and it should work. Install Toolbox first, maybe by creating a new venv for the Toolbox and FlexTool - you can follow the spirit of the instructions above even though commands will be somewhat different. If your Linux runs on another architecture or you have a Mac, then we haven't tested those. 
 
-Other Linux architecture's could work, but get correct binaries for highs from https://github.com/JuliaBinaryWrappers/HiGHSstatic_jll.jl/releases and compile glpsol from https://github.com/mingodad/GLPK/ (FlexTool uses some of the improvements made to GLPK in this fork). Then replace the binaries in the FlexTool root folder. This will cause conflicts when next time updating FlexTool using the instructions above. You need to resolve those conflicts, maybe by using `git restore .` before the update and re-copying the binaries after the update. Mac version might require small changes to the code (especially flextoolrunner.py) in addition to the correct binaries. Spine Toolbox works also on Mac, but apparently has some graphical glitches (21st Sep. 2024 - hopefully will be fixed at some point).
+Other Linux architecture's could work, but get correct binaries for highs from https://github.com/JuliaBinaryWrappers/HiGHSstatic_jll.jl/releases and compile glpsol from https://github.com/mingodad/GLPK/ (FlexTool uses some of the improvements made to GLPK in this fork). Then replace the binaries in the FlexTool root directory. This will cause conflicts when next time updating FlexTool using the instructions above. You need to resolve those conflicts, maybe by using `git restore .` before the update and re-copying the binaries after the update. Mac version might require small changes to the code (especially flextoolrunner.py) in addition to the correct binaries. Spine Toolbox works also on Mac, but apparently has some graphical glitches (21st Sep. 2024 - hopefully will be fixed at some point).
