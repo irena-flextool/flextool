@@ -28,7 +28,7 @@ nav:
   - Introduction: index.md
   - 'Installing and updating':
     - 'Overview of the interfaces to Flextool': interface_overview.md
-    - 'Installing IRENA FlexTool - SpineToolbox': install_toolbox.md
+    - 'Install/start/update IRENA FlexTool - SpineToolbox': install_toolbox.md
     - 'Installing IRENA FlexTool - Web interface': install_web_interface.md
   - Documentation:
     - 'Tutorial': tutorial.md

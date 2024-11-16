@@ -7,8 +7,14 @@ Follow video tutorial for installation here: [Link to YouTube](https://youtu.be/
 > [! NOTE]
 > If you have existing Python in the PATH (try `python --version` in a terminal) and it is not a supported version, then you need to install another Python and call it with a full path (unless you replace the old Python with the new in the PATH).
 
+- Install git if you want more easy FlexTool upgrades in the future (the other option is to download a zip file, as instructed later)
+	- Download and install from [https://git-scm.com/downloads](https://git-scm.com/downloads) or using app manager (not available in Windows Store). git install asks a lot of questions. For most of them you can choose the pre-selected default. Here are expections:
+		- Text editor: switch from VIM to Nano (scroll upward) - unless you know and like VIM. Feel free to choose another text editor if you like.
+		- Use Windows' default console window (unless you know what you are doing)
+		- After installation: No need to launch git bash
+
 - Start a terminal (e.g. type `cmd` in Windows search)
-- 'cd' to a directory where you want to have FlexTool's virtual environment directory (Python packages FlexTool needs). If you are not familiar with terminals, just `cd full_path_to_the_directory`, where that full path can be copied from a file manager.
+- 'cd' to a directory where you want to have FlexTool's virtual environment directory (for the Python packages that FlexTool needs). If you are not familiar with terminals, just `cd full_path_to_the_directory`, where that full path can be copied from a file manager.
 - Make a virtual environment for FlexTool by
 
 ```
@@ -21,21 +27,25 @@ python -m venv flextool-venv
 flextool-venv\Scripts\activate
 ```
 
-- Get Flextool:
+- Get FlexTool
     - Option 1, easy but harder to keep up-to-date:
         - Download a [zip file](https://github.com/irena-flextool/flextool/archive/refs/heads/master.zip).
         - Unzip to a location of your choice.
-    - Option 2, install using git (and use git later when keeping FlexTool up-to-date):
-        - Download and install from [https://git-scm.com/downloads](https://git-scm.com/downloads) or using app manager (not available in Windows Store)
-        - 'cd' to a directory where you want Flextool's directory to be located (this could be the same location as for flextool-venv).
+    - Option 2, install using git (git installation instructions were given above):
+		- 'cd' to a directory where you want FlexTool's directory to be located (this could be the same location as for flextool-venv).
         - Lastly
 
 ```
 git clone https://github.com/irena-flextool/flextool.git
 ```
 
-- 'cd' to the FlexTool root (main) directory (unless there already)
-- Install requirements by
+- 'cd' to the FlexTool root (main) directory. If you unzipped, cd to that directory. If you just cloned FlexTool, then
+
+```
+cd flextool
+```
+
+- Install requirements (including Spine Toolbox) to the FlexTool virtual environment by
 
 ```
 python -m pip install -r requirements.txt --timeout=10000
@@ -45,7 +55,7 @@ python -m pip install -r requirements.txt --timeout=10000
 - Create basic files that FlexTool needs (`skip-git` argument is needed if you did not install git)
 
 ```
-python update_flextool-py --skip-git
+python update_flextool.py --skip-git
 ```
 
 - Start Spine Toolbox (can take a small while)
@@ -54,23 +64,40 @@ python update_flextool-py --skip-git
 spinetoolbox
 ```
 
+- Open FlexTool project in Spine Toolbox (Choose the FlexTool *directory* from File > Open project dialog by navigating to the directory where FlexTool itself is installed)
+
 ## Starting IRENA FlexTool
 
 - Start a terminal (e.g. type 'cmd' in Windows search)
-- 'cd' to directory where the virtual environment directory for flextool is (assumed below to be 'flextool-venv', but modify as needed)
-- Activate the environment
+- Option 1: using venv (Python virtual environment, as instructed above)
+	- 'cd' to directory where the FlexTool virtual environment was installed (e.g. C:\users\user_name\)
+	- Activate the environment by ('flextool-venv' may be something else, if you used another virtual environment name)
 
 ```
 flextool-venv\Scripts\activate
 ```
 
-- Launch Spine Toolbox
+	- Launch Spine Toolbox
+
+```
+spinetoolbox
+```
+
+- Option 2: using miniconda (FlexTool installation before 15.11.2024 instructed to use Miniconda)
+    - Open a conda prompt
+	- Activate the environment
+
+```
+conda activate flextool
+```
+
+    - Launch Spine Toolbox
 
 ```
 python -m spinetoolbox
 ```
 
-- Open FlexTool3 project in Spine Toolbox (Choose the flextool *directory* from File > Open project dialog by navigating to the directory where FlexTool itself is installed)
+- Open FlexTool project in Spine Toolbox (Choose the flextool *directory* from File > Open project dialog by navigating to the directory where FlexTool itself is installed)
 
 ## Updating IRENA FlexTool
 
@@ -86,7 +113,7 @@ python -m pip install --upgrade spinetoolbox
 
 
 - Then, to update FlexTool
-- 'cd' to flextool directory
+- 'cd' to FlexTool directory
 
 ```
 python update_flextool.py
