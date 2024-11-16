@@ -818,8 +818,21 @@
 If you have existing Python in the PATH (try <code>python --version</code> in a terminal) and it is not a supported version, then you need to install another Python and call it with a full path (unless you replace the old Python with the new in the PATH).</p>
 </blockquote>
 <ul>
-<li>Start a terminal (e.g. type <code>cmd</code> in Windows search)</li>
-<li>'cd' to a directory where you want to have FlexTool's virtual environment directory (Python packages FlexTool needs). If you are not familiar with terminals, just <code>cd full_path_to_the_directory</code>, where that full path can be copied from a file manager.</li>
+<li>
+<p>Install git if you want more easy FlexTool upgrades in the future (the other option is to download a zip file, as instructed later)</p>
+<ul>
+<li>Download and install from <a href="https://git-scm.com/downloads">https://git-scm.com/downloads</a> or using app manager (not available in Windows Store). git install asks a lot of questions. For most of them you can choose the pre-selected default. Here are expections:<ul>
+<li>Text editor: switch from VIM to Nano (scroll upward) - unless you know and like VIM. Feel free to choose another text editor if you like.</li>
+<li>Use Windows' default console window (unless you know what you are doing)</li>
+<li>After installation: No need to launch git bash</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>
+<p>Start a terminal (e.g. type <code>cmd</code> in Windows search)</p>
+</li>
+<li>'cd' to a directory where you want to have FlexTool's virtual environment directory (for the Python packages that FlexTool needs). If you are not familiar with terminals, just <code>cd full_path_to_the_directory</code>, where that full path can be copied from a file manager.</li>
 <li>Make a virtual environment for FlexTool by</li>
 </ul>
 <pre><code>python -m venv flextool-venv
@@ -830,15 +843,14 @@ If you have existing Python in the PATH (try <code>python --version</code> in a 
 <pre><code>flextool-venv\Scripts\activate
 </code></pre>
 <ul>
-<li>Get Flextool:<ul>
+<li>Get FlexTool<ul>
 <li>Option 1, easy but harder to keep up-to-date:<ul>
 <li>Download a <a href="https://github.com/irena-flextool/flextool/archive/refs/heads/master.zip">zip file</a>.</li>
 <li>Unzip to a location of your choice.</li>
 </ul>
 </li>
-<li>Option 2, install using git (and use git later when keeping FlexTool up-to-date):<ul>
-<li>Download and install from <a href="https://git-scm.com/downloads">https://git-scm.com/downloads</a> or using app manager (not available in Windows Store)</li>
-<li>'cd' to a directory where you want Flextool's directory to be located (this could be the same location as for flextool-venv).</li>
+<li>Option 2, install using git (git installation instructions were given above):<ul>
+<li>'cd' to a directory where you want FlexTool's directory to be located (this could be the same location as for flextool-venv).</li>
 <li>Lastly</li>
 </ul>
 </li>
@@ -848,8 +860,12 @@ If you have existing Python in the PATH (try <code>python --version</code> in a 
 <pre><code>git clone https://github.com/irena-flextool/flextool.git
 </code></pre>
 <ul>
-<li>'cd' to the FlexTool root (main) directory (unless there already)</li>
-<li>Install requirements by</li>
+<li>'cd' to the FlexTool root (main) directory. If you unzipped, cd to that directory. If you just cloned FlexTool, then</li>
+</ul>
+<pre><code>cd flextool
+</code></pre>
+<ul>
+<li>Install requirements (including Spine Toolbox) to the FlexTool virtual environment by</li>
 </ul>
 <pre><code>python -m pip install -r requirements.txt --timeout=10000
 </code></pre>
@@ -857,28 +873,46 @@ If you have existing Python in the PATH (try <code>python --version</code> in a 
 <li>Please note, the <code>timeout</code> argument is necessary only if you are on a slow internet connection</li>
 <li>Create basic files that FlexTool needs (<code>skip-git</code> argument is needed if you did not install git)</li>
 </ul>
-<pre><code>python update_flextool-py --skip-git
+<pre><code>python update_flextool.py --skip-git
 </code></pre>
 <ul>
 <li>Start Spine Toolbox (can take a small while)</li>
 </ul>
 <pre><code>spinetoolbox
 </code></pre>
+<ul>
+<li>Open FlexTool project in Spine Toolbox (Choose the FlexTool <em>directory</em> from File &gt; Open project dialog by navigating to the directory where FlexTool itself is installed)</li>
+</ul>
 <h2 id="starting-irena-flextool">Starting IRENA FlexTool</h2>
 <ul>
 <li>Start a terminal (e.g. type 'cmd' in Windows search)</li>
-<li>'cd' to directory where the virtual environment directory for flextool is (assumed below to be 'flextool-venv', but modify as needed)</li>
-<li>Activate the environment</li>
+<li>Option 1: using venv (Python virtual environment, as instructed above)<ul>
+<li>'cd' to directory where the FlexTool virtual environment was installed (e.g. C:\users\user_name)</li>
+<li>Activate the environment by ('flextool-venv' may be something else, if you used another virtual environment name)</li>
+</ul>
+</li>
 </ul>
 <pre><code>flextool-venv\Scripts\activate
 </code></pre>
+<pre><code>- Launch Spine Toolbox
+</code></pre>
+<pre><code>spinetoolbox
+</code></pre>
 <ul>
-<li>Launch Spine Toolbox</li>
+<li>Option 2: using miniconda (FlexTool installation before 15.11.2024 instructed to use Miniconda)<ul>
+<li>Open a conda prompt</li>
+<li>Activate the environment</li>
 </ul>
+</li>
+</ul>
+<pre><code>conda activate flextool
+</code></pre>
+<pre><code>- Launch Spine Toolbox
+</code></pre>
 <pre><code>python -m spinetoolbox
 </code></pre>
 <ul>
-<li>Open FlexTool3 project in Spine Toolbox (Choose the flextool <em>directory</em> from File &gt; Open project dialog by navigating to the directory where FlexTool itself is installed)</li>
+<li>Open FlexTool project in Spine Toolbox (Choose the flextool <em>directory</em> from File &gt; Open project dialog by navigating to the directory where FlexTool itself is installed)</li>
 </ul>
 <h2 id="updating-irena-flextool">Updating IRENA FlexTool</h2>
 <h3 id="updates-when-using-venv-virtual-environment-as-instructed-above-since-15112024">Updates when using venv (virtual environment, as instructed above since 15.11.2024)</h3>
@@ -893,7 +927,7 @@ If you have existing Python in the PATH (try <code>python --version</code> in a 
 </code></pre>
 <ul>
 <li>Then, to update FlexTool</li>
-<li>'cd' to flextool directory</li>
+<li>'cd' to FlexTool directory</li>
 </ul>
 <pre><code>python update_flextool.py
 </code></pre>
