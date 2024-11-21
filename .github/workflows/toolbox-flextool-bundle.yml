@@ -1,4 +1,4 @@
-name: Make PyInstaller Bundle for Toolbox and FlexTool
+name: Make Bundle for Toolbox and FlexTool
 
 on:
   workflow_dispatch:
@@ -80,7 +80,7 @@ jobs:
           ../../embedded-python/python -m pip install spinedb-api
 #          cd flextool
 #          ../../../embedded-python/python -m pip install -r requirements.txt
-      - name: Upload archive testing artifact v4
+      - name: Upload archive with artifact v4
         uses: actions/upload-artifact@v4
         with:
           name: FlexTool-Toolbox-win-${{ steps.toolbox-version.outputs.version }}
