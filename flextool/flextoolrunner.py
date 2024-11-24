@@ -25,7 +25,6 @@ class FlexToolRunner:
 
     def __init__(self, flextool_dir=None, bin_dir=None, root_dir=None):
         self.logger = logging.getLogger(__name__)
-        self.logger.info("foobar")
 #        logger.basicConfig(
 #            stream=sys.stderr,
 #            level=logging.DEBUG,
@@ -45,6 +44,7 @@ class FlexToolRunner:
             self.bin_dir = Path(__file__).parent.parent / "bin"
         if root_dir is None:
             self.root_dir = Path(__file__).parent.parent
+        print(str(self.root_dir))
         # read the data in
         self.check_version()
         self.timelines = self.get_timelines()

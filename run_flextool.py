@@ -1,11 +1,17 @@
 import argparse
 import sys
 import logging
+import importlib.util
 
 sys.stdout.reconfigure(line_buffering=True)
 
-from flextool.flextoolrunner import FlexToolRunner
+spec = importlib.util.spec_from_file_location("flextool.flextoolrunner", "flextool/flextoolrunner.py")
+flextoolrunner = importlib.util.module_from_spec(spec)
+sys.modules["module.name"] = flextoolrunner
+spec.loader.exec_module(flextoolrunner)
 
+#__file__ = os.path.abspath("run_flextool.py")
+#from flextool.flextoolrunner import FlexToolRunner
 
 #return_codes
 #0 : Success
@@ -22,12 +28,13 @@ def main():
         handlers=[logging.StreamHandler(sys.stdout)]
     )
 
-    runner = FlexToolRunner()
+    runner = flextoolrunner.FlexToolRunner()
     try:
         return_code = runner.run_model()
     except Exception as e:
         logging.error(f"Model run failed: {e}")
         sys.exit(1)
+    print(__file__)
 
 
 if __name__ == '__main__':
