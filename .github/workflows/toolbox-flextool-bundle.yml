@@ -78,7 +78,7 @@ jobs:
           ../../embedded-python/python -m pip install pandas
           ../../embedded-python/python -m pip install spinedb-api
           cd flextool
-          ../../../embedded-python/python update_flextool.py
+          ../../../embedded-python/python update_flextool.py --skip-git
 #          cd flextool
 #          ../../../embedded-python/python -m pip install -r requirements.txt
       - name: Upload archive with artifact v4
