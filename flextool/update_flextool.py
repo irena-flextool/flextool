@@ -26,8 +26,8 @@ def update_flextool(skip_git):
     migrate_project("./.spinetoolbox/project_temp.json","./.spinetoolbox/project.json")
     os.remove("./.spinetoolbox/project_temp.json")
 
-    from .migrate_database import migrate_database
-    from .initialize_database import initialize_database
+    from flextool.migrate_database import migrate_database
+    from flextool.initialize_database import initialize_database
 
     if not os.path.exists("input_data.sqlite"):
         initialize_database("input_data.sqlite")
