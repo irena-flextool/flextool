@@ -129,3 +129,11 @@ def migrate_project(old_path, new_path):
 
     shutil.copy("./.spinetoolbox/project_temp2.json", new_path)
     os.remove("./.spinetoolbox/project_temp2.json")
+
+
+def main():
+    update_flextool(False)
+
+
+if __name__ == '__main__':
+    main()
