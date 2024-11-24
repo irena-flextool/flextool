@@ -3,7 +3,6 @@ from flextool.update_flextool import update_flextool
 
 
 def flextool_update(skip_git):
-    print(skip_git)
     update_flextool(skip_git)
 
 

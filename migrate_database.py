@@ -1,5 +1,5 @@
 import argparse
-from flextool.migrage_database import migrate_flextool
+from flextool.migrate_database import migrate_database
 
 
 def migrage_database(db_name):
