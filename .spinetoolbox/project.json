@@ -50,13 +50,13 @@
         },
         "connections": [
             {
-                "name": "from Excel_input_data to Import_from_Excel",
+                "name": "from Excel input to Replace with Excel input",
                 "from": [
-                    "Excel_input_data",
+                    "Excel input",
                     "right"
                 ],
                 "to": [
-                    "Import_from_Excel",
+                    "Replace with Excel input",
                     "left"
                 ],
                 "filter_settings": {
@@ -134,13 +134,13 @@
                 }
             },
             {
-                "name": "from Init to Initialize",
+                "name": "from Examples to Replace with examples",
                 "from": [
-                    "Init",
+                    "Examples",
                     "right"
                 ],
                 "to": [
-                    "Initialize",
+                    "Replace with examples",
                     "left"
                 ],
                 "filter_settings": {
@@ -180,9 +180,9 @@
                 }
             },
             {
-                "name": "from Initialize to Input_data",
+                "name": "from Replace with examples to Input_data",
                 "from": [
-                    "Initialize",
+                    "Replace with examples",
                     "right"
                 ],
                 "to": [
@@ -210,7 +210,8 @@
                         "metadata": true,
                         "entity_metadata": true,
                         "parameter_value_metadata": true
-                    }
+                    },
+                    "write_index": 1
                 },
                 "filter_settings": {
                     "known_filters": {},
@@ -222,9 +223,9 @@
                 }
             },
             {
-                "name": "from Import_from_Excel to Input_data",
+                "name": "from Replace with Excel input to Input_data",
                 "from": [
-                    "Import_from_Excel",
+                    "Replace with Excel input",
                     "right"
                 ],
                 "to": [
@@ -252,7 +253,8 @@
                         "metadata": true,
                         "entity_metadata": true,
                         "parameter_value_metadata": true
-                    }
+                    },
+                    "write_index": 2
                 },
                 "filter_settings": {
                     "known_filters": {},
@@ -273,6 +275,9 @@
                     "Export_to_CSV",
                     "left"
                 ],
+                "options": {
+                    "require_scenario_filter": true
+                },
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input_data": {
@@ -448,30 +453,13 @@
         "FlexTool3": {
             "type": "Tool",
             "description": "",
-            "x": 71.03179326601074,
-            "y": -7.890439791528905,
+            "x": 74.07290183373073,
+            "y": -3.8356283679023413,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": [],
             "kill_completed_processes": false,
             "log_process_output": false
-        },
-        "Init": {
-            "type": "Data Store",
-            "description": "",
-            "x": -407.79421234090034,
-            "y": 63.57610369303393,
-            "url": {
-                "dialect": "sqlite",
-                "host": "",
-                "port": "",
-                "database": {
-                    "type": "path",
-                    "relative": true,
-                    "path": "templates/init.sqlite"
-                },
-                "schema": ""
-            }
         },
         "Input_data": {
             "type": "Data Store",
@@ -490,47 +478,11 @@
                 "schema": ""
             }
         },
-        "Initialize": {
-            "type": "Merger",
-            "description": "",
-            "x": -287.2765001829209,
-            "y": 51.23859533562457,
-            "cancel_on_error": true
-        },
-        "Excel_input_data": {
-            "type": "Data Connection",
-            "description": "",
-            "x": -436.8582078041219,
-            "y": -51.0422277640707,
-            "file_references": [
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "FlexTool_input.xlsx"
-                }
-            ],
-            "db_references": []
-        },
-        "Import_from_Excel": {
-            "type": "Importer",
-            "description": "",
-            "x": -310.39469337686535,
-            "y": -49.61188242041004,
-            "specification": "FlexTool3_Excel_input",
-            "cancel_on_error": false,
-            "on_conflict": "replace",
-            "file_selection": [
-                [
-                    "<project>/FlexTool_input.xlsx",
-                    true
-                ]
-            ]
-        },
         "Export_to_CSV": {
             "type": "Exporter",
             "description": "",
-            "x": -37.264656936856206,
-            "y": -12.02782833609757,
+            "x": -36.25095408094956,
+            "y": -10.000422624284283,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -632,6 +584,59 @@
             "cmd_line_args": [],
             "kill_completed_processes": false,
             "log_process_output": false
+        },
+        "Excel input": {
+            "type": "Data Connection",
+            "description": "",
+            "x": -436.8582078041219,
+            "y": -50.02852490816406,
+            "file_references": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "example_input.xlsx"
+                }
+            ],
+            "db_references": []
+        },
+        "Examples": {
+            "type": "Data Store",
+            "description": "",
+            "x": -407.79421234090034,
+            "y": 63.57610369303393,
+            "url": {
+                "dialect": "sqlite",
+                "host": "",
+                "port": "",
+                "database": {
+                    "type": "path",
+                    "relative": true,
+                    "path": "templates/examples.sqlite"
+                },
+                "schema": ""
+            }
+        },
+        "Replace with Excel input": {
+            "type": "Importer",
+            "description": "",
+            "x": -310.39469337686535,
+            "y": -49.61188242041004,
+            "specification": "FlexTool3_Excel_input",
+            "cancel_on_error": false,
+            "on_conflict": "replace",
+            "file_selection": [
+                [
+                    "<project>/example_input.xlsx",
+                    true
+                ]
+            ]
+        },
+        "Replace with examples": {
+            "type": "Merger",
+            "description": "",
+            "x": -292.34501446245423,
+            "y": 64.41673246241092,
+            "cancel_on_error": true
         }
     }
 }

@@ -33,9 +33,11 @@ def update_flextool(skip_git):
         initialize_database("input_data.sqlite")
     if not os.path.exists("input_data_template.sqlite"):
         initialize_database("input_data_template.sqlite")
+    if not os.path.exists("example_input.xlsx"):
+        shutil.copy("./templates/example_input_template.xlsx", "./example_input.xlsx")
 
     db_to_update = []
-    db_to_update.append("templates/init.sqlite")
+    db_to_update.append("templates/examples.sqlite")
     db_to_update.append("input_data.sqlite")
     db_to_update.append("templates/input_data_template.sqlite")
     db_to_update.append("templates/time_settings_only.sqlite")
