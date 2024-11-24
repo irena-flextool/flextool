@@ -42,6 +42,8 @@ jobs:
         run: |
           mkdir embedded-python
           cd embedded-python
+          ls
+          ls -l
           curl -o python.zip https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-amd64.zip
           tar xf python.zip
           del python.zip
@@ -78,9 +80,9 @@ jobs:
           ../../embedded-python/python -m pip install pandas
           ../../embedded-python/python -m pip install spinedb-api
           cd flextool
-          ls -Al
+          ls -l
           cd flextool
-          ls -Al
+          ls -l
           cd ..
           ../../../embedded-python/python update_flextool.py --skip-git
 #          cd flextool
