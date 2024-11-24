@@ -11,5 +11,5 @@
     "cmdline_args": [
         "--use-subprocess"
     ],
-    "includes_main_path": "../../.."
+    "includes_main_path": "../../../flextool"
 }
