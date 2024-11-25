@@ -2,13 +2,14 @@ import argparse
 import sys
 import importlib.util
 
-spec = importlib.util.spec_from_file_location("flextool.update_flextool", "flextool/update_flextool.py")
-flextool = importlib.util.module_from_spec(spec)
-sys.modules["module.name"] = flextool
-spec.loader.exec_module(flextool)
+from flextool.update_flextool import update_flextool
+#spec = importlib.util.spec_from_file_location("flextool.update_flextool", "flextool/update_flextool.py")
+#flextool = importlib.util.module_from_spec(spec)
+#sys.modules["module.name"] = flextool
+#spec.loader.exec_module(flextool)
 
 def flextool_update(skip_git):
-    flextool.update_flextool(skip_git)
+    update_flextool(skip_git)
 
 
 if __name__ == "__main__":

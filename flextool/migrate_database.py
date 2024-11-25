@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import argparse
 from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError
 
 
@@ -456,3 +457,10 @@ def get_parameter_type_list():
         out.append(dictionary)
 
     return out
+    
+    
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('filename',help= "The filepath of the database to be migrated")
+    args = parser.parse_args()
+    migrate_database(args.filename)

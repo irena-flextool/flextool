@@ -7,6 +7,8 @@ try:
     from spinedb_api import import_data, DatabaseMapping, SpineDBAPIError
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
+from flextool.migrate_database import migrate_database
+from flextool.initialize_database import initialize_database
 
 
 def update_flextool(skip_git):
@@ -25,9 +27,6 @@ def update_flextool(skip_git):
 
     migrate_project("./.spinetoolbox/project_temp.json","./.spinetoolbox/project.json")
     os.remove("./.spinetoolbox/project_temp.json")
-
-    from flextool.migrate_database import migrate_database
-    from flextool.initialize_database import initialize_database
 
     if not os.path.exists("input_data.sqlite"):
         initialize_database("input_data.sqlite")
