@@ -78,7 +78,6 @@ jobs:
           git clone -b structural_update https://github.com/irena-flextool/flextool.git --depth=1
           ../../embedded-python/python -m pip install pandas
           ../../embedded-python/python -m pip install spinedb-api
-          ../../embedded-python/python -m pip install setuptools
           cd flextool
           ./python.exe update_flextool.py --skip-git
 #          cd flextool
