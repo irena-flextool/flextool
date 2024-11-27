@@ -75,14 +75,13 @@ jobs:
       - name: Install FlexTool
         run: |
           cd "dist/Spine Toolbox"
-          git clone -b structural_update --single-branch https://github.com/irena-flextool/flextool.git --depth=1
+          git clone -b structural_update https://github.com/irena-flextool/flextool.git --depth=1
           ../../embedded-python/python -m pip install pandas
           ../../embedded-python/python -m pip install spinedb-api
+          ../../embedded-python/python -m pip install setuptools
           cd flextool
-          ls
-          cd flextool
-          ls
-          cd ..
+          ../../../embedded-python/python -m pip install .
+          ../../../embedded-python/python -m pip list -v
           ../../../embedded-python/python update_flextool.py --skip-git
 #          cd flextool
 #          ../../../embedded-python/python -m pip install -r requirements.txt

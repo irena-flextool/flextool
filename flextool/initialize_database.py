@@ -2,6 +2,8 @@ import json
 import sys
 import argparse
 from spinedb_api import import_data, DatabaseMapping
+from migrate_database import migrate_database
+
 
 def initialize_database(database_name="new_database.sqlite"):
 
@@ -19,8 +21,6 @@ def initialize_database(database_name="new_database.sqlite"):
     print(str(num)+" imports made")
     print("Initialized")
     new_db.commit_session("Initialized")
-
-    from migrate_database import migrate_database
 
     migrate_database(database_name)
 
