@@ -78,6 +78,7 @@ jobs:
           ../../embedded-python/python -m pip install pandas
           ../../embedded-python/python -m pip install spinedb-api
           cd flextool
+          ../../embedded-python/python -m pip install -e .
           git checkout structural_update
           ../../../embedded-python/python update_flextool.py
 #          cd flextool
