@@ -80,7 +80,6 @@ jobs:
           ../../embedded-python/python -m pip install spinedb-api
           ../../embedded-python/python -m pip install setuptools
           cd flextool
-#          ./python -m pip install .
           ./python -m pip list -v
           ./python update_flextool.py --skip-git
 #          cd flextool
