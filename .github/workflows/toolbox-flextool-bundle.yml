@@ -80,8 +80,7 @@ jobs:
           ../../embedded-python/python -m pip install spinedb-api
           ../../embedded-python/python -m pip install setuptools
           cd flextool
-          ./python -m pip list -v
-          ./python update_flextool.py --skip-git
+          ./python.exe update_flextool.py --skip-git
 #          cd flextool
 #          ../../../embedded-python/python -m pip install -r requirements.txt
       - name: Upload archive with artifact v4
