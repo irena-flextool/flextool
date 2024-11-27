@@ -8,7 +8,7 @@ try:
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
 from flextool.migrate_database import migrate_database
-from flextool import initialize_database
+from flextool.initialize_database import initialize_database
 
 
 def update_flextool(skip_git):
@@ -29,9 +29,9 @@ def update_flextool(skip_git):
     os.remove("./.spinetoolbox/project_temp.json")
 
     if not os.path.exists("input_data.sqlite"):
-        flextool.initialize_database("input_data.sqlite")
+        initialize_database("input_data.sqlite")
     if not os.path.exists("input_data_template.sqlite"):
-        flextool.initialize_database("input_data_template.sqlite")
+        initialize_database("input_data_template.sqlite")
     if not os.path.exists("example_input.xlsx"):
         shutil.copy("./templates/example_input_template.xlsx", "./example_input.xlsx")
 

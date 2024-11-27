@@ -8,7 +8,7 @@ __all__ = [
     FlexToolRunner,
     update_flextool,
     migrate_database,
-    initialize_database
+    initialize_database,
 ]
 
 name = "flextool"

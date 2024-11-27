@@ -2,7 +2,7 @@ import argparse
 import sys
 import importlib.util
 
-from .flextool import update_flextool
+from flextool.update_flextool import update_flextool
 #spec = importlib.util.spec_from_file_location("flextool.update_flextool", "flextool/update_flextool.py")
 #flextool = importlib.util.module_from_spec(spec)
 #sys.modules["module.name"] = flextool
