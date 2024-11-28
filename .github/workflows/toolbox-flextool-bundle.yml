@@ -60,35 +60,18 @@ jobs:
         run : |
           cd embedded-python
           ./python.exe get-pip.py
+      - name: Add pandas and spinedb-api
+        run: |
+          cd embedded-python/Scripts
+          ./pip.exe --version
+          ./pip.exe install pandas spinedb-api
       - name: List packages in embedded Python
         run: |
           cd embedded-python/Scripts
           ./pip.exe list
-      - name: Add pandas and spinedb-api
+      - name: Build bundle
         run: |
-          cd embedded-python/Scripts
-          ./pip.exe --version    
-          ./pip.exe install pandas
-          ./pip.exe install spinedb-api
-      - name: Copy pandas and spinedb-api to embedded side
-        run: |
-          which python
-          which pip
-          ls
-          cd embedded-python
-          ls
-          cd Lib/site-packages
-          ls
-          cd C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages
-          ls
-#      - name: copy pandas and spinedb-pi
-#        run: |
-#          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/pandas* "dist/Spine Toolbox/Python/Lib/site-packages"
-#          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/spinedb_api* "dist/Spine Toolbox/Python/Lib/site-packages"
-#          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/numpy* "dist/Spine Toolbox/Python/Lib/site-packages"
-#      - name: Build bundle
-#        run: |
-#          python -m PyInstaller --paths=./python/Lib/site-packages  
+          python -m PyInstaller spinetoolbox.spec -- --embedded-python=embedded-python
       - name: Get Toolbox version
         id: toolbox-version
         shell: bash
