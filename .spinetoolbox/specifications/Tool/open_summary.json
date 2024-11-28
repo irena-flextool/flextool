@@ -11,5 +11,5 @@
     "inputfiles_opt": [],
     "outputfiles": [],
     "cmdline_args": [],
-    "includes_main_path": "../../.."
+    "includes_main_path": "../../../flextool"
 }

@@ -1,0 +1,7 @@
+write_solution_to_file=true
+solution_file=flextool.sol
+write_solution_style=2
+mip_report_level=2
+mip_heuristic_effort=0.5
+mip_detect_symmetry=false
+mip_rel_gap=0.002

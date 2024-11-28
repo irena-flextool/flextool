@@ -1,0 +1,20 @@
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flextool"
+version = "3.8.0"
+description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
+requires-python = ">=3.8,<3.13"
+dependencies = [
+    "pandas",
+    "spinedb-api",
+]
+
+[tool.setuptools]
+py-modules = [
+    "flextoolrunner",
+    "update_database",
+    "migrate_database",
+    "initialize_database"
+]
