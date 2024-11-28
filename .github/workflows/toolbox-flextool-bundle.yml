@@ -71,10 +71,15 @@ jobs:
           ./pip install spinedb-api
       - name: Copy pandas and spinedb-api to embedded side
         run: |
+          where python
+          where pip
+          where ./pip
           ls
-          cp -r lib/site-packages/panda* "dist/Spine Toolbox/Python/Lib/site-packages"
-          cp -r lib/site-packages/spinedb_ap* "dist/Spine Toolbox/Python/Lib/site-packages"
-          cp -r lib/site-packages/nump* "dist/Spine Toolbox/Python/Lib/site-packages"
+          cd embedded-python
+          ls
+#          cp -r lib/site-packages/panda* "dist/Spine Toolbox/Python/Lib/site-packages"
+#          cp -r lib/site-packages/spinedb_ap* "dist/Spine Toolbox/Python/Lib/site-packages"
+#          cp -r lib/site-packages/nump* "dist/Spine Toolbox/Python/Lib/site-packages"
       - name: Build bundle
         run: |
           python -m PyInstaller spinetoolbox.spec -- --embedded-python=embedded-python
@@ -85,12 +90,19 @@ jobs:
           python -c "from importlib.metadata import version; print('version=' + version('spinetoolbox'))" >> $GITHUB_OUTPUT
       - name: Install FlexTool
         run: |
+          ls
           cd "dist/Spine Toolbox"
           git clone -b structural_update https://github.com/irena-flextool/flextool.git --depth=1
 #          ../../embedded-python/python -m pip install pandas
 #          ../../embedded-python/python -m pip install spinedb-api
 #          python -m pip install pandas
 #          python -m pip install spinedb-api
+      - name: copy pandas and spinedb-pi
+        run: |
+          cd embedded-python
+          cp -r lib/site-packages/pandas* "../dist/Spine Toolbox/Python/Lib/site-packages"
+          cp -r lib/site-packages/spinedb_api* "../dist/Spine Toolbox/Python/Lib/site-packages"
+          cp -r lib/site-packages/numpy* "../dist/Spine Toolbox/Python/Lib/site-packages"
       - name: Update FlexTool
         run: |
           cd "dist/Spine Toolbox/flextool"
