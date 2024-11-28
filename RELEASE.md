@@ -1,4 +1,20 @@
-** Release 3.8.0 (29.8.2024)
+## Release 3.9.0 (28.11.2024)
+**Bug fixes**
+
+- Fixing Excel input template
+
+**New features**
+
+- Updated documentation to match Toolbox changes
+- New HiGHS version (1.8.1), should help with model getting stuck.
+- Reorganising file structure to remove clutter from FlexTool root
+- Some name changes in the workflow
+- FlexTool has requirements.txt and pyproject.toml (allows pip install -e ., but not in pypi)
+- Improved installation instructions (switched from miniconda to venv)
+- Linux (Ubuntu tested) should work out of the box (but FlexTool execution only in work directory one scenario at a time!)
+ 
+
+## Release 3.8.0 (29.8.2024)
 **Bug fixes**
 
 - Excel input file to use entity_alternative
