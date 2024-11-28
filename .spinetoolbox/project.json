@@ -403,8 +403,8 @@
                     },
                     "auto_online": false,
                     "enabled_filter_types": {
-                        "alternative_filter": false,
-                        "scenario_filter": true
+                        "alternative_filter": true,
+                        "scenario_filter": false
                     }
                 }
             },
