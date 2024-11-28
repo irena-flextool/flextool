@@ -85,9 +85,9 @@ jobs:
 #          cp -r lib/site-packages/nump* "dist/Spine Toolbox/Python/Lib/site-packages"
       - name: copy pandas and spinedb-pi
         run: |
-          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/pandas* "../dist/Spine Toolbox/Python/Lib/site-packages"
-          cp -r lib/site-packages/spinedb_api* "../dist/Spine Toolbox/Python/Lib/site-packages"
-          cp -r lib/site-packages/numpy* "../dist/Spine Toolbox/Python/Lib/site-packages"
+          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/pandas* "dist/Spine Toolbox/Python/Lib/site-packages"
+          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/spinedb_api* "dist/Spine Toolbox/Python/Lib/site-packages"
+          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/numpy* "dist/Spine Toolbox/Python/Lib/site-packages"
       - name: Build bundle
         run: |
           python -m PyInstaller spinetoolbox.spec -- --embedded-python=embedded-python
