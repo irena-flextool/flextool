@@ -71,7 +71,7 @@ jobs:
           ./pip install spinedb-api
       - name: Copy pandas and spinedb-api to embedded side
         run: |
-          ls -l
+          ls
           cp -r lib/site-packages/panda* "dist/Spine Toolbox/Python/Lib/site-packages"
           cp -r lib/site-packages/spinedb_ap* "dist/Spine Toolbox/Python/Lib/site-packages"
           cp -r lib/site-packages/nump* "dist/Spine Toolbox/Python/Lib/site-packages"
