@@ -64,6 +64,11 @@ jobs:
         run: |
           cd embedded-python/Scripts
           ./pip.exe list
+      - name: Add pandas and spinedb-api
+        run: |
+          cd "dist/Spine Toolbox"
+          ../../embedded-python/python -m pip install pandas
+          ../../embedded-python/python -m pip install spinedb-api
       - name: Build bundle
         run: |
           python -m PyInstaller spinetoolbox.spec -- --embedded-python=embedded-python
@@ -76,10 +81,10 @@ jobs:
         run: |
           cd "dist/Spine Toolbox"
           git clone -b structural_update https://github.com/irena-flextool/flextool.git --depth=1
-          ../../embedded-python/python -m pip install pandas
-          ../../embedded-python/python -m pip install spinedb-api
-          python -m pip install pandas
-          python -m pip install spinedb-api
+#          ../../embedded-python/python -m pip install pandas
+#          ../../embedded-python/python -m pip install spinedb-api
+#          python -m pip install pandas
+#          python -m pip install spinedb-api
       - name: Update FlexTool
         run: |
           cd "dist/Spine Toolbox/flextool"
