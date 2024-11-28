@@ -79,13 +79,16 @@ jobs:
           python -c "from importlib.metadata import version; print('version=' + version('spinetoolbox'))" >> $GITHUB_OUTPUT
       - name: Install FlexTool
         run: |
-          ls
           cd "dist/Spine Toolbox"
           git clone https://github.com/irena-flextool/flextool.git --depth=1
       - name: Update FlexTool
         run: |
           cd "dist/Spine Toolbox/flextool"
           python update_flextool.py --skip-git
+      - name: Add flextool start bat-file
+        run: |
+          cd "dist/Spine Toolbox"
+          echo start \"\" ./spinetoolbox.exe flextool > FlexTool.bat
       - name: Upload archive with artifact v4
         uses: actions/upload-artifact@v4
         with:
