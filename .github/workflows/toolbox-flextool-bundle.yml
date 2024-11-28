@@ -22,7 +22,7 @@ jobs:
       - name: "Set up Python"
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.7"
           cache: pip
           cache-dependency-path: |
             pyproject.toml
@@ -66,9 +66,15 @@ jobs:
           ./pip.exe list
       - name: Add pandas and spinedb-api
         run: |
-          cd "dist/Spine Toolbox"
-          ../../embedded-python/python -m pip install pandas
-          ../../embedded-python/python -m pip install spinedb-api
+          cd embedded-python/Scripts
+          ./pip install pandas
+          ./pip install spinedb-api
+      - name: Copy pandas and spinedb-api to embedded side
+        run: |
+          ls -l
+          cp -r lib/site-packages/panda* "dist/Spine Toolbox/Python/Lib/site-packages"
+          cp -r lib/site-packages/spinedb_ap* "dist/Spine Toolbox/Python/Lib/site-packages"
+          cp -r lib/site-packages/nump* "dist/Spine Toolbox/Python/Lib/site-packages"
       - name: Build bundle
         run: |
           python -m PyInstaller spinetoolbox.spec -- --embedded-python=embedded-python
