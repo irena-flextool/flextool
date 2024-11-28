@@ -67,8 +67,9 @@ jobs:
       - name: Add pandas and spinedb-api
         run: |
           cd embedded-python/Scripts
-          ./pip install pandas
-          ./pip install spinedb-api
+          ./pip.exe --version    
+          ./pip.exe install pandas
+          ./pip.exe install spinedb-api
       - name: Copy pandas and spinedb-api to embedded side
         run: |
           which python
@@ -80,17 +81,14 @@ jobs:
           ls
           cd C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages
           ls
-#          cp -r lib/site-packages/panda* "dist/Spine Toolbox/Python/Lib/site-packages"
-#          cp -r lib/site-packages/spinedb_ap* "dist/Spine Toolbox/Python/Lib/site-packages"
-#          cp -r lib/site-packages/nump* "dist/Spine Toolbox/Python/Lib/site-packages"
-      - name: copy pandas and spinedb-pi
-        run: |
-          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/pandas* "dist/Spine Toolbox/Python/Lib/site-packages"
-          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/spinedb_api* "dist/Spine Toolbox/Python/Lib/site-packages"
-          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/numpy* "dist/Spine Toolbox/Python/Lib/site-packages"
-      - name: Build bundle
-        run: |
-          python -m PyInstaller spinetoolbox.spec -- --embedded-python=embedded-python
+#      - name: copy pandas and spinedb-pi
+#        run: |
+#          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/pandas* "dist/Spine Toolbox/Python/Lib/site-packages"
+#          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/spinedb_api* "dist/Spine Toolbox/Python/Lib/site-packages"
+#          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/numpy* "dist/Spine Toolbox/Python/Lib/site-packages"
+#      - name: Build bundle
+#        run: |
+#          python -m PyInstaller --paths=./python/Lib/site-packages  
       - name: Get Toolbox version
         id: toolbox-version
         shell: bash
@@ -101,10 +99,6 @@ jobs:
           ls
           cd "dist/Spine Toolbox"
           git clone -b structural_update https://github.com/irena-flextool/flextool.git --depth=1
-#          ../../embedded-python/python -m pip install pandas
-#          ../../embedded-python/python -m pip install spinedb-api
-#          python -m pip install pandas
-#          python -m pip install spinedb-api
       - name: Update FlexTool
         run: |
           cd "dist/Spine Toolbox/flextool"
