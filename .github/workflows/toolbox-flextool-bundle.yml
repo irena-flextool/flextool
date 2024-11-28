@@ -71,15 +71,23 @@ jobs:
           ./pip install spinedb-api
       - name: Copy pandas and spinedb-api to embedded side
         run: |
-          where python
-          where pip
-          where ./pip
+          which python
+          which pip
           ls
           cd embedded-python
+          ls
+          cd Lib/site-packages
+          ls
+          cd C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages
           ls
 #          cp -r lib/site-packages/panda* "dist/Spine Toolbox/Python/Lib/site-packages"
 #          cp -r lib/site-packages/spinedb_ap* "dist/Spine Toolbox/Python/Lib/site-packages"
 #          cp -r lib/site-packages/nump* "dist/Spine Toolbox/Python/Lib/site-packages"
+      - name: copy pandas and spinedb-pi
+        run: |
+          cp -r C:/hostedtoolcache/windows/Python/3.12.7/x64/lib/site-packages/pandas* "../dist/Spine Toolbox/Python/Lib/site-packages"
+          cp -r lib/site-packages/spinedb_api* "../dist/Spine Toolbox/Python/Lib/site-packages"
+          cp -r lib/site-packages/numpy* "../dist/Spine Toolbox/Python/Lib/site-packages"
       - name: Build bundle
         run: |
           python -m PyInstaller spinetoolbox.spec -- --embedded-python=embedded-python
@@ -97,12 +105,6 @@ jobs:
 #          ../../embedded-python/python -m pip install spinedb-api
 #          python -m pip install pandas
 #          python -m pip install spinedb-api
-      - name: copy pandas and spinedb-pi
-        run: |
-          cd embedded-python
-          cp -r lib/site-packages/pandas* "../dist/Spine Toolbox/Python/Lib/site-packages"
-          cp -r lib/site-packages/spinedb_api* "../dist/Spine Toolbox/Python/Lib/site-packages"
-          cp -r lib/site-packages/numpy* "../dist/Spine Toolbox/Python/Lib/site-packages"
       - name: Update FlexTool
         run: |
           cd "dist/Spine Toolbox/flextool"
