@@ -8,15 +8,14 @@ IRENA FlexTool is an energy and power systems model for understanding the role o
 This is IRENA FlexTool v3.x.x (see current version from RELEASE.md) in beta testing. Report any bugs or difficulties in the [issue tracker](https://github.com/irena-flextool/flextool/issues). 
 The previous version of IRENA FlexTool can be found in https://www.irena.org/energytransition/Energy-System-Models-and-Data/IRENA-FlexTool.
 
-## Documentation and installation
+## [Documentation](https://irena-flextool.github.io/flextool/) and [installation](https://irena-flextool.github.io/flextool/install_toolbox/)
 
 > [!IMPORTANT]
 > Installation, user guide and ***documentation*** can be found at: https://irena-flextool.github.io/flextool/.
-> User guide and documentation are under development.
 
-The documenation has a section on installation where one installs Python and git and then uses virtual environment (venv) to create and install FlexTool. This allows to update both FlexTool and its graphical interface (Spine Toolbox).
+The documenation has a [section on installation](https://irena-flextool.github.io/flextool/install_toolbox/) where one installs Python and git and then uses virtual environment (venv) to create and install FlexTool. This allows to update both FlexTool and its graphical interface (Spine Toolbox) with new versions with relative ease.
 
-There is also an experimental [zip file]() containing both. However, it does not allow direct updates (you need to download a new zip file to update).
+There is also an experimental [zip file](https://github.com/irena-flextool/flextool/releases/download/v3.9.0/Flextool-Toolbox.zip) containing both Flextool and Spine Toolbox (Windows 10 and 11 only). This requires only unzipping. However, it does not allow direct updates (you need to download a new zip file to update).
 
 > [!NOTE]  
 > Spine Toolbox has received a major upgrade 29th of April 2024. Next time you update FlexTool, [update Spine Toolbox first](https://github.com/spine-tools/Spine-Toolbox#installation). Follow the upgrade instructions of your Toolbox installation method.
