@@ -86,9 +86,11 @@ jobs:
           cd "dist/Spine Toolbox/flextool"
           python update_flextool.py --skip-git
       - name: Add flextool start bat-file
+        shell: pwsh
         run: |
           cd "dist/Spine Toolbox"
-          echo "start \"\" ./spinetoolbox.exe flextool" > FlexTool.bat
+          $content = 'start "" ./spinetoolbox.exe flextool'
+          Set-Content -Path Flextool.bat -Value $content
       - name: Upload archive with artifact v4
         uses: actions/upload-artifact@v4
         with:
