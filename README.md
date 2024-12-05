@@ -15,7 +15,7 @@ The previous version of IRENA FlexTool can be found in https://www.irena.org/ene
 
 The documenation has a [section on installation](https://irena-flextool.github.io/flextool/install_toolbox/) where one installs Python and git and then uses virtual environment (venv) to create and install FlexTool. This allows to update both FlexTool and its graphical interface (Spine Toolbox) with new versions with relative ease.
 
-There is also an experimental [zip file](https://github.com/irena-flextool/flextool/releases/download/v3.9.0/Flextool-Toolbox.zip) containing both Flextool and Spine Toolbox (Windows 10 and 11 only). This requires only unzipping. However, it does not allow direct updates (you need to download a new zip file to update).
+There is also an experimental [zip file](https://github.com/irena-flextool/flextool/releases/download/v3.9.0/Flextool-Toolbox.zip) containing both Flextool and Spine Toolbox (Windows 10 and 11 only). This requires only unzipping to a user-controlled folder (e.g. 'users/user_name/', do not use 'Program Files'). However, it does not allow direct updates (you need to download a new zip file to update).
 
 > [!NOTE]  
 > Spine Toolbox has received a major upgrade 29th of April 2024. Next time you update FlexTool, [update Spine Toolbox first](https://github.com/spine-tools/Spine-Toolbox#installation). Follow the upgrade instructions of your Toolbox installation method.
