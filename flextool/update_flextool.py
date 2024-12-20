@@ -30,8 +30,8 @@ def update_flextool(skip_git):
 
     if not os.path.exists("input_data.sqlite"):
         initialize_database("input_data.sqlite")
-    if not os.path.exists("input_data_template.sqlite"):
-        initialize_database("input_data_template.sqlite")
+    if not os.path.exists("templates/input_data_template.sqlite"):
+        initialize_database("templates/input_data_template.sqlite")
     if not os.path.exists("example_input.xlsx"):
         shutil.copy("./templates/example_input_template.xlsx", "./example_input.xlsx")
 
@@ -59,14 +59,14 @@ def update_flextool(skip_git):
 
     result_template_path = './version/flextool_template_results_master.json'
     #replace the template sqlite
-    if os.path.exists('Results_template.sqlite'):
-        os.remove('Results_template.sqlite')
-    initialize_result_database('Results_template.sqlite', result_template_path)
+    if os.path.exists('templates/results_template.sqlite'):
+        os.remove('templates/results_template.sqlite')
+    initialize_result_database('templates/results_template.sqlite', result_template_path)
 
-    if not os.path.exists("Results.sqlite"):
-        shutil.copy("Results_template.sqlite", "Results.sqlite")
+    if not os.path.exists("results.sqlite"):
+        shutil.copy("templates/results_template.sqlite", "results.sqlite")
     #update result parameter definitions    
-    db = DatabaseMapping('sqlite:///' + 'Results.sqlite', create = False, upgrade = True)
+    db = DatabaseMapping('sqlite:///' + 'results.sqlite', create = False, upgrade = True)
     #get template JSON. This can be the master or old template if conflicting migrations in between
     with open (result_template_path) as json_file:
         template = json.load(json_file)
