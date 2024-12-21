@@ -3607,7 +3607,7 @@ param r_costDivest_d{d in period} := r_costDivestUnit_d[d] + r_costDivestConnect
 param r_costExistingFixed_d{d in period} := sum{e in entity : (e, d) not in ed_invest} r_cost_entity_existing_fixed[e, d];
 
 param pdNodeInflow{n in node, d in period} := 
-  + (if n in nodeBalance then sum{(d, t) in dt} pdtNodeInflow[n, d, t])
+  + (if n in nodeBalance && (n, 'no_inflow') not in node__inflow_method then sum{(d, t) in dt} pdtNodeInflow[n, d, t])
   + (if n in nodeBalancePeriod then pdNode[n, 'annual_flow', d]);
 
 
@@ -3671,13 +3671,13 @@ param r_group_output_Internal_unit_losses__d{g in groupOutputNodeFlows, d in d_r
   + sum{(d, t) in dt_realize_dispatch} r_group_output_Internal_unit_losses__dt[g, d, t];
 
 param r_group_node_inflow__dt{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch} :=
-  + sum{(g,n) in group_node}
+  + sum{(g,n) in group_node : (n, 'no_inflow') not in node__inflow_method}
     +pdtNodeInflow[n, d, t];
 param r_group_node_inflow__d{g in groupOutputNodeFlows, d in d_realized_period} :=
   + sum{(d, t) in dt_realize_dispatch} r_group_node_inflow__dt[g, d, t];
     
 param r_group_node_state_losses__dt{g in groupOutputNodeFlows, (d,t) in dt_realize_dispatch} :=
-  + sum{n in nodeState: (g,n) in group_node}
+  + sum{n in nodeSelfDischarge: (g,n) in group_node}
     +r_selfDischargeLoss_dt[n, d, t];
 param r_group_node_state_losses__d{g in groupOutputNodeFlows, d in d_realized_period}:=
   + sum{(d, t) in dt_realize_dispatch} r_group_node_state_losses__dt[g, d, t];
@@ -3947,11 +3947,11 @@ for {i in 1..1 : p_model['solveFirst']}
   printf '"curtailed VRE share, [of annual inflow]","upward slack [of annual inflow]",' >> fn_groupNode__dt;
 	printf '"downward slack [of annual inflow]"\n' >> fn_groupNode__dt;
   }
-for {g in groupOutput_node, s in solve_current, (d, t) in dt_realize_dispatch: sum{(g, n) in group_node} pdtNodeInflow[n, d, t]}
+for {g in groupOutput_node, s in solve_current, (d, t) in dt_realize_dispatch}
   {
     printf '%s,%s,%s,%s,%.8g,%.8g,%.6f,%.6f,%.6f,%.6f\n', g, s, d, t
-     , ( - sum{(g, n) in group_node} pdtNodeInflow[n, d, t] )
-     , sum{(g, n) in group_node} pdtNodeInflow[n, d, t] / complete_period_share_of_year[d]
+     , ( - sum{(g, n) in group_node : (n, 'no_inflow') not in node__inflow_method} pdtNodeInflow[n, d, t] )
+     , sum{(g, n) in group_node : (n, 'no_inflow') not in node__inflow_method} pdtNodeInflow[n, d, t] / complete_period_share_of_year[d]
      , ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
             r_process__source__sink_Flow__dt[p, source, n, d, t]  
 		 )   
