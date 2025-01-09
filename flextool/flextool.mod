@@ -1551,9 +1551,12 @@ param p_entity_all_existing {e in entity, d in period} :=
   - (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
 ;
 
+param p_entity_existing_count {e in entity, d in period} :=
+  + p_entity_all_existing[e, d] 
+    / p_entity_unitsize[e];
+		  
 param p_entity_existing_integer_count {e in entity, d in period} :=
-  + round( p_entity_all_existing[e, d] 
-           / p_entity_unitsize[e] );
+  + round( p_entity_existing_count[e, d] );
 
 param p_entity_previously_invested_capacity {e in entity, d in period} :=
   + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_invested_capacity[e, d_history]);
@@ -2130,112 +2133,75 @@ param indirect := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_tota
 display indirect;
 
 s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
-  + ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
-      + sum{(p, r, 'up', sink) in process_reserve_upDown_node} v_reserve[p, r, 'up', sink, d, t] * p_entity_unitsize[p]
+  + ( + v_flow[p, source, sink, d, t]
+      + sum{(p, r, 'up', sink) in process_reserve_upDown_node} v_reserve[p, r, 'up', sink, d, t]
 	)
-  	* 
-	  ( if (p, source) in process_source then p_process_source_coefficient[p, source]
-	    else if (p, sink) in process_sink then  1 / p_process_sink_coefficient[p, sink]
-		else 1
-      )
   <=
   + pdtProfile[f, d, t]
-    * ( + p_entity_all_existing[p, d]
-        + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
-        - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
+    * ( + p_entity_existing_count[p, d]
+        + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest]
+        - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 	  )
       * pdtProcess[p, 'availability', d, t]
-      / (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
-  + ( if (p, 'min_load_efficiency') in process__ct_method then 
-	    ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
-		  + (if p in process_online_integer then v_online_integer[p, d, t])
-		)
-        * pdtProcess_section[p, d, t] * p_entity_unitsize[p]
-        * pdtProcess[p, 'availability', d, t]
-	)
 ;
 
 s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
-  + ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
-      - sum{(p, r, 'down', sink) in process_reserve_upDown_node} v_reserve[p, r, 'down', sink, d, t] * p_entity_unitsize[p]
+  + ( + v_flow[p, source, sink, d, t]
+      - sum{(p, r, 'down', sink) in process_reserve_upDown_node} v_reserve[p, r, 'down', sink, d, t]
     )
-    * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
-        else if (p, sink) in process_sink then 1 / p_process_sink_coefficient[p, sink]
-		else 1
-	  )
   >=
   + pdtProfile[f, d, t]
-    * ( + p_entity_all_existing[p, d]
-        + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
-        - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
+    * ( + p_entity_existing_count[p, d]
+        + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest]
+        - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 	  )
       * pdtProcess[p, 'availability', d, t]
-      / (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
-  + ( if (p, 'min_load_efficiency') in process__ct_method then 
-		( + (if p in process_online_linear then v_online_linear[p, d, t]) 
-		  + (if p in process_online_integer then v_online_integer[p, d, t])
-		)
-        * pdtProcess_section[p, d, t] * p_entity_unitsize[p]
-        * pdtProcess[p, 'availability', d, t]
-	)
 ;
 
 s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink__profile__profile_method, (d, t) in dt} :
-  + ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
-  	      * ( if (p, source) in process_source then p_process_source_coefficient[p, source]
-			  else if (p, sink) in process_sink then 1 / p_process_sink_coefficient[p, sink]
-			  else 1
-			)
-	)
+  + v_flow[p, source, sink, d, t]
   =
   + pdtProfile[f, d, t]
-    * ( + p_entity_all_existing[p, d]
-        + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest] * p_entity_unitsize[p]
-        - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest] * p_entity_unitsize[p]
+    * ( + p_entity_existing_count[p, d]
+        + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest]
+        - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 	  )
       * pdtProcess[p, 'availability', d, t]
-      / (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
-  + ( if (p, 'min_load_efficiency') in process__ct_method then 
-		( + (if p in process_online_linear then v_online_linear[p, d, t]) 
-		  + (if p in process_online_integer then v_online_integer[p, d, t])
-		)
-        * pdtProcess_section[p, d, t] * p_entity_unitsize[p]
-        * pdtProcess[p, 'availability', d, t]
-	)
 ;
 
 s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_method, (d, t) in dt} :
-  + v_state[n, d, t] * p_entity_unitsize[n]
+  + v_state[n, d, t]
   <=
   + pdtProfile[f, d, t]
-    * ( + p_entity_all_existing[n, d]
-        + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
-        - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
+    * ( + p_entity_existing_count[n, d]
+        + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest]
+        - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest]
 	  )
       * pdtNode[n, 'availability', d, t]
 ;
 
 s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_method, (d, t) in dt} :
-  + v_state[n, d, t] * p_entity_unitsize[n]
+  + v_state[n, d, t]
   >=
   + pdtProfile[f, d, t]
-    * ( + p_entity_all_existing[n, d]
-        + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
-        - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
+    * ( + p_entity_existing_count[n, d]
+        + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest]
+        - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest]
 	  )
       * pdtNode[n, 'availability', d, t]
 ;
 
 s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, t) in dt} :
-  + v_state[n, d, t] * p_entity_unitsize[n]
+  + v_state[n, d, t]
   =
   + pdtProfile[f, d, t]
-    * ( + p_entity_all_existing[n, d]
-        + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
-        - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
+    * ( + p_entity_existing_count[n, d]
+        + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest]
+        - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest]
 	  )
       * pdtNode[n, 'availability', d, t]
 ;
+
 
 s.t. storage_state_start_binding {n in nodeState, (d, t) in period__time_first
      : p_nested_model['solveFirst'] && (n, 'bind_forward_only') not in node__storage_binding_method
