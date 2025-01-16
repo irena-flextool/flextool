@@ -1156,6 +1156,13 @@ param p_discount_factor_operations_yearly{d in period} :=
 		if sum{y in year} p_years_represented[d, y]
 		then sum{(d, y) in period__year} ( ( 1/(1 + p_disc_rate) ^ (p_years_from_solve[d, y] + p_disc_offset_operations) ) * p_years_represented[d, y] )
 		else 1;
+
+# Check for division by zero
+printf 'Checking: node lifetime parameter > 0, if the node is using investments';
+check {e in entityInvest, d in period_invest : e in node} pdNode[e, 'lifetime', d] > 0 ;
+printf 'Checking: process (unit and connection) lifetime parameter > 0, if the process is using investments';
+check {e in entityInvest, d in period_invest : e in process} pdProcess[e, 'lifetime', d] > 0 ;
+
 param ed_entity_annual{e in entityInvest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in invest_method_not_allowed}
           ( + ( pdNode[e, 'invest_cost', d] * 1000 
@@ -1172,6 +1179,7 @@ param ed_entity_annual{e in entityInvest, d in period_invest} :=
 			+ pdProcess[e, 'fixed_cost', d] * 1000
 		  )
 ;
+
 param ed_entity_annual_discounted{e in entityInvest, d in period_invest} :=
         + sum{(e,m) in entity__lifetime_method : m = 'reinvest_choice'}
           ( + ed_entity_annual[e, d] 
