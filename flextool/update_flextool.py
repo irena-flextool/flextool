@@ -7,6 +7,7 @@ try:
     from spinedb_api import import_data, DatabaseMapping, SpineDBAPIError
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
+from spinedb_api.exception import NothingToCommit
 from flextool.migrate_database import migrate_database
 from flextool.initialize_database import initialize_database
 
@@ -66,30 +67,27 @@ def update_flextool(skip_git):
     if not os.path.exists("results.sqlite"):
         shutil.copy("templates/results_template.sqlite", "results.sqlite")
     #update result parameter definitions    
-    db = DatabaseMapping('sqlite:///' + 'results.sqlite', create = False, upgrade = True)
     #get template JSON. This can be the master or old template if conflicting migrations in between
     with open (result_template_path) as json_file:
         template = json.load(json_file)
-    #these update the old descriptions, but wont remove them or change names (the new name is created, but old stays)
-    (num,log) = import_data(db, object_parameters = template["object_parameters"])
-    (num,log) = import_data(db, relationship_parameters = template["relationship_parameters"])
-
-    try:
-        db.commit_session("Updated relationship_parameters, object parameters to the Results.sqlite")
-    except SpineDBAPIError:
-        print("These parameters have been added before, continuing") 
-    return 0
+    with DatabaseMapping('sqlite:///' + 'results.sqlite', create = False, upgrade = True) as db:
+        #these update the old descriptions, but wont remove them or change names (the new name is created, but old stays)
+        (num,log) = import_data(db, object_parameters = template["object_parameters"])
+        (num,log) = import_data(db, relationship_parameters = template["relationship_parameters"])
+        try:
+            db.commit_session("Updated relationship_parameters, object parameters to the Results.sqlite")
+        except NothingToCommit:
+            print("These parameters have been added before, continuing")
+        return 0
 
 def initialize_result_database(filename,json_path):
 
-    db = DatabaseMapping('sqlite:///' + filename, create = True)
-
     with open (json_path) as json_file:
         template = json.load(json_file)
-
-    (num,log) = import_data(db,**template)
-    print("Result database initialized")
-    db.commit_session("Result database initialized")
+    with DatabaseMapping('sqlite:///' + filename, create = True) as db:
+        (num,log) = import_data(db,**template)
+        print("Result database initialized")
+        db.commit_session("Result database initialized")
 
 def migrate_project(old_path, new_path):
     #purpose of this is to update some of the items that users should not need to modify

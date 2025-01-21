@@ -1,5 +1,4 @@
 import json
-import sys
 import argparse
 from spinedb_api import import_data, DatabaseMapping
 from flextool.migrate_database import migrate_database
@@ -16,11 +15,11 @@ def initialize_database(database_name="new_database.sqlite"):
         template = json.load(json_file)
 
 
-    new_db = DatabaseMapping('sqlite:///' + database_name, create = True)
-    (num,log) = import_data(new_db,**template)
-    print(str(num)+" imports made")
-    print("Initialized")
-    new_db.commit_session("Initialized")
+    with DatabaseMapping('sqlite:///' + database_name, create = True) as new_db:
+        (num,log) = import_data(new_db,**template)
+        print(str(num)+" imports made")
+        print("Initialized")
+        new_db.commit_session("Initialized")
 
     migrate_database(database_name)
 
