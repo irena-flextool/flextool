@@ -7,6 +7,8 @@ import os
 import xml.etree.ElementTree as ET
 import pandas as pd
 import shutil
+import spinedb_api as api
+from spinedb_api import DatabaseMapping
 from pathlib import Path
 from collections import OrderedDict
 from collections import defaultdict
@@ -23,7 +25,7 @@ class FlexToolRunner:
     Define Class to run the model and read and recreate the required config files:
     """
 
-    def __init__(self, flextool_dir=None, bin_dir=None, root_dir=None):
+    def __init__(self, input_db_url=None, flextool_dir=None, bin_dir=None, root_dir=None):
         self.logger = logging.getLogger(__name__)
 #        logger.basicConfig(
 #            stream=sys.stderr,
@@ -46,97 +48,133 @@ class FlexToolRunner:
             self.root_dir = Path(__file__).parent.parent
         print(str(self.root_dir))
         # read the data in
-        self.check_version()
-        self.timelines = self.get_timelines()
-        self.model_solve = self.get_solves()
-        self.solve_modes = self.get_solve_modes("solve_mode")
-        self.roll_counter = self.make_roll_counter()
-        self.highs_presolve = self.get_solve_modes("highs_presolve")
-        self.highs_method = self.get_solve_modes("highs_method")
-        self.highs_parallel = self.get_solve_modes("highs_parallel")
-        self.solve_period_years_represented = self.get_solve_period_years_represented()
-        self.solvers = self.get_solver()
-        self.timeblocks = self.get_timeblocks()
-        self.timeblocks__timeline = self.get_timeblocks_timelines()
-        self.stochastic_branches = self.get_stochastic_branches()
+        # open connection to input db
+        with (DatabaseMapping(input_db_url) as db):
+            self.timelines = self.params_to_dict(db=db, cl="timeline", par="timestep_duration", mode="defaultdict")
+            self.model_solve = self.params_to_dict(db=db, cl="model", par="solves", mode="defaultdict")
+            self.solve_modes = self.params_to_dict(db=db, cl="solve", par="solve_mode", mode="dict")
+            self.roll_counter = self.make_roll_counter()
+            self.highs_presolve = self.params_to_dict(db=db, cl="solve", par="highs_presolve", mode="dict")
+            self.highs_method = self.params_to_dict(db=db, cl="solve", par="highs_method", mode="dict")
+            self.highs_parallel = self.params_to_dict(db=db, cl="solve", par="highs_parallel", mode="dict")
+            self.solve_period_years_represented = self.params_to_dict(db=db, cl="solve", par="years_represented", mode="defaultdict")
+            self.solvers = self.params_to_dict(db=db, cl="solve", par="solver", mode="dict")
+            self.timeblocks = self.params_to_dict(db=db, cl="timeblockSet", par="block_duration", mode="defaultdict")
+            self.timeblocks__timeline = self.entities_to_dict(db=db, cl="timeblockSet__timeline", mode="defaultdict")
+            self.stochastic_branches = self.params_to_dict(db=db, cl="solve", par="stochastic_branches", mode="defaultdict")
+            self.solver_precommand = self.params_to_dict(db=db, cl="solve", par="solver_precommand", mode="dict")
+            self.solver_arguments = self.params_to_dict(db=db, cl="solve", par="solver_arguments", mode="defaultdict")
+            self.contains_solves = self.params_to_dict(db=db, cl="solve", par="contains_solves", mode="defaultdict")
+            self.hole_multipliers = self.params_to_dict(db=db, cl="solve", par="timeline_hole_multiplier", mode="defaultdict")
+            self.new_step_durations = self.params_to_dict(db=db, cl="timeblockSet", par="new_stepduration", mode="dict")
+            # Rolling parameter is packaged from three parameters
+            rolling_duration = self.params_to_dict(db=db, cl="solve", par="rolling_duration", mode="dict")
+            rolling_solve_horizon = self.params_to_dict(db=db, cl="solve", par="rolling_solve_horizon", mode="dict")
+            rolling_solve_jump = self.params_to_dict(db=db, cl="solve", par="rolling_solve_jump", mode="dict")
+            self.rolling_times = defaultdict(list)
+            all_keys = list(set(rolling_duration) | set(rolling_solve_horizon) | set(rolling_solve_jump))
+            for i, var in enumerate([rolling_solve_jump, rolling_solve_horizon, rolling_duration]):
+                for key in all_keys:
+                    if key in var:
+                        self.rolling_times[key].append(var[key])
+                    else:
+                        if i == 0:
+                            self.rolling_times[key].append(0)
+                        if i == 1:
+                            self.rolling_times[key].append(0)
+                        if i == 2:
+                            self.rolling_times[key].append(-1)  # If rolling_duration is not given, assume -1
+            self.timeblocks_used_by_solves = self.get_period_timesets(db=db)
+
+            self.invest_periods = self.periods_to_tuples(db=db, cl="solve", par="invest_periods")
+            self.realized_periods = self.periods_to_tuples(db=db, cl="solve", par="invest_periods")
+            self.realized_invest_periods = self.periods_to_tuples(db=db, cl="solve", par="invest_periods")
+            self.fix_storage_periods = self.periods_to_tuples(db=db, cl="solve", par="invest_periods")
+            self.check_version(db=db)
+
         self.stochastic_timesteps = defaultdict(list)
-        self.solver_precommand = self.get_solver_precommand()
-        self.solver_arguments = self.get_solver_arguments()
-        self.contains_solves = self.get_contains_solves()
-        self.hole_multipliers = self.get_hole_multipliers()
-        self.rolling_times = self.get_rolling_times()
-        self.new_step_durations = self.get_new_step_durations()
         self.original_timeline = defaultdict()
         self.create_timeline_from_timestep_duration()
         self.first_of_complete_solve = []
         self.last_of_solve = []
-        self.timeblocks_used_by_solves = {**self.get_timeblocks_used_by_solves(), **self.get_2d_timeblocks_used_by_solves()}
-        self.invest_periods = self.get_list_of_tuples('input/solve__invest_period.csv') + self.get_2d_map_periods('input/solve__invest_period_2d_map.csv')
-        self.realized_periods = self.get_list_of_tuples('input/solve__realized_period.csv') + self.get_2d_map_periods('input/solve__realized_period_2d_map.csv')
-        self.realized_invest_periods = self.get_list_of_tuples('input/solve__realized_invest_period.csv') + self.get_2d_map_periods('input/solve__realized_invest_period_2d_map.csv')
-        self.fix_storage_periods = self.get_list_of_tuples('input/solve__fix_storage_period.csv') + self.get_2d_map_periods('input/solve__fix_storage_period_2d_map.csv')
         #self.write_full_timelines(self.timelines, 'steps.csv')
 
-    def check_version(self):
-        with open('input/db_version.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            tool_version = 21.0
-            database_version = 0
-            while True:
-                try:
-                    datain = next(filereader)
-                    database_version = datain[0]
-                except StopIteration:
-                    break
+
+    def periods_to_tuples(self, db, cl, par):
+        entities = db.get_entity_items(entity_class_name=cl)
+        params = db.get_parameter_value_items(entity_class_name=cl,
+                                                 parameter_definition_name=par)
+        tuple_list = []
+        for entity in entities:
+            params = db.get_parameter_value_items(entity_class_name=cl,
+                                                  entity_name=entity["name"],
+                                                  parameter_definition_name=par)
+            for param in params:
+                param_value = api.from_database(param["value"], param["type"])
+
+                for (i, row) in enumerate(param_value.values):
+                    if isinstance(param_value.values[i], api.Map):
+                        new_name = param["entity_name"] + "_" + param_value.indexes[i]
+                        self.duplicate_solve(param["entity_name"], new_name)
+                        tuple_list.append((new_name, param_value.indexes[i]))
+
+                        new_period_timeblockset_list = []
+                        for solve, period__timeblockset_list in list(self.timeblocks_used_by_solves.items()):
+                            if solve == param["entity_name"]:
+                                for period__timeblockset in period__timeblockset_list:
+                                    if period__timeblockset[0] == param_value.indexes[i]:
+                                        new_period_timeblockset_list.append(period__timeblockset)
+                        if new_name not in self.timeblocks_used_by_solves.keys():
+                            self.timeblocks_used_by_solves[new_name] = new_period_timeblockset_list
+                        else:
+                            for item in new_period_timeblockset_list:
+                                if item not in self.timeblocks_used_by_solves[new_name]:
+                                    self.timeblocks_used_by_solves[new_name].append(item)
+                    else:
+                        tuple_list.append((param["entity_name"], row))
+        return tuple_list
+
+
+
+    def get_period_timesets(self, db):
+        entities = db.get_entity_items(entity_class_name="solve")
+        params = db.get_parameter_value_items(entity_class_name="solve",
+                                                 parameter_definition_name="period_timeblockSet")
+        timeblocks_used_by_solves = defaultdict(list)
+        for entity in entities:
+            params = db.get_parameter_value_items(entity_class_name="solve",
+                                                  entity_name=entity["name"],
+                                                  parameter_definition_name="period_timeblockSet")
+            for param in params:
+                param_value = api.from_database(param["value"], param["type"])
+                for (i, row) in enumerate(param_value.indexes):
+                    if isinstance(param_value.values[i], api.Map):
+                        new_name = param["entity_name"] + "_" + param_value.indexes[i]
+                        self.duplicate_solve(param["entity_name"], new_name)
+                        timeblocks_used_by_solves[new_name].append((param_value.values[i].indexes[i],
+                                                                    param_value.values[i].values[i]))
+                    else:
+                        timeblocks_used_by_solves[param["entity_name"]].append((param_value.indexes[i],
+                                                                                param_value.values[i]))
+        return timeblocks_used_by_solves
+
+
+
+    def check_version(self, db):
+        db_version_item = db.get_parameter_definition_item(entity_class_name="model",
+                                                           name="version")
+        if not db_version_item:
+            self.logger.error("No version information found in the FlexTool input database, check you have a correct database.")
+            sys.exit(-1)
+        database_version = api.from_database(db_version_item["default_value"], db_version_item["default_type"])
+        tool_version = 22.0
         if float(database_version) < tool_version:
-            self.logger.error("The input database is in an older version than the tool. Please migrate the database to the new version: python migrate_database.py path_to_database")
+            self.logger.error(
+                "The input database is in an older version than the tool. Please migrate the database to the new version: python migrate_database.py path_to_database")
             sys.exit(-1)
 
-    def get_2d_timeblocks_used_by_solves(self):
 
-        with open('input/timeblocks_in_use_2d.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            timeblocks_used_by_solves = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    new_name = datain[0]+"_"+datain[1]
-                    self.duplicate_solve(datain[0],new_name)
-                    timeblocks_used_by_solves[new_name].append((datain[2], datain[3]))
-                except StopIteration:
-                    break
-        return timeblocks_used_by_solves
-    
-    def get_2d_map_periods(self,input_filename):
 
-        with open(input_filename, 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            period_list = []
-            while True:
-                try:
-                    datain = next(filereader)
-                    new_name = datain[0]+"_"+datain[1]
-                    self.duplicate_solve(datain[0],new_name)
-                    period_list.append((new_name,datain[2]))
-                    new_period_timeblockset_list = []
-                    for solve, period__timeblockset_list in list(self.timeblocks_used_by_solves.items()):
-                        if solve == datain[0]:
-                            for period__timeblockset in period__timeblockset_list:
-                                if period__timeblockset[0] == datain[2]:
-                                    new_period_timeblockset_list.append(period__timeblockset)
-                    if new_name not in self.timeblocks_used_by_solves.keys():
-                        self.timeblocks_used_by_solves[new_name] = new_period_timeblockset_list
-                    else:
-                        for item in new_period_timeblockset_list:
-                            if item not in self.timeblocks_used_by_solves[new_name]:
-                                self.timeblocks_used_by_solves[new_name].append(item)
-                except StopIteration:
-                    break
-        return period_list
-        
     def duplicate_solve(self, old_solve, new_name):
         if new_name not in self.model_solve.values() and new_name not in self.contains_solves.values():
             dup_map_list=[
@@ -162,42 +200,6 @@ class FlexToolRunner:
                     solves.append(new_name)
                 self.model_solve[model] = solves
 
-    def get_solves(self):
-        """
-        read in
-        the list of solves, return it as a list of strings
-        :return:
-        """
-        with open("input/model__solve.csv", 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            model__solve = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    model__solve[datain[0]].append((datain[1]))
-                except StopIteration:
-                    break
-        return model__solve
-
-    def get_solve_modes(self, parameter):
-        """
-        read in
-        the list of solve modes, return it as a list of strings
-        :return:
-        """
-        with open("input/solve_mode.csv", 'r') as solvefile:
-            header = solvefile.readline()
-            solves = solvefile.readlines()
-            params = []
-            right_params = {}
-            for solve in solves:
-                solve_stripped = solve.rstrip()
-                params.append(solve_stripped.split(","))
-            for param in params:
-                if param[0] == parameter:
-                    right_params[param[1]] = param[2]
-        return right_params
 
     def make_roll_counter(self):
         roll_counter_map={}
@@ -206,155 +208,6 @@ class FlexToolRunner:
                 roll_counter_map[key] = 0
         return roll_counter_map
 
-    def get_solve_period_years_represented(self):
-        """
-        read the years presented by each period in a solve
-        :return: dict : (period name, years represented)
-        """
-        with open('input/solve__period__years_represented.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            years_represented = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    years_represented[datain[0]].append((datain[1], datain[2]))
-                except StopIteration:
-                    break
-        return years_represented
-
-    def get_solver(self):
-        """
-        read in
-        the list of solvers for each solve. return it as a list of strings
-        :return:
-        """
-        with open('input/solver.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            solver_dict = defaultdict()
-            while True:
-                try:
-                    datain = next(filereader)
-                    solver_dict[datain[0]] = datain[1]
-                except StopIteration:
-                    break
-
-        #with open("input/solver.csv", 'r') as solvefile:
-        #    header = solvefile.readline()
-        #    solvers = solvefile.readlines()
-        #    for solver in solvers:
-        #        solve__period = solver.split(",")
-        #        solver_dict[solve__period[0]] = solve__period[1]
-        return solver_dict
-
-    def get_solver_precommand(self):
-        """
-        read in
-        the solver_precommand for each solve. return it as a list of strings
-        :return:
-        """
-        with open('input/solver_precommand.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            solver_precommand_dict = defaultdict()
-            while True:
-                try:
-                    datain = next(filereader)
-                    solver_precommand_dict[datain[0]] = datain[1]
-                except StopIteration:
-                    break
-        return solver_precommand_dict
-        
-    def get_solver_arguments(self):
-        """
-        read in
-        the solver commands for each solve. return it as a list of strings
-        :return:
-        """
-        with open('input/solver_arguments.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            solver_arguments_dict = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    solver_arguments_dict[datain[0]].append((datain[1]))
-                except StopIteration:
-                    break
-        return solver_arguments_dict
-
-    def get_contains_solves(self):
-        """
-        read in
-        the contains_solves for each solve. return it as a dict of list of strings
-        :return:
-        """
-        with open('input/solve__contains_solve.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            contains_solves_dict = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    contains_solves_dict[datain[0]]= datain[1]
-                except StopIteration:
-                    break
-        return contains_solves_dict
-
-    def get_hole_multipliers(self):
-        """
-        read in
-        the hole multipliers for each solve. return it as a dict of list of strings
-        :return:
-        """
-        with open('input/solve_hole_multiplier.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            hole_multipliers = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    hole_multipliers[datain[0]] = datain[1]
-                except StopIteration:
-                    break
-        return hole_multipliers
-
-    def get_rolling_times(self):
-        """
-        read in
-        the rolling_times for each solve. return it as a dict of list of ints
-        :return:
-        """
-        with open('input/solve__rolling_times.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            rolling_parameters = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    rolling_parameters[datain[0]].append((datain[1],datain[2]))
-                except StopIteration:
-                    break
-        rolling_times=defaultdict(list)
-        for solve, data in list(rolling_parameters.items()):
-            horizon = 0
-            jump = 0
-            duration = -1
-            for param_value in data:
-                if "rolling_duration" in param_value[0]:
-                    duration = float(param_value[1])
-                if "rolling_solve_horizon" in param_value[0]:
-                    horizon = float(param_value[1])
-                if "rolling_solve_jump" in param_value[0]:
-                    jump = float(param_value[1])
-            
-            if self.solve_modes[solve] == 'rolling_window' and (horizon == 0 or jump == 0):
-                self.logger.error("When using rolling_window solve mode, rolling_solve_horizon and rolling_solve_jump must defined and not be 0")
-                sys.exit(-1)
-            rolling_times[solve] = [jump,horizon,duration]
-
-        return rolling_times
 
     def create_timeline_from_timestep_duration(self):
         for timeblockSet_name, timeblockSet in list(self.timeblocks.items()):
@@ -512,148 +365,6 @@ class FlexToolRunner:
                             row = [node__value[0],timeline_row[0],value]
                             filewriter.writerow(row)
 
-    def get_new_step_durations(self):
-        """
-        read the new step duration for each solve
-        :return: dict : (period name, step_duration (hours))
-        """
-        with open('input/timeblockSet__new_stepduration.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            step_durations = defaultdict()
-            while True:
-                try:
-                    datain = next(filereader)
-                    step_durations[datain[0]]=datain[1]
-                except StopIteration:
-                    break
-        return step_durations 
-
-    def get_timeblocks_used_by_solves(self):
-        """
-        timeblocks_in_use.csv contains three columns
-        solve: name of the solve
-        period: name of the time periods used for a particular solve
-        timeblocks: timeblocks used by the period
-
-        :return list of tuples in a dict of solves : (period name, timeblock name)
-        """
-        with open('input/timeblocks_in_use.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            timeblocks_used_by_solves = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    timeblocks_used_by_solves[datain[0]].append((datain[1], datain[2]))
-                    # blockname needs to be in both block_start and timeblock_lengths.csv
-                    # assert datain[1] in self.starts.keys(), "Block {0} not in block_starts.csv".format(datain[1])
-                    # assert datain[1] in self.steps.keys(), "Block {0} not in block_steps.csv".format(datain[1])
-                except StopIteration:
-                    break
-                #except AssertionError as e:
-                #    self.logger.error(e)
-                #    sys.exit(-1)
-        return timeblocks_used_by_solves
-
-    def get_timelines(self):
-        """
-        read in the timelines including step durations for all simulation steps
-        timeline is the only inputfile that contains the full timelines for all timeblocks.
-        :return: list of tuples in a dict timeblocks : (timestep name, duration)
-        """
-        with open('input/timeline.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            timelines = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    timelines[datain[0]].append((datain[1], datain[2]))
-                except StopIteration:
-                    break
-        return timelines
-
-    def get_timeblocks_timelines(self):
-        """
-        read in the timelines including step durations for all simulation steps
-        timeline is the only inputfile that contains the full timelines for all timeblocks.
-        :return: list of tuples in a dict timeblocks : (timestep name, duration)
-        """
-        with open('input/timeblocks__timeline.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            timeblocks__timeline = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    timeblocks__timeline[datain[0]].append((datain[1]))
-                except StopIteration:
-                    break
-        return timeblocks__timeline
-
-    def get_timeblocks(self):
-        """
-        read in the timeblock definitions that say what each set of timeblock contains (timeblock start and length)
-        :return: list of tuples in a dict of timeblocks : (start timestep name, timeblock length in timesteps)
-        :return: list of tuples that hold the timeblock length in timesteps
-        """
-        with open('input/timeblocks.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            timeblocks = defaultdict(list)
-            #timeblock_lengths = []
-            while True:
-                try:
-                    datain = next(filereader)
-                    timeblocks[datain[0]].append((datain[1], datain[2]))
-                    """ This assert should check the list of timelines inside the dict, but didn't have time to formulate it yet
-                    assert timeblocks[datain[0]] in self.timelines[datain[0]], "Block {0} start time {1} not found in timelines".format(
-                        datain[0], datain[1])
-                    """
-                    #timeblock_lengths.append[(datain[0], datain[1])] = datain[2]
-                except StopIteration:
-                    break
-                """ Once the assert works, this can be included
-                except AssertionError as e:
-                    self.logger.error(e)
-                    sys.exit(-1)
-                """
-        return timeblocks
-
-    def get_stochastic_branches(self):
-        """
-        read stochastic data
-        :return a 5d array (solve, period, branch, weight, realized):
-        """
-        with open('input/stochastic_branches.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            map_5d = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    map_5d[datain[0]].append([datain[1], datain[2], datain[3], datain[4], datain[5]])
-                except StopIteration:
-                    break
-        return map_5d
-
-    def get_list_of_tuples(self, filename):
-        """
-        read in invest_period
-        :return  a list of tuples that say when it's ok to invest (solve, period):
-        """
-        with open(filename, 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            tuple_list = []
-            while True:
-                try:
-                    datain = next(filereader)
-                    tuple_list.append((datain[0], datain[1]))
-                except StopIteration:
-                    break
-        return tuple_list
 
     def make_steps(self, start, stop):
         """
@@ -2085,6 +1796,75 @@ class FlexToolRunner:
                 f'Trying to run more than one model - not supported. The results of the first model are retained.')
             sys.exit(-1)
 
+    def entities_to_dict(self, db, cl, mode):
+        entities = db.get_entity_items(entity_class_name=cl)
+        if mode == "defaultdict":
+            result = defaultdict(list)
+        elif mode == "dict":
+            result = dict()
+        for entity in entities:
+            if len(entity["entity_byname"]) > 1:
+                result[entity["entity_byname"][0]] = list(entity["entity_byname"][1:])
+            else:
+                raise ValueError("Only one dimension in the entity, cannot make into a dict in entities_to_dict")
+        return result
+
+
+    def params_to_dict(self, db, cl, par, mode):
+        entities = db.get_entity_items(entity_class_name=cl)
+        params = db.get_parameter_value_items(entity_class_name=cl,
+                                                 parameter_definition_name=par)
+        if mode == "defaultdict":
+            result = defaultdict(list)
+        elif mode == "dict":
+            result = dict()
+        elif mode == "list":
+            result = []
+        for entity in entities:
+            params = db.get_parameter_value_items(entity_class_name=cl,
+                                                  entity_name=entity["name"],
+                                                  parameter_definition_name=par)
+            for param in params:
+                param_value = api.from_database(param["value"], param["type"])
+                if mode == "defaultdict" or mode == "dict":
+                    if isinstance(param_value, api.Map):
+                        if isinstance(param_value.values[0], float):
+                            result[entity["name"]] = list(zip(list(param_value.indexes), list(map(float, param_value.values))))
+                        elif isinstance(param_value.values[0], str):
+                            result[entity["name"]] = list(zip(list(param_value.indexes), param_value.values))
+                        elif isinstance(param_value.values[0], api.Map):
+                            data = []
+                            for dim1 in param_value.values:
+                                if isinstance(dim1.values[0], api.Map):
+                                    for dim2 in dim1.values:
+                                        if isinstance(dim2.values[0], api.Map):
+                                            dim2_name = dim2.indexes
+                                            for dim3 in dim2.values:
+                                                if isinstance(dim3.values[0], api.Map):
+                                                    for dim4 in dim3.values:
+                                                        data.append([dim1, dim2, dim3, dim4])
+                                                else:
+                                                    data.append([param_value.indexes[0], dim1.indexes[0], dim2.indexes[0], dim3.indexes[0], dim3.values[0]])
+                                        else:
+                                            data.append([param_value.indexes[0], dim1.indexes[0], dim2.indexes[0], dim2.values[0]])
+                                else:
+                                    data.append([param_value.indexes[0], dim1.indexes[0], dim1.values[0]])
+                            result[entity["name"]] = data
+                        else:
+                            raise TypeError("params_to_dict function does not handle other values than floats and strings")
+                    elif isinstance(param_value, api.Array):
+                        result[entity["name"]] = param_value.values
+                    elif isinstance(param_value, float):
+                        result[entity["name"]] = param_value
+                    elif isinstance(param_value, str):
+                        result[entity["name"]] = param_value
+                elif mode == "list":
+                    if isinstance(param_value, float):
+                        result.append([entity["name"], param_value])
+                    elif isinstance(param_value, str):
+                        result.append([entity["name"], param_value])
+
+        return result
 
 def main():
     logging.basicConfig(level=logging.INFO)

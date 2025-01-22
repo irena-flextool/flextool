@@ -7,7 +7,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 spec = importlib.util.spec_from_file_location("flextool.flextoolrunner", "flextool/flextoolrunner.py")
 flextoolrunner = importlib.util.module_from_spec(spec)
-sys.modules["module.name"] = flextoolrunner
+sys.modules["flextool.flextoolrunner"] = flextoolrunner
 spec.loader.exec_module(flextoolrunner)
 
 #__file__ = os.path.abspath("run_flextool.py")
@@ -21,14 +21,18 @@ spec.loader.exec_module(flextoolrunner)
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.description = "Run flextool does not take arguments. It uses input folder to setup the model run. Return codes are 0: success, 1: infeasible or unbounded, -1: failure."
+    parser.description = "Run flextool using the specified database URL. Return codes are 0: success, 1: infeasible or unbounded, -1: failure."
+    parser.add_argument('input_db_url', help='Database URL to connect to (can be copied from Toolbox workflow db item')
+
+    args = parser.parse_args()
+    input_db_url = args.input_db_url
 
     logging.basicConfig(
         level=logging.INFO,
         handlers=[logging.StreamHandler(sys.stdout)]
     )
 
-    runner = flextoolrunner.FlexToolRunner()
+    runner = flextoolrunner.FlexToolRunner(input_db_url)
     try:
         return_code = runner.run_model()
     except Exception as e:
