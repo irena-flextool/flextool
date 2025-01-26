@@ -403,8 +403,8 @@ param scale_the_state;
 set param_costs dimen 1;
 param costs_discounted {param_costs} default 0;
 
-set objectClass_paramName_default dimen 2;
-param default_value {objectClass_paramName_default};
+set class_paramName_default dimen 2;
+param default_value {class_paramName_default};
 
 #########################
 # Read data
@@ -511,8 +511,8 @@ table data IN 'CSV' 'solve_data/p_discount_years.csv' : [period], p_discount_yea
 table data IN 'CSV' 'solve_data/p_years_represented.csv' : period__year <- [period,years_from_solve], p_years_represented~p_years_represented, p_years_from_solve~p_years_from_solve;
 table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
 table data IN 'CSV' 'input/p_discount_rate.csv' : [model], p_discount_rate;
-table data IN 'CSV' 'input/default_values.csv' : objectClass_paramName_default <-[objectClass, paramName];
-table data IN 'CSV' 'input/default_values.csv' : [objectClass,paramName], default_value;
+table data IN 'CSV' 'input/default_values.csv' : class_paramName_default <-[class, paramName];
+table data IN 'CSV' 'input/default_values.csv' : [class,paramName], default_value;
 
 #Timeseries parameters, Timestep values are in solve_data as they might be averaged for the solve
 table data IN 'CSV' 'solve_data/pt_node.csv' : node__param__time <- [node, nodeParam, time], pt_node~pt_node;
@@ -883,7 +883,7 @@ param pdtNode {(n, param) in node__TimeParam_in_use, (d, t) in dt} :=
 		     then p_node[n, param]
         else if param in nodeParam_def1
              then 1
-        else if ('node',param) in objectClass_paramName_default
+        else if ('node',param) in class_paramName_default
             then default_value['node', param]
         else 0;
 
