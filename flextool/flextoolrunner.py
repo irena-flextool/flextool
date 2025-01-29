@@ -2033,7 +2033,6 @@ class FlexToolRunner:
                                  ("node", "cumulative_max_capacity"),
                                  ("node", "cumulative_min_capacity"),
                                  ("node", "self_discharge_loss"),
-                                 ("node", "availability"),
                                  ("node", "existing"),
                                  ("node", "storage_state_reference_value")], "node,nodeParam,period,pd_node",
                             "input/pd_node.csv", filter_in_type=["1d_map"], filter_out_index="time", param_print=True)
