@@ -513,10 +513,10 @@ class FlexToolRunner:
                 current_permissions = os.stat(glpsol_file).st_mode & 0o777
                 if current_permissions != 0o755:
                     os.chmod(glpsol_file, 0o755)
-            if os.path.exists(glpsol_file):
-                current_permissions = os.stat(glpsol_file).st_mode & 0o777
+            if os.path.exists(highs_file):
+                current_permissions = os.stat(highs_file).st_mode & 0o777
                 if current_permissions != 0o755:
-                    os.chmod(glpsol_file, 0o755)
+                    os.chmod(highs_file, 0o755)
         elif sys.platform.startswith("win32"):
             glpsol_file = str(self.bin_dir / "glpsol.exe")
             highs_file = str(self.bin_dir / "highs.exe")
@@ -723,35 +723,6 @@ class FlexToolRunner:
         return 0
 
 
-    # def get_active_time(self, current_solve, timeblocks_used_by_solves, timeblocks, timelines, timeblocks__timelines):
-    #     """
-    #     retunr all block codes that are included in solve
-    #     :param solve:
-    #     :param blocklist:
-    #     :return:
-    #     """
-    #     active_time = defaultdict(list)
-    #     for solve in timeblocks_used_by_solves:
-    #         if solve == current_solve:
-    #             for period_timeblock in timeblocks_used_by_solves[solve]:
-    #                 for timeblocks__timeline_key, timeblocks__timeline_value in timeblocks__timelines.items():
-    #                     if timeblocks__timeline_key == period_timeblock[1]:
-    #                         for timeline in timelines:
-    #                             if timeline == timeblocks__timeline_value[0]:
-    #                                 for single_timeblock_def in timeblocks[timeblocks__timeline_key]:
-    #                                     for index, timestep in enumerate(timelines[timeline]):
-    #                                         if timestep[0] == single_timeblock_def[0]:
-    #                                             for block_step in range(int(float(single_timeblock_def[1]))):
-    #                                                 active_time[period_timeblock[0]].append((
-    #                                                                     timelines[timeline][index + block_step][0],
-    #                                                                     index + block_step,
-    #                                                                     timelines[timeline][index + block_step][1]))
-    #                                             break
-    #     if len(active_time.keys()) == 0:
-    #         self.logger.error(current_solve + " could not connect to a timeline. Check that object solve has period_timeblockSet [Map], correct realized_periods [Array], objects timeblockSet [Map] and timeline [Map] are defined and that relation timeblockSet_timeline exists")
-    #         sys.exit(-1)
-    #     return active_time
-
     def get_active_time(self, current_solve, timeblocks_used_by_solves, timeblocks, timelines, timeblocks__timelines):
         """
         Maps periods to their corresponding timeline entries for a given solve.
@@ -894,7 +865,8 @@ class FlexToolRunner:
             writer.writerow(headers)
             writer.writerows(step_lengths)
 
-    def get_first_steps(self, steplists):
+    @staticmethod
+    def get_first_steps(steplists):
         """
         get the first step of the current solve and the next solve in execution order.
         :param steplists: Dictionary containg steplist for each solve, in order
@@ -910,7 +882,8 @@ class FlexToolRunner:
                 starts[name] = (steplists[solve_names[index]][0], steplists[solve_names[index + 1]][0])
         return starts
 
-    def write_first_steps(self, timeline, filename):
+    @staticmethod
+    def write_first_steps(timeline, filename):
         """
         write to file the first step of each period
         
@@ -956,7 +929,8 @@ class FlexToolRunner:
                     out = [period_name, item[0]]
                     outfile.write(out[0] + ',' + out[1] + '\n')
 
-    def write_periods(self, solve, periods, filename):
+    @staticmethod
+    def write_periods(solve, periods, filename):
         """
         write to file a list of periods based on the current solve and
         a list of tuples with the solve as the first element in the tuple
@@ -972,11 +946,13 @@ class FlexToolRunner:
                 if item[0] == solve:
                     outfile.write(item[1] + '\n')
 
-    def write_solve_status(self, first_state, last_state, nested = False):
+    @staticmethod
+    def write_solve_status(first_state, last_state, nested = False):
         """
         make a file solve_first.csv that contains information if the current solve is the first to be run
 
-        :param first_state: boolean if the current run is the first
+        :param first_state: boolean if the current solve is the first
+        :param last_state: boolean if the current solve is the last
 
         """
         if not nested:
@@ -1002,7 +978,8 @@ class FlexToolRunner:
                 else:
                     p_model_file.write("solveLast,0\n")
 
-    def write_currentSolve(self, solve, filename):
+    @staticmethod
+    def write_currentSolve(solve, filename):
         """
         make a file with the current solve name
         """
@@ -1010,7 +987,8 @@ class FlexToolRunner:
             solvefile.write("solve\n")
             solvefile.write(solve + "\n")
 
-    def write_empty_investment_file(self):
+    @staticmethod
+    def write_empty_investment_file():
         """
         make a file p_entity_invested.csv that will contain capacities of invested and divested processes. For the first solve it will be empty.
         """
@@ -1021,7 +999,8 @@ class FlexToolRunner:
         with open("solve_data/p_entity_period_existing_capacity.csv", 'w') as firstfile:
             firstfile.write("entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n")
 
-    def write_empty_storage_fix_file(self):
+    @staticmethod
+    def write_empty_storage_fix_file():
         with open("solve_data/fix_storage_price.csv", 'w') as firstfile:
             firstfile.write("node, period, step, ndt_fix_storage_price\n")
         with open("solve_data/fix_storage_quantity.csv", 'w') as firstfile:
@@ -1031,7 +1010,8 @@ class FlexToolRunner:
         with open("solve_data/p_roll_continue_state.csv", 'w') as firstfile:
             firstfile.write("node, p_roll_continue_state\n")
 
-    def write_headers_for_empty_output_files(self, filename, header):
+    @staticmethod
+    def write_headers_for_empty_output_files(filename, header):
         """
         make an empty output file with headers
         """
@@ -1060,7 +1040,8 @@ class FlexToolRunner:
                     for i in active_time:
                         realfile.write(period+","+i[0]+"\n")
     
-    def write_branch__period_relationship(self, period__branch, filename):
+    @staticmethod
+    def write_branch__period_relationship(period__branch, filename):
         """
         write the period_branch relatioship
         """
@@ -1391,14 +1372,14 @@ class FlexToolRunner:
             #rolling_times: 0:jump, 1:horizon, 2:duration
             rolling_times = self.rolling_times[solve]
             if duration == -1:
-                duration = rolling_times[2]
+                duration = float(rolling_times[2])
             period_start_timestep = start
             if start != None:
                 start_timestep = self.find_next_timestep(full_active_time_list_own, start, parent_solve__roll[0], solve) # if the timestep is not in the lower timeline
                 period_start_timestep = [start[0],start_timestep]
             
             roll_solves, roll_active_time_lists, roll_realized_time_lists = (
-                self.create_rolling_solves(solve, full_active_time_list, rolling_times[0], rolling_times[1], period_start_timestep, duration))
+                self.create_rolling_solves(solve, full_active_time_list, float(rolling_times[0]), float(rolling_times[1]), period_start_timestep, duration))
             for i in roll_solves:
                 complete_solves[i] = solve
                 parent_roll_lists[i] = parent_solve__roll[1]
@@ -1428,7 +1409,7 @@ class FlexToolRunner:
                     else:
                         start = None
                     #upper_jump = lower_duration 
-                    duration = rolling_times[0]
+                    duration = float(rolling_times[0])
                     inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_parent_roll_lists = (
                         self.define_solve(contains_solve, [solve, roll], realized, start, duration))
                     solves += inner_solves
@@ -1742,8 +1723,8 @@ class FlexToolRunner:
         first = True
         previous_complete_solve = None
         for i, solve in enumerate(all_solves):
+            self.logger.info("Creating timelines for solve " + solve + " (" + str(i) + ")")
             complete_active_time_lists = self.get_active_time(complete_solve[solve], self.timeblocks_used_by_solves, self.timeblocks, self.timelines, self.timeblocks__timeline)
-            self.logger.info("Creating timelines")
             self.write_full_timelines(self.stochastic_timesteps[solve], self.timeblocks_used_by_solves[complete_solve[solve]], self.timeblocks__timeline, self.timelines, 'solve_data/steps_in_timeline.csv')
             self.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
             self.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete = True)
@@ -1797,6 +1778,7 @@ class FlexToolRunner:
                 last_of_nested_level = False
             #if multiple storage solve levels, get the storage fix of the upper level, (not the fix of the previous roll):
             if storage_fix_values_exist:
+                self.logger.info("Fetching storage parameters from the upper solve")
                 shutil.copy("solve_data/fix_storage_quantity_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_quantity.csv")
                 shutil.copy("solve_data/fix_storage_price_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_price.csv")
                 shutil.copy("solve_data/fix_storage_usage_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_usage.csv")
@@ -2088,8 +2070,8 @@ class FlexToolRunner:
                             "process,startup_method", "input/process__startup_method.csv")
             write_parameter(db, [("unit", "conversion_method"), ("connection", "transfer_method")], "process,ct_method",
                             "input/process__ct_method.csv")
-            write_parameter(db, [("reserve__upDown__unit__node", "is_active")], "process,reserve,upDown,node",
-                            "input/process__reserve__upDown__node.csv")
+            write_entity(db, ["reserve__upDown__unit__node", "reserve__upDown__connection__node"], "process,reserve,upDown,node",
+                            "input/process__reserve__upDown__node.csv", entity_dimens=[[2,0,1,3], [2,0,1,3]])
             write_parameter(db, [("profile", "profile")], "profile,time,pt_profile", "input/pt_profile.csv",
                             filter_in_type=["1d_map"], filter_out_index="period")
             write_parameter(db, [("profile", "profile")], "profile,branch,time_start,time,pbt_profile", "input/pbt_profile.csv",
@@ -2099,16 +2081,18 @@ class FlexToolRunner:
             write_parameter(db, [("profile", "profile")], "profile,p_profile", "input/p_profile.csv",
                             filter_in_type=["float", "str", "bool"])
             write_entity(db, ["profile"], "profile", "input/profile.csv")
-            write_parameter(db, [("reserve__upDown__group")],
+            write_parameter(db, [("reserve__upDown__group", "increase_reserve_ratio"),
+                                 ("reserve__upDown__group", "penalty_reserve"),
+                                 ("reserve__upDown__group", "reservation")],
                             "reserve,upDown,group,reserveParam,p_reserve_upDown_group",
                             "input/p_reserve__upDown__group.csv", filter_in_type=["float", "str", "bool"], param_print=True)
-            write_parameter(db, [("reserve__upDown__group")],
+            write_parameter(db, [("reserve__upDown__group", "reservation")],
                             "reserve,upDown,group,reserveParam,time,pt_reserve_upDown_group",
                             "input/pt_reserve__upDown__group.csv", filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
-            write_parameter(db, [("reserve__upDown__group")],
+            write_parameter(db, [("reserve__upDown__group", "reservation")],
                             "reserve,upDown,group,reserveParam,branch,time_start,time,pbt_reserve_upDown_group",
                             "input/pbt_reserve__upDown__group.csv", filter_in_type=["3d_map"], param_print=True)
-            write_parameter(db, [("reserve__upDown__group")], "reserve,upDown,group,method",
+            write_parameter(db, [("reserve__upDown__group", "reserve_method")], "reserve,upDown,group,method",
                             "input/reserve__upDown__group__method.csv")
             write_parameter(db, [("solve", "solver")], "solve,solver", "input/solver.csv")
             write_parameter(db, [("solve", "timeline_hole_multiplier")], "solve,p_hole_multiplier",
@@ -2180,9 +2164,18 @@ class FlexToolRunner:
                             "input/p_process_source.csv", param_print=True)
             write_parameter(db, [("unit__outputNode")], "process,sink,sourceSinkParam,p_process_sink",
                             "input/p_process_sink.csv", param_print=True)
-            write_parameter(db, [("reserve__upDown__unit__node", "reserveParam")],
+            write_parameter(db, [("reserve__upDown__unit__node", "increase_reserve_ratio"),
+                                 ("reserve__upDown__unit__node", "large_failure_ratio"),
+                                 ("reserve__upDown__unit__node", "max_share"),
+                                 ("reserve__upDown__unit__node", "reliability"),
+                                 ("reserve__upDown__connection__node", "increase_reserve_ratio"),
+                                 ("reserve__upDown__connection__node", "large_failure_ratio"),
+                                 ("reserve__upDown__connection__node", "max_share"),
+                                 ("reserve__upDown__connection__node", "reliability")
+                                 ],
                             "process,reserve,upDown,node,reserveParam,p_process_reserve_upDown_node",
-                            "input/p_process__reserve__upDown__node.csv", filter_in_type=["float", "str", "bool"], param_print=True)
+                            "input/p_process__reserve__upDown__node.csv",
+                            filter_in_type=["float", "str", "bool"], param_print=True, dimens = [1, 2, 0, 3])
             write_parameter(db, [("unit__outputNode", "constraint_flow_coefficient"),
                                  ("unit__inputNode", "constraint_flow_coefficient"),
                                  ("connection__node", "constraint_flow_coefficient")],
@@ -2351,7 +2344,7 @@ def write_entity(db, cl, header, filename, entity_dimens=None):
             realfile.write(entity + "\n")
 
 
-def write_parameter(db, cl_pars, header, filename, filter_in_type=None, filter_out_index=None, filter_in_value=None, no_value=False, param_print=False):
+def write_parameter(db, cl_pars, header, filename, filter_in_type=None, filter_out_index=None, filter_in_value=None, no_value=False, param_print=False, dimens=None):
     # interpret map dimensionality and map into map for later comparisons
     type_filter_map_dim = []
     if filter_in_type:
@@ -2378,10 +2371,18 @@ def write_parameter(db, cl_pars, header, filename, filter_in_type=None, filter_o
             if filter_in_type and param["type"] not in filter_in_type:
                 continue
 
+            entity_byname = param["entity_byname"]
+            if dimens:
+                temp_entity_byname = [None] * len(entity_byname)
+                for i, dimen in enumerate(dimens):
+                    temp_entity_byname[dimen] = entity_byname[i]
+                entity_byname = temp_entity_byname
+            entity_byname = ','.join(entity_byname)
+
             if param_print:
-                first_cols = ','.join(param["entity_byname"]) + ',' + param["parameter_definition_name"]
+                first_cols = entity_byname + ',' + param["parameter_definition_name"]
             else:
-                first_cols = ','.join(param["entity_byname"])
+                first_cols = entity_byname
             if param["type"] == "map":
                 # If the first parameter index contains filter_out_index, then skip the parameter (maybe should be extended to other indexes)
                 if filter_out_index and param["parsed_value"].index_name == filter_out_index:
@@ -2412,7 +2413,7 @@ def write_parameter(db, cl_pars, header, filename, filter_in_type=None, filter_o
                             realfile.write(first_cols + ',' + ','.join(index) + ',' + str(flat_values[i]) + '\n')
             elif param["type"] == "array" or param["type"] == "time_series":
                 for row in param["parsed_value"].values:
-                    realfile.write(','.join(param["entity_byname"]) + ',' + row + '\n')
+                    realfile.write(entity_byname + ',' + row + '\n')
             elif param["type"] == "str" or param["type"] == "float" or param["type"] == "bool":
                 # Filter based on values: only if the value is found, then data is written
                 if filter_in_value and param["parsed_value"] != filter_in_value:

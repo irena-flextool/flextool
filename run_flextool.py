@@ -3,8 +3,22 @@ import sys
 import logging
 import traceback
 import importlib.util
+from typing import Callable
+from functools import wraps
 
-sys.stdout.reconfigure(line_buffering=True)
+class FlushingStream:
+    def __init__(self, stream):
+        self.stream = stream
+
+    def write(self, data):
+        self.stream.write(data)
+        self.stream.flush()
+
+    def __getattr__(self, attr):
+        return getattr(self.stream, attr)
+
+
+sys.stdout = FlushingStream(sys.stdout)
 
 spec = importlib.util.spec_from_file_location("flextool.flextoolrunner", "flextool/flextoolrunner.py")
 flextoolrunner = importlib.util.module_from_spec(spec)
@@ -25,15 +39,17 @@ def main():
     parser.description = "Run flextool using the specified database URL. Return codes are 0: success, 1: infeasible or unbounded, -1: failure."
     parser.add_argument('input_db_url', help='Database URL to connect to (can be copied from Toolbox workflow db item')
     parser.add_argument('scenario_name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
+    parser.add_argument('--debug', action='store_true')
 
     args = parser.parse_args()
     input_db_url = args.input_db_url
     scenario_name = args.scenario_name
+    DEBUG = args.debug
 
     logging.basicConfig(
-        level=logging.INFO,
-        handlers=[logging.StreamHandler(sys.stdout)],
-        format = '%(levelname)s:%(filename)s:%(lineno)d:%(message)s'
+        level=logging.DEBUG if DEBUG else logging.INFO,
+        format='%(levelname)s:%(filename)s:%(lineno)d:%(message)s',
+        handlers=[logging.StreamHandler(sys.stdout)]
     )
 
     if scenario_name:
@@ -49,6 +65,17 @@ def main():
         sys.exit(1)
     print(__file__)
 
+
+# Debug flag
+DEBUG = False  # Set via environment variable or config
+
+def debug_only(func: Callable) -> Callable:
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if DEBUG:
+            return func(*args, **kwargs)
+
+    return wrapper
 
 if __name__ == '__main__':
     main()
