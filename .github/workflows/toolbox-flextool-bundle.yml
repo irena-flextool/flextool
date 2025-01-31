@@ -64,7 +64,7 @@ jobs:
         run: |
           cd embedded-python/Scripts
           ./pip.exe list
-      - name: Add pandas and spinedb-api
+      - name: Add pandas and spinedb-api==0.32.2
         run: |
           cd embedded-python/Scripts
           ./pip.exe --version
