@@ -1,3 +1,4 @@
+import time
 import csv
 import math
 import subprocess
@@ -1114,7 +1115,7 @@ class FlexToolRunner:
                 if (solve_branch__time_branch[0], solve_branch__time_branch[0]) in period__branch_lists:
                     realfile.write(solve_branch__time_branch[0] +","+ '1.0'+"\n")
                 elif solve_branch__time_branch[1] in time_branch_weight.keys() and solve_branch__time_branch[0] in active_time_list.keys():
-                    realfile.write(solve_branch__time_branch[0] +","+ time_branch_weight[solve_branch__time_branch[1]]+"\n")  
+                    realfile.write(solve_branch__time_branch[0] +","+ str(time_branch_weight[solve_branch__time_branch[1]])+"\n")
 
         with open("solve_data/solve_branch__time_branch.csv", 'w') as realfile:
             realfile.write("period,branch\n")
@@ -1892,23 +1893,7 @@ class FlexToolRunner:
                         elif isinstance(param_value.values[0], str):
                             result[entity["name"]] = list(zip(list(param_value.indexes), param_value.values))
                         elif isinstance(param_value.values[0], api.Map):
-                            data = []
-                            for dim1 in param_value.values:
-                                if isinstance(dim1.values[0], api.Map):
-                                    for dim2 in dim1.values:
-                                        if isinstance(dim2.values[0], api.Map):
-                                            dim2_name = dim2.indexes
-                                            for dim3 in dim2.values:
-                                                if isinstance(dim3.values[0], api.Map):
-                                                    for dim4 in dim3.values:
-                                                        data.append([dim1, dim2, dim3, dim4])
-                                                else:
-                                                    data.append([param_value.indexes[0], dim1.indexes[0], dim2.indexes[0], dim3.indexes[0], dim3.values[0]])
-                                        else:
-                                            data.append([param_value.indexes[0], dim1.indexes[0], dim2.indexes[0], dim2.values[0]])
-                                else:
-                                    data.append([param_value.indexes[0], dim1.indexes[0], dim1.values[0]])
-                            result[entity["name"]] = data
+                            result[entity["name"]] = api.convert_map_to_table(param_value)
                         else:
                             raise TypeError("params_to_dict function does not handle other values than floats and strings")
                     elif isinstance(param_value, api.Array):
@@ -2099,8 +2084,11 @@ class FlexToolRunner:
             write_parameter(db, [("solve", "solver_precommand")], "solve,solver_precommand",
                             "input/solver_precommand.csv")
             write_parameter(db, [("solve", "solver_arguments")], "solve,arguments", "input/solver_arguments.csv")
-            write_parameter(db, [("solve", "highs_method"), ("solve", "highs_parallel"), ("solve", "solve_mode")],
-                            "param,solve,value", "input/solve_mode.csv", param_print=True)
+            write_parameter(db, [("solve", "highs_method"),
+                                 ("solve", "highs_parallel"),
+                                 ("solve", "highs_presolve"),
+                                 ("solve", "solve_mode")],
+                            "param,solve,value", "input/solve_mode.csv", param_print=True, param_loc = 0)
             write_parameter(db, [("solve", "contains_solves")], "solve,include_solve",
                             "input/solve__contains_solve.csv")
             write_parameter(db, [("solve", "realized_periods")], "solve,roll,period",
@@ -2253,8 +2241,24 @@ class FlexToolRunner:
                                 ], "node,nodeParam,p_node", "input/p_node.csv",
                             filter_in_type=["float", "str", "bool"], param_print=True)
             write_parameter(db, [("group__unit", "groupParam"), ("group__connection", "groupParam")],
-                            "group,process,groupParam,p_group_process_s", "input/p_group__process.csv", param_print=True)
-            write_parameter(db, [("group", "groupParam")], "group,groupParam,p_group", "input/p_group.csv",
+                            "group,process,groupParam,p_group_process_s",
+                            "input/p_group__process.csv", param_print=True)
+            write_parameter(db, [("group", "groupParam"),
+                                 ("group", "capacity_margin"),
+                                 ("group", "co2_max_total"),
+                                 ("group", "co2_price"),
+                                 ("group", "inertia_limit"),
+                                 ("group", "invest_max_total"),
+                                 ("group", "invest_min_total"),
+                                 ("group", "max_cumulative_flow"),
+                                 ("group", "max_instant_flow"),
+                                 ("group", "min_cumulative_flow"),
+                                 ("group", "min_instant_flow"),
+                                 ("group", "non_synchronous_limit"),
+                                 ("group", "penalty_capacity_margin"),
+                                 ("group", "penalty_inertia"),
+                                 ("group", "penalty_non_synchronous"),
+                                ], "group,groupParam,p_group", "input/p_group.csv",
                             filter_in_type=["float", "str", "bool"], param_print=True)
             write_parameter(db, [("unit", "invest_forced"),
                                  ("unit", "invest_max_period"),
@@ -2294,9 +2298,26 @@ class FlexToolRunner:
                             "input/p_discount_offset_operations.csv")
             write_parameter(db, [("model", "discount_offset_investment")], "model,p_discount_offset_investment",
                             "input/p_discount_offset_investment.csv")
-            write_parameter(db, [("group", "groupParam")], "group,groupParam,period,pd_group", "input/pd_group.csv",
+            write_parameter(db, [("group", "co2_max_period"),
+                                 ("group", "co2_price"),
+                                 ("group", "inertia_limit"),
+                                 ("group", "invest_max_period"),
+                                 ("group", "invest_min_period"),
+                                 ("group", "invest_min_total"),
+                                 ("group", "max_cumulative_flow"),
+                                 ("group", "max_instant_flow"),
+                                 ("group", "min_cumulative_flow"),
+                                 ("group", "min_instant_flow"),
+                                 ("group", "non_synchronous_limit"),
+                                 ("group", "penalty_capacity_margin"),
+                                 ("group", "penalty_inertia"),
+                                 ("group", "penalty_non_synchronous"),
+                                 ], "group,groupParam,period,pd_group", "input/pd_group.csv",
                             filter_in_type=["1d_map"], filter_out_index="time", param_print=True)
-            write_parameter(db, [("group", "groupParam")], "group,groupParam,period,pt_group", "input/pt_group.csv",
+            write_parameter(db, [("group", "co2_price"),
+                                 ("group", "max_instant_flow"),
+                                 ("group", "min_instant_flow"),
+                                ], "group,groupParam,period,pt_group", "input/pt_group.csv",
                             filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
             write_parameter(db, [("unit", "efficiency"),
                                  ("unit", "efficiency_at_min_load"),
@@ -2311,7 +2332,14 @@ class FlexToolRunner:
                                 ],
                             "process,processParam,branch,time_start,time,pbt_process", "input/pbt_process.csv",
                             filter_in_type=["3d_map"], param_print=True)
-            write_parameter(db, [("model", "output_param")], "output,value", "input/optional_outputs.csv", param_print=True)
+            write_parameter(db, [("model", "exclude_entity_outputs"),
+                                 ("model", "output_connection__node__node_flow_t"),
+                                 ("model", "output_connection_flow_separate"),
+                                 ("model", "output_horizon"),
+                                 ("model", "output_ramp_envelope"),
+                                 ("model", "output_unit__node_flow_t"),
+                                 ("model", "output_unit__node_ramp_t"),
+                                ], "output,value", "input/optional_outputs.csv", param_print=True, no_entity=True)
             write_parameter(db, [("group", "output_results")], "groupOutput", "input/groupOutput.csv",
                             filter_in_value="yes", no_value=True)
             write_parameter(db, [("group", "has_non_synchronous")], "groupNonSync", "input/groupNonSync.csv",
@@ -2343,7 +2371,9 @@ def write_entity(db, cl, header, filename, entity_dimens=None):
             realfile.write(entity + "\n")
 
 
-def write_parameter(db, cl_pars, header, filename, filter_in_type=None, filter_out_index=None, filter_in_value=None, no_value=False, param_print=False, dimens=None):
+def write_parameter(db, cl_pars, header, filename,
+                    filter_in_type=None, filter_out_index=None, filter_in_value=None,
+                    no_value=False, param_print=False, dimens=None, param_loc=None, no_entity=None):
     # interpret map dimensionality and map into map for later comparisons
     type_filter_map_dim = []
     if filter_in_type:
@@ -2358,7 +2388,6 @@ def write_parameter(db, cl_pars, header, filename, filter_in_type=None, filter_o
                 filter_in_type.remove(type_filter)
         if map_found:
             filter_in_type.append("map")
-    entities = []
     params = []
     for cl_par in cl_pars:
         params = params + db.get_parameter_value_items(entity_class_name=cl_par[0],
@@ -2376,12 +2405,24 @@ def write_parameter(db, cl_pars, header, filename, filter_in_type=None, filter_o
                 for i, dimen in enumerate(dimens):
                     temp_entity_byname[dimen] = entity_byname[i]
                 entity_byname = temp_entity_byname
-            entity_byname = ','.join(entity_byname)
+
 
             if param_print:
-                first_cols = entity_byname + ',' + param["parameter_definition_name"]
+                if param_loc is not None:
+                    time.sleep(0.1)
+                    collect = []
+                    for (i, byname) in enumerate(entity_byname):
+                        if i == param_loc:
+                            collect.append(param["parameter_definition_name"])
+                        collect.append(byname)
+                    first_cols = ','.join(collect)
+                else:
+                    if no_entity:
+                        first_cols = param["parameter_definition_name"]
+                    else:
+                        first_cols = ','.join(entity_byname) + ',' + param["parameter_definition_name"]
             else:
-                first_cols = entity_byname
+                first_cols = ','.join(entity_byname)
             if param["type"] == "map":
                 # If the first parameter index contains filter_out_index, then skip the parameter (maybe should be extended to other indexes)
                 if filter_out_index and param["parsed_value"].index_name == filter_out_index:
@@ -2401,18 +2442,16 @@ def write_parameter(db, cl_pars, header, filename, filter_in_type=None, filter_o
                         else:
                             realfile.write(first_cols + ',' + ','.join(res) + '\n')
                 else:
-                    for index in list(value.indexes):
-                        indexes.append([index])
-                # Go through map dimensions recursively (first dimensions was already added on the previous row)
-                    (flat_values, flat_indexes) = flatten_map(value.values, indexes)
-                    for (i, index) in enumerate(flat_indexes):
+                    flat_map = api.convert_map_to_table(value)
+                    for (i, index) in enumerate(flat_map):
                         if no_value:
-                            realfile.write(first_cols + ',' + ','.join(index) + '\n')
+                            realfile.write(first_cols + ',' + ','.join(index[:-1]) + '\n')
                         else:
-                            realfile.write(first_cols + ',' + ','.join(index) + ',' + str(flat_values[i]) + '\n')
+                            index[-1] = str(index[-1])
+                            realfile.write(first_cols + ',' + ','.join(index) + '\n')
             elif param["type"] == "array" or param["type"] == "time_series":
                 for row in param["parsed_value"].values:
-                    realfile.write(entity_byname + ',' + row + '\n')
+                    realfile.write(','.join(entity_byname) + ',' + row + '\n')
             elif param["type"] == "str" or param["type"] == "float" or param["type"] == "bool":
                 # Filter based on values: only if the value is found, then data is written
                 if filter_in_value and param["parsed_value"] != filter_in_value:
