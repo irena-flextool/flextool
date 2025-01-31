@@ -1,3 +1,17 @@
+## Release 3.10.0 (31.1.2025)
+**Bug fixes**
+
+- Prevent HiGHS from hanging after founding a solution
+- Fix profile limits (issue when efficiency != 1)
+- Made to work with new Toolbox DB API
+
+**New features**
+
+- New HiGHS versio (1.9.0)
+- Script to see the differences in outputs (or inputs) between two model runs (meant for testing)
+- FlexToolRunner.py reads input data directly from DB (speed-up)
+
+
 ## Release 3.9.0 (28.11.2024)
 **Bug fixes**
 
@@ -12,7 +26,7 @@
 - FlexTool has requirements.txt and pyproject.toml (allows pip install -e ., but not in pypi)
 - Improved installation instructions (switched from miniconda to venv)
 - Linux (Ubuntu tested) should work out of the box (but FlexTool execution only in work directory one scenario at a time!)
- 
+
 
 ## Release 3.8.0 (29.8.2024)
 **Bug fixes**
@@ -38,7 +52,7 @@
 - User constraint including capacity fixed to include unitsize
 - User constraint including flows fixed to include step_duration
 - Creating multiple invests with 2D maps fixed
-- Update_flextool.py/ migrate_database.py crashing if nothing to commit 
+- Update_flextool.py/ migrate_database.py crashing if nothing to commit
 - Nested structure:
   - Pass end state only from dispatch level
   - Storage fix_quantity overrides other storage options
@@ -47,7 +61,7 @@
 
 - Added non-anticipatory constraint to stochastic branches. The brnaches now start from the first timestep.
 - Storage_reference_value: Now possible to set seperately for multiple end times as time step map.
-- Nested structure storage_nested_fix_method: 
+- Nested structure storage_nested_fix_method:
   - Added fix_usage
   - Fix_price changed to set the price to the objective function of the lower level solve
 
@@ -94,7 +108,7 @@
 -	Two-way MIP connection to allow only one direction at a time
 -	Connection variable cost to the objective function
 -	Allow investing with just `invest_periods` without `realized_periods`
-- unit_inputNode: `coefficient` applied correctly to units with multiple inputs 
+- unit_inputNode: `coefficient` applied correctly to units with multiple inputs
 
 **New features**
 
@@ -108,7 +122,7 @@
 -	A workflow item to display the summary file from model runs
 -	Database with pre-made time settings for the users to start with *time_settings_only.sqlite*
 -	C02 max total costraint
--	Default values for: 
+-	Default values for:
     -	Penalty values
     -	Efficiency
     -	Constraint constant
