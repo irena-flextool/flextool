@@ -1,12 +1,17 @@
+import time
 import csv
 import math
 import subprocess
 import logging
+import copy
 import sys
 import os
 import xml.etree.ElementTree as ET
 import pandas as pd
 import shutil
+import spinedb_api as api
+from spinedb_api import DatabaseMapping
+# from spinedb_api.filters.scenario_filter import scenario_filter_config, scenario_filter_from_dict
 from pathlib import Path
 from collections import OrderedDict
 from collections import defaultdict
@@ -23,7 +28,7 @@ class FlexToolRunner:
     Define Class to run the model and read and recreate the required config files:
     """
 
-    def __init__(self, flextool_dir=None, bin_dir=None, root_dir=None):
+    def __init__(self, input_db_url=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None):
         self.logger = logging.getLogger(__name__)
 #        logger.basicConfig(
 #            stream=sys.stderr,
@@ -46,97 +51,142 @@ class FlexToolRunner:
             self.root_dir = Path(__file__).parent.parent
         print(str(self.root_dir))
         # read the data in
-        self.check_version()
-        self.timelines = self.get_timelines()
-        self.model_solve = self.get_solves()
-        self.solve_modes = self.get_solve_modes("solve_mode")
-        self.roll_counter = self.make_roll_counter()
-        self.highs_presolve = self.get_solve_modes("highs_presolve")
-        self.highs_method = self.get_solve_modes("highs_method")
-        self.highs_parallel = self.get_solve_modes("highs_parallel")
-        self.solve_period_years_represented = self.get_solve_period_years_represented()
-        self.solvers = self.get_solver()
-        self.timeblocks = self.get_timeblocks()
-        self.timeblocks__timeline = self.get_timeblocks_timelines()
-        self.stochastic_branches = self.get_stochastic_branches()
+        # open connection to input db
+        if scenario_name:
+            scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
+        with (DatabaseMapping(input_db_url) as db):
+            if scenario_name:
+                api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
+            self.check_version(db=db)
+            self.timelines = self.params_to_dict(db=db, cl="timeline", par="timestep_duration", mode="defaultdict")
+            self.model_solve = self.params_to_dict(db=db, cl="model", par="solves", mode="defaultdict")
+            self.solve_modes = self.params_to_dict(db=db, cl="solve", par="solve_mode", mode="dict")
+            self.roll_counter = self.make_roll_counter()
+            self.highs_presolve = self.params_to_dict(db=db, cl="solve", par="highs_presolve", mode="dict")
+            self.highs_method = self.params_to_dict(db=db, cl="solve", par="highs_method", mode="dict")
+            self.highs_parallel = self.params_to_dict(db=db, cl="solve", par="highs_parallel", mode="dict")
+            self.solve_period_years_represented = self.params_to_dict(db=db, cl="solve", par="years_represented", mode="defaultdict")
+            self.solvers = self.params_to_dict(db=db, cl="solve", par="solver", mode="dict")
+            self.timeblocks = self.params_to_dict(db=db, cl="timeblockSet", par="block_duration", mode="defaultdict")
+            self.timeblocks__timeline = self.entities_to_dict(db=db, cl="timeblockSet__timeline", mode="defaultdict")
+            self.stochastic_branches = self.params_to_dict(db=db, cl="solve", par="stochastic_branches", mode="defaultdict")
+            self.solver_precommand = self.params_to_dict(db=db, cl="solve", par="solver_precommand", mode="dict")
+            self.solver_arguments = self.params_to_dict(db=db, cl="solve", par="solver_arguments", mode="defaultdict")
+            self.contains_solves = self.params_to_dict(db=db, cl="solve", par="contains_solves", mode="defaultdict", str_to_list=True)
+            self.hole_multipliers = self.params_to_dict(db=db, cl="solve", par="timeline_hole_multiplier", mode="defaultdict")
+            self.new_step_durations = self.params_to_dict(db=db, cl="timeblockSet", par="new_stepduration", mode="dict")
+            # Rolling parameter is packaged from three parameters
+            rolling_duration = self.params_to_dict(db=db, cl="solve", par="rolling_duration", mode="dict")
+            rolling_solve_horizon = self.params_to_dict(db=db, cl="solve", par="rolling_solve_horizon", mode="dict")
+            rolling_solve_jump = self.params_to_dict(db=db, cl="solve", par="rolling_solve_jump", mode="dict")
+            self.rolling_times = defaultdict(list)
+            all_keys = list(set(rolling_duration) | set(rolling_solve_horizon) | set(rolling_solve_jump))
+            for i, var in enumerate([rolling_solve_jump, rolling_solve_horizon, rolling_duration]):
+                for key in all_keys:
+                    if key in var:
+                        self.rolling_times[key].append(var[key])
+                    else:
+                        if i == 0:
+                            self.rolling_times[key].append(0)
+                        if i == 1:
+                            self.rolling_times[key].append(0)
+                        if i == 2:
+                            self.rolling_times[key].append(-1)  # If rolling_duration is not given, assume -1
+            self.timeblocks_used_by_solves = self.get_period_timesets(db=db)
+
+            self.invest_periods = self.periods_to_tuples(db=db, cl="solve", par="invest_periods")
+            self.realized_periods = self.periods_to_tuples(db=db, cl="solve", par="realized_periods")
+            self.realized_invest_periods = self.periods_to_tuples(db=db, cl="solve", par="realized_invest_periods")
+            self.fix_storage_periods = self.periods_to_tuples(db=db, cl="solve", par="fix_storage_periods")
+
+
         self.stochastic_timesteps = defaultdict(list)
-        self.solver_precommand = self.get_solver_precommand()
-        self.solver_arguments = self.get_solver_arguments()
-        self.contains_solves = self.get_contains_solves()
-        self.hole_multipliers = self.get_hole_multipliers()
-        self.rolling_times = self.get_rolling_times()
-        self.new_step_durations = self.get_new_step_durations()
         self.original_timeline = defaultdict()
         self.create_timeline_from_timestep_duration()
         self.first_of_complete_solve = []
         self.last_of_solve = []
-        self.timeblocks_used_by_solves = {**self.get_timeblocks_used_by_solves(), **self.get_2d_timeblocks_used_by_solves()}
-        self.invest_periods = self.get_list_of_tuples('input/solve__invest_period.csv') + self.get_2d_map_periods('input/solve__invest_period_2d_map.csv')
-        self.realized_periods = self.get_list_of_tuples('input/solve__realized_period.csv') + self.get_2d_map_periods('input/solve__realized_period_2d_map.csv')
-        self.realized_invest_periods = self.get_list_of_tuples('input/solve__realized_invest_period.csv') + self.get_2d_map_periods('input/solve__realized_invest_period_2d_map.csv')
-        self.fix_storage_periods = self.get_list_of_tuples('input/solve__fix_storage_period.csv') + self.get_2d_map_periods('input/solve__fix_storage_period_2d_map.csv')
         #self.write_full_timelines(self.timelines, 'steps.csv')
 
-    def check_version(self):
-        with open('input/db_version.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            tool_version = 21.0
-            database_version = 0
-            while True:
-                try:
-                    datain = next(filereader)
-                    database_version = datain[0]
-                except StopIteration:
-                    break
+
+    def periods_to_tuples(self, db, cl, par):
+        entities = db.get_entity_items(entity_class_name=cl)
+        params = db.get_parameter_value_items(entity_class_name=cl,
+                                                 parameter_definition_name=par)
+        tuple_list = []
+        for entity in entities:
+            params = db.get_parameter_value_items(entity_class_name=cl,
+                                                  entity_name=entity["name"],
+                                                  parameter_definition_name=par)
+            for param in params:
+                param_value = api.from_database(param["value"], param["type"])
+
+                for (i, row) in enumerate(param_value.values):
+                    if isinstance(param_value.values[i], api.Map):
+                        new_name = param["entity_name"] + "_" + param_value.indexes[i]
+                        self.duplicate_solve(param["entity_name"], new_name)
+                        tuple_list.append((new_name, param_value.indexes[i]))
+
+                        new_period_timeblockset_list = []
+                        for solve, period__timeblockset_list in list(self.timeblocks_used_by_solves.items()):
+                            if solve == param["entity_name"]:
+                                for period__timeblockset in period__timeblockset_list:
+                                    if period__timeblockset[0] == param_value.indexes[i]:
+                                        new_period_timeblockset_list.append(period__timeblockset)
+                        if new_name not in self.timeblocks_used_by_solves.keys():
+                            self.timeblocks_used_by_solves[new_name] = new_period_timeblockset_list
+                        else:
+                            for item in new_period_timeblockset_list:
+                                if item not in self.timeblocks_used_by_solves[new_name]:
+                                    self.timeblocks_used_by_solves[new_name].append(item)
+                    else:
+                        tuple_list.append((param["entity_name"], row))
+        return tuple_list
+
+
+
+    def get_period_timesets(self, db):
+        entities = db.get_entity_items(entity_class_name="solve")
+        params = db.get_parameter_value_items(entity_class_name="solve",
+                                                 parameter_definition_name="period_timeblockSet")
+        timeblocks_used_by_solves = defaultdict(list)
+
+        solves_in_model = [item for sublist in
+                           list(self.model_solve.values()) + list(self.contains_solves.values()) for item in sublist]
+        for entity in entities:
+            if entity["name"] in solves_in_model:
+                params = db.get_parameter_value_items(entity_class_name="solve",
+                                                      entity_name=entity["name"],
+                                                      parameter_definition_name="period_timeblockSet")
+                for param in params:
+                    param_value = api.from_database(param["value"], param["type"])
+                    for (i, row) in enumerate(param_value.indexes):
+                        if isinstance(param_value.values[i], api.Map):
+                            new_name = param["entity_name"] + "_" + param_value.indexes[i]
+                            self.duplicate_solve(param["entity_name"], new_name)
+                            timeblocks_used_by_solves[new_name].append((param_value.values[i].indexes[i],
+                                                                        param_value.values[i].values[i]))
+                        else:
+                            timeblocks_used_by_solves[param["entity_name"]].append((param_value.indexes[i],
+                                                                                param_value.values[i]))
+        return timeblocks_used_by_solves
+
+
+
+    def check_version(self, db):
+        db_version_item = db.get_parameter_definition_item(entity_class_name="model",
+                                                           name="version")
+        if not db_version_item:
+            self.logger.error("No version information found in the FlexTool input database, check you have a correct database.")
+            sys.exit(-1)
+        database_version = api.from_database(db_version_item["default_value"], db_version_item["default_type"])
+        tool_version = 22.0
         if float(database_version) < tool_version:
-            self.logger.error("The input database is in an older version than the tool. Please migrate the database to the new version: python migrate_database.py path_to_database")
+            self.logger.error(
+                "The input database is in an older version than the tool. Please migrate the database to the new version: python migrate_database.py path_to_database")
             sys.exit(-1)
 
-    def get_2d_timeblocks_used_by_solves(self):
 
-        with open('input/timeblocks_in_use_2d.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            timeblocks_used_by_solves = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    new_name = datain[0]+"_"+datain[1]
-                    self.duplicate_solve(datain[0],new_name)
-                    timeblocks_used_by_solves[new_name].append((datain[2], datain[3]))
-                except StopIteration:
-                    break
-        return timeblocks_used_by_solves
-    
-    def get_2d_map_periods(self,input_filename):
 
-        with open(input_filename, 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            period_list = []
-            while True:
-                try:
-                    datain = next(filereader)
-                    new_name = datain[0]+"_"+datain[1]
-                    self.duplicate_solve(datain[0],new_name)
-                    period_list.append((new_name,datain[2]))
-                    new_period_timeblockset_list = []
-                    for solve, period__timeblockset_list in list(self.timeblocks_used_by_solves.items()):
-                        if solve == datain[0]:
-                            for period__timeblockset in period__timeblockset_list:
-                                if period__timeblockset[0] == datain[2]:
-                                    new_period_timeblockset_list.append(period__timeblockset)
-                    if new_name not in self.timeblocks_used_by_solves.keys():
-                        self.timeblocks_used_by_solves[new_name] = new_period_timeblockset_list
-                    else:
-                        for item in new_period_timeblockset_list:
-                            if item not in self.timeblocks_used_by_solves[new_name]:
-                                self.timeblocks_used_by_solves[new_name].append(item)
-                except StopIteration:
-                    break
-        return period_list
-        
     def duplicate_solve(self, old_solve, new_name):
         if new_name not in self.model_solve.values() and new_name not in self.contains_solves.values():
             dup_map_list=[
@@ -162,42 +212,6 @@ class FlexToolRunner:
                     solves.append(new_name)
                 self.model_solve[model] = solves
 
-    def get_solves(self):
-        """
-        read in
-        the list of solves, return it as a list of strings
-        :return:
-        """
-        with open("input/model__solve.csv", 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            model__solve = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    model__solve[datain[0]].append((datain[1]))
-                except StopIteration:
-                    break
-        return model__solve
-
-    def get_solve_modes(self, parameter):
-        """
-        read in
-        the list of solve modes, return it as a list of strings
-        :return:
-        """
-        with open("input/solve_mode.csv", 'r') as solvefile:
-            header = solvefile.readline()
-            solves = solvefile.readlines()
-            params = []
-            right_params = {}
-            for solve in solves:
-                solve_stripped = solve.rstrip()
-                params.append(solve_stripped.split(","))
-            for param in params:
-                if param[0] == parameter:
-                    right_params[param[1]] = param[2]
-        return right_params
 
     def make_roll_counter(self):
         roll_counter_map={}
@@ -206,155 +220,6 @@ class FlexToolRunner:
                 roll_counter_map[key] = 0
         return roll_counter_map
 
-    def get_solve_period_years_represented(self):
-        """
-        read the years presented by each period in a solve
-        :return: dict : (period name, years represented)
-        """
-        with open('input/solve__period__years_represented.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            years_represented = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    years_represented[datain[0]].append((datain[1], datain[2]))
-                except StopIteration:
-                    break
-        return years_represented
-
-    def get_solver(self):
-        """
-        read in
-        the list of solvers for each solve. return it as a list of strings
-        :return:
-        """
-        with open('input/solver.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            solver_dict = defaultdict()
-            while True:
-                try:
-                    datain = next(filereader)
-                    solver_dict[datain[0]] = datain[1]
-                except StopIteration:
-                    break
-
-        #with open("input/solver.csv", 'r') as solvefile:
-        #    header = solvefile.readline()
-        #    solvers = solvefile.readlines()
-        #    for solver in solvers:
-        #        solve__period = solver.split(",")
-        #        solver_dict[solve__period[0]] = solve__period[1]
-        return solver_dict
-
-    def get_solver_precommand(self):
-        """
-        read in
-        the solver_precommand for each solve. return it as a list of strings
-        :return:
-        """
-        with open('input/solver_precommand.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            solver_precommand_dict = defaultdict()
-            while True:
-                try:
-                    datain = next(filereader)
-                    solver_precommand_dict[datain[0]] = datain[1]
-                except StopIteration:
-                    break
-        return solver_precommand_dict
-        
-    def get_solver_arguments(self):
-        """
-        read in
-        the solver commands for each solve. return it as a list of strings
-        :return:
-        """
-        with open('input/solver_arguments.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            solver_arguments_dict = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    solver_arguments_dict[datain[0]].append((datain[1]))
-                except StopIteration:
-                    break
-        return solver_arguments_dict
-
-    def get_contains_solves(self):
-        """
-        read in
-        the contains_solves for each solve. return it as a dict of list of strings
-        :return:
-        """
-        with open('input/solve__contains_solve.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            contains_solves_dict = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    contains_solves_dict[datain[0]]= datain[1]
-                except StopIteration:
-                    break
-        return contains_solves_dict
-
-    def get_hole_multipliers(self):
-        """
-        read in
-        the hole multipliers for each solve. return it as a dict of list of strings
-        :return:
-        """
-        with open('input/solve_hole_multiplier.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            hole_multipliers = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    hole_multipliers[datain[0]] = datain[1]
-                except StopIteration:
-                    break
-        return hole_multipliers
-
-    def get_rolling_times(self):
-        """
-        read in
-        the rolling_times for each solve. return it as a dict of list of ints
-        :return:
-        """
-        with open('input/solve__rolling_times.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            rolling_parameters = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    rolling_parameters[datain[0]].append((datain[1],datain[2]))
-                except StopIteration:
-                    break
-        rolling_times=defaultdict(list)
-        for solve, data in list(rolling_parameters.items()):
-            horizon = 0
-            jump = 0
-            duration = -1
-            for param_value in data:
-                if "rolling_duration" in param_value[0]:
-                    duration = float(param_value[1])
-                if "rolling_solve_horizon" in param_value[0]:
-                    horizon = float(param_value[1])
-                if "rolling_solve_jump" in param_value[0]:
-                    jump = float(param_value[1])
-            
-            if self.solve_modes[solve] == 'rolling_window' and (horizon == 0 or jump == 0):
-                self.logger.error("When using rolling_window solve mode, rolling_solve_horizon and rolling_solve_jump must defined and not be 0")
-                sys.exit(-1)
-            rolling_times[solve] = [jump,horizon,duration]
-
-        return rolling_times
 
     def create_timeline_from_timestep_duration(self):
         for timeblockSet_name, timeblockSet in list(self.timeblocks.items()):
@@ -512,148 +377,6 @@ class FlexToolRunner:
                             row = [node__value[0],timeline_row[0],value]
                             filewriter.writerow(row)
 
-    def get_new_step_durations(self):
-        """
-        read the new step duration for each solve
-        :return: dict : (period name, step_duration (hours))
-        """
-        with open('input/timeblockSet__new_stepduration.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            step_durations = defaultdict()
-            while True:
-                try:
-                    datain = next(filereader)
-                    step_durations[datain[0]]=datain[1]
-                except StopIteration:
-                    break
-        return step_durations 
-
-    def get_timeblocks_used_by_solves(self):
-        """
-        timeblocks_in_use.csv contains three columns
-        solve: name of the solve
-        period: name of the time periods used for a particular solve
-        timeblocks: timeblocks used by the period
-
-        :return list of tuples in a dict of solves : (period name, timeblock name)
-        """
-        with open('input/timeblocks_in_use.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            timeblocks_used_by_solves = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    timeblocks_used_by_solves[datain[0]].append((datain[1], datain[2]))
-                    # blockname needs to be in both block_start and timeblock_lengths.csv
-                    # assert datain[1] in self.starts.keys(), "Block {0} not in block_starts.csv".format(datain[1])
-                    # assert datain[1] in self.steps.keys(), "Block {0} not in block_steps.csv".format(datain[1])
-                except StopIteration:
-                    break
-                #except AssertionError as e:
-                #    self.logger.error(e)
-                #    sys.exit(-1)
-        return timeblocks_used_by_solves
-
-    def get_timelines(self):
-        """
-        read in the timelines including step durations for all simulation steps
-        timeline is the only inputfile that contains the full timelines for all timeblocks.
-        :return: list of tuples in a dict timeblocks : (timestep name, duration)
-        """
-        with open('input/timeline.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            timelines = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    timelines[datain[0]].append((datain[1], datain[2]))
-                except StopIteration:
-                    break
-        return timelines
-
-    def get_timeblocks_timelines(self):
-        """
-        read in the timelines including step durations for all simulation steps
-        timeline is the only inputfile that contains the full timelines for all timeblocks.
-        :return: list of tuples in a dict timeblocks : (timestep name, duration)
-        """
-        with open('input/timeblocks__timeline.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            timeblocks__timeline = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    timeblocks__timeline[datain[0]].append((datain[1]))
-                except StopIteration:
-                    break
-        return timeblocks__timeline
-
-    def get_timeblocks(self):
-        """
-        read in the timeblock definitions that say what each set of timeblock contains (timeblock start and length)
-        :return: list of tuples in a dict of timeblocks : (start timestep name, timeblock length in timesteps)
-        :return: list of tuples that hold the timeblock length in timesteps
-        """
-        with open('input/timeblocks.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            timeblocks = defaultdict(list)
-            #timeblock_lengths = []
-            while True:
-                try:
-                    datain = next(filereader)
-                    timeblocks[datain[0]].append((datain[1], datain[2]))
-                    """ This assert should check the list of timelines inside the dict, but didn't have time to formulate it yet
-                    assert timeblocks[datain[0]] in self.timelines[datain[0]], "Block {0} start time {1} not found in timelines".format(
-                        datain[0], datain[1])
-                    """
-                    #timeblock_lengths.append[(datain[0], datain[1])] = datain[2]
-                except StopIteration:
-                    break
-                """ Once the assert works, this can be included
-                except AssertionError as e:
-                    self.logger.error(e)
-                    sys.exit(-1)
-                """
-        return timeblocks
-
-    def get_stochastic_branches(self):
-        """
-        read stochastic data
-        :return a 5d array (solve, period, branch, weight, realized):
-        """
-        with open('input/stochastic_branches.csv', 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            map_5d = defaultdict(list)
-            while True:
-                try:
-                    datain = next(filereader)
-                    map_5d[datain[0]].append([datain[1], datain[2], datain[3], datain[4], datain[5]])
-                except StopIteration:
-                    break
-        return map_5d
-
-    def get_list_of_tuples(self, filename):
-        """
-        read in invest_period
-        :return  a list of tuples that say when it's ok to invest (solve, period):
-        """
-        with open(filename, 'r') as blk:
-            filereader = csv.reader(blk, delimiter=',')
-            headers = next(filereader)
-            tuple_list = []
-            while True:
-                try:
-                    datain = next(filereader)
-                    tuple_list.append((datain[0], datain[1]))
-                except StopIteration:
-                    break
-        return tuple_list
 
     def make_steps(self, start, stop):
         """
@@ -704,14 +427,14 @@ class FlexToolRunner:
                 outfile.write('period,step,step_duration\n')
                 for period_name, period in timeline.items():
                     for item in period:
-                        outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
+                        outfile.write(period_name + ',' + item[0] + ',' + str(item[2]) + '\n')
         else: 
             with open(filename, 'w') as outfile:
                 # prepend with a header
                 outfile.write('period,step,complete_step_duration\n')
                 for period_name, period in timeline.items():
                     for item in period:
-                        outfile.write(period_name + ',' + item[0] + ',' + item[2] + '\n')
+                        outfile.write(period_name + ',' + item[0] + ',' + str(item[2]) + '\n')
 
     def write_years_represented(self, period__branch, years_represented, filename):
         """
@@ -777,7 +500,7 @@ class FlexToolRunner:
     def model_run(self, current_solve):
         """
         run the model executable once
-        :return the output of glpsol.exe:
+        :return the output of glpsol:
         """
         try:
             solver = self.solvers[current_solve]
@@ -787,6 +510,14 @@ class FlexToolRunner:
         if sys.platform.startswith("linux"):
             glpsol_file = str(self.bin_dir / "glpsol")
             highs_file = str(self.bin_dir / "highs")
+            if os.path.exists(glpsol_file):
+                current_permissions = os.stat(glpsol_file).st_mode & 0o777
+                if current_permissions != 0o755:
+                    os.chmod(glpsol_file, 0o755)
+            if os.path.exists(highs_file):
+                current_permissions = os.stat(highs_file).st_mode & 0o777
+                if current_permissions != 0o755:
+                    os.chmod(highs_file, 0o755)
         elif sys.platform.startswith("win32"):
             glpsol_file = str(self.bin_dir / "glpsol.exe")
             highs_file = str(self.bin_dir / "highs.exe")
@@ -798,7 +529,7 @@ class FlexToolRunner:
         cplex_sol_file = str(self.root_dir / "cplex.sol")
         flextool_sol_file = str(self.root_dir / "flextool.sol")
         if solver == "glpsol":
-            only_glpsol = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '--cbg','-w', glp_solution_file] + sys.argv[1:]
+            only_glpsol = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '--cbg','-w', glp_solution_file] + sys.argv[3:]
             try:
                 completed = subprocess.run(only_glpsol)
             except Exception as e:
@@ -817,7 +548,7 @@ class FlexToolRunner:
 
         elif solver == "highs" or solver == "cplex":
             highs_step1 = [glpsol_file, '--check', '--model', flextool_model_file, '-d', flextool_base_data_file,
-                           '--wfreemps', mps_file] + sys.argv[1:]
+                           '--wfreemps', mps_file] + sys.argv[3:]
             completed = subprocess.run(highs_step1)
             if completed.returncode != 0:
                 self.logger.error(f'glpsol mps writing failed: {completed.returncode}')
@@ -853,12 +584,12 @@ class FlexToolRunner:
                 if current_solve not in self.solver_precommand.keys():
                     if solver == "cplex":
                         if current_solve not in self.solver_arguments.keys():
-                            cplex_step = ['cplex', '-c', 'read', mps_file, 'opt', 'write', cplex_sol_file, 'quit']  + sys.argv[1:]
+                            cplex_step = ['cplex', '-c', 'read', mps_file, 'opt', 'write', cplex_sol_file, 'quit']  + sys.argv[3:]
                         else:
                             cplex_step = ['cplex', '-c', 'read', mps_file]
                             cplex_step += self.solver_arguments[current_solve]
                             cplex_step += ['opt', 'write', cplex_sol_file, 'quit']
-                            cplex_step += sys.argv[1:]
+                            cplex_step += sys.argv[3:]
 
                         completed = subprocess.run(cplex_step)
                         if completed.returncode != 0:
@@ -870,12 +601,12 @@ class FlexToolRunner:
                     s_wrapper = self.solver_precommand[current_solve]
                     if solver == "cplex":
                         if current_solve not in self.solver_arguments.keys():
-                            cplex_step = [s_wrapper, 'cplex', '-c', 'read', mps_file,'opt', 'write', cplex_sol_file, 'quit']  + sys.argv[1:]
+                            cplex_step = [s_wrapper, 'cplex', '-c', 'read', mps_file,'opt', 'write', cplex_sol_file, 'quit']  + sys.argv[3:]
                         else:
                             cplex_step = [s_wrapper, 'cplex', '-c', 'read', mps_file]
                             cplex_step += self.solver_arguments[current_solve]
                             cplex_step += ['opt', 'write', cplex_sol_file, 'quit']
-                            cplex_step += sys.argv[1:]
+                            cplex_step += sys.argv[3:]
 
                         completed = subprocess.run(cplex_step)
                         if completed.returncode != 0:
@@ -886,7 +617,7 @@ class FlexToolRunner:
 
 
             highs_step3 = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '-r',
-                        flextool_sol_file] + sys.argv[1:]
+                        flextool_sol_file] + sys.argv[3:]
             completed = subprocess.run(highs_step3)
             if completed.returncode == 0:
                 print("GLPSOL wrote the results into csv files\n")
@@ -995,31 +726,43 @@ class FlexToolRunner:
 
     def get_active_time(self, current_solve, timeblocks_used_by_solves, timeblocks, timelines, timeblocks__timelines):
         """
-        retunr all block codes that are included in solve
-        :param solve:
-        :param blocklist:
-        :return:
-        """ 
+        Maps periods to their corresponding timeline entries for a given solve.
+
+        Returns a dict mapping period IDs to lists of (timestep, index, value) tuples.
+        """
         active_time = defaultdict(list)
-        for solve in timeblocks_used_by_solves:
-            if solve == current_solve:
-                for period_timeblock in timeblocks_used_by_solves[solve]:
-                    for timeblocks__timeline_key, timeblocks__timeline_value in timeblocks__timelines.items():
-                        if timeblocks__timeline_key == period_timeblock[1]:
-                            for timeline in timelines:
-                                if timeline == timeblocks__timeline_value[0]:
-                                    for single_timeblock_def in timeblocks[timeblocks__timeline_key]:
-                                        for index, timestep in enumerate(timelines[timeline]):
-                                            if timestep[0] == single_timeblock_def[0]:
-                                                for block_step in range(int(float(single_timeblock_def[1]))):
-                                                    active_time[period_timeblock[0]].append((
-                                                                        timelines[timeline][index + block_step][0],
-                                                                        index + block_step,
-                                                                        timelines[timeline][index + block_step][1]))
-                                                break
-        if len(active_time.keys()) == 0:
-            self.logger.error(current_solve + " could not connect to a timeline. Check that object solve has period_timeblockSet [Map], correct realized_periods [Array], objects timeblockSet [Map] and timeline [Map] are defined and that relation timeblockSet_timeline exists")
-            sys.exit(-1)
+
+        # Skip if not current solve
+        if current_solve not in timeblocks_used_by_solves:
+            raise ValueError(f"{current_solve}: Current solve does not have period_timeblockSet defined.")
+
+        for period, timeblock_id in timeblocks_used_by_solves[current_solve]:
+            # Get timeline ID for this timeblock
+            timeline_id = timeblocks__timelines.get(timeblock_id, [None])[0]
+            if not timeline_id:
+                continue
+
+            # Get timeline data
+            timeline_data = timelines.get(timeline_id, [])
+            if not timeline_data:
+                continue
+
+            # Process each timeblock definition
+            for start_time, duration in timeblocks[timeblock_id]:
+                # Find starting index in timeline
+                for idx, (time, value) in enumerate(timeline_data):
+                    if time == start_time:
+                        # Add entries for duration
+                        for step in range(int(float(duration))):
+                            if idx + step < len(timeline_data):
+                                entry = timeline_data[idx + step]
+                                active_time[period].append((entry[0], idx + step, entry[1]))
+                        break
+
+        if not active_time:
+            raise ValueError(f"{current_solve}: Failed to map to timeline. Check period_timeblockSet, "
+                             "realized_periods, timeblockSet and timeline definitions.")
+
         return active_time
 
     def make_step_jump(self, active_time_list, period__branch, solve_branch__time_branch_list):
@@ -1123,7 +866,8 @@ class FlexToolRunner:
             writer.writerow(headers)
             writer.writerows(step_lengths)
 
-    def get_first_steps(self, steplists):
+    @staticmethod
+    def get_first_steps(steplists):
         """
         get the first step of the current solve and the next solve in execution order.
         :param steplists: Dictionary containg steplist for each solve, in order
@@ -1139,7 +883,8 @@ class FlexToolRunner:
                 starts[name] = (steplists[solve_names[index]][0], steplists[solve_names[index + 1]][0])
         return starts
 
-    def write_first_steps(self, timeline, filename):
+    @staticmethod
+    def write_first_steps(timeline, filename):
         """
         write to file the first step of each period
         
@@ -1185,7 +930,8 @@ class FlexToolRunner:
                     out = [period_name, item[0]]
                     outfile.write(out[0] + ',' + out[1] + '\n')
 
-    def write_periods(self, solve, periods, filename):
+    @staticmethod
+    def write_periods(solve, periods, filename):
         """
         write to file a list of periods based on the current solve and
         a list of tuples with the solve as the first element in the tuple
@@ -1201,11 +947,13 @@ class FlexToolRunner:
                 if item[0] == solve:
                     outfile.write(item[1] + '\n')
 
-    def write_solve_status(self, first_state, last_state, nested = False):
+    @staticmethod
+    def write_solve_status(first_state, last_state, nested = False):
         """
         make a file solve_first.csv that contains information if the current solve is the first to be run
 
-        :param first_state: boolean if the current run is the first
+        :param first_state: boolean if the current solve is the first
+        :param last_state: boolean if the current solve is the last
 
         """
         if not nested:
@@ -1231,7 +979,8 @@ class FlexToolRunner:
                 else:
                     p_model_file.write("solveLast,0\n")
 
-    def write_currentSolve(self, solve, filename):
+    @staticmethod
+    def write_currentSolve(solve, filename):
         """
         make a file with the current solve name
         """
@@ -1239,7 +988,8 @@ class FlexToolRunner:
             solvefile.write("solve\n")
             solvefile.write(solve + "\n")
 
-    def write_empty_investment_file(self):
+    @staticmethod
+    def write_empty_investment_file():
         """
         make a file p_entity_invested.csv that will contain capacities of invested and divested processes. For the first solve it will be empty.
         """
@@ -1250,7 +1000,8 @@ class FlexToolRunner:
         with open("solve_data/p_entity_period_existing_capacity.csv", 'w') as firstfile:
             firstfile.write("entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n")
 
-    def write_empty_storage_fix_file(self):
+    @staticmethod
+    def write_empty_storage_fix_file():
         with open("solve_data/fix_storage_price.csv", 'w') as firstfile:
             firstfile.write("node, period, step, ndt_fix_storage_price\n")
         with open("solve_data/fix_storage_quantity.csv", 'w') as firstfile:
@@ -1260,7 +1011,8 @@ class FlexToolRunner:
         with open("solve_data/p_roll_continue_state.csv", 'w') as firstfile:
             firstfile.write("node, p_roll_continue_state\n")
 
-    def write_headers_for_empty_output_files(self, filename, header):
+    @staticmethod
+    def write_headers_for_empty_output_files(filename, header):
         """
         make an empty output file with headers
         """
@@ -1289,7 +1041,8 @@ class FlexToolRunner:
                     for i in active_time:
                         realfile.write(period+","+i[0]+"\n")
     
-    def write_branch__period_relationship(self, period__branch, filename):
+    @staticmethod
+    def write_branch__period_relationship(period__branch, filename):
         """
         write the period_branch relatioship
         """
@@ -1362,7 +1115,7 @@ class FlexToolRunner:
                 if (solve_branch__time_branch[0], solve_branch__time_branch[0]) in period__branch_lists:
                     realfile.write(solve_branch__time_branch[0] +","+ '1.0'+"\n")
                 elif solve_branch__time_branch[1] in time_branch_weight.keys() and solve_branch__time_branch[0] in active_time_list.keys():
-                    realfile.write(solve_branch__time_branch[0] +","+ time_branch_weight[solve_branch__time_branch[1]]+"\n")  
+                    realfile.write(solve_branch__time_branch[0] +","+ str(time_branch_weight[solve_branch__time_branch[1]])+"\n")
 
         with open("solve_data/solve_branch__time_branch.csv", 'w') as realfile:
             realfile.write("period,branch\n")
@@ -1504,18 +1257,18 @@ class FlexToolRunner:
             for i, step in enumerate(active_time):
                 if not ended:
                     if started:
-                        if duration_counter >= duration and duration != -1:
+                        if duration_counter >= float(duration) and duration != -1:
                             jumps.append(last_index)
                             horizons.append(last_index)
                             ended = True
                             break
-                        if jump_counter >= jump:
+                        if jump_counter >= float(jump):
                             jumps.append(last_index)
                             starts.append([period,i])
-                            jump_counter -= jump
-                        if horizon_counter >= horizon:
+                            jump_counter -= float(jump)
+                        if horizon_counter >= float(horizon):
                             horizons.append(last_index)
-                            horizon_counter -= jump
+                            horizon_counter -= float(jump)
                         horizon_counter += float(step[2])
                         jump_counter += float(step[2])
                         duration_counter += float(step[2])
@@ -1588,22 +1341,31 @@ class FlexToolRunner:
         #check that the lower level solves have periods only from of upper_level realizations
         full_active_time_list_own = self.get_active_time(solve, self.timeblocks_used_by_solves, self.timeblocks,self.timelines, self.timeblocks__timeline)
         if len(realized) != 0:
+            # Make full_active_time_list to include only timesteps that are found in 'realized' periods.
+            # After that, remove any periods from 'realised' are not in fix_storage, realized or realized_invest periods
             for key, item in list(full_active_time_list_own.items()):
                 if key in realized :
                     full_active_time_list[key] = item
+            periods_to_be_removed = []  # Cannot remove directly from the list that is being iterated
             for period in realized:
-                if (solve,period) not in self.fix_storage_periods and (solve,period) not in self.realized_periods and (solve,period) not in self.realized_invest_periods:
-                    realized.remove(period)
+                if (solve,period) not in (self.fix_storage_periods + self.realized_periods + self.realized_invest_periods):
+                    periods_to_be_removed.append(period)
+            for period in periods_to_be_removed:
+                realized.remove(period)
         else:
-            for solve_period in set().union(self.realized_periods, self.realized_invest_periods,self.fix_storage_periods):
-                if solve == solve_period[0]:
+            # Create realized based on periods in realized_periods, realized_invest_periods and fix_storage_periods
+            # and then use the timesteps that were fetched earlier with get_active_time directly
+            ordered_periods = OrderedDict.fromkeys(
+                self.realized_periods + self.realized_invest_periods + self.fix_storage_periods)
+            for solve_period in ordered_periods:
+                if solve_period[0] == solve:
                     realized.append(solve_period[1])
             full_active_time_list = full_active_time_list_own
 
         if solve in self.contains_solves.keys():
-            contains_solve = self.contains_solves[solve]
+            contain_solves = self.contains_solves[solve]
         else:
-            contains_solve = None
+            contain_solves = []
         if solve not in self.solve_modes.keys():
             self.solve_modes[solve] = "single_solve"
 
@@ -1611,13 +1373,14 @@ class FlexToolRunner:
             #rolling_times: 0:jump, 1:horizon, 2:duration
             rolling_times = self.rolling_times[solve]
             if duration == -1:
-                duration = rolling_times[2]
+                duration = float(rolling_times[2])
             period_start_timestep = start
             if start != None:
                 start_timestep = self.find_next_timestep(full_active_time_list_own, start, parent_solve__roll[0], solve) # if the timestep is not in the lower timeline
                 period_start_timestep = [start[0],start_timestep]
             
-            roll_solves, roll_active_time_lists, roll_realized_time_lists = self.create_rolling_solves(solve, full_active_time_list, rolling_times[0], rolling_times[1], period_start_timestep, duration)
+            roll_solves, roll_active_time_lists, roll_realized_time_lists = (
+                self.create_rolling_solves(solve, full_active_time_list, float(rolling_times[0]), float(rolling_times[1]), period_start_timestep, duration))
             for i in roll_solves:
                 complete_solves[i] = solve
                 parent_roll_lists[i] = parent_solve__roll[1]
@@ -1633,7 +1396,12 @@ class FlexToolRunner:
                 self.first_of_complete_solve.append(roll_solves[0])
             self.last_of_solve.append(roll_solves[-1])
 
-            if contains_solve != None:
+            if contain_solves:
+                if len(contain_solves) > 1:
+                    logging.error("More than one solve in a rolling solve, not managed")
+                    sys.exit(-1)
+                else:
+                    contains_solve = contain_solves[0]
                 for index, roll in enumerate(roll_solves):
                     solves.append(roll)
                     #creating the start time for the rolling. This is next timestep of the roll timeline from the first [period, timestamp] of the active time of the parent roll
@@ -1642,8 +1410,9 @@ class FlexToolRunner:
                     else:
                         start = None
                     #upper_jump = lower_duration 
-                    duration = rolling_times[0]
-                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, [solve, roll], realized, start, duration)
+                    duration = float(rolling_times[0])
+                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_parent_roll_lists = (
+                        self.define_solve(contains_solve, [solve, roll], realized, start, duration))
                     solves += inner_solves
                     complete_solves.update(inner_complete_solve)
                     parent_roll_lists.update(inner_parent_roll_lists)
@@ -1660,8 +1429,9 @@ class FlexToolRunner:
             self.first_of_complete_solve.append(solve)
             self.last_of_solve.append(solve)
 
-            if contains_solve != None:
-                inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_parent_roll_lists = self.define_solve(contains_solve, [solve, solve], realized)
+            for contain_solve in contain_solves:
+                inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_parent_roll_lists = (
+                    self.define_solve(contain_solve, [solve, solve], realized))
                 solves += inner_solves
                 complete_solves.update(inner_complete_solve)
                 parent_roll_lists.update(inner_parent_roll_lists)
@@ -1879,7 +1649,6 @@ class FlexToolRunner:
         first read the solve configuration from the input files, then for each solve write the files that are needed
         By that solve into disk. separate the reading into a separate step since the input files need knowledge of multiple solves.
         """
-        runner = FlexToolRunner()
         active_time_lists = OrderedDict()
         jump_lists = OrderedDict()
         solve_period_history = defaultdict(list)
@@ -1895,54 +1664,55 @@ class FlexToolRunner:
         except FileExistsError:
             print("solve_data folder existed")
 
-        if not runner.model_solve:
+        if not self.model_solve:
             self.logger.error("No model. Make sure the 'model' class defines solves [Array].")
             sys.exit(-1)
-        solves = next(iter(runner.model_solve.values()))
+        solves = next(iter(self.model_solve.values()))
         if not solves:
             self.logger.error("No solves in model.")
             sys.exit(-1)
         
         for solve in solves:
-            solve_solves, solve_complete_solve, solve_active_time_lists, solve_realized_time_lists, solve_parent_roll = runner.define_solve(solve, [None,None], [])
+            solve_solves, solve_complete_solve, solve_active_time_lists, solve_realized_time_lists, solve_parent_roll = self.define_solve(solve, [None,None], [])
             all_solves += solve_solves
             complete_solve.update(solve_complete_solve)
             parent_roll.update(solve_parent_roll)
             active_time_lists.update(solve_active_time_lists)
             realized_time_lists.update(solve_realized_time_lists)
 
-        period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, realized_time_lists, branch_start_time_lists = runner.create_stochastic_periods(runner.stochastic_branches, all_solves, complete_solve, active_time_lists, realized_time_lists)
+        period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, realized_time_lists, branch_start_time_lists = self.create_stochastic_periods(self.stochastic_branches, all_solves, complete_solve, active_time_lists, realized_time_lists)
 
         real_solves = [] 
         for solve in solves: #real solves are the defined solves not including the individual rolls
             real_solves.append(solve)     
-        for solve, inner_solve in list(runner.contains_solves.items()):
-            real_solves.append(inner_solve)
+        for solve, inner_solves in list(self.contains_solves.items()):
+            for inner_solve in inner_solves:
+                real_solves.append(inner_solve)
 
         for solve in real_solves:
             #check that period__years_represented has only periods included in the solve
             new_years_represented = []
-            for period__year in runner.solve_period_years_represented[solve]:
-                if any(period__year[0] == period__timeblockSet[0] for period__timeblockSet in runner.timeblocks_used_by_solves[solve]):  
+            for period__year in self.solve_period_years_represented[solve]:
+                if any(period__year[0] == period__timeblockSet[0] for period__timeblockSet in self.timeblocks_used_by_solves[solve]):
                     new_years_represented.append(period__year)
-            runner.solve_period_years_represented[solve] = new_years_represented
+            self.solve_period_years_represented[solve] = new_years_represented
             # get period_history from earlier solves
             for solve_2 in real_solves:
                 if solve_2 == solve:
                     break
-                for solve__period in (runner.realized_periods+runner.invest_periods+runner.fix_storage_periods+runner.realized_invest_periods):
+                for solve__period in (self.realized_periods+self.invest_periods+self.fix_storage_periods+self.realized_invest_periods):
                     if solve__period[0] == solve_2:
-                        this_solve = runner.solve_period_years_represented[solve_2]
+                        this_solve = self.solve_period_years_represented[solve_2]
                         for period in this_solve:
                             if period[0] == solve__period[1] and not any(period[0]== sublist[0] for sublist in solve_period_history[solve]):
                                     solve_period_history[solve].append((period[0], period[1]))
             # get period_history from this solve
-            for period__year in runner.solve_period_years_represented[solve]:
+            for period__year in self.solve_period_years_represented[solve]:
                 if not any(period__year[0]== sublist[0] for sublist in solve_period_history[solve]):
                     solve_period_history[solve].append((period__year[0], period__year[1]))
             #if not defined, all the periods have the value 1
-            if not runner.solve_period_years_represented[solve]:
-                for period__timeblockSet in runner.timeblocks_used_by_solves[solve]:
+            if not self.solve_period_years_represented[solve]:
+                for period__timeblockSet in self.timeblocks_used_by_solves[solve]:
                     if not any(period__timeblockSet[0]== sublist[0] for sublist in solve_period_history[solve]):
                         solve_period_history[solve].append((period__timeblockSet[0], 1))
         for solve in active_time_lists.keys():
@@ -1954,82 +1724,83 @@ class FlexToolRunner:
         first = True
         previous_complete_solve = None
         for i, solve in enumerate(all_solves):
-            complete_active_time_lists = runner.get_active_time(complete_solve[solve], runner.timeblocks_used_by_solves, runner.timeblocks, runner.timelines, runner.timeblocks__timeline)
-            self.logger.info("Creating timelines")
-            runner.write_full_timelines(runner.stochastic_timesteps[solve], runner.timeblocks_used_by_solves[complete_solve[solve]], runner.timeblocks__timeline, runner.timelines, 'solve_data/steps_in_timeline.csv')
-            runner.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
-            runner.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete = True)
-            runner.write_step_jump(jump_lists[solve])
+            self.logger.info("Creating timelines for solve " + solve + " (" + str(i) + ")")
+            complete_active_time_lists = self.get_active_time(complete_solve[solve], self.timeblocks_used_by_solves, self.timeblocks, self.timelines, self.timeblocks__timeline)
+            self.write_full_timelines(self.stochastic_timesteps[solve], self.timeblocks_used_by_solves[complete_solve[solve]], self.timeblocks__timeline, self.timelines, 'solve_data/steps_in_timeline.csv')
+            self.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
+            self.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete = True)
+            self.write_step_jump(jump_lists[solve])
             self.logger.info("Creating period data")
-            runner.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], 'solve_data/period_with_history.csv')
-            runner.write_periods(complete_solve[solve], runner.realized_invest_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
+            self.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], 'solve_data/period_with_history.csv')
+            self.write_periods(complete_solve[solve], self.realized_invest_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
             #assume that if realized_invest_periods is not defined,but the invest_periods and realized_periods are defined, use realized_periods also as the realized_invest_periods
-            if (not any(complete_solve[solve] == step[0] for step in runner.realized_invest_periods)) and any(complete_solve[solve] == step[0] for step in runner.invest_periods) and any(complete_solve[solve] == step[0] for step in runner.realized_periods):
-                 runner.write_periods(complete_solve[solve], runner.realized_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
-            runner.write_periods(complete_solve[solve], runner.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
-            runner.write_years_represented(period__branch_lists[solve], runner.solve_period_years_represented[complete_solve[solve]],'solve_data/p_years_represented.csv')
-            runner.write_period_years(period__branch_lists[solve], runner.solve_period_years_represented[complete_solve[solve]],'solve_data/p_discount_years.csv')
-            runner.write_currentSolve(solve, 'solve_data/solve_current.csv')
-            runner.write_hole_multiplier(solve, 'solve_data/solve_hole_multiplier.csv')
-            runner.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
-            runner.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
-            runner.write_last_realized_step(realized_time_lists[solve], complete_solve[solve], 'solve_data/last_realized_timestep.csv')
+            if (not any(complete_solve[solve] == step[0] for step in self.realized_invest_periods)) and any(complete_solve[solve] == step[0] for step in self.invest_periods) and any(complete_solve[solve] == step[0] for step in self.realized_periods):
+                 self.write_periods(complete_solve[solve], self.realized_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
+            self.write_periods(complete_solve[solve], self.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
+            self.write_years_represented(period__branch_lists[solve], self.solve_period_years_represented[complete_solve[solve]],'solve_data/p_years_represented.csv')
+            self.write_period_years(period__branch_lists[solve], self.solve_period_years_represented[complete_solve[solve]],'solve_data/p_discount_years.csv')
+            self.write_currentSolve(solve, 'solve_data/solve_current.csv')
+            self.write_hole_multiplier(solve, 'solve_data/solve_hole_multiplier.csv')
+            self.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
+            self.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
+            self.write_last_realized_step(realized_time_lists[solve], complete_solve[solve], 'solve_data/last_realized_timestep.csv')
             self.logger.info("Create realized timeline")
-            runner.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
-            runner.write_fix_storage_timesteps(realized_time_lists[solve],complete_solve[solve])
+            self.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
+            self.write_fix_storage_timesteps(realized_time_lists[solve],complete_solve[solve])
             self.logger.info("Possible stochastics")
-            runner.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
-            runner.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve])
-            runner.write_solve_branch__time_branch_list_and_weight(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve])
-            runner.write_first_and_last_periods(active_time_lists[solve], runner.timeblocks_used_by_solves[complete_solve[solve]], period__branch_lists[solve])
+            self.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
+            self.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve])
+            self.write_solve_branch__time_branch_list_and_weight(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve])
+            self.write_first_and_last_periods(active_time_lists[solve], self.timeblocks_used_by_solves[complete_solve[solve]], period__branch_lists[solve])
 
             #check if the upper level fixes storages
-            if complete_solve[solve] in runner.contains_solves.values() and any(complete_solve[parent_roll[solve]] == solve_period[0] for solve_period in runner.fix_storage_periods): # check that the parent_roll exists and has storage fixing
+            if complete_solve[solve] in self.contains_solves.values() and any(complete_solve[parent_roll[solve]] == solve_period[0] for solve_period in self.fix_storage_periods): # check that the parent_roll exists and has storage fixing
                 storage_fix_values_exist = True
             else:
                 storage_fix_values_exist = False
             if storage_fix_values_exist:
                 self.logger.info("Nested timeline matching")
-                runner.write_timeline_matching_map(active_time_lists[parent_roll[solve]], active_time_lists[solve], complete_solve[parent_roll[solve]], complete_solve[solve], period__branch_lists[solve])
+                self.write_timeline_matching_map(active_time_lists[parent_roll[solve]], active_time_lists[solve], complete_solve[parent_roll[solve]], complete_solve[solve], period__branch_lists[solve])
             else:
                 with open("solve_data/timeline_matching_map.csv", 'w') as realfile:
                     realfile.write("period,step,upper_step\n")
             #if timeline created from new step_duration, all timeseries have to be averaged or summed for the new timestep
             if previous_complete_solve != complete_solve[solve]:
                 self.logger.info("Aggregating timeline and parameters for the new step size")
-                runner.create_averaged_timeseries(complete_solve[solve])
+                self.create_averaged_timeseries(complete_solve[solve])
             previous_complete_solve = complete_solve[solve]
-            if solve in runner.first_of_complete_solve:
+            if solve in self.first_of_complete_solve:
                 first_of_nested_level = True
             else:
                 first_of_nested_level = False
-            if solve in runner.last_of_solve:
+            if solve in self.last_of_solve:
                 last_of_nested_level = True
             else:
                 last_of_nested_level = False
             #if multiple storage solve levels, get the storage fix of the upper level, (not the fix of the previous roll):
             if storage_fix_values_exist:
+                self.logger.info("Fetching storage parameters from the upper solve")
                 shutil.copy("solve_data/fix_storage_quantity_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_quantity.csv")
                 shutil.copy("solve_data/fix_storage_price_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_price.csv")
                 shutil.copy("solve_data/fix_storage_usage_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_usage.csv")
 
-            runner.write_solve_status(first_of_nested_level,last_of_nested_level, nested = True)
+            self.write_solve_status(first_of_nested_level,last_of_nested_level, nested = True)
             last = i == len(solves) - 1
-            runner.write_solve_status(first, last)
+            self.write_solve_status(first, last)
             if i == 0:
                 first = False
-                runner.write_empty_investment_file()
-                runner.write_empty_storage_fix_file()
-                runner.write_headers_for_empty_output_files('output/costs_discounted.csv', 'param_costs,costs_discounted')
+                self.write_empty_investment_file()
+                self.write_empty_storage_fix_file()
+                self.write_headers_for_empty_output_files('output/costs_discounted.csv', 'param_costs,costs_discounted')
             self.logger.info("Starting model creation")
-            exit_status = runner.model_run(complete_solve[solve])
+            exit_status = self.model_run(complete_solve[solve])
             if exit_status == 0:
                 self.logger.info('Success!')
             else:
                 self.logger.error(f'Error: {exit_status}')
                 sys.exit(-1)
             #if multiple storage solve levels, save the storage fix of this level:
-            if any(complete_solve[solve] == solve_period[0] for solve_period in runner.fix_storage_periods):
+            if any(complete_solve[solve] == solve_period[0] for solve_period in self.fix_storage_periods):
                 shutil.copy("solve_data/fix_storage_quantity.csv","solve_data/fix_storage_quantity_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_price.csv", "solve_data/fix_storage_price_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_usage.csv","solve_data/fix_storage_usage_"+ complete_solve[solve]+".csv")
@@ -2037,7 +1808,7 @@ class FlexToolRunner:
         #produce periodic data as post-process for rolling window solves
         post_process_results = False
         for solve in complete_solve.keys():
-            if runner.solve_modes[complete_solve[solve]] == "rolling_window":
+            if self.solve_modes[complete_solve[solve]] == "rolling_window":
                 post_process_results = True
         if post_process_results:
             #[[group by], relation dimensions]
@@ -2069,30 +1840,677 @@ class FlexToolRunner:
             "unit_online__period": [[],1],
             }
 
-            runner.periodic_postprocess(period_only, method = "periodic", arithmetic= "sum")
-            runner.periodic_postprocess(timewise_groupby, method = "timewise", arithmetic= "sum")
-            runner.periodic_postprocess(timewise_average_groupby, method = "timewise", arithmetic= "average")
-            runner.combine_result_tables("output/annualized_investment_costs__period.csv","output/annualized_dispatch_costs__period.csv", "output/annualized_costs__period.csv")
-            runner.divide_column("output/group_node__period.csv",div_col_ind = 3, to_cols_ind=[5,6,7,8], remove = True)
-            runner.divide_group_with_another("output/unit_curtailment_share__outputNode__period.csv", row_start_ind= 2, from_col_ind = 3 ,remove_cols_ind = [0], remove = True)
+            self.periodic_postprocess(period_only, method = "periodic", arithmetic= "sum")
+            self.periodic_postprocess(timewise_groupby, method = "timewise", arithmetic= "sum")
+            self.periodic_postprocess(timewise_average_groupby, method = "timewise", arithmetic= "average")
+            self.combine_result_tables("output/annualized_investment_costs__period.csv","output/annualized_dispatch_costs__period.csv", "output/annualized_costs__period.csv")
+            self.divide_column("output/group_node__period.csv",div_col_ind = 3, to_cols_ind=[5,6,7,8], remove = True)
+            self.divide_group_with_another("output/unit_curtailment_share__outputNode__period.csv", row_start_ind= 2, from_col_ind = 3 ,remove_cols_ind = [0], remove = True)
             os.remove("output/annualized_dispatch_costs__period.csv")
         os.remove("output/annualized_dispatch_costs__period__t.csv")
         os.remove("output/annualized_investment_costs__period.csv")
         os.remove("output/group_node__period__t.csv")
         os.remove("output/unit_curtailment_share__outputNode__period__t.csv")
-        if len(runner.model_solve) > 1:
+        if len(self.model_solve) > 1:
             self.logger.error(
                 f'Trying to run more than one model - not supported. The results of the first model are retained.')
             sys.exit(-1)
 
+    def entities_to_dict(self, db, cl, mode):
+        entities = db.get_entity_items(entity_class_name=cl)
+        if mode == "defaultdict":
+            result = defaultdict(list)
+        elif mode == "dict":
+            result = dict()
+        for entity in entities:
+            if len(entity["entity_byname"]) > 1:
+                result[entity["entity_byname"][0]] = list(entity["entity_byname"][1:])
+            else:
+                raise ValueError("Only one dimension in the entity, cannot make into a dict in entities_to_dict")
+        return result
+
+
+    def params_to_dict(self, db, cl, par, mode, str_to_list=False):
+        entities = db.get_entity_items(entity_class_name=cl)
+        params = db.get_parameter_value_items(entity_class_name=cl,
+                                                 parameter_definition_name=par)
+        if mode == "defaultdict":
+            result = defaultdict(list)
+        elif mode == "dict":
+            result = dict()
+        elif mode == "list":
+            result = []
+        for entity in entities:
+            params = db.get_parameter_value_items(entity_class_name=cl,
+                                                  entity_name=entity["name"],
+                                                  parameter_definition_name=par)
+            for param in params:
+                param_value = api.from_database(param["value"], param["type"])
+                if mode == "defaultdict" or mode == "dict":
+                    if isinstance(param_value, api.Map):
+                        if isinstance(param_value.values[0], float):
+                            result[entity["name"]] = list(zip(list(param_value.indexes), list(map(float, param_value.values))))
+                        elif isinstance(param_value.values[0], str):
+                            result[entity["name"]] = list(zip(list(param_value.indexes), param_value.values))
+                        elif isinstance(param_value.values[0], api.Map):
+                            result[entity["name"]] = api.convert_map_to_table(param_value)
+                        else:
+                            raise TypeError("params_to_dict function does not handle other values than floats and strings")
+                    elif isinstance(param_value, api.Array):
+                        result[entity["name"]] = param_value.values
+                    elif isinstance(param_value, float):
+                        result[entity["name"]] = str(param_value)
+                    elif isinstance(param_value, str):
+                        if str_to_list:
+                            result[entity["name"]] = [param_value]
+                        else:
+                            result[entity["name"]] = param_value
+                elif mode == "list":
+                    if isinstance(param_value, float):
+                        result.append([entity["name"], param_value])
+                    elif isinstance(param_value, str):
+                        result.append([entity["name"], param_value])
+
+        return result
+
+    def write_input(self, input_db_url, scenario_name=None):
+        if scenario_name:
+            scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
+        with (DatabaseMapping(input_db_url) as db):
+            if scenario_name:
+                api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
+            if not os.path.exists("input"):
+                os.makedirs("input", exist_ok=True)
+            write_default_values(db, [("node", "penalty_up"), ("node", "penalty_down")],
+                                 "class,paramName,default_value", "input/default_values.csv",
+                                 filter_in_type=["float", "str", "bool"])
+            write_parameter(db, [("commodity", "price")], "commodity,commodityParam,time,pt_commodity",
+                            "input/pt_commodity.csv", filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
+            write_parameter(db, [("commodity", "price"), ("commodity", "co2_content")], "commodity,commodityParam,p_commodity",
+                            "input/p_commodity.csv", filter_in_type=["float", "str"], param_print=True)
+            write_parameter(db, [("commodity", "price")], "commodity,commodityParam,period,pd_commodity",
+                            "input/pd_commodity.csv", filter_in_type=["1d_map"], filter_out_index="time", param_print=True)
+            write_entity(db, ["commodity"], "commodity", "input/commodity.csv")
+            write_entity(db, ["commodity__node"], "commodity,node", "input/commodity__node.csv")
+            write_parameter(db, [("constraint", "sense")], "constraint,sense", "input/constraint__sense.csv")
+            write_parameter(db, [("constraint", "constant")], "constraint,p_constraint_constant",
+                            "input/p_constraint_constant.csv")
+            write_parameter(db, [("model", "debug")], "debug", "input/debug.csv")
+            write_entity(db, ["node", "unit", "connection"], "entity", "input/entity.csv")
+            write_parameter(db, [("node", "invest_method"), ("unit", "invest_method"), ("connection", "invest_method")],
+                            "entity,invest_method", "input/entity__invest_method.csv")
+            write_parameter(db, [("node", "lifetime_method"), ("unit", "lifetime_method"),
+                                 ("connection", "lifetime_method")], "entity,lifetime_method",
+                            "input/entity__lifetime_method.csv")
+            write_entity(db, ["group"], "group", "input/group.csv")
+            write_parameter(db, [("group", "co2_method")], "group,co2_method", "input/group__co2_method.csv")
+            write_parameter(db, [("group", "invest_method")], "group,invest_method", "input/group__invest_method.csv")
+            write_parameter(db, [("group", "loss_share_type")], "group,loss_share_type",
+                            "input/group__loss_share_type.csv")
+            write_entity(db, ["group__node"], "group,node", "input/group__node.csv")
+            write_entity(db, ["group__unit", "group__connection"], "group,process", "input/group__process.csv")
+            write_entity(db, ["group__unit__node", "group__connection__node"], "group,process,node",
+                         "input/group__process__node.csv")
+            write_parameter(db, [("group", "has_capacity_margin")], "groupCapacityMargin",
+                            "input/groupCapacityMargin.csv", filter_in_value="yes", no_value=True)
+            write_parameter(db, [("group", "include_stochastics")], "group", "input/groupIncludeStochastics.csv",
+                            filter_in_value="yes", no_value=True)
+            write_parameter(db, [("group", "has_inertia")], "groupInertia", "input/groupInertia.csv",
+                            filter_in_value="yes", no_value=True)
+            write_parameter(db, [("group", "output_node_flows")], "groupOutputNodeFlows",
+                            "input/groupOutputNodeFlows.csv", filter_in_value="yes", no_value=True)
+            write_parameter(db, [("group", "output_aggregate_flows")], "groupOutputAggregateFlows",
+                            "input/groupOutputAggregateFlows.csv", filter_in_value="yes", no_value=True)
+            write_parameter(db, [("model", "exclude_entity_outputs")], "value", "input/exclude_entity_outputs.csv")
+            write_parameter(db, [("model", "solves")], "model,solve", "input/model__solve.csv")
+            write_entity(db, ["node"], "node", "input/node.csv")
+            write_parameter(db, [("node", "constraint_capacity_coefficient")],
+                            "node,constraint,p_node_constraint_capacity_coefficient",
+                            "input/p_node_constraint_capacity_coefficient.csv")
+            write_parameter(db, [("node", "constraint_state_coefficient")],
+                            "node,constraint,p_node_constraint_state_coefficient",
+                            "input/p_node_constraint_state_coefficient.csv")
+            write_parameter(db, [("node", "has_balance")], "nodeBalance", "input/nodeBalance.csv",
+                            filter_in_value="yes", no_value=True)
+            write_parameter(db, [("node", "inflow_method")], "node,inflow_method", "input/node__inflow_method.csv")
+            write_parameter(db, [("node", "node_type")], "node,node_type", "input/node__node_type.csv")
+            write_parameter(db, [("node", "profile_method")], "node,profile,profile_method",
+                            "input/node__profile__profile_method.csv")
+            write_parameter(db, [("node", "has_storage")], "nodeState", "input/nodeState.csv", filter_in_value="yes",
+                            no_value=True)
+            write_parameter(db, [("node", "storage_binding_method")], "node,storage_binding_method",
+                            "input/node__storage_binding_method.csv")
+            write_parameter(db, [("node", "storage_nested_fix_method")], "node,storage_nested_fix_method",
+                            "input/node__storage_nested_fix_method.csv")
+            write_parameter(db, [("node", "storage_solve_horizon_method")], "node,storage_solve_horizon_method",
+                            "input/node__storage_solve_horizon_method.csv")
+            write_parameter(db, [("node", "storage_start_end_method")], "node,storage_start_end_method",
+                            "input/node__storage_start_end_method.csv")
+            write_parameter(db, [("node", "penalty_down"), ("node", "self_discharge_loss"), ("node", "availability"),
+                                 ("node", "storage_state_reference_value")], "node,nodeParam,time,pt_node",
+                            "input/pt_node.csv", filter_in_type=["1d_map", "array", "time_series"],
+                            filter_out_index="period", param_print=True)
+            write_parameter(db, [("node", "penalty_down"), ("node", "self_discharge_loss"), ("node", "availability"),
+                                 ("node", "storage_state_reference_value")],
+                            "node,nodeParam,branch,time_start,time,pt_node", "input/pbt_node.csv",
+                            filter_in_type=["3d_map"], param_print=True)
+            write_parameter(db, [("node", "inflow")], "node,time,pt_node_inflow", "input/pt_node_inflow.csv",
+                            filter_in_type=["1d_map", "array", "time_series"], filter_out_index="period")
+            write_parameter(db, [("node", "inflow")], "node,branch,time_start,time,pbt_node_inflow",
+                            "input/pbt_node_inflow.csv", filter_in_type=["3d_map"])
+            write_parameter(db, [("node", "annual_flow"),
+                                 ("node", "peak_inflow"),
+                                 ("node", "invest_forced"),
+                                 ("node", "invest_max_period"),
+                                 ("node", "invest_min_period"),
+                                 ("node", "retire_forced"),
+                                 ("node", "retire_max_period"),
+                                 ("node", "retire_min_period"),
+                                 ("node", "invest_cost"),
+                                 ("node", "salvage_value"),
+                                 ("node", "interest_rate"),
+                                 ("node", "lifetime"),
+                                 ("node", "fixed_cost"),
+                                 ("node", "storage_state_reference_price"),
+                                 ("node", "availability"),
+                                 ("node", "penalty_up"),
+                                 ("node", "penalty_down"),
+                                 ("node", "cumulative_max_capacity"),
+                                 ("node", "cumulative_min_capacity"),
+                                 ("node", "self_discharge_loss"),
+                                 ("node", "existing"),
+                                 ("node", "storage_state_reference_value")], "node,nodeParam,period,pd_node",
+                            "input/pd_node.csv", filter_in_type=["1d_map"], filter_out_index="time", param_print=True)
+            write_entity(db, ["unit", "connection"], "process", "input/process.csv")
+            write_entity(db, ["connection"], "process_connection", "input/process_connection.csv")
+            write_parameter(db, [("unit__outputNode", "coefficient")], "process,sink,p_process_sink_coefficient",
+                            "input/p_process_sink_coefficient.csv", filter_in_type=["float", "str", "bool"])
+            write_parameter(db, [("unit__inputNode", "coefficient")], "process,source,p_process_source_coefficient",
+                            "input/p_process_source_coefficient.csv", filter_in_type=["float", "str", "bool"])
+            write_parameter(db, [("connection", "is_DC")], "process", "input/process_nonSync_connection.csv",
+                            filter_in_value="yes", no_value=True)
+            write_entity(db, ["unit"], "process_unit", "input/process_unit.csv")
+            write_parameter(db, [("unit__outputNode", "other_operational_cost")], "process,sink,sourceSinkTimeParam,time,pt_process_sink",
+                            "input/pt_process_sink.csv", filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
+            write_parameter(db, [("unit__outputNode", "other_operational_cost")], "process,sink,sourceSinkPeriodParam,period,pd_process_sink",
+                            "input/pd_process_sink.csv", filter_in_type=["1d_map"], filter_out_index="time", param_print=True)
+            write_parameter(db, [("unit__outputNode", "other_operational_cost")],
+                            "process,sink,sourceSinkTimeParam,branch,time_start,time,pbt_process_sink", "input/pbt_process_sink.csv",
+                            filter_in_type=["3d_map"], param_print=True)
+            write_parameter(db, [("unit__inputNode", "other_operational_cost")],
+                            "process,source,sourceSinkTimeParam,time,pt_process_source", "input/pt_process_source.csv",
+                            filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
+            write_parameter(db, [("unit__inputNode", "other_operational_cost")],
+                            "process,source,sourceSinkPeriodParam,period,pd_process_source", "input/pd_process_source.csv",
+                            filter_in_type=["1d_map"], filter_out_index="time", param_print=True)
+            write_parameter(db, [("unit__inputNode", "other_operational_cost")],
+                            "process,source,sourceSinkTimeParam,branch,time_start,time,pbt_process_source", "input/pbt_process_source.csv",
+                            filter_in_type=["3d_map"], param_print=True)
+            write_parameter(db, [("connection__profile", "profile_method")], "process,profile,profile_method",
+                            "input/process__profile__profile_method.csv")
+            write_parameter(db, [("unit__outputNode", "ramp_method"), ("unit__inputNode", "ramp_method")],
+                            "process,node,ramp_method", "input/process__node__ramp_method.csv")
+            write_parameter(db, [("unit", "startup_method"), ("connection", "startup_method")],
+                            "process,startup_method", "input/process__startup_method.csv")
+            write_parameter(db, [("unit", "conversion_method"), ("connection", "transfer_method")], "process,ct_method",
+                            "input/process__ct_method.csv")
+            write_entity(db, ["reserve__upDown__unit__node", "reserve__upDown__connection__node"], "process,reserve,upDown,node",
+                            "input/process__reserve__upDown__node.csv", entity_dimens=[[2,0,1,3], [2,0,1,3]])
+            write_parameter(db, [("profile", "profile")], "profile,time,pt_profile", "input/pt_profile.csv",
+                            filter_in_type=["1d_map"], filter_out_index="period")
+            write_parameter(db, [("profile", "profile")], "profile,branch,time_start,time,pbt_profile", "input/pbt_profile.csv",
+                            filter_in_type=["3d_map"])
+            write_parameter(db, [("profile", "profile")], "profile,period,pd_profile", "input/pd_profile.csv",
+                            filter_in_type=["1d_map"], filter_out_index="time")
+            write_parameter(db, [("profile", "profile")], "profile,p_profile", "input/p_profile.csv",
+                            filter_in_type=["float", "str", "bool"])
+            write_entity(db, ["profile"], "profile", "input/profile.csv")
+            write_parameter(db, [("reserve__upDown__group", "increase_reserve_ratio"),
+                                 ("reserve__upDown__group", "penalty_reserve"),
+                                 ("reserve__upDown__group", "reservation")],
+                            "reserve,upDown,group,reserveParam,p_reserve_upDown_group",
+                            "input/p_reserve__upDown__group.csv", filter_in_type=["float", "str", "bool"], param_print=True)
+            write_parameter(db, [("reserve__upDown__group", "reservation")],
+                            "reserve,upDown,group,reserveParam,time,pt_reserve_upDown_group",
+                            "input/pt_reserve__upDown__group.csv", filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
+            write_parameter(db, [("reserve__upDown__group", "reservation")],
+                            "reserve,upDown,group,reserveParam,branch,time_start,time,pbt_reserve_upDown_group",
+                            "input/pbt_reserve__upDown__group.csv", filter_in_type=["3d_map"], param_print=True)
+            write_parameter(db, [("reserve__upDown__group", "reserve_method")], "reserve,upDown,group,method",
+                            "input/reserve__upDown__group__method.csv")
+            write_parameter(db, [("solve", "solver")], "solve,solver", "input/solver.csv")
+            write_parameter(db, [("solve", "timeline_hole_multiplier")], "solve,p_hole_multiplier",
+                            "input/solve_hole_multiplier.csv")
+            write_parameter(db, [("solve", "solver_precommand")], "solve,solver_precommand",
+                            "input/solver_precommand.csv")
+            write_parameter(db, [("solve", "solver_arguments")], "solve,arguments", "input/solver_arguments.csv")
+            write_parameter(db, [("solve", "highs_method"),
+                                 ("solve", "highs_parallel"),
+                                 ("solve", "highs_presolve"),
+                                 ("solve", "solve_mode")],
+                            "param,solve,value", "input/solve_mode.csv", param_print=True, param_loc = 0)
+            write_parameter(db, [("solve", "contains_solves")], "solve,include_solve",
+                            "input/solve__contains_solve.csv")
+            write_parameter(db, [("solve", "realized_periods")], "solve,roll,period",
+                            "input/solve__realized_period_2d_map.csv", filter_in_type=["2d_map"], no_value=True)
+            write_parameter(db, [("solve", "fix_storage_periods")], "solve,roll,period",
+                            "input/solve__fix_storage_period_2d_map.csv", filter_in_type=["2d_map"], no_value=True)
+            write_parameter(db, [("solve", "invest_periods")], "solve,roll,period",
+                            "input/solve__invest_period_2d_map.csv", filter_in_type=["2d_map"], no_value=True)
+            write_parameter(db, [("solve", "realized_periods")], "solve,period", "input/solve__realized_period.csv",
+                            filter_in_type=["array", "1d_map"])
+            write_parameter(db, [("solve", "realized_invest_periods")], "solve,invest_realized_period",
+                            "input/solve__realized_invest_period.csv", filter_in_type=["array", "1d_map"])
+            write_parameter(db, [("solve", "realized_invest_periods")], "solve,roll,period",
+                            "input/solve__realized_invest_period_2d_map.csv", filter_in_type=["2d_map"], no_value=True)
+            write_parameter(db, [("solve", "fix_storage_periods")], "solve,period",
+                            "input/solve__fix_storage_period.csv", filter_in_type=["array", "1d_map"])
+            write_parameter(db, [("solve", "invest_periods")], "solve,period", "input/solve__invest_period.csv",
+                            filter_in_type=["array", "1d_map"])
+            write_parameter(db, [("solve", "years_represented")], "solve,period,years_represented",
+                            "input/solve__period__years_represented.csv")
+            write_parameter(db, [("solve", "stochastic_branches")], "solve,period,branch,start_time,realized,weight",
+                            "input/stochastic_branches.csv")
+            write_parameter(db, [("timeline", "timestep_duration")], "timeline,timestep,duration", "input/timeline.csv")
+            write_parameter(db, [("timeline", "timeline_duration_in_years")], "timeline,p_timeline_duration_in_years",
+                            "input/timeline_duration_in_years.csv")
+            write_parameter(db, [("timeblockSet", "block_duration")], "timeblocks,start,duration", "input/timeblocks.csv")
+            write_entity(db, ["timeblockSet__timeline"], "timeblocks,timeline", "input/timeblocks__timeline.csv")
+            write_parameter(db, [("solve", "period_timeblockSet")], "solve,roll,period,timeblocks",
+                            "input/timeblocks_in_use_2d.csv", filter_in_type=["2d_map"])
+            write_parameter(db, [("solve", "period_timeblockSet")], "solve,period,timeblocks", "input/timeblocks_in_use.csv",
+                            filter_in_type=["1d_map"])
+            write_parameter(db, [("timeblockSet", "new_stepduration")], "timeblockSet,step_duration",
+                            "input/timeblockSet__new_stepduration.csv", filter_out_index="time")
+            write_parameter(db, [("unit__outputNode")], "process,sink,param", "input/unit__sinkNode__param.csv",
+                            filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
+            write_parameter(db, [("unit__inputNode")], "process,source,param", "input/unit__sourceNode__param.csv",
+                            filter_out_index="period", param_print=True)
+            write_parameter(db, [("unit", "efficiency"),
+                                 ("unit", "efficiency_at_min_load"),
+                                 ("unit", "min_load"),
+                                 ("unit", "other_operational_cost"),
+                                 ("unit", "availability"),
+                                 ("connection", "efficiency"),
+                                 ("connection", "efficiency_at_min_load"),
+                                 ("connection", "min_load"),
+                                 ("connection", "other_operational_cost"),
+                                 ("connection", "availability"),
+                                ],
+                            "process,processParam,time,pt_process", "input/pt_process.csv", filter_in_type=["1d_map"],
+                            filter_out_index="period", param_print=True)
+            write_entity(db, ["unit__inputNode", "connection__node__node"], "process,source", "input/process__source.csv",
+                         entity_dimens=[[0,1], [0,1]])
+            write_parameter(db, [("unit__outputNode", "is_non_synchronous")], "process,sink",
+                            "input/process__sink_nonSync_unit.csv", filter_in_value="yes", no_value=True)
+            write_entity(db, ["unit__outputNode", "connection__node__node"], "process,sink", "input/process__sink.csv",
+                         entity_dimens=[[0,1], [0,2]])
+            write_parameter(db, [("unit__node__profile", "profile_method")], "process,node,profile,profile_method",
+                            "input/process__node__profile__profile_method.csv")
+            write_parameter(db, [("unit__inputNode")], "process,source,sourceSinkParam,p_process_source",
+                            "input/p_process_source.csv", param_print=True)
+            write_parameter(db, [("unit__outputNode")], "process,sink,sourceSinkParam,p_process_sink",
+                            "input/p_process_sink.csv", param_print=True)
+            write_parameter(db, [("reserve__upDown__unit__node", "increase_reserve_ratio"),
+                                 ("reserve__upDown__unit__node", "large_failure_ratio"),
+                                 ("reserve__upDown__unit__node", "max_share"),
+                                 ("reserve__upDown__unit__node", "reliability"),
+                                 ("reserve__upDown__connection__node", "increase_reserve_ratio"),
+                                 ("reserve__upDown__connection__node", "large_failure_ratio"),
+                                 ("reserve__upDown__connection__node", "max_share"),
+                                 ("reserve__upDown__connection__node", "reliability")
+                                 ],
+                            "process,reserve,upDown,node,reserveParam,p_process_reserve_upDown_node",
+                            "input/p_process__reserve__upDown__node.csv",
+                            filter_in_type=["float", "str", "bool"], param_print=True, dimens = [1, 2, 0, 3])
+            write_parameter(db, [("unit__outputNode", "constraint_flow_coefficient"),
+                                 ("unit__inputNode", "constraint_flow_coefficient"),
+                                 ("connection__node", "constraint_flow_coefficient")],
+                            "process,node,constraint,p_process_node_constraint_flow_coefficient",
+                            "input/p_process_node_constraint_flow_coefficient.csv", filter_in_type=["1d_map"])
+            write_parameter(db, [("unit", "constraint_capacity_coefficient"),
+                                 ("connection", "constraint_capacity_coefficient")],
+                            "process,constraint,p_process_constraint_capacity_coefficient",
+                            "input/p_process_constraint_capacity_coefficient.csv", filter_in_type=["1d_map"])
+            write_parameter(db, [("unit", "availability"),
+                                 ("unit", "cumulative_max_capacity"),
+                                 ("unit", "cumulative_min_capacity"),
+                                 ("unit", "efficiency"),
+                                 ("unit", "efficiency_at_min_load"),
+                                 ("unit", "existing"),
+                                 ("unit", "fixed_cost"),
+                                 ("unit", "interest_rate"),
+                                 ("unit", "invest_cost"),
+                                 ("unit", "invest_max_total"),
+                                 ("unit", "invest_min_total"),
+                                 ("unit", "lifetime"),
+                                 ("unit", "min_downtime"),
+                                 ("unit", "min_load"),
+                                 ("unit", "min_uptime"),
+                                 ("unit", "retire_max_total"),
+                                 ("unit", "retire_min_total"),
+                                 ("unit", "salvage_value"),
+                                 ("unit", "startup_cost"),
+                                 ("unit", "virtual_unitsize"),
+                                 ("connection", "availability"),
+                                 ("connection", "cumulative_max_capacity"),
+                                 ("connection", "cumulative_min_capacity"),
+                                 ("connection", "efficiency"),
+                                 ("connection", "existing"),
+                                 ("connection", "fixed_cost"),
+                                 ("connection", "interest_rate"),
+                                 ("connection", "invest_cost"),
+                                 ("connection", "invest_max_total"),
+                                 ("connection", "invest_min_total"),
+                                 ("connection", "lifetime"),
+                                 ("connection", "other_operational_cost"),
+                                 ("connection", "retire_max_total"),
+                                 ("connection", "retire_min_total"),
+                                 ("connection", "salvage_value"),
+                                 ("connection", "startup_cost"),
+                                 ("connection", "virtual_unitsize")
+                                ],
+                            "process,processParam,p_process", "input/p_process.csv",
+                            filter_in_type=["float", "str", "bool"], param_print=True)
+            write_parameter(db, [("node", "annual_flow"),
+                                 ("node", "availability"),
+                                 ("node", "cumulative_max_capacity"),
+                                 ("node", "cumulative_min_capacity"),
+                                 ("node", "existing"),
+                                 ("node", "fixed_cost"),
+                                 ("node", "inflow"),
+                                 ("node", "interest_rate"),
+                                 ("node", "invest_cost"),
+                                 ("node", "invest_forced"),
+                                 ("node", "invest_max_total"),
+                                 ("node", "invest_min_total"),
+                                 ("node", "lifetime"),
+                                 ("node", "peak_inflow"),
+                                 ("node", "penalty_down"),
+                                 ("node", "penalty_up"),
+                                 ("node", "retire_max_total"),
+                                 ("node", "retire_min_total"),
+                                 ("node", "salvage_value"),
+                                 ("node", "self_discharge_loss"),
+                                 ("node", "storage_state_end"),
+                                 ("node", "storage_state_reference_price"),
+                                 ("node", "storage_state_reference_value"),
+                                 ("node", "storage_state_start"),
+                                 ("node", "storate_state_end"),
+                                 ("node", "virtual_unitsize")
+                                ], "node,nodeParam,p_node", "input/p_node.csv",
+                            filter_in_type=["float", "str", "bool"], param_print=True)
+            write_parameter(db, [("group__unit", "groupParam"), ("group__connection", "groupParam")],
+                            "group,process,groupParam,p_group_process_s",
+                            "input/p_group__process.csv", param_print=True)
+            write_parameter(db, [("group", "groupParam"),
+                                 ("group", "capacity_margin"),
+                                 ("group", "co2_max_total"),
+                                 ("group", "co2_price"),
+                                 ("group", "inertia_limit"),
+                                 ("group", "invest_max_total"),
+                                 ("group", "invest_min_total"),
+                                 ("group", "max_cumulative_flow"),
+                                 ("group", "max_instant_flow"),
+                                 ("group", "min_cumulative_flow"),
+                                 ("group", "min_instant_flow"),
+                                 ("group", "non_synchronous_limit"),
+                                 ("group", "penalty_capacity_margin"),
+                                 ("group", "penalty_inertia"),
+                                 ("group", "penalty_non_synchronous"),
+                                ], "group,groupParam,p_group", "input/p_group.csv",
+                            filter_in_type=["float", "str", "bool"], param_print=True)
+            write_parameter(db, [("unit", "invest_forced"),
+                                 ("unit", "invest_max_period"),
+                                 ("unit", "invest_min_period"),
+                                 ("unit", "retire_forced"),
+                                 ("unit", "retire_max_period"),
+                                 ("unit", "retire_min_period"),
+                                 ("unit", "invest_cost"),
+                                 ("unit", "salvage_value"),
+                                 ("unit", "interest_rate"),
+                                 ("unit", "lifetime"),
+                                 ("unit", "fixed_cost"),
+                                 ("unit", "other_operational_cost"),
+                                 ("unit", "existing"),
+                                 ("unit", "cumulative_max_capacity"),
+                                 ("unit", "cumulative_min_capacity"),
+                                 ("connection", "invest_forced"),
+                                 ("connection", "invest_max_period"),
+                                 ("connection", "invest_min_period"),
+                                 ("connection", "retire_forced"),
+                                 ("connection", "retire_max_period"),
+                                 ("connection", "retire_min_period"),
+                                 ("connection", "invest_cost"),
+                                 ("connection", "salvage_value"),
+                                 ("connection", "interest_rate"),
+                                 ("connection", "lifetime"),
+                                 ("connection", "fixed_cost"),
+                                 ("connection", "other_operational_cost"),
+                                 ("connection", "existing"),
+                                 ("connection", "cumulative_max_capacity"),
+                                 ("connection", "cumulative_min_capacity"),
+                                ],
+                            "process,processParam,period,pd_process", "input/pd_process.csv", filter_in_type=["1d_map"],
+                            filter_out_index="time", param_print=True)
+            write_parameter(db, [("model", "discount_rate")], "model,p_discount_rate", "input/p_discount_rate.csv")
+            write_parameter(db, [("model", "discount_offset_operations")], "model,p_discount_offset_operations",
+                            "input/p_discount_offset_operations.csv")
+            write_parameter(db, [("model", "discount_offset_investment")], "model,p_discount_offset_investment",
+                            "input/p_discount_offset_investment.csv")
+            write_parameter(db, [("group", "co2_max_period"),
+                                 ("group", "co2_price"),
+                                 ("group", "inertia_limit"),
+                                 ("group", "invest_max_period"),
+                                 ("group", "invest_min_period"),
+                                 ("group", "invest_min_total"),
+                                 ("group", "max_cumulative_flow"),
+                                 ("group", "max_instant_flow"),
+                                 ("group", "min_cumulative_flow"),
+                                 ("group", "min_instant_flow"),
+                                 ("group", "non_synchronous_limit"),
+                                 ("group", "penalty_capacity_margin"),
+                                 ("group", "penalty_inertia"),
+                                 ("group", "penalty_non_synchronous"),
+                                 ], "group,groupParam,period,pd_group", "input/pd_group.csv",
+                            filter_in_type=["1d_map"], filter_out_index="time", param_print=True)
+            write_parameter(db, [("group", "co2_price"),
+                                 ("group", "max_instant_flow"),
+                                 ("group", "min_instant_flow"),
+                                ], "group,groupParam,period,pt_group", "input/pt_group.csv",
+                            filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
+            write_parameter(db, [("unit", "efficiency"),
+                                 ("unit", "efficiency_at_min_load"),
+                                 ("unit", "min_load"),
+                                 ("unit", "other_operational_cost"),
+                                 ("unit", "availability"),
+                                 ("connection", "efficiency"),
+                                 ("connection", "efficiency_at_min_load"),
+                                 ("connection", "min_load"),
+                                 ("connection", "other_operational_cost"),
+                                 ("connection", "availability")
+                                ],
+                            "process,processParam,branch,time_start,time,pbt_process", "input/pbt_process.csv",
+                            filter_in_type=["3d_map"], param_print=True)
+            write_parameter(db, [("model", "exclude_entity_outputs"),
+                                 ("model", "output_connection__node__node_flow_t"),
+                                 ("model", "output_connection_flow_separate"),
+                                 ("model", "output_horizon"),
+                                 ("model", "output_ramp_envelope"),
+                                 ("model", "output_unit__node_flow_t"),
+                                 ("model", "output_unit__node_ramp_t"),
+                                ], "output,value", "input/optional_outputs.csv", param_print=True, no_entity=True)
+            write_parameter(db, [("group", "output_results")], "groupOutput", "input/groupOutput.csv",
+                            filter_in_value="yes", no_value=True)
+            write_parameter(db, [("group", "has_non_synchronous")], "groupNonSync", "input/groupNonSync.csv",
+                            filter_in_value="yes", no_value=True)
+            write_default_values(db, [("model", "version")], "version", "input/db_version.csv",
+                            filter_in_type=["float", "str", "bool"], only_value=True)
+
+
+
+def write_entity(db, cl, header, filename, entity_dimens=None):
+    entities = []
+    for (i, ent_class) in enumerate(cl):
+        class_entity_dimens = None
+        if entity_dimens:
+            class_entity_dimens = entity_dimens[i]
+        for entity in db.get_entity_items(entity_class_name=ent_class):
+            if class_entity_dimens is None:
+                entities.append(','.join(entity["entity_byname"]))
+            else:
+                entity_dim = []
+                for x in class_entity_dimens:
+                    entity_dim.append(entity["entity_byname"][x])
+                entities.append(','.join(entity_dim))
+
+
+    with open(filename, 'w') as realfile:
+        realfile.write(header + "\n")
+        for entity in entities:
+            realfile.write(entity + "\n")
+
+
+def write_parameter(db, cl_pars, header, filename,
+                    filter_in_type=None, filter_out_index=None, filter_in_value=None,
+                    no_value=False, param_print=False, dimens=None, param_loc=None, no_entity=None):
+    # interpret map dimensionality and map into map for later comparisons
+    type_filter_map_dim = []
+    if filter_in_type:
+        map_found = False
+        for type_filter in filter_in_type:
+            if type_filter in ["1d_map", "2d_map", "3d_map", "4d_map", "5d_map"]:
+                if map_found:
+                    logging.error("Trying to have two different dimensionalities in the same parameter to be written out")
+                    sys.exit(-1)
+                map_found = True
+                type_filter_map_dim = int(type_filter[0])
+                filter_in_type.remove(type_filter)
+        if map_found:
+            filter_in_type.append("map")
+    params = []
+    for cl_par in cl_pars:
+        params = params + db.get_parameter_value_items(entity_class_name=cl_par[0],
+                                                       parameter_definition_name=cl_par[1])
+    with open(filename, 'w') as realfile:
+        realfile.write(header + "\n")
+        for param in params:
+            # This filter ensures that the parameter is of required type (skip to next if not)
+            if filter_in_type and param["type"] not in filter_in_type:
+                continue
+
+            entity_byname = param["entity_byname"]
+            if dimens:
+                temp_entity_byname = [None] * len(entity_byname)
+                for i, dimen in enumerate(dimens):
+                    temp_entity_byname[dimen] = entity_byname[i]
+                entity_byname = temp_entity_byname
+
+
+            if param_print:
+                if param_loc is not None:
+                    time.sleep(0.1)
+                    collect = []
+                    for (i, byname) in enumerate(entity_byname):
+                        if i == param_loc:
+                            collect.append(param["parameter_definition_name"])
+                        collect.append(byname)
+                    first_cols = ','.join(collect)
+                else:
+                    if no_entity:
+                        first_cols = param["parameter_definition_name"]
+                    else:
+                        first_cols = ','.join(entity_byname) + ',' + param["parameter_definition_name"]
+            else:
+                first_cols = ','.join(entity_byname)
+            if param["type"] == "map":
+                # If the first parameter index contains filter_out_index, then skip the parameter (maybe should be extended to other indexes)
+                if filter_out_index and param["parsed_value"].index_name == filter_out_index:
+                    continue
+                # Check that map dimensionality matches with filter requirement (if not, then skip)
+                if filter_in_type and type_filter_map_dim != api.parameter_value.from_database_to_dimension_count(param["value"], param["type"]):
+                    continue
+                value = param["parsed_value"]
+                indexes = []
+                if api.parameter_value.from_database_to_dimension_count(param["value"], param["type"]) <= 1:
+                    result = list(value.indexes)
+                    # Doing a zip, since there can be multiple rows in the map
+                    result = list(zip(result, [str(v) for v in value.values]))
+                    for res in result:
+                        if no_value:
+                            realfile.write(first_cols + ',' + res[0] + '\n')
+                        else:
+                            realfile.write(first_cols + ',' + ','.join(res) + '\n')
+                else:
+                    flat_map = api.convert_map_to_table(value)
+                    for (i, index) in enumerate(flat_map):
+                        if no_value:
+                            realfile.write(first_cols + ',' + ','.join(index[:-1]) + '\n')
+                        else:
+                            index[-1] = str(index[-1])
+                            realfile.write(first_cols + ',' + ','.join(index) + '\n')
+            elif param["type"] == "array" or param["type"] == "time_series":
+                for row in param["parsed_value"].values:
+                    realfile.write(','.join(entity_byname) + ',' + row + '\n')
+            elif param["type"] == "str" or param["type"] == "float" or param["type"] == "bool":
+                # Filter based on values: only if the value is found, then data is written
+                if filter_in_value and param["parsed_value"] != filter_in_value:
+                    continue
+                if no_value:
+                    realfile.write(first_cols + '\n')
+                else:
+                    realfile.write(first_cols + ',' + str(param["parsed_value"]) + '\n')
+            else:
+                logging.error("Input data found in a parameter not of supported type")
+                sys.exit(-1)
+
+
+def flatten_map(mapList, indexes):
+    result = []
+    j = 0
+    for (i, subMap) in enumerate(mapList):
+        parent_index = indexes.pop(i + j)
+        for (k, child_index) in enumerate(list(subMap.indexes)):
+            comb_index = copy.deepcopy(parent_index)
+            comb_index.extend([child_index])
+            indexes.insert(i + j, comb_index)
+            if any(isinstance(x, api.Map) for x in subMap.values):
+                (result, indexes) = flatten_map(subMap.values, [indexes[i + j]])
+            else:
+                result.append(subMap.values[k])
+            j = j + 1
+        # del indexes[i + j]
+        j = j - 1
+    return (result, indexes)
+
+
+def write_default_values(db, cl_pars, header, filename, filter_in_type=None, only_value=False):
+    param_defs = []
+    for cl_par in cl_pars:
+        param_defs.append(db.get_parameter_definition_item(entity_class_name=cl_par[0],
+                                                           name=cl_par[1]))
+    with open(filename, 'w') as realfile:
+        realfile.write(header + "\n")
+        for param in param_defs:
+            # This filter ensures that the parameter is of required type (skip to next if not)
+            if filter_in_type and param["default_type"] not in filter_in_type:
+                continue
+
+            if param["default_type"] == "str" or param["default_type"] == "float" or param["default_type"] == "bool":
+                if only_value:
+                    realfile.write(str(api.from_database(param["default_value"], param["default_type"])) + '\n')
+                else:
+                    realfile.write(param["entity_class_name"] + "," + param["name"] + ","
+                               + str(api.from_database(param["default_value"], param["default_type"])) + '\n')
+            else:
+                logging.error("Input data found in a parameter definition not of supported default type")
+                sys.exit(-1)
+
 
 def main():
     logging.basicConfig(level=logging.INFO)
-    
-    runner = FlexToolRunner()
-    return_code = runner.run_model()
-    print(f"Return code: {return_code}")
-
+    logging.error("Run using run_flextool.py in the root of FlexTool")
+    sys.exit(-1)
 
 if __name__ == '__main__':
     main()
