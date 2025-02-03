@@ -98,7 +98,6 @@ def migrate_project(old_path, new_path):
     items = [
         "Replace with examples",
         "FlexTool",
-        "Export_to_CSV",
         "Import_results",
         "Plot_results",
         "Plot_settings",
