@@ -2461,7 +2461,13 @@ def write_parameter(db, cl_pars, header, filename,
                 else:
                     realfile.write(first_cols + ',' + str(param["parsed_value"]) + '\n')
             else:
-                logging.error("Input data found in a parameter not of supported type")
+                if not filter_in_type:
+                    filter_in_type = "Bool, str, float, array, time_series, map"
+                logging.error("Input data found in a parameter not of supported type."+ 
+                              "\nEntity: "+ ','.join(entity_byname) + 
+                              "\nParameter: " + param["parameter_definition_name"]+
+                              "\nSupported types: " + filter_in_type +
+                              "\nParameter type: "+ str(param["type"]))
                 sys.exit(-1)
 
 
@@ -2503,7 +2509,8 @@ def write_default_values(db, cl_pars, header, filename, filter_in_type=None, onl
                     realfile.write(param["entity_class_name"] + "," + param["name"] + ","
                                + str(api.from_database(param["default_value"], param["default_type"])) + '\n')
             else:
-                logging.error("Input data found in a parameter definition not of supported default type")
+                logging.error("Default_value found in a parameter definition not of supported default type"+
+                              "\nParameter: " + param["parameter_definition_name"])
                 sys.exit(-1)
 
 
