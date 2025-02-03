@@ -2462,12 +2462,12 @@ def write_parameter(db, cl_pars, header, filename,
                     realfile.write(first_cols + ',' + str(param["parsed_value"]) + '\n')
             else:
                 if not filter_in_type:
-                    filter_in_type = ["Bool", "str", "float", "array", "time_series", "map"]
+                    filter_in_type = ["bool", "str", "float", "array", "time_series", "map"]
                 logging.error(f"Input data found in a parameter not of supported type."+ 
                               f"\nEntity: {','.join(entity_byname)}"+
-                              f"\nParameter: {param["parameter_definition_name"]}"+
+                              f"\nParameter: {param['parameter_definition_name']}"+
                               f"\nSupported types: {filter_in_type}"+
-                              f"\nParameter type: {param["type"]}")
+                              f"\nParameter type: {param['type']}")
                 sys.exit(-1)
 
 
