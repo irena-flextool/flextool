@@ -3248,17 +3248,17 @@ s.t. non_anticipativity_storage_use{n in nodeState, (d,b) in period__branch, (d,
           ) * step_duration[b, t]
         ;
 
-s.t. non_anticipativity_online_integer{p in process_online_integer, (d,b) in period__branch, (d,t) in dt_non_anticipativity}:
+s.t. non_anticipativity_online_integer{p in process_online_integer, (d,b) in period__branch, (d,t) in dt_non_anticipativity: b in period_in_use}:
   + v_online_integer[p,d,t] 
   = 
   + v_online_integer[p,b,t] 
 ;
-s.t. non_anticipativity_online_linear{p in process_online_linear, (d,b) in period__branch, (d,t) in dt_non_anticipativity}:
+s.t. non_anticipativity_online_linear{p in process_online_linear, (d,b) in period__branch, (d,t) in dt_non_anticipativity: b in period_in_use}:
   + v_online_linear[p,d,t] 
   = 
   + v_online_linear[p,b,t] 
 ;
-s.t. non_anticipativity_reserve{(p, r, ud, n) in process_reserve_upDown_node_active, (d,b) in period__branch, (d,t) in dt_non_anticipativity: sum{(r, ud, g) in reserve__upDown__group} 1}: 
+s.t. non_anticipativity_reserve{(p, r, ud, n) in process_reserve_upDown_node_active, (d,b) in period__branch, (d,t) in dt_non_anticipativity: sum{(r, ud, g) in reserve__upDown__group} 1 && b in period_in_use}: 
   + v_reserve[p, r, ud, n, d, t]
   =
   + v_reserve[p, r, ud, n, b, t]
@@ -4613,7 +4613,7 @@ for {s in solve_current, d in d_realized_period: 'yes' not in exclude_entity_out
   {
 	  printf '\n%s,%s,%s','curtailment', s, d >> fn_unit__sinkNode__d_curtailment;
     for {(u, sink) in process_sink : u in process_VRE}
-      { printf ',%.6f', ( if entity_all_capacity[u, d] 
+      { printf ',%.6f', ( if entity_all_capacity[u, d] && potentialVREgen[u, sink, d]
 					      then ( potentialVREgen[u, sink, d] - r_process_sink_flow_d[u, sink, d] ) / potentialVREgen[u, sink, d]
 						  else 0 ) >> fn_unit__sinkNode__d_curtailment; }
     printf '\n%s,%s,%s','potential', s, d >> fn_unit__sinkNode__d_curtailment;
