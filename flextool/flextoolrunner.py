@@ -2429,7 +2429,7 @@ def write_parameter(db, cl_pars, header, filename,
                 value = param["parsed_value"]
                 indexes = []
                 if api.parameter_value.from_database_to_dimension_count(param["value"], param["type"]) <= 1:
-                    result = list(value.indexes)
+                    result = [str(ind) for ind in value.indexes]
                     # Doing a zip, since there can be multiple rows in the map
                     result = list(zip(result, [str(v) for v in value.values]))
                     for res in result:
