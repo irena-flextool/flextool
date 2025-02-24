@@ -257,6 +257,8 @@ class FlexToolRunner:
     def create_averaged_timeseries(self,solve):
         timeseries_map={
             'pt_node_inflow.csv': "sum",
+            'pt_commodity.csv': "average",
+            'pt_group.csv': "average",
             'pt_node.csv': "average",
             'pt_process.csv': "average",
             'pt_profile.csv': "average",
@@ -264,6 +266,8 @@ class FlexToolRunner:
             'pt_process_sink.csv': "average",
             'pt_reserve__upDown__group.csv': "average",
             'pbt_node_inflow.csv': "sum",
+            'pbt_commodity.csv': "average",
+            'pbt_group.csv': "average",
             'pbt_node.csv': "average",
             'pbt_process.csv': "average",
             'pbt_profile.csv': "average",
@@ -1921,6 +1925,8 @@ class FlexToolRunner:
                                  filter_in_type=["float", "str", "bool"])
             write_parameter(db, [("commodity", "price")], "commodity,commodityParam,time,pt_commodity",
                             "input/pt_commodity.csv", filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
+            write_parameter(db, [("commodity", "price")], "commodity,commodityParam,branch,time_start,time,pbt_commodity",
+                            "input/pbt_commodity.csv", filter_in_type=["3d_map"], param_print=True)
             write_parameter(db, [("commodity", "price"), ("commodity", "co2_content")], "commodity,commodityParam,p_commodity",
                             "input/p_commodity.csv", filter_in_type=["float", "str"], param_print=True)
             write_parameter(db, [("commodity", "price")], "commodity,commodityParam,period,pd_commodity",
@@ -2312,8 +2318,13 @@ class FlexToolRunner:
             write_parameter(db, [("group", "co2_price"),
                                  ("group", "max_instant_flow"),
                                  ("group", "min_instant_flow"),
-                                ], "group,groupParam,period,pt_group", "input/pt_group.csv",
+                                ], "group,groupParam,time,pt_group", "input/pt_group.csv",
                             filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
+            write_parameter(db, [("group", "co2_price"),
+                                 ("group", "max_instant_flow"),
+                                 ("group", "min_instant_flow"),
+                                ], "group,groupParam,branch,time_start,time,pbt_group", "input/pbt_group.csv",
+                            filter_in_type=["3d_map"], param_print=True)
             write_parameter(db, [("unit", "efficiency"),
                                  ("unit", "efficiency_at_min_load"),
                                  ("unit", "min_load"),

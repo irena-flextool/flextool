@@ -72,6 +72,7 @@ set sense_equal within sense;
 
 set commodityParam;
 set commodityPeriodParam within commodityParam;
+set commodityTimeParam within commodityParam;
 set nodeParam;
 set nodeParam_def1 within nodeParam;
 set nodePeriodParam;
@@ -126,6 +127,7 @@ set periodAll 'd - Time periods in data (including those currently in use)' := p
 
 param p_group {g in group, groupParam} default 0;
 param pd_group {g in group, groupPeriodParam, d in periodAll} default 0;
+param pt_group {g in group, groupTimeParam, time} default 0;
 param p_group__process {g in group, p in process, groupParam};
 
 
@@ -315,6 +317,7 @@ param p_model {modelParam};
 param p_nested_model {modelParam};
 param p_commodity {c in commodity, commodityParam} default 0;
 param pd_commodity {c in commodity, commodityPeriodParam, d in periodAll} default 0;
+param pt_commodity {c in commodity, commodityTimeParam, time} default 0;
 
 param p_node {node, nodeParam} default 0;
 param pd_node {node, nodePeriodParam, periodAll} default 0;
@@ -515,6 +518,8 @@ table data IN 'CSV' 'input/default_values.csv' : class_paramName_default <-[clas
 table data IN 'CSV' 'input/default_values.csv' : [class,paramName], default_value;
 
 #Timeseries parameters, Timestep values are in solve_data as they might be averaged for the solve
+table data IN 'CSV' 'solve_data/pt_commodity.csv' : node__param__time <- [commodity, commodityParam, time], pt_commodity~pt_commodity;
+table data IN 'CSV' 'solve_data/pt_group.csv' : node__param__time <- [group, groupParam, time], pt_group~pt_group;
 table data IN 'CSV' 'solve_data/pt_node.csv' : node__param__time <- [node, nodeParam, time], pt_node~pt_node;
 table data IN 'CSV' 'solve_data/pt_node_inflow.csv' : node__time_inflow <- [node, time], pt_node_inflow~pt_node_inflow;
 table data IN 'CSV' 'solve_data/pt_process.csv' : process__param__time <- [process, processParam, time], pt_process~pt_process;
