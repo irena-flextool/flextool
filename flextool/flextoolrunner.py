@@ -1756,7 +1756,7 @@ class FlexToolRunner:
             self.write_first_and_last_periods(active_time_lists[solve], self.timeblocks_used_by_solves[complete_solve[solve]], period__branch_lists[solve])
 
             #check if the upper level fixes storages
-            if complete_solve[solve] in self.contains_solves.values() and any(complete_solve[parent_roll[solve]] == solve_period[0] for solve_period in self.fix_storage_periods): # check that the parent_roll exists and has storage fixing
+            if [complete_solve[solve]] in self.contains_solves.values() and any(complete_solve[parent_roll[solve]] == solve_period[0] for solve_period in self.fix_storage_periods): # check that the parent_roll exists and has storage fixing
                 storage_fix_values_exist = True
             else:
                 storage_fix_values_exist = False
