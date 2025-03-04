@@ -1164,7 +1164,43 @@ class FlexToolRunner:
             for period in period_first_list:
                 realfile.write(period+"\n")
 
-        
+    def separate_period_and_timeseries_data(self, timelines, solve__period__timeblock):
+        """
+        This function separates period data from timeseries data. It only exists because there is no good way to differentiate 1d-Maps from each other.
+        """
+        inputfiles = ['pdt_commodity.csv',
+                      'pdt_group.csv']
+        for inputfile in inputfiles:
+            output_period = f'input/pd_{inputfile[4:]}'
+            output_timeseries = f'input/pt_{inputfile[4:]}'
+            timesteps = []
+            for timeline in list(timelines.values()):
+                for step in timeline:
+                    timesteps.append(step[0])
+            periods = []
+            for period__timeblocks in solve__period__timeblock.values():
+                for period__timeblock in period__timeblocks:
+                    periods.append(period__timeblock[0]) 
+
+            with open(output_period, 'w', newline='') as blk_p:
+                period_writer = csv.writer(blk_p, delimiter=',')
+                with open(output_timeseries, 'w', newline='') as blk_t:
+                    timeseries_writer = csv.writer(blk_t, delimiter=',') 
+                    with open(f'input/{inputfile}', 'r') as blk:
+                        filereader = csv.reader(blk, delimiter=',')
+                        headers = next(filereader)
+                        timeseries_writer.writerow(headers)
+                        period_writer.writerow(headers[:-2]+['period',f'pd_{headers[-1][3:]}'])
+                        while True:
+                            try:
+                                datain = next(filereader)
+                                if datain[2] in periods:
+                                    period_writer.writerow(datain)
+                                elif datain[2] in timesteps:
+                                    timeseries_writer.writerow(datain)
+                            except StopIteration:
+                                break
+
     #these exist to connect timesteps from two different timelines or aggregated versions of one
     def connect_two_timelines(self,period,first_solve,second_solve, period__branch):
         first_period_timeblocks = self.timeblocks_used_by_solves[first_solve]
@@ -1754,6 +1790,7 @@ class FlexToolRunner:
             self.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve])
             self.write_solve_branch__time_branch_list_and_weight(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve])
             self.write_first_and_last_periods(active_time_lists[solve], self.timeblocks_used_by_solves[complete_solve[solve]], period__branch_lists[solve])
+            self.separate_period_and_timeseries_data(self.timelines, self.timeblocks_used_by_solves)
 
             #check if the upper level fixes storages
             if [complete_solve[solve]] in self.contains_solves.values() and any(complete_solve[parent_roll[solve]] == solve_period[0] for solve_period in self.fix_storage_periods): # check that the parent_roll exists and has storage fixing
@@ -1922,11 +1959,9 @@ class FlexToolRunner:
                                  "class,paramName,default_value", "input/default_values.csv",
                                  filter_in_type=["float", "str", "bool"])
             write_parameter(db, [("commodity", "price")], "commodity,commodityParam,time,pt_commodity",
-                            "input/pt_commodity.csv", filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
+                            "input/pdt_commodity.csv", filter_in_type=["1d_map"], param_print=True)
             write_parameter(db, [("commodity", "price"), ("commodity", "co2_content")], "commodity,commodityParam,p_commodity",
                             "input/p_commodity.csv", filter_in_type=["float", "str"], param_print=True)
-            write_parameter(db, [("commodity", "price")], "commodity,commodityParam,period,pd_commodity",
-                            "input/pd_commodity.csv", filter_in_type=["1d_map"], filter_out_index="time", param_print=True)
             write_entity(db, ["commodity"], "commodity", "input/commodity.csv")
             write_entity(db, ["commodity__node"], "commodity,node", "input/commodity__node.csv")
             write_parameter(db, [("constraint", "sense")], "constraint,sense", "input/constraint__sense.csv")
@@ -2309,13 +2344,8 @@ class FlexToolRunner:
                                  ("group", "penalty_capacity_margin"),
                                  ("group", "penalty_inertia"),
                                  ("group", "penalty_non_synchronous"),
-                                 ], "group,groupParam,period,pd_group", "input/pd_group.csv",
-                            filter_in_type=["1d_map"], filter_out_index="time", param_print=True)
-            write_parameter(db, [("group", "co2_price"),
-                                 ("group", "max_instant_flow"),
-                                 ("group", "min_instant_flow"),
-                                ], "group,groupParam,time,pt_group", "input/pt_group.csv",
-                            filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
+                                 ], "group,groupParam,time,pt_group", "input/pdt_group.csv",
+                            filter_in_type=["1d_map"], param_print=True)
             write_parameter(db, [("unit", "efficiency"),
                                  ("unit", "efficiency_at_min_load"),
                                  ("unit", "min_load"),
