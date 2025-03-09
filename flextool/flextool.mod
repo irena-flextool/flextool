@@ -4631,9 +4631,10 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,' >> fn_unit__sinkNode__d_curtailment;
 	for {(u, sink) in process_sink : u in process_VRE} printf ',%s', sink >> fn_unit__sinkNode__d_curtailment;
   }
-for {s in solve_current, d in d_realized_period: 'yes' not in exclude_entity_outputs}
+for {s in solve_current, d in d_realized_period: 'yes' not in exclude_entity_outputs
+                                                 && exists{(u, sink) in process_sink : u in process_VRE} 1}
   {
-	  printf '\n%s,%s,%s','curtailment', s, d >> fn_unit__sinkNode__d_curtailment;
+    printf '\n%s,%s,%s','curtailment', s, d >> fn_unit__sinkNode__d_curtailment;
     for {(u, sink) in process_sink : u in process_VRE}
       { printf ',%.6f', ( if entity_all_capacity[u, d] && potentialVREgen[u, sink, d]
 					      then ( potentialVREgen[u, sink, d] - r_process_sink_flow_d[u, sink, d] ) / potentialVREgen[u, sink, d]
@@ -4642,7 +4643,7 @@ for {s in solve_current, d in d_realized_period: 'yes' not in exclude_entity_out
     for {(u, sink) in process_sink : u in process_VRE}
       { printf ',%.6f', ( if entity_all_capacity[u, d] then potentialVREgen[u, sink, d] else 0 ) >> fn_unit__sinkNode__d_curtailment; }
   } 
-printf 'Write unit__outputNode curtailment share of VRE units for periods...\n';
+printf 'Write unit__outputNode curtailment share of VRE units for time...\n';
 param fn_unit__sinkNode__share__dt_curtailment symbolic := "output/unit_curtailment_share__outputNode__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
@@ -4651,7 +4652,8 @@ for {i in 1..1 : p_model['solveFirst']}
 	printf '\n,,,' >> fn_unit__sinkNode__share__dt_curtailment;
 	for {(u, sink) in process_sink : u in process_VRE} printf ',%s', sink >> fn_unit__sinkNode__share__dt_curtailment;
   }
-for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_outputs}
+for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_outputs
+                                                 && exists{(u, sink) in process_sink : u in process_VRE} 1}
   {
     for {(d,t) in dt_realize_dispatch }
     {
@@ -5441,4 +5443,5 @@ display v_invest, v_divest, solve_current, total_cost;
 #display {n in nodeBalancePeriod, (d, t) in dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {n in nodeBalancePeriod, (d, t) in dt}: pdtNodeInflow[n, d, t];
 #display p_entity_existing_capacity_first_solve;
+
 end;

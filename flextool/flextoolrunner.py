@@ -1652,8 +1652,11 @@ class FlexToolRunner:
             #the relationship information is removed so that the datatype would be float not str
             relationship_start_df=pd.read_csv(inputfile, header = 0, nrows=row_start_ind-1)
             df = pd.read_csv(inputfile,header = 0, skiprows=range(1,row_start_ind))
-        else:    
+        else:
             df = pd.read_csv(inputfile,header = 0)
+        # In case there no data for this has been output, the processing needs to be skipped
+        if df.empty:
+            return
         from_col = df.columns[from_col_ind]
         
         rows = list(df.index)
