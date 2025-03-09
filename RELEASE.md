@@ -1,3 +1,11 @@
+## Release 3.11.0 (4.3.2025)
+**Bug fixes**
+- Preventing crashes on curtailment calucaltions to units without capacity and MIP stochastic solving
+- Correcting nested storage state passing
+
+**New features**
+- Timeseries prices for commodity and co2
+
 ## Release 3.10.0 (31.1.2025)
 **Bug fixes**
 
