@@ -1910,7 +1910,6 @@ class FlexToolRunner:
 
 
     def params_to_dict(self, db, cl, par, mode, str_to_list=False):
-        print(par)
         all_params = db.get_parameter_value_items(entity_class_name=cl,
                                                  parameter_definition_name=par)
         if mode == "defaultdict":
@@ -2402,7 +2401,6 @@ def write_parameter(db, cl_pars, header, filename,
                     filter_in_type=None, filter_out_index=None, filter_in_value=None,
                     no_value=False, param_print=False, dimens=None, param_loc=None, no_entity=None):
     # interpret map dimensionality and map into map for later comparisons
-    print(f'writing: {cl_pars}')
     type_filter_map_dim = []
     if filter_in_type:
         map_found = False
