@@ -15,3 +15,8 @@ results/
 __pycache__
 .idea/
 site/"example_input.xlsx" 
+*.xls*
+site/
+input/
+output/
+solve_data/

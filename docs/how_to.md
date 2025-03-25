@@ -1,7 +1,7 @@
 # How-to
 
 How-to section contains examples on how to include common energy system components in your model. The examples assume that you have sufficient understanding of FlexTool basics (e.g. by doing the tutorial).
-Each example will either include an example database file that is located in the 'how to examples databases' folder or the example is included in the init.sqlite as a scenario. If the example is in its own database, you can switch to that database by selecting the 'input' data store in the workflow and then changing the database by clicking the folder icon next to the current database file path in the 'Data store properties' widget. Navigate to the 'how to example databases' folder and choose the appropriate database.
+Each example will either include an example database file that is located in the 'how to examples databases' folder or the example is included in the examples.sqlite as a scenario. If the example is in its own database, you can switch to that database by selecting the 'input' data store in the workflow and then changing the database by clicking the folder icon next to the current database file path in the 'Data store properties' widget. Navigate to the 'how to example databases' folder and choose the appropriate database.
 
 This section is divided into two parts: 
 
@@ -21,7 +21,7 @@ Building parts of the model:
 - [How to add CO2 emissions, costs and limits](#how-to-add-co2-emissions-costs-and-limits)
 - [How to create a non-synchronous limit](#how-to-create-a-non-synchronous-limit)
 - [How to see the VRE curtailment and VRE share results for a node](#how-to-see-the-vre-curtailment-and-vre-share-results-for-a-node)
-
+- [How to create a delay between two nodes](#how-to-create-a-delay-between-two-nodes)
 
 Setting different solves:
 
@@ -67,7 +67,7 @@ Be careful when choosing datatypes! Maps need to be maps not arrays. (In the fut
 
 ## How to create a PV, wind or run-of-river hydro power plant
 
-**(init.sqlite scenario: wind)**
+**(examples.sqlite scenario: wind)**
 ***init - west - wind***
 
 These three power plant types don't use any commodities (i.e. fuels), but are instead dependant on a timeseries profile.
@@ -161,7 +161,7 @@ Examples of all these options are shown in the demand.sqlite.
 
 ## How to add a storage unit (battery) 
 
-**(init.sqlite, scenario: wind_battery)**
+**(examples.sqlite, scenario: wind_battery)**
 ***init - west - wind - battery***
 
 In the ***Init*** SQLite database, there is a `scenario` *wind_battery*.
@@ -215,7 +215,7 @@ Finally `connection_node_node` is needed between inverter, the battery and the d
 ![Add a battery](./battery.png)
 
 ##  How to make investments (storage/unit) 
-**(init.sqlite scenario: wind_battery_invest)**
+**(examples.sqlite scenario: wind_battery_invest)**
 ***init - west - wind - battery - battery_invest***
 
 Here we will use the previous battery scenario to represent the investment options in the tool.
@@ -287,7 +287,7 @@ Finally, FlexTool can actually mix three different types of constraint coefficie
 
 ## How to create combined heat and power (CHP) 
 
-**(init.sqlite scenario: coal_chp)**
+**(examples.sqlite scenario: coal_chp)**
 ***init - west - coal_chp - heat***
 
 First, a new *heat* `node` is added with the necessary parameters. The `nodes` can be used for energy form of energy or matter, so the heat demand node does not differ from the electricity demand node. 
@@ -574,7 +574,7 @@ The `constraint_flow_coefficient` for pump_input should therefore be (1/efficien
 ![Hydro pump relation](./hydro_pump_relations.PNG)
 
 ## How to add a reserve
-**(init.sqlite: scenario network_coal_wind_reserve)**
+**(examples.sqlite: scenario network_coal_wind_reserve)**
 
 In FlexTool, reserves are defined for a group of nodes. If there is a need to have a reserve requirement for a single node, it needs its own group. Therefore, when creating a reserve, the first step is to add a new `group` (e.g. *electricity*) with all member nodes (e.g. *west*, *east* and *north*) using the `group__node` entity. Then, a new reserve categories can be added (e.g. *primary*) to the `reserve` entity. 
 Finally, make sure there are *up* and *down* entities in the `UpDown' entity. These are hard-coded names in FlexTool and need to be used when creating reserves.
@@ -625,7 +625,7 @@ Next we will add ramp limits. With the ramping limits, the user can force the ch
 
 ## How to add CO2 emissions, costs and limits
 
-**(init.sqlite scenario: coal_co2 )**
+**(examples.sqlite scenario: coal_co2 )**
 ***init - west - coal - co2_price - co2_limit***
 
 Carbon dioxide emissions are added to FlexTool by associating relevant `commodities` (e.g. *coal*) with a `co2_content` parameter (CO2 content (tons per MWh) of energy contained in the fuel). 
@@ -706,8 +706,15 @@ Note: The results are the share of curtailment in relation to the inflow (demand
 
 ![Curtailment results](./curtailment_results.PNG)
 
+## How to create a delay between two nodes
+**(examples.sqlite scenario: water_pump_delayed)**
+
+Sometimes a flow between two nodes needs to be delayed, for example water flow in river systems can take hours between two power plants. This can be approximated using `delay` parameter available for units (and unidirectional connections). Delay can be expressed using a constant value (hours) or as a weighted map of time delays (index: time delay in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Delay requires that the time resolutions in the model are always integer multiples of these time differences.
+
+![Delay](./delay.png)
+
 ## How to run solves in a sequence (investment + dispatch)
-**(init.sqlite scenario: 5weeks_invest_fullYear_dispatch_coal_wind)**
+**(examples.sqlite scenario: 5weeks_invest_fullYear_dispatch_coal_wind)**
 
 In this example, investment decisions are made using a five week sample of a year and then the dispatch is solved with the full year timeline using these investments. 
 
@@ -747,7 +754,7 @@ A multi-year model is constructed from multiple periods, each presenting one yea
 A multi-year model could be solved at one go (multi_year_one_solve) or by rolling through several solves (multi-year) where each solve has a foresight horizon and a realisation horizon. Next we will go through both options.
 
 ### Multi year with one solve
-**(init.sqlite scenario: multi_year_one_solve)**
+**(examples.sqlite scenario: multi_year_one_solve)**
 
 In this example, one solve is used for all the four periods. All the four periods need to be added to the solve arrays `invest_periods` and `realized_periods`. Here the same timeblock is used for all the four periods, so only difference between them is the increasing inflow set above. The parameters that need to be added to the `solve` entity:
 
@@ -759,7 +766,7 @@ In this example, one solve is used for all the four periods. All the four period
 ![Multi-year one solve](./multi_year_one_solve.PNG)
 
 ### Multi year with rolling solves 
-**(init.sqlite scenario: multi_year)**
+**(examples.sqlite scenario: multi_year)**
 
 If the solving time gets too big, there is an option to split the timeline into overlapping parts and solve them separately. This shortens the solving time as it increases exponentially as the model grows. Therefore, collection of smaller solves is faster. The drawback is that the accuracy will be affected if there are dependencies with a larger time interval than the split size. 
 
@@ -779,7 +786,7 @@ Next figure shows the values needed to define one solve (out of the four solves 
 
 Note the the `solve_mode`: *rolling_window* is not used! This is not for investment runs (without nesting) as it rolls freely, and investments should only be made at the start of the period. This example is called 'manual rolling' later when those are discussed.
 
-In the init.sqlite, the solve entities have solver parameters: `highs_method`, `highs_parallel` and `highs_presolve`. They only affect the speed and not the results, but usually the default values are good enough and the user should only change them if they understand how the solvers work.
+In the examples.sqlite, the solve entities have solver parameters: `highs_method`, `highs_parallel` and `highs_presolve`. They only affect the speed and not the results, but usually the default values are good enough and the user should only change them if they understand how the solvers work.
 
 ![Solve data](./data_for_one_solve.png)
 
@@ -950,7 +957,7 @@ You can use the same lower level solve with each the investment solves as the lo
 
 Note that the results of a nested rolling solve run are not fully optimal, because the information in the model is decreased. This is the price you pay for the speed. Therefore, the results should not be taken as they are, instead it is important to know how to interpret the results: What phenomena are missing? How will they affect the results? Where should extra investments go to satisfy the demand (there is a possibility to use the `capacity_margin` method to force extra investments)?
 
-In the init.sqlite there are four example scenarios related to this:
+In the examples.sqlite there are four example scenarios related to this:
 
 - *multi_fullYear_battery*: The four period full year single solve, with coal, wind, battery storage with unlimited investment possibilities. Running this is still possible but takes a few minutes. This is here as a reference for the nested solves.
 - *multi_fullYear_battery_nested_24h_invest_one_solve*: This has the nested structure and the investment solve is done with 24h timesteps and storage solve 6h timesteps.

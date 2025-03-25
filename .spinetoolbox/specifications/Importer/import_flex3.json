@@ -4519,7 +4519,7 @@
                 "2": "string"
             }
         },
-        "source_type": "DataPackageConnector"
+        "source_type": "DatapackageReader"
     },
     "description": ""
 }

@@ -369,6 +369,17 @@ set ed_history_realized_read dimen 2 within {e in entity, d in period_with_histo
 param p_entity_period_existing_capacity {e in entity, d in period_with_history};
 param p_entity_period_invested_capacity {e in entity, d in period_with_history};
 
+####
+# Delayed flows
+####
+set time_step_diff dimen 1;
+#set process_delayed dimen 1 within process;
+#set process_source_undelayed within process_source;
+#set process_source_delayed within process_source;
+set process_delay_weighted__time_step_diff dimen 2 within {process, time_step_diff};
+set tt__time_step_diff dimen 3 within {time, time, time_step_diff};
+param p_process_delay_weighted {process, time_step_diff};
+set process_delay_single__time_step_diff dimen 2 within {process, time_step_diff};
 
 ####
 #Stochastic sets and params
@@ -461,6 +472,7 @@ table data IN 'CSV' 'input/p_process_node_constraint_flow_coefficient.csv' : pro
 table data IN 'CSV' 'input/p_process_constraint_capacity_coefficient.csv' : process_capacity_constraint <- [process, constraint];
 table data IN 'CSV' 'input/p_node_constraint_capacity_coefficient.csv' : node_capacity_constraint <- [node, constraint];
 table data IN 'CSV' 'input/p_node_constraint_state_coefficient.csv' : node_state_constraint <- [node, constraint];
+table data IN 'CSV' 'input/p_process_delay_weighted.csv' : process_delay_weighted__time_step_diff <- [process, time_step_diff];
 table data IN 'CSV' 'input/constraint__sense.csv' : constraint__sense <- [constraint, sense];
 table data IN 'CSV' 'input/p_process.csv' : process__param <- [process, processParam];
 table data IN 'CSV' 'input/p_profile.csv' : profile_param <- [profile];
@@ -486,6 +498,9 @@ table data IN 'CSV' 'input/p_process_source.csv' : process__source__param <- [pr
 table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
 table data IN 'CSV' 'input/pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
 table data IN 'CSV' 'input/timeline.csv' : timeline__timestep__duration <- [timeline,timestep,duration];
+table data IN 'CSV' 'solve_data/time_step_diff.csv' : time_step_diff <- [time_step_diff];
+table data IN 'CSV' 'solve_data/tt__time_step_diff.csv' : tt__time_step_diff <- [time_source,time_sink,time_step_diff];
+table data IN 'CSV' 'input/process_delay_single.csv' : process_delay_single__time_step_diff <- [process,time_step_diff];
 
 # Parameters for model data.
 table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_commodity;
@@ -504,6 +519,7 @@ table data IN 'CSV' 'input/p_process_sink.csv' : [process, sink, sourceSinkParam
 table data IN 'CSV' 'input/p_process_sink_coefficient.csv' : [process, sink], p_process_sink_coefficient;
 table data IN 'CSV' 'input/p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
 table data IN 'CSV' 'input/p_process_source_coefficient.csv' : [process, source], p_process_source_coefficient;
+table data IN 'CSV' 'input/p_process_delay_weighted.csv' : [process, time_step_diff], p_process_delay_weighted;
 table data IN 'CSV' 'input/p_constraint_constant.csv' : [constraint], p_constraint_constant;
 table data IN 'CSV' 'input/p_process.csv' : [process, processParam], p_process;
 table data IN 'CSV' 'input/pd_process.csv' : [process, processParam, period], pd_process;
@@ -586,12 +602,21 @@ set nodeBalancePeriod := {n in node : (n, 'balance_within_period') in node__node
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
+set process_delayed := setof {(p, td) in process_delay_weighted__time_step_diff} (p)
+                       union setof {(p, td) in process_delay_single__time_step_diff} (p);
+
 set process__fork_method_yes dimen 2 within {process, fork_method} := 
     {p in process, m in fork_method 
-	  : (sum{(p, source) in process_source} 1 > 1 || sum{(p, sink) in process_sink} 1 > 1) && m in fork_method_yes};
+	  : (    sum{(p, source) in process_source} 1 > 1
+	      || sum{(p, sink) in process_sink} 1 > 1
+	      || p in process_delayed
+	    ) && m in fork_method_yes};
 set process__fork_method_no dimen 2 within {process, fork_method} := 
     {p in process, m in fork_method 
-	  : (sum{(p, source) in process_source} 1 < 2 && sum{(p, sink) in process_sink} 1 < 2) && m in fork_method_no};
+	  : (    sum{(p, source) in process_source} 1 < 2
+	      && sum{(p, sink) in process_sink} 1 < 2
+	      && p not in process_delayed
+	    ) && m in fork_method_no};
 set process__fork_method := process__fork_method_yes union process__fork_method_no;
 set process_ct_startup_fork_method := 
     { p in process, m1 in ct_method, m2 in startup_method, m3 in fork_method, m in method
@@ -758,6 +783,15 @@ set process_online_linear 'processes with an online status using linear variable
 set process_online_integer 'processes with an online status using integer variable' := setof {(p, m) in process_method : m in method_MIP} p;
 set process_online := process_online_linear union process_online_integer;
 set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
+
+set process_source_undelayed := {(p, e) in process_source : p not in process_delayed};
+set process_source_delayed := {(p, e) in process_source : p in process_delayed};
+set process_source_sink_undelayed := {(p, source, sink) in process_source_sink : p not in process_delayed};
+set process_source_sink_delayed := {(p, source, sink) in process_source_sink : p in process_delayed};
+param p_process_delay_weight {p in process_delayed, td in time_step_diff} :=
+  + if (p, td) in process_delay_single__time_step_diff
+    then 1
+    else p_process_delay_weighted[p, td];
 
 param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} := 
         + if (c, param, d) in commodity__param__period
@@ -1936,7 +1970,7 @@ minimize total_cost:
 ;
 param w_total_cost := gmtime() - datetime0 - setup1 - w_calc_slope - setup2;
 display w_total_cost;
-
+display process_source_sink_delayed;
 # Energy balance in each node  
 s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
   + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] / p_hole_multiplier[c] )
@@ -1955,7 +1989,14 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
   # n is sink
   + sum {(p, source, n) in process_source_sink} (
       + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t]
-	)  
+	)
+# It would be nice to have single variable delay, but not yet implemented (needs post-processing and fixing the term below)
+#  + sum {(p, source, n) in process_source_sink_delayed} (
+#      + sum {(t, t_, td) in tt__time_step_diff : p_process_delay_weight[p, td]}
+#        ( + v_flow[p, source, n, d, t_] * p_entity_unitsize[p] * step_duration[d, t_]
+#  	          * p_process_delay_weight[p, td]
+#        )
+#    )
   # n is source
   - sum {(p, n, sink) in process_source_sink_eff } ( 
       + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
@@ -2142,22 +2183,28 @@ param reserves := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_tota
 display reserves;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
-s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t) in dt} :
-  + sum {source in entity : (p, source) in process_source} 
-    ( + v_flow[p, source, p, d, t] * p_entity_unitsize[p]
+s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t_) in dt} :
+  + sum {source in entity : (p, source) in process_source_undelayed}
+    ( + v_flow[p, source, p, d, t_] * p_entity_unitsize[p]
   	      * p_process_source_coefficient[p, source]
 	)
+  + sum {source in entity : (p, source) in process_source_delayed}
+      + sum {(t, t_, td) in tt__time_step_diff : p_process_delay_weight[p, td]}
+        ( + v_flow[p, source, p, d, t] * p_entity_unitsize[p]
+  	          * p_process_source_coefficient[p, source]
+  	          * p_process_delay_weight[p, td]
+	    )
   =
-  + sum {sink in entity : (p, sink) in process_sink && p_process_sink_coefficient[p,sink] != 0} 
-    ( + v_flow[p, p, sink, d, t] * p_entity_unitsize[p]
-	      / p_process_sink_coefficient[p, sink]
-	)
-	  * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
-  + (if (p, 'min_load_efficiency') in process__ct_method then 
-			( + (if p in process_online_linear then v_online_linear[p, d, t]) 
-			  + (if p in process_online_integer then v_online_integer[p, d, t])
+  + sum {sink in entity : (p, sink) in process_sink && p_process_sink_coefficient[p,sink] != 0}
+    ( + v_flow[p, p, sink, d, t_] * p_entity_unitsize[p]
+          / p_process_sink_coefficient[p, sink]
+    )
+	  * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t_] else 1 / pdtProcess[p, 'efficiency', d, t_])
+  + (if (p, 'min_load_efficiency') in process__ct_method then
+			( + (if p in process_online_linear then v_online_linear[p, d, t_])
+			  + (if p in process_online_integer then v_online_integer[p, d, t_])
 			)
-            * pdtProcess_section[p, d, t] * p_entity_unitsize[p])
+            * pdtProcess_section[p, d, t_] * p_entity_unitsize[p])
 ;
 param indirect := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves;
 display indirect;
@@ -5443,5 +5490,4 @@ display v_invest, v_divest, solve_current, total_cost;
 #display {n in nodeBalancePeriod, (d, t) in dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {n in nodeBalancePeriod, (d, t) in dt}: pdtNodeInflow[n, d, t];
 #display p_entity_existing_capacity_first_solve;
-
 end;
