@@ -372,14 +372,14 @@ param p_entity_period_invested_capacity {e in entity, d in period_with_history};
 ####
 # Delayed flows
 ####
-set time_step_diff dimen 1;
+set delay_duration dimen 1;
 #set process_delayed dimen 1 within process;
 #set process_source_undelayed within process_source;
 #set process_source_delayed within process_source;
-set process_delay_weighted__time_step_diff dimen 2 within {process, time_step_diff};
-set tt__time_step_diff dimen 3 within {time, time, time_step_diff};
-param p_process_delay_weighted {process, time_step_diff};
-set process_delay_single__time_step_diff dimen 2 within {process, time_step_diff};
+set process_delay_weighted__delay_duration dimen 2 within {process, delay_duration};
+set tt__delay_duration dimen 3 within {time, time, delay_duration};
+param p_process_delay_weighted {process, delay_duration};
+set process_delay_single__delay_duration dimen 2 within {process, delay_duration};
 
 ####
 #Stochastic sets and params
@@ -472,7 +472,7 @@ table data IN 'CSV' 'input/p_process_node_constraint_flow_coefficient.csv' : pro
 table data IN 'CSV' 'input/p_process_constraint_capacity_coefficient.csv' : process_capacity_constraint <- [process, constraint];
 table data IN 'CSV' 'input/p_node_constraint_capacity_coefficient.csv' : node_capacity_constraint <- [node, constraint];
 table data IN 'CSV' 'input/p_node_constraint_state_coefficient.csv' : node_state_constraint <- [node, constraint];
-table data IN 'CSV' 'input/p_process_delay_weighted.csv' : process_delay_weighted__time_step_diff <- [process, time_step_diff];
+table data IN 'CSV' 'input/p_process_delay_weighted.csv' : process_delay_weighted__delay_duration <- [process, delay_duration];
 table data IN 'CSV' 'input/constraint__sense.csv' : constraint__sense <- [constraint, sense];
 table data IN 'CSV' 'input/p_process.csv' : process__param <- [process, processParam];
 table data IN 'CSV' 'input/p_profile.csv' : profile_param <- [profile];
@@ -498,9 +498,9 @@ table data IN 'CSV' 'input/p_process_source.csv' : process__source__param <- [pr
 table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
 table data IN 'CSV' 'input/pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
 table data IN 'CSV' 'input/timeline.csv' : timeline__timestep__duration <- [timeline,timestep,duration];
-table data IN 'CSV' 'solve_data/time_step_diff.csv' : time_step_diff <- [time_step_diff];
-table data IN 'CSV' 'solve_data/tt__time_step_diff.csv' : tt__time_step_diff <- [time_source,time_sink,time_step_diff];
-table data IN 'CSV' 'input/process_delay_single.csv' : process_delay_single__time_step_diff <- [process,time_step_diff];
+table data IN 'CSV' 'solve_data/delay_duration.csv' : delay_duration <- [delay_duration];
+table data IN 'CSV' 'solve_data/tt__delay_duration.csv' : tt__delay_duration <- [time_source,time_sink,delay_duration];
+table data IN 'CSV' 'input/process_delay_single.csv' : process_delay_single__delay_duration <- [process,delay_duration];
 
 # Parameters for model data.
 table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_commodity;
@@ -519,7 +519,7 @@ table data IN 'CSV' 'input/p_process_sink.csv' : [process, sink, sourceSinkParam
 table data IN 'CSV' 'input/p_process_sink_coefficient.csv' : [process, sink], p_process_sink_coefficient;
 table data IN 'CSV' 'input/p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
 table data IN 'CSV' 'input/p_process_source_coefficient.csv' : [process, source], p_process_source_coefficient;
-table data IN 'CSV' 'input/p_process_delay_weighted.csv' : [process, time_step_diff], p_process_delay_weighted;
+table data IN 'CSV' 'input/p_process_delay_weighted.csv' : [process, delay_duration], p_process_delay_weighted;
 table data IN 'CSV' 'input/p_constraint_constant.csv' : [constraint], p_constraint_constant;
 table data IN 'CSV' 'input/p_process.csv' : [process, processParam], p_process;
 table data IN 'CSV' 'input/pd_process.csv' : [process, processParam, period], pd_process;
@@ -602,8 +602,8 @@ set nodeBalancePeriod := {n in node : (n, 'balance_within_period') in node__node
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
-set process_delayed := setof {(p, td) in process_delay_weighted__time_step_diff} (p)
-                       union setof {(p, td) in process_delay_single__time_step_diff} (p);
+set process_delayed := setof {(p, td) in process_delay_weighted__delay_duration} (p)
+                       union setof {(p, td) in process_delay_single__delay_duration} (p);
 
 set process__fork_method_yes dimen 2 within {process, fork_method} := 
     {p in process, m in fork_method 
@@ -788,8 +788,8 @@ set process_source_undelayed := {(p, e) in process_source : p not in process_del
 set process_source_delayed := {(p, e) in process_source : p in process_delayed};
 set process_source_sink_undelayed := {(p, source, sink) in process_source_sink : p not in process_delayed};
 set process_source_sink_delayed := {(p, source, sink) in process_source_sink : p in process_delayed};
-param p_process_delay_weight {p in process_delayed, td in time_step_diff} :=
-  + if (p, td) in process_delay_single__time_step_diff
+param p_process_delay_weight {p in process_delayed, td in delay_duration} :=
+  + if (p, td) in process_delay_single__delay_duration
     then 1
     else p_process_delay_weighted[p, td];
 
@@ -1992,7 +1992,7 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
 	)
 # It would be nice to have single variable delay, but not yet implemented (needs post-processing and fixing the term below)
 #  + sum {(p, source, n) in process_source_sink_delayed} (
-#      + sum {(t, t_, td) in tt__time_step_diff : p_process_delay_weight[p, td]}
+#      + sum {(t, t_, td) in tt__delay_duration : p_process_delay_weight[p, td]}
 #        ( + v_flow[p, source, n, d, t_] * p_entity_unitsize[p] * step_duration[d, t_]
 #  	          * p_process_delay_weight[p, td]
 #        )
@@ -2189,7 +2189,7 @@ s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t_) in dt} :
   	      * p_process_source_coefficient[p, source]
 	)
   + sum {source in entity : (p, source) in process_source_delayed}
-      + sum {(t, t_, td) in tt__time_step_diff : p_process_delay_weight[p, td]}
+      + sum {(t, t_, td) in tt__delay_duration : p_process_delay_weight[p, td]}
         ( + v_flow[p, source, p, d, t] * p_entity_unitsize[p]
   	          * p_process_source_coefficient[p, source]
   	          * p_process_delay_weight[p, td]
