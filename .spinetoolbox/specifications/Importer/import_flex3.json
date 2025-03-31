@@ -3839,6 +3839,1321 @@
                         ]
                     }
                 }
+            ],
+            "unit__outputnode__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "unit__node"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -1,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -2,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "flow_annualized"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 4
+                            }
+                        ]
+                    }
+                }
+            ],
+            "unit__inputnode__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "unit__node"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -1,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -2,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "flow_annualized"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 4
+                            }
+                        ]
+                    }
+                }
+            ],
+            "process__reserve__updown__node__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": -1
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "reserve"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "upDown"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -3,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -4,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -5,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -6,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "reservation_t"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 7
+                            }
+                        ]
+                    }
+                }
+            ],
+            "unit__inputnode__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "unit__node"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -1,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -2,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "flow_t"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 4
+                            }
+                        ]
+                    }
+                }
+            ],
+            "unit__outputnode__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "unit__node"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -1,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -2,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "flow_t"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 4
+                            }
+                        ]
+                    }
+                }
+            ],
+            "process__reserve__updown__node__period_average": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": -1
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "reserve"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "upDown"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -3,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -4,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -5,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -6,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "reservation_average"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 7
+                            }
+                        ]
+                    }
+                }
+            ],
+            "slack__reserve__updown__group__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "group__reserve__upDown"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "reserve"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "upDown"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "group"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -1,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -2,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -3,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "slack_reserve_t"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "unit_ramp__inputnode__dt": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "unit__node"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -1,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -2,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "ramp_t"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 4
+                            }
+                        ]
+                    }
+                }
+            ],
+            "unit_ramp__outputnode__dt": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "unit__node"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -1,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -2,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "ramp_t"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 4
+                            }
+                        ]
+                    }
+                }
+            ],
+            "unit_cf__inputnode__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "unit__node"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -1,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -2,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "cf"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 4
+                            }
+                        ]
+                    }
+                }
+            ],
+            "unit_cf__outputnode__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "unit__node"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -1,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -2,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "cf"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 4
+                            }
+                        ]
+                    }
+                }
+            ],
+            "unit_curtailment_share__outputnode__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "unit__node"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -1,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -2,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "curtailment_share"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "type"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 4
+                            }
+                        ]
+                    }
+                }
+            ],
+            "unit_curtailment__outputnode__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "unit__node"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "unit"
+                            },
+                            {
+                                "map_type": "Dimension",
+                                "position": "hidden",
+                                "value": "node"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "relationship"
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -1,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "Element",
+                                "position": -2,
+                                "import_entities": true
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "curtailment_t"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 4
+                            }
+                        ]
+                    }
+                }
+            ],
+            "group_process_co2__period": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "group"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": -1
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "CO2_annualized"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "group_node_vre_share__period__t": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "group"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": -1
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "VRE_share_t"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "solve"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "period"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "time"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -3892,7 +5207,22 @@
             "group_flows__period__t",
             "group_flows__period",
             "group_process_CO2__period",
-            "group__unit__node_inertia__period__t"
+            "group__unit__node_inertia__period__t",
+            "unit__outputnode__period",
+            "unit__inputnode__period",
+            "process__reserve__updown__node__period__t",
+            "unit__inputnode__period__t",
+            "unit__outputnode__period__t",
+            "process__reserve__updown__node__period_average",
+            "slack__reserve__updown__group__period__t",
+            "unit_ramp__inputnode__dt",
+            "unit_ramp__outputnode__dt",
+            "unit_cf__inputnode__period",
+            "unit_cf__outputnode__period",
+            "unit_curtailment_share__outputnode__period",
+            "unit_curtailment__outputnode__period__t",
+            "group_process_co2__period",
+            "group_node_vre_share__period__t"
         ],
         "table_options": {
             "node__period": {},
@@ -4025,6 +5355,51 @@
                 "has_header": false
             },
             "group__unit__node_inertia__period__t": {
+                "has_header": false
+            },
+            "unit__outputnode__period": {
+                "has_header": false
+            },
+            "unit__inputnode__period": {
+                "has_header": false
+            },
+            "process__reserve__updown__node__period__t": {
+                "has_header": false
+            },
+            "unit__inputnode__period__t": {
+                "has_header": false
+            },
+            "unit__outputnode__period__t": {
+                "has_header": false
+            },
+            "process__reserve__updown__node__period_average": {
+                "has_header": false
+            },
+            "slack__reserve__updown__group__period__t": {
+                "has_header": false
+            },
+            "unit_ramp__inputnode__dt": {
+                "has_header": false
+            },
+            "unit_ramp__outputnode__dt": {
+                "has_header": false
+            },
+            "unit_cf__inputnode__period": {
+                "has_header": false
+            },
+            "unit_cf__outputnode__period": {
+                "has_header": false
+            },
+            "unit_curtailment_share__outputnode__period": {
+                "has_header": false
+            },
+            "unit_curtailment__outputnode__period__t": {
+                "has_header": false
+            },
+            "group_process_co2__period": {
+                "has_header": false
+            },
+            "group_node_vre_share__period__t": {
                 "has_header": false
             }
         },
@@ -4391,6 +5766,91 @@
                 "4": "float",
                 "5": "float",
                 "6": "float"
+            },
+            "unit__outputnode__period": {
+                "0": "string",
+                "1": "string",
+                "2": "float",
+                "3": "float"
+            },
+            "unit__inputnode__period": {
+                "0": "string",
+                "1": "string",
+                "2": "float"
+            },
+            "process__reserve__updown__node__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string"
+            },
+            "unit__inputnode__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float"
+            },
+            "unit__outputnode__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float",
+                "4": "float"
+            },
+            "process__reserve__updown__node__period_average": {
+                "0": "string",
+                "1": "string"
+            },
+            "slack__reserve__updown__group__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string"
+            },
+            "unit_ramp__inputnode__dt": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float"
+            },
+            "unit_ramp__outputnode__dt": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float",
+                "4": "float"
+            },
+            "unit_cf__inputnode__period": {
+                "0": "string",
+                "1": "string",
+                "2": "float"
+            },
+            "unit_cf__outputnode__period": {
+                "0": "string",
+                "1": "string",
+                "2": "float",
+                "3": "float"
+            },
+            "unit_curtailment_share__outputnode__period": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float"
+            },
+            "unit_curtailment__outputnode__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float"
+            },
+            "group_process_co2__period": {
+                "0": "string",
+                "1": "string",
+                "2": "float"
+            },
+            "group_node_vre_share__period__t": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float"
             }
         },
         "table_default_column_type": {
@@ -4517,9 +5977,61 @@
             "group__unit__node_inertia__period__t": {
                 "1": "string",
                 "2": "string"
+            },
+            "unit__outputnode__period": {
+                "1": "string",
+                "0": "string"
+            },
+            "unit__inputnode__period": {
+                "1": "string",
+                "0": "string"
+            },
+            "process__reserve__updown__node__period__t": {
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string"
+            },
+            "unit__inputnode__period__t": {
+                "1": "string",
+                "0": "string",
+                "2": "string"
+            },
+            "unit__outputnode__period__t": {
+                "1": "string",
+                "0": "string",
+                "2": "string"
+            },
+            "process__reserve__updown__node__period_average": {
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string"
+            },
+            "slack__reserve__updown__group__period__t": {
+                "1": "string",
+                "2": "string"
+            },
+            "unit_ramp__inputnode__dt": {
+                "1": "string",
+                "0": "string"
+            },
+            "unit_ramp__outputnode__dt": {
+                "1": "string",
+                "0": "string"
+            },
+            "unit_cf__inputnode__period": {
+                "1": "string",
+                "0": "string"
+            },
+            "unit_cf__outputnode__period": {
+                "1": "string",
+                "0": "string"
             }
         },
-        "source_type": "DataPackageConnector"
+        "source_type": "DatapackageReader"
     },
     "description": ""
 }
