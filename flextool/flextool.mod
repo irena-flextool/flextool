@@ -1,7 +1,7 @@
 # © International Renewable Energy Agency 2018-2022
 
 #The FlexTool is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License
-#as published by the Free Software Foundation, either §ersion 3 of the License, or (at your option) any later version.
+#as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
 #The FlexTool is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; 
 #without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for more details.
@@ -9,7 +9,9 @@
 #You should have received a copy of the GNU Lesser General Public License along with the FlexTool.  
 #If not, see <https://www.gnu.org/licenses/>.
 
-#Author: Juha Kiviluoma (2017-2022), VTT Technical Research Centre of Finland
+#Authors:
+# Juha Kiviluoma, VTT Technical Research Centre of Finland (2017-2025), Nodal-Tools Ltd (2025)
+# Arttu Tupala, VTT Technical Research Centre of Finland (2023-2025)
 
 param datetime0 := gmtime();
 display datetime0;
@@ -373,9 +375,6 @@ param p_entity_period_invested_capacity {e in entity, d in period_with_history};
 # Delayed flows
 ####
 set delay_duration dimen 1;
-#set process_delayed dimen 1 within process;
-#set process_source_undelayed within process_source;
-#set process_source_delayed within process_source;
 set process_delay_weighted__delay_duration dimen 2 within {process, delay_duration};
 set tt__delay_duration dimen 3 within {time, time, delay_duration};
 param p_process_delay_weighted {process, delay_duration};
@@ -1846,6 +1845,8 @@ check {(d,t) in period__time_first: exists{(r, ud, g, param, tb, ts, t2) in rese
 printf'Checking that existing capacity is less than cumulative_max_capacity\n';
 check {(e, d) in ed_invest_cumulative}:
   p_entity_all_existing[e, d] <= ed_cumulative_max_capacity[e, d];
+printf 'Delayed flows must be one-way:  ';
+check {p in process_delayed} sum{(p, m) in process_method : m in method_1way} 1 > 0;
 
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
@@ -1984,7 +1985,7 @@ minimize total_cost:
 ;
 param w_total_cost := gmtime() - datetime0 - setup1 - w_calc_slope - setup2;
 display w_total_cost;
-display process_source_sink_delayed;
+
 # Energy balance in each node  
 s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
   + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] / p_hole_multiplier[c] )
@@ -2004,7 +2005,7 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
   + sum {(p, source, n) in process_source_sink} (
       + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t]
 	)
-# It would be nice to have single variable delay, but not yet implemented (needs post-processing and fixing the term below)
+# It would be nice to have single variable delay, but not yet implemented (it would need post-processing and fixing the term below)
 #  + sum {(p, source, n) in process_source_sink_delayed} (
 #      + sum {(t, t_, td) in tt__delay_duration : p_process_delay_weight[p, td]}
 #        ( + v_flow[p, source, n, d, t_] * p_entity_unitsize[p] * step_duration[d, t_]

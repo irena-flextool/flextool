@@ -21,7 +21,7 @@ def migrate_database(database_path):
             version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
         next_version = int(version) + 1
-        new_version = 23
+        new_version = 24
 
         while next_version <= new_version:
             if next_version == 0:
@@ -113,7 +113,10 @@ def migrate_database(database_path):
             elif next_version == 23:
                 db.add_update_item("parameter_definition", entity_class_name= "commodity", name= "price", parameter_type_list = None, parameter_value_list_name = None, description = "[CUR/MWh or other unit] Price of the commodity. Constant, period or time.")
                 db.add_update_item("parameter_definition", entity_class_name= "group", name= "co2_price", parameter_type_list = None, parameter_value_list_name = None, description = "[CUR/ton] CO2 price for a group of nodes. Constant, period or time.")
-                update_parameter_types(db)
+                update_parameter_types_v23(db)
+            elif next_version == 24:
+                db.add_update_item("parameter_definition", entity_class_name= "connection", name= "delay", parameter_type_list = ("float","1d_map"), parameter_value_list_name = None, description = "[hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.")
+                db.add_update_item("parameter_definition", entity_class_name= "unit", name= "delay", parameter_type_list = ("float","1d_map"), parameter_value_list_name = None, description = "[hours] A time delay between the input nodes and the output nodes. Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.")
             else:
                 print("Version invalid")
             next_version += 1
@@ -251,12 +254,12 @@ def change_optional_output_type(db, filepath):
         print("This change has been done before, continuing") 
     return 0
 
-def update_parameter_types(db):
-    type_list = get_parameter_type_list()
+def update_parameter_types_v23(db):
+    type_list = get_parameter_type_list_v23()
     for i in type_list:
         db.add_update_item("parameter_definition", entity_class_name = i[0], name = i[1], parameter_type_list = i[2])
 
-def get_parameter_type_list():
+def get_parameter_type_list_v23():
     types = [["commodity", "co2_content", ("float",)],
              ["commodity", "price", ("float","1d_map")],
              ["connection", "availability", ("float","1d_map")],
