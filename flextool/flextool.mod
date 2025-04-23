@@ -1715,14 +1715,23 @@ var vq_state_up_group {g in group_loss_share, (d,t) in dt} >= 0;
 
 #########################
 ## Data checks 
-printf 'Checking: Eff. data for 1 variable conversions directly from source to sink (and possibly back)\n';
+printf 'Checking: Eff. data for 1 variable conversions directly from source to sink (and possibly back).';
+printf' Efficiency should always be !=0 \n';
 check {(p, m) in process_method, (d,t) in dt : m in method_1var && not (p, 'none') in process__ct_method } pdtProcess[p, 'efficiency', d, t] != 0 ;
 
-printf 'Checking: Efficiency data for 1-way conversions with an online variable\n';
+printf 'Checking: Efficiency data for 1-way conversions with an online variable.';
+printf 'Efficiency should always be !=0\n';
 check {(p, m) in process_method, (d,t) in dt : m in method_1way_on} pdtProcess[p, 'efficiency', d, t] != 0;
 
-printf 'Checking: Efficiency data for 2-way linear conversions without online variables\n';
+printf 'Checking: Efficiency data for 2-way linear conversions without online variables.';
+printf 'Efficiency should always be !=0\n';
 check {(p, m) in process_method, (d,t) in dt : m in method_2way_off} pdtProcess[p, 'efficiency', d, t] != 0;
+
+printf 'Checking: Min load efficiency should be greater than zero\n';
+check {p in process_minload, (d,t) in dt} pdtProcess[p, 'efficiency_at_min_load', d, t] > 0;
+
+printf 'Checking: Min load should be less than 1\n';
+check {p in process_minload, (d,t) in dt} pdtProcess[p, 'min_load', d, t] < 1.0;
 
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
 check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
@@ -1735,6 +1744,11 @@ check {d in period : d not in period_first && (sum{(e, d) in ed_invest} 1 || sum
 
 printf 'Checking: Does a node with has_storage also have has_balance set to yes\n';
 check {n in nodeState} : n in nodeBalance;
+
+printf 'Checking: The nodes with scaling methods should have the inflow parameter set\n';
+check {n in node, d in period: (n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method ||
+        (n, 'scale_to_annual_and_peak_flow') in node__inflow_method}:
+  sum{(d, t) in dt_complete} ptNode_inflow[n, t] != 0;
 
 printf 'Checking: Availability conflicts with storage constraints\n';
 check {n in nodeState, (d,t) in period__time_first: (n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method}:
