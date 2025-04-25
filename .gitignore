@@ -14,7 +14,8 @@ results/
 *.sol
 __pycache__
 .idea/
-site/"example_input.xlsx" 
+site/
+example_input.xlsx 
 *.xls*
 site/
 input/
