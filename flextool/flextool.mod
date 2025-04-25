@@ -1,7 +1,7 @@
 # © International Renewable Energy Agency 2018-2022
 
 #The FlexTool is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License
-#as published by the Free Software Foundation, either §ersion 3 of the License, or (at your option) any later version.
+#as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
 #The FlexTool is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; 
 #without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for more details.
@@ -9,7 +9,9 @@
 #You should have received a copy of the GNU Lesser General Public License along with the FlexTool.  
 #If not, see <https://www.gnu.org/licenses/>.
 
-#Author: Juha Kiviluoma (2017-2022), VTT Technical Research Centre of Finland
+#Authors:
+# Juha Kiviluoma, VTT Technical Research Centre of Finland (2017-2025), Nodal-Tools Ltd (2025)
+# Arttu Tupala, VTT Technical Research Centre of Finland (2023-2025)
 
 param datetime0 := gmtime();
 display datetime0;
@@ -369,6 +371,14 @@ set ed_history_realized_read dimen 2 within {e in entity, d in period_with_histo
 param p_entity_period_existing_capacity {e in entity, d in period_with_history};
 param p_entity_period_invested_capacity {e in entity, d in period_with_history};
 
+####
+# Delayed flows
+####
+set delay_duration dimen 1;
+set process_delay_weighted__delay_duration dimen 2 within {process, delay_duration};
+set tt__delay_duration dimen 3 within {time, time, delay_duration};
+param p_process_delay_weighted {process, delay_duration};
+set process_delay_single__delay_duration dimen 2 within {process, delay_duration};
 
 ####
 #Stochastic sets and params
@@ -461,6 +471,7 @@ table data IN 'CSV' 'input/p_process_node_constraint_flow_coefficient.csv' : pro
 table data IN 'CSV' 'input/p_process_constraint_capacity_coefficient.csv' : process_capacity_constraint <- [process, constraint];
 table data IN 'CSV' 'input/p_node_constraint_capacity_coefficient.csv' : node_capacity_constraint <- [node, constraint];
 table data IN 'CSV' 'input/p_node_constraint_state_coefficient.csv' : node_state_constraint <- [node, constraint];
+table data IN 'CSV' 'input/p_process_delay_weighted.csv' : process_delay_weighted__delay_duration <- [process, delay_duration];
 table data IN 'CSV' 'input/constraint__sense.csv' : constraint__sense <- [constraint, sense];
 table data IN 'CSV' 'input/p_process.csv' : process__param <- [process, processParam];
 table data IN 'CSV' 'input/p_profile.csv' : profile_param <- [profile];
@@ -486,6 +497,9 @@ table data IN 'CSV' 'input/p_process_source.csv' : process__source__param <- [pr
 table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
 table data IN 'CSV' 'input/pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
 table data IN 'CSV' 'input/timeline.csv' : timeline__timestep__duration <- [timeline,timestep,duration];
+table data IN 'CSV' 'solve_data/delay_duration.csv' : delay_duration <- [delay_duration];
+table data IN 'CSV' 'solve_data/tt__delay_duration.csv' : tt__delay_duration <- [time_source,time_sink,delay_duration];
+table data IN 'CSV' 'input/process_delay_single.csv' : process_delay_single__delay_duration <- [process,delay_duration];
 
 # Parameters for model data.
 table data IN 'CSV' 'input/p_commodity.csv' : [commodity, commodityParam], p_commodity;
@@ -504,6 +518,7 @@ table data IN 'CSV' 'input/p_process_sink.csv' : [process, sink, sourceSinkParam
 table data IN 'CSV' 'input/p_process_sink_coefficient.csv' : [process, sink], p_process_sink_coefficient;
 table data IN 'CSV' 'input/p_process_source.csv' : [process, source, sourceSinkParam], p_process_source;
 table data IN 'CSV' 'input/p_process_source_coefficient.csv' : [process, source], p_process_source_coefficient;
+table data IN 'CSV' 'input/p_process_delay_weighted.csv' : [process, delay_duration], p_process_delay_weighted;
 table data IN 'CSV' 'input/p_constraint_constant.csv' : [constraint], p_constraint_constant;
 table data IN 'CSV' 'input/p_process.csv' : [process, processParam], p_process;
 table data IN 'CSV' 'input/pd_process.csv' : [process, processParam, period], pd_process;
@@ -586,12 +601,21 @@ set nodeBalancePeriod := {n in node : (n, 'balance_within_period') in node__node
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
+set process_delayed := setof {(p, td) in process_delay_weighted__delay_duration} (p)
+                       union setof {(p, td) in process_delay_single__delay_duration} (p);
+
 set process__fork_method_yes dimen 2 within {process, fork_method} := 
     {p in process, m in fork_method 
-	  : (sum{(p, source) in process_source} 1 > 1 || sum{(p, sink) in process_sink} 1 > 1) && m in fork_method_yes};
+	  : (    sum{(p, source) in process_source} 1 > 1
+	      || sum{(p, sink) in process_sink} 1 > 1
+	      || p in process_delayed
+	    ) && m in fork_method_yes};
 set process__fork_method_no dimen 2 within {process, fork_method} := 
     {p in process, m in fork_method 
-	  : (sum{(p, source) in process_source} 1 < 2 && sum{(p, sink) in process_sink} 1 < 2) && m in fork_method_no};
+	  : (    sum{(p, source) in process_source} 1 < 2
+	      && sum{(p, sink) in process_sink} 1 < 2
+	      && p not in process_delayed
+	    ) && m in fork_method_no};
 set process__fork_method := process__fork_method_yes union process__fork_method_no;
 set process_ct_startup_fork_method := 
     { p in process, m1 in ct_method, m2 in startup_method, m3 in fork_method, m in method
@@ -758,6 +782,15 @@ set process_online_linear 'processes with an online status using linear variable
 set process_online_integer 'processes with an online status using integer variable' := setof {(p, m) in process_method : m in method_MIP} p;
 set process_online := process_online_linear union process_online_integer;
 set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
+
+set process_source_undelayed := {(p, e) in process_source : p not in process_delayed};
+set process_source_delayed := {(p, e) in process_source : p in process_delayed};
+set process_source_sink_undelayed := {(p, source, sink) in process_source_sink : p not in process_delayed};
+set process_source_sink_delayed := {(p, source, sink) in process_source_sink : p in process_delayed};
+param p_process_delay_weight {p in process_delayed, td in delay_duration} :=
+  + if (p, td) in process_delay_single__delay_duration
+    then 1
+    else p_process_delay_weighted[p, td];
 
 param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} := 
         + if (c, param, d) in commodity__param__period
@@ -1812,6 +1845,8 @@ check {(d,t) in period__time_first: exists{(r, ud, g, param, tb, ts, t2) in rese
 printf'Checking that existing capacity is less than cumulative_max_capacity\n';
 check {(e, d) in ed_invest_cumulative}:
   p_entity_all_existing[e, d] <= ed_cumulative_max_capacity[e, d];
+printf 'Delayed flows must be one-way:  ';
+check {p in process_delayed} sum{(p, m) in process_method : m in method_1way} 1 > 0;
 
 param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
@@ -1969,7 +2004,14 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
   # n is sink
   + sum {(p, source, n) in process_source_sink} (
       + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t]
-	)  
+	)
+# It would be nice to have single variable delay, but not yet implemented (it would need post-processing and fixing the term below)
+#  + sum {(p, source, n) in process_source_sink_delayed} (
+#      + sum {(t, t_, td) in tt__delay_duration : p_process_delay_weight[p, td]}
+#        ( + v_flow[p, source, n, d, t_] * p_entity_unitsize[p] * step_duration[d, t_]
+#  	          * p_process_delay_weight[p, td]
+#        )
+#    )
   # n is source
   - sum {(p, n, sink) in process_source_sink_eff } ( 
       + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
@@ -2156,22 +2198,28 @@ param reserves := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_tota
 display reserves;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
-s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t) in dt} :
-  + sum {source in entity : (p, source) in process_source} 
-    ( + v_flow[p, source, p, d, t] * p_entity_unitsize[p]
+s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t_) in dt} :
+  + sum {source in entity : (p, source) in process_source_undelayed}
+    ( + v_flow[p, source, p, d, t_] * p_entity_unitsize[p]
   	      * p_process_source_coefficient[p, source]
 	)
+  + sum {source in entity : (p, source) in process_source_delayed}
+      + sum {(t, t_, td) in tt__delay_duration : p_process_delay_weight[p, td]}
+        ( + v_flow[p, source, p, d, t] * p_entity_unitsize[p]
+  	          * p_process_source_coefficient[p, source]
+  	          * p_process_delay_weight[p, td]
+	    )
   =
-  + sum {sink in entity : (p, sink) in process_sink && p_process_sink_coefficient[p,sink] != 0} 
-    ( + v_flow[p, p, sink, d, t] * p_entity_unitsize[p]
-	      / p_process_sink_coefficient[p, sink]
-	)
-	  * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
-  + (if (p, 'min_load_efficiency') in process__ct_method then 
-			( + (if p in process_online_linear then v_online_linear[p, d, t]) 
-			  + (if p in process_online_integer then v_online_integer[p, d, t])
+  + sum {sink in entity : (p, sink) in process_sink && p_process_sink_coefficient[p,sink] != 0}
+    ( + v_flow[p, p, sink, d, t_] * p_entity_unitsize[p]
+          / p_process_sink_coefficient[p, sink]
+    )
+	  * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t_] else 1 / pdtProcess[p, 'efficiency', d, t_])
+  + (if (p, 'min_load_efficiency') in process__ct_method then
+			( + (if p in process_online_linear then v_online_linear[p, d, t_])
+			  + (if p in process_online_integer then v_online_integer[p, d, t_])
 			)
-            * pdtProcess_section[p, d, t] * p_entity_unitsize[p])
+            * pdtProcess_section[p, d, t_] * p_entity_unitsize[p])
 ;
 param indirect := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves;
 display indirect;
@@ -5457,5 +5505,4 @@ display v_invest, v_divest, solve_current, total_cost;
 #display {n in nodeBalancePeriod, (d, t) in dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {n in nodeBalancePeriod, (d, t) in dt}: pdtNodeInflow[n, d, t];
 #display p_entity_existing_capacity_first_solve;
-
 end;

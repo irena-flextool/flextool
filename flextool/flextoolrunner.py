@@ -75,6 +75,7 @@ class FlexToolRunner:
             self.contains_solves = self.params_to_dict(db=db, cl="solve", par="contains_solves", mode="defaultdict", str_to_list=True)
             self.hole_multipliers = self.params_to_dict(db=db, cl="solve", par="timeline_hole_multiplier", mode="defaultdict")
             self.new_step_durations = self.params_to_dict(db=db, cl="timeblockSet", par="new_stepduration", mode="dict")
+            self.delay_durations = self.params_to_dict(db=db, cl="unit", par="delay", mode="dict")
             # Rolling parameter is packaged from three parameters
             rolling_duration = self.params_to_dict(db=db, cl="solve", par="rolling_duration", mode="dict")
             rolling_solve_horizon = self.params_to_dict(db=db, cl="solve", par="rolling_solve_horizon", mode="dict")
@@ -1042,7 +1043,30 @@ class FlexToolRunner:
                 if (solve,period) in self.fix_storage_periods:
                     for i in active_time:
                         realfile.write(period+","+i[0]+"\n")
-    
+
+    def write_delayed_durations(self,active_time_list,solve):
+        delay_duration_set = set()
+        for (entity, delay_durations) in self.delay_durations.items():
+            if isinstance(delay_durations, list):
+                for delay_duration in delay_durations:
+                    delay_duration_set.add(delay_duration[0])
+            else:
+                delay_duration_set.add(delay_durations)
+        with open("solve_data/delay_duration.csv", 'w') as realfile:
+            realfile.write("delay_duration\n")
+            for delay_duration in delay_duration_set:
+                realfile.write(str(delay_duration)+"\n")
+        with open("solve_data/tt__delay_duration.csv", 'w') as realfile:
+            realfile.write("time_source,time_sink,delay_duration\n")
+            for timeblockSet_name, timeblockSet in list(self.timeblocks.items()):
+                timeline_name = self.timeblocks__timeline[timeblockSet_name][0]
+                time_steps = self.timelines[timeline_name]
+                for k, time_step in enumerate(time_steps):
+                    for delay_duration in delay_duration_set:
+                        if k + int(float(delay_duration)) < len(time_steps):
+                            row = ','.join([time_step[0], time_steps[k+int(float(delay_duration))][0], str(delay_duration)])
+                            realfile.write(row+"\n")
+
     @staticmethod
     def write_branch__period_relationship(period__branch, filename):
         """
@@ -1788,6 +1812,7 @@ class FlexToolRunner:
             self.logger.info("Create realized timeline")
             self.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
             self.write_fix_storage_timesteps(realized_time_lists[solve],complete_solve[solve])
+            self.write_delayed_durations(realized_time_lists[solve], complete_solve[solve])
             self.logger.info("Possible stochastics")
             self.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
             self.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve])
@@ -2206,6 +2231,14 @@ class FlexToolRunner:
                                  ("connection", "constraint_capacity_coefficient")],
                             "process,constraint,p_process_constraint_capacity_coefficient",
                             "input/p_process_constraint_capacity_coefficient.csv", filter_in_type=["1d_map"])
+            write_parameter(db, [("unit", "delay"),
+                                 ("connection", "delay")],
+                            "process,delay_duration,p_process_delay_weighted",
+                            "input/p_process_delay_weighted.csv", filter_in_type=["1d_map"])
+            write_parameter(db, [("unit", "delay"),
+                                 ("connection", "delay")],
+                            "process,delay_duration",
+                            "input/process_delay_single.csv", filter_in_type=["str", "float"])
             write_parameter(db, [("unit", "availability"),
                                  ("unit", "cumulative_max_capacity"),
                                  ("unit", "cumulative_min_capacity"),

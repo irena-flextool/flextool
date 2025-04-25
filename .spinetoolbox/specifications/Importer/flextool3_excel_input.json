@@ -4242,7 +4242,7 @@
                 "1": "string"
             }
         },
-        "source_type": "ExcelConnector"
+        "source_type": "ExcelReader"
     },
     "description": ""
 }
