@@ -2181,10 +2181,6 @@ class FlexToolRunner:
                             filter_in_type=["1d_map"])
             write_parameter(db, [("timeblockSet", "new_stepduration")], "timeblockSet,step_duration",
                             "input/timeblockSet__new_stepduration.csv", filter_out_index="time")
-            write_parameter(db, [("unit__outputNode")], "process,sink,param", "input/unit__sinkNode__param.csv",
-                            filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
-            write_parameter(db, [("unit__inputNode")], "process,source,param", "input/unit__sourceNode__param.csv",
-                            filter_out_index="period", param_print=True)
             write_parameter(db, [("unit", "efficiency"),
                                  ("unit", "efficiency_at_min_load"),
                                  ("unit", "min_load"),
@@ -2206,9 +2202,15 @@ class FlexToolRunner:
                          entity_dimens=[[0,1], [0,2]])
             write_parameter(db, [("unit__node__profile", "profile_method")], "process,node,profile,profile_method",
                             "input/process__node__profile__profile_method.csv")
-            write_parameter(db, [("unit__inputNode")], "process,source,sourceSinkParam,p_process_source",
+            write_parameter(db, [("unit__inputNode", "inertia_constant"),
+                                 ("unit__inputNode", "ramp_cost"),
+                                 ("unit__inputNode", "ramp_speed_down"),
+                                 ("unit__inputNode", "ramp_speed_up")], "process,source,sourceSinkParam,p_process_source",
                             "input/p_process_source.csv", param_print=True)
-            write_parameter(db, [("unit__outputNode")], "process,sink,sourceSinkParam,p_process_sink",
+            write_parameter(db, [("unit__outputNode", "inertia_constant"),
+                                 ("unit__outputNode", "ramp_cost"),
+                                 ("unit__outputNode", "ramp_speed_down"),
+                                 ("unit__outputNode", "ramp_speed_up")], "process,sink,sourceSinkParam,p_process_sink",
                             "input/p_process_sink.csv", param_print=True)
             write_parameter(db, [("reserve__upDown__unit__node", "increase_reserve_ratio"),
                                  ("reserve__upDown__unit__node", "large_failure_ratio"),
