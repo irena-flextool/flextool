@@ -275,6 +275,9 @@
                     "FlexTool",
                     "left"
                 ],
+                "options": {
+                    "require_scenario_filter": true
+                },
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input_data": {
