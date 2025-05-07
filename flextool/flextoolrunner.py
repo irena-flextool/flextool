@@ -1049,22 +1049,23 @@ class FlexToolRunner:
         for (entity, delay_durations) in self.delay_durations.items():
             if isinstance(delay_durations, list):
                 for delay_duration in delay_durations:
-                    delay_duration_set.add(delay_duration[0])
+                    delay_duration_set.add(str(delay_duration[0]))
             else:
-                delay_duration_set.add(delay_durations)
+                delay_duration_set.add(str(delay_durations))
         with open("solve_data/delay_duration.csv", 'w') as realfile:
             realfile.write("delay_duration\n")
             for delay_duration in delay_duration_set:
                 realfile.write(str(delay_duration)+"\n")
-        with open("solve_data/tt__delay_duration.csv", 'w') as realfile:
-            realfile.write("time_source,time_sink,delay_duration\n")
-            for timeblockSet_name, timeblockSet in list(self.timeblocks.items()):
-                timeline_name = self.timeblocks__timeline[timeblockSet_name][0]
-                time_steps = self.timelines[timeline_name]
+        with open("solve_data/dtt__delay_duration.csv", 'w') as realfile:
+            realfile.write("period,time_source,time_sink,delay_duration\n")
+            for period_name, time_steps in active_time_list.items():
                 for k, time_step in enumerate(time_steps):
                     for delay_duration in delay_duration_set:
                         if k + int(float(delay_duration)) < len(time_steps):
-                            row = ','.join([time_step[0], time_steps[k+int(float(delay_duration))][0], str(delay_duration)])
+                            row = ','.join([period_name, time_step[0], time_steps[k + int(float(delay_duration))][0], str(delay_duration)])
+                            realfile.write(row+"\n")
+                        elif k + int(float(delay_duration)) >= len(time_steps):
+                            row = ','.join([period_name, time_step[0], time_steps[k - len(time_steps) + int(float(delay_duration))][0], str(delay_duration)])
                             realfile.write(row+"\n")
 
     @staticmethod

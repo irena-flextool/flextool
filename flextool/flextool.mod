@@ -376,7 +376,7 @@ param p_entity_period_invested_capacity {e in entity, d in period_with_history};
 ####
 set delay_duration dimen 1;
 set process_delay_weighted__delay_duration dimen 2 within {process, delay_duration};
-set tt__delay_duration dimen 3 within {time, time, delay_duration};
+set dtt__delay_duration dimen 4 within {period, time, time, delay_duration};
 param p_process_delay_weighted {process, delay_duration};
 set process_delay_single__delay_duration dimen 2 within {process, delay_duration};
 
@@ -498,7 +498,7 @@ table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [proces
 table data IN 'CSV' 'input/pd_commodity.csv' : commodity__param__period <- [commodity, commodityParam, period];
 table data IN 'CSV' 'input/timeline.csv' : timeline__timestep__duration <- [timeline,timestep,duration];
 table data IN 'CSV' 'solve_data/delay_duration.csv' : delay_duration <- [delay_duration];
-table data IN 'CSV' 'solve_data/tt__delay_duration.csv' : tt__delay_duration <- [time_source,time_sink,delay_duration];
+table data IN 'CSV' 'solve_data/dtt__delay_duration.csv' : dtt__delay_duration <- [period,time_source,time_sink,delay_duration];
 table data IN 'CSV' 'input/process_delay_single.csv' : process_delay_single__delay_duration <- [process,delay_duration];
 
 # Parameters for model data.
@@ -601,8 +601,8 @@ set nodeBalancePeriod := {n in node : (n, 'balance_within_period') in node__node
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
-set process_delayed := setof {(p, td) in process_delay_weighted__delay_duration} (p)
-                       union setof {(p, td) in process_delay_single__delay_duration} (p);
+set process_delayed__duration := process_delay_weighted__delay_duration union process_delay_single__delay_duration;
+set process_delayed := setof {(p, td) in process_delayed__duration} (p);
 
 set process__fork_method_yes dimen 2 within {process, fork_method} := 
     {p in process, m in fork_method 
@@ -787,7 +787,8 @@ set process_source_undelayed := {(p, e) in process_source : p not in process_del
 set process_source_delayed := {(p, e) in process_source : p in process_delayed};
 set process_source_sink_undelayed := {(p, source, sink) in process_source_sink : p not in process_delayed};
 set process_source_sink_delayed := {(p, source, sink) in process_source_sink : p in process_delayed};
-param p_process_delay_weight {p in process_delayed, td in delay_duration} :=
+
+param p_process_delay_weight {(p, td) in process_delayed__duration} :=
   + if (p, td) in process_delay_single__delay_duration
     then 1
     else p_process_delay_weighted[p, td];
@@ -2007,7 +2008,7 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
 	)
 # It would be nice to have single variable delay, but not yet implemented (it would need post-processing and fixing the term below)
 #  + sum {(p, source, n) in process_source_sink_delayed} (
-#      + sum {(t, t_, td) in tt__delay_duration : p_process_delay_weight[p, td]}
+#      + sum {(d, t, t_, td) in dtt__delay_duration : p_process_delay_weight[p, td]}
 #        ( + v_flow[p, source, n, d, t_] * p_entity_unitsize[p] * step_duration[d, t_]
 #  	          * p_process_delay_weight[p, td]
 #        )
@@ -2198,28 +2199,28 @@ param reserves := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_tota
 display reserves;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
-s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t_) in dt} :
+s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t) in dt} :
   + sum {source in entity : (p, source) in process_source_undelayed}
-    ( + v_flow[p, source, p, d, t_] * p_entity_unitsize[p]
+    ( + v_flow[p, source, p, d, t] * p_entity_unitsize[p]
   	      * p_process_source_coefficient[p, source]
 	)
   + sum {source in entity : (p, source) in process_source_delayed}
-      + sum {(t, t_, td) in tt__delay_duration : p_process_delay_weight[p, td]}
-        ( + v_flow[p, source, p, d, t] * p_entity_unitsize[p]
+      + sum {(d, t_, t, td) in dtt__delay_duration : (p, td) in process_delayed__duration}
+        ( + v_flow[p, source, p, d, t_] * p_entity_unitsize[p]
   	          * p_process_source_coefficient[p, source]
   	          * p_process_delay_weight[p, td]
 	    )
   =
   + sum {sink in entity : (p, sink) in process_sink && p_process_sink_coefficient[p,sink] != 0}
-    ( + v_flow[p, p, sink, d, t_] * p_entity_unitsize[p]
+    ( + v_flow[p, p, sink, d, t] * p_entity_unitsize[p]
           / p_process_sink_coefficient[p, sink]
     )
-	  * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t_] else 1 / pdtProcess[p, 'efficiency', d, t_])
+	  * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
   + (if (p, 'min_load_efficiency') in process__ct_method then
-			( + (if p in process_online_linear then v_online_linear[p, d, t_])
-			  + (if p in process_online_integer then v_online_integer[p, d, t_])
+			( + (if p in process_online_linear then v_online_linear[p, d, t])
+			  + (if p in process_online_integer then v_online_integer[p, d, t])
 			)
-            * pdtProcess_section[p, d, t_] * p_entity_unitsize[p])
+            * pdtProcess_section[p, d, t] * p_entity_unitsize[p])
 ;
 param indirect := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves;
 display indirect;
