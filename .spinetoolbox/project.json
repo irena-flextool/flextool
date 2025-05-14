@@ -22,11 +22,6 @@
                 {
                     "type": "path",
                     "relative": true,
-                    "path": ".spinetoolbox/specifications/Exporter/export_flextool3_csv.json"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
                     "path": ".spinetoolbox/specifications/Exporter/results_to_excel.json"
                 }
             ],
@@ -275,6 +270,9 @@
                     "FlexTool",
                     "left"
                 ],
+                "options": {
+                    "require_scenario_filter": true
+                },
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input_data": {
