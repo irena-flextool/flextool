@@ -4924,7 +4924,7 @@ for {i in 1..1 : p_model['solveFirst']}
     printf '"state change","self discharge","upward slack","downward slack"\n' >> fn_node__dt; }  # Print the header on the first solve
 for {s in solve_current: 'output_node_balance_t' in enable_optional_outputs && 'yes' not in exclude_entity_outputs}
   { for {n in node, (d, t) in dt_realize_dispatch}
-    { printf '%s,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g\n'
+    { printf '%s,%s,%s,%s,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.8g,%.8g\n'
       , n, s, d, t
           , + (if (n, 'no_inflow') not in node__inflow_method && n in nodeBalance union nodeBalancePeriod then pdtNodeInflow[n, d, t])
         , sum{(p, source, n) in process_source_sink_alwaysProcess : p in process_unit} r_process__source__sink_Flow__dt[p, source, n, d, t]
