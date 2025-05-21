@@ -5,6 +5,7 @@ import traceback
 import importlib.util
 from typing import Callable
 from functools import wraps
+import time
 
 class FlushingStream:
     def __init__(self, stream):
@@ -51,19 +52,24 @@ def main():
         format='%(levelname)s:%(filename)s:%(lineno)d:%(message)s',
         handlers=[logging.StreamHandler(sys.stdout)]
     )
-
+    start_time = time.time()
     if scenario_name:
         runner = flextoolrunner.FlexToolRunner(input_db_url, scenario_name)
+        print("--- Init time %s seconds ---" % (time.time() - start_time))
         runner.write_input(input_db_url, scenario_name)
+        print("--- write time %s seconds ---" % (time.time() - start_time))
     else:
         runner = flextoolrunner.FlexToolRunner(input_db_url)
+        print("--- Init time %s seconds ---" % (time.time() - start_time))
         runner.write_input(input_db_url)
+        print("--- write time %s seconds ---" % (time.time() - start_time))
     try:
         return_code = runner.run_model()
     except Exception as e:
         logging.error(f"Model run failed: {str(e)}\nTraceback:\n{traceback.format_exc()}")
         sys.exit(1)
     print(__file__)
+    print("--- full time %s seconds ---" % (time.time() - start_time))
 
 
 # Debug flag

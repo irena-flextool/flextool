@@ -57,6 +57,7 @@ class FlexToolRunner:
         with (DatabaseMapping(input_db_url) as db):
             if scenario_name:
                 api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
+            db.fetch_all("parameter_value")
             self.check_version(db=db)
             self.timelines = self.params_to_dict(db=db, cl="timeline", par="timestep_duration", mode="defaultdict")
             self.model_solve = self.params_to_dict(db=db, cl="model", par="solves", mode="defaultdict")
@@ -110,65 +111,61 @@ class FlexToolRunner:
 
 
     def periods_to_tuples(self, db, cl, par):
-        entities = db.get_entity_items(entity_class_name=cl)
-        params = db.get_parameter_value_items(entity_class_name=cl,
-                                                 parameter_definition_name=par)
+        entities = db.find_entities(entity_class_name=cl)
+        params = db.find_parameter_values(entity_class_name=cl,
+                                            parameter_definition_name=par)
         tuple_list = []
         for entity in entities:
-            params = db.get_parameter_value_items(entity_class_name=cl,
-                                                  entity_name=entity["name"],
-                                                  parameter_definition_name=par)
             for param in params:
-                param_value = api.from_database(param["value"], param["type"])
+                if param["entity_name"] == entity["name"]:
+                    param_value = api.from_database(param["value"], param["type"])
 
-                for (i, row) in enumerate(param_value.values):
-                    if isinstance(param_value.values[i], api.Map):
-                        new_name = param["entity_name"] + "_" + param_value.indexes[i]
-                        self.duplicate_solve(param["entity_name"], new_name)
-                        tuple_list.append((new_name, param_value.indexes[i]))
+                    for (i, row) in enumerate(param_value.values):
+                        if isinstance(param_value.values[i], api.Map):
+                            new_name = param["entity_name"] + "_" + param_value.indexes[i]
+                            self.duplicate_solve(param["entity_name"], new_name)
+                            tuple_list.append((new_name, param_value.indexes[i]))
 
-                        new_period_timeblockset_list = []
-                        for solve, period__timeblockset_list in list(self.timeblocks_used_by_solves.items()):
-                            if solve == param["entity_name"]:
-                                for period__timeblockset in period__timeblockset_list:
-                                    if period__timeblockset[0] == param_value.indexes[i]:
-                                        new_period_timeblockset_list.append(period__timeblockset)
-                        if new_name not in self.timeblocks_used_by_solves.keys():
-                            self.timeblocks_used_by_solves[new_name] = new_period_timeblockset_list
+                            new_period_timeblockset_list = []
+                            for solve, period__timeblockset_list in list(self.timeblocks_used_by_solves.items()):
+                                if solve == param["entity_name"]:
+                                    for period__timeblockset in period__timeblockset_list:
+                                        if period__timeblockset[0] == param_value.indexes[i]:
+                                            new_period_timeblockset_list.append(period__timeblockset)
+                            if new_name not in self.timeblocks_used_by_solves.keys():
+                                self.timeblocks_used_by_solves[new_name] = new_period_timeblockset_list
+                            else:
+                                for item in new_period_timeblockset_list:
+                                    if item not in self.timeblocks_used_by_solves[new_name]:
+                                        self.timeblocks_used_by_solves[new_name].append(item)
                         else:
-                            for item in new_period_timeblockset_list:
-                                if item not in self.timeblocks_used_by_solves[new_name]:
-                                    self.timeblocks_used_by_solves[new_name].append(item)
-                    else:
-                        tuple_list.append((param["entity_name"], row))
+                            tuple_list.append((param["entity_name"], row))
         return tuple_list
 
 
 
     def get_period_timesets(self, db):
-        entities = db.get_entity_items(entity_class_name="solve")
-        params = db.get_parameter_value_items(entity_class_name="solve",
-                                                 parameter_definition_name="period_timeblockSet")
+        entities = db.find_entities(entity_class_name="solve")
+        params = db.find_parameter_values(entity_class_name="solve",
+                                            parameter_definition_name="period_timeblockSet")
         timeblocks_used_by_solves = defaultdict(list)
 
         solves_in_model = [item for sublist in
                            list(self.model_solve.values()) + list(self.contains_solves.values()) for item in sublist]
         for entity in entities:
             if entity["name"] in solves_in_model:
-                params = db.get_parameter_value_items(entity_class_name="solve",
-                                                      entity_name=entity["name"],
-                                                      parameter_definition_name="period_timeblockSet")
                 for param in params:
-                    param_value = api.from_database(param["value"], param["type"])
-                    for (i, row) in enumerate(param_value.indexes):
-                        if isinstance(param_value.values[i], api.Map):
-                            new_name = param["entity_name"] + "_" + param_value.indexes[i]
-                            self.duplicate_solve(param["entity_name"], new_name)
-                            timeblocks_used_by_solves[new_name].append((param_value.values[i].indexes[i],
-                                                                        param_value.values[i].values[i]))
-                        else:
-                            timeblocks_used_by_solves[param["entity_name"]].append((param_value.indexes[i],
-                                                                                param_value.values[i]))
+                    if param["entity_name"] == entity["name"]:
+                        param_value = api.from_database(param["value"], param["type"])
+                        for (i, row) in enumerate(param_value.indexes):
+                            if isinstance(param_value.values[i], api.Map):
+                                new_name = param["entity_name"] + "_" + param_value.indexes[i]
+                                self.duplicate_solve(param["entity_name"], new_name)
+                                timeblocks_used_by_solves[new_name].append((param_value.values[i].indexes[i],
+                                                                            param_value.values[i].values[i]))
+                            else:
+                                timeblocks_used_by_solves[param["entity_name"]].append((param_value.indexes[i],
+                                                                                    param_value.values[i]))
         return timeblocks_used_by_solves
 
 
@@ -1925,7 +1922,7 @@ class FlexToolRunner:
             sys.exit(-1)
 
     def entities_to_dict(self, db, cl, mode):
-        entities = db.get_entity_items(entity_class_name=cl)
+        entities = db.find_entities(entity_class_name=cl)
         if mode == "defaultdict":
             result = defaultdict(list)
         elif mode == "dict":
@@ -1939,7 +1936,7 @@ class FlexToolRunner:
 
 
     def params_to_dict(self, db, cl, par, mode, str_to_list=False):
-        all_params = db.get_parameter_value_items(entity_class_name=cl,
+        all_params = db.find_parameter_values(entity_class_name=cl,
                                                  parameter_definition_name=par)
         if mode == "defaultdict":
             result = defaultdict(list)
@@ -1979,6 +1976,9 @@ class FlexToolRunner:
         if scenario_name:
             scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
         with (DatabaseMapping(input_db_url) as db):
+            #it is faster to fetch all now than fetching multiple times
+            db.fetch_all("entity")
+            db.fetch_all("parameter_value")
             if scenario_name:
                 api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
             if not os.path.exists("input"):
@@ -2420,7 +2420,7 @@ def write_entity(db, cl, header, filename, entity_dimens=None):
         class_entity_dimens = None
         if entity_dimens:
             class_entity_dimens = entity_dimens[i]
-        for entity in db.get_entity_items(entity_class_name=ent_class):
+        for entity in db.find_entities(entity_class_name=ent_class):
             if class_entity_dimens is None:
                 entities.append(','.join(entity["entity_byname"]))
             else:
@@ -2455,8 +2455,8 @@ def write_parameter(db, cl_pars, header, filename,
             filter_in_type.append("map")
     params = []
     for cl_par in cl_pars:
-        params = params + db.get_parameter_value_items(entity_class_name=cl_par[0],
-                                                       parameter_definition_name=cl_par[1])
+        params = params + db.find_parameter_values(entity_class_name=cl_par[0],
+                                                    parameter_definition_name=cl_par[1])
     with open(filename, 'w') as realfile:
         realfile.write(header + "\n")
         for param in params:
@@ -2557,9 +2557,11 @@ def flatten_map(mapList, indexes):
 
 def write_default_values(db, cl_pars, header, filename, filter_in_type=None, only_value=False):
     param_defs = []
+    definitions = db.find_parameter_definitions()#entity_class_name=cl_par[0], name=cl_par[1])
     for cl_par in cl_pars:
-        param_defs.append(db.get_parameter_definition_item(entity_class_name=cl_par[0],
-                                                           name=cl_par[1]))
+        for definition in definitions:
+            if definition["entity_class_name"] == cl_par[0] and definition["name"] == cl_par[1]:
+                param_defs.append(definition)
     with open(filename, 'w') as realfile:
         realfile.write(header + "\n")
         for param in param_defs:
