@@ -1,3 +1,14 @@
+## Release 3.12.0 (22.5.2025)
+**Bug fixes**
+- Decimal points in node_balance_t were causing some grievance.
+- Issues with lower case / upper case filenames when importing results
+- Added missing parameters inertia_constant, ramp_cost, ramp_speed back to the model (caused by release 3.10.0)
+- Fixed a output processing crash in a rolling model without VRE
+
+**New features**
+- Delays for units and one-way connections. New parameter delay, measured in time-steps (be careful), which can be a constant or a map of (integer timesteps, weight) where the weights should add to one. The map allows to spread the delay like it might happen in river systems.
+- An order of magnitude speed-up in reading inputs
+
 ## Release 3.11.0 (4.3.2025)
 **Bug fixes**
 - Preventing crashes on curtailment calucaltions to units without capacity and MIP stochastic solving
