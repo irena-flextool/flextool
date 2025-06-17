@@ -3608,7 +3608,7 @@ param r_cost_entity_divest_d{(e, d) in ed_divest} :=
 	  * p_discount_factor_operations_yearly[d]
 ;
 
-param r_cost_entity_existing_fixed{e in entity, d in d_realized_period : (e, d) not in ed_invest} :=
+param r_cost_entity_existing_fixed{e in entity, d in period} :=
   + p_entity_all_existing[e, d]
       * ( + if e in process then pdProcess[e, 'fixed_cost', d] else 0 
 	      + if e in node then pdNode[e, 'fixed_cost', d] else 0 
@@ -3663,7 +3663,7 @@ param r_costDivestState_d{d in period} := sum{(e, d) in ed_divest : e in nodeSta
 
 param r_costInvest_d{d in period} := r_costInvestUnit_d[d] + r_costInvestConnection_d[d] + r_costInvestState_d[d];
 param r_costDivest_d{d in period} := r_costDivestUnit_d[d] + r_costDivestConnection_d[d] + r_costDivestState_d[d];
-param r_costExistingFixed_d{d in period} := sum{e in entity : (e, d) not in ed_invest} r_cost_entity_existing_fixed[e, d];
+param r_costExistingFixed_d{d in period} := sum{e in entity} r_cost_entity_existing_fixed[e, d];
 
 param pdNodeInflow{n in node, d in period} := 
   + (if n in nodeBalance && (n, 'no_inflow') not in node__inflow_method then sum{(d, t) in dt} pdtNodeInflow[n, d, t])
