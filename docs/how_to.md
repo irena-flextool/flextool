@@ -50,12 +50,12 @@ The names of these alternatives hint at the intended use of each timeline. Even 
 To define a temporal structure for a model instance, you need to create the following entities:
 
 - `timeline` entity called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains, in the first column, the name of each timestep (e.g. *t0001* or *2022-01-01-01*) and, in the second column, the length of the timestep in hours (e.g. *1.0*). The timestep names here must match the timestep names in other time series like `inflow` or `profile`. Here all of the three options use the same full year timeline i.e. timesteps from t0001 to t8760 with a step size of one hour.
-- `timeblockset` entities called *full-year*, *2day* and *5week*. Each of them need a map-type parameter `block_duration` to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps: (*t0001*, *8760*) for the *full-year* and (*t4001* and *48.0*) for the 48h. The timeline is larger than the 48 hours, but this way the solver uses 48 hours specified. The *5week* needs five starting points
+- `timeset` entities called *full-year*, *2day* and *5week*. Each of them need a map-type parameter `timeset_duration` to define a timeset using a timestep name to indicate where the timeset starts and a number to define the duration of the timeset in timesteps: (*t0001*, *8760*) for the *full-year* and (*t4001* and *48.0*) for the 48h. The timeline is larger than the 48 hours, but this way the solver uses 48 hours specified. The *5week* needs five starting points
 *t2521*, *t4538*, *t5041*, *t7057* and *t8233* with all having the length of *168.0*
-- `timeblockset` needs to be connected to the timeline. This is done by adding the `timeblockset__timeline` entities (*full-year*| *y2020*), (*2day*| *y2020*), (*5weeks*| *y2020*). 
+- `timeset` needs to be connected to the timeline. This is done by adding the `timeset__timeline` entities (*full-year*| *y2020*), (*2day*| *y2020*), (*5weeks*| *y2020*). 
 - `solve` entities called *full-year-dispatch*, *2day-dispatch* and *5week-invest*. In addition, they need the following parameters:
 
-  - a map-type parameter `period_timeblockSet` to define the timeblockset to be used by each period. Here each of the three use their `timeblockSet` to describe the same period *p2020*. The first column of the map has the period: *p2020* and the second column the `timeblockSet`: *full-year*, *2day* or *5week*
+  - a map-type parameter `period_timeset` to define the timeset to be used by each period. Here each of the three use their `timeset` to describe the same period *p2020*. The first column of the map has the period: *p2020* and the second column the `timeset`: *full-year*, *2day* or *5week*
   - an array-type parameter `realized_periods` to define the periods that are realised from the `solve` named by the entity (the first column of an array is an index number starting with *0*, the second column contains the period to be realized in the results: *p2020* for all the solves here)
   - a parameter `solve_mode`, to be set to *single_solve* in these examples
 
@@ -188,7 +188,7 @@ Storage states can be tied to a value. For this three methods are introduced:
 
 - `storage_start_end_method`: Fixes start and/or end state of the storage to a chosen value. This is for the start and the end of the whole model timeline (not for individual solves in case the model is rolling forward).
     -  `storage_state_start` and `storage_state_end` set these values.
-- `storage_bind_method`: Forces the start and end values to be the same for the chosen  time interval (timeblock, period or solve)
+- `storage_bind_method`: Forces the start and end values to be the same for the chosen  time interval (timeset, period or solve)
 - `storage_solve_horizon_method`: Fixes the state of the storage at the end of the solve horizon or sets a price for the stored energy at the end of the solve horizon
     - `storage_state_reference_value` and `storage_state_reference_price` set these values
   
@@ -367,7 +367,7 @@ The required parameters of the reservoir node are (node_c and node_t sheets if u
 - `existing`: The maximum size of the reservoir [m^3]
 - `penalty_up`: a larger number than with the demand node to not allow creating extra water if not enough electricity is being created
 - `penalty_down`: 0 or a large number (spilling or not)
-- a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeblock* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*, which will pick the storage level at the end of each solve from the time series provided as a reference (*storage_state_reference_value*).
+- a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeset* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*, which will pick the storage level at the end of each solve from the time series provided as a reference (*storage_state_reference_value*).
 - `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 The `unit` is connected to the *reservoir* `node` and the output `node` *demand_node* (unit_c and unit_node_c in excel):
@@ -472,7 +472,7 @@ The required parameters of the reservoir node are (node_c and node_t sheets if u
 - `existing`: The maximum size of the reservoir as the potential energy [MWh]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: 0 or a large number (spilling or not)
-- a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeblock* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*, which will pick the storage level at the end of each solve from the time series provided as a reference (*storage_state_reference_value*).
+- a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeset* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*, which will pick the storage level at the end of each solve from the time series provided as a reference (*storage_state_reference_value*).
 - `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* (unit_c and unit_node_c in excel):
@@ -500,9 +500,9 @@ The storage level fixes should be the same in both storages (reservoir and pump 
 
 - `fix_start_end_method`: *fix_start*
 - `storage_state_start`: 0.5
-- `bind_storage_method`: *bind_with_timeblock*
+- `bind_storage_method`: *bind_with_timeset*
 
-This sets the starting storage levels to be 50%. The binding will also constrain the state of the storage at the end of of each timeblock to be the same as in the beginning of the timeblock.
+This sets the starting storage levels to be 50%. The binding will also constrain the state of the storage at the end of of each timeset to be the same as in the beginning of the timeset.
 
 Then create the pump unit and add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
 
@@ -723,13 +723,13 @@ To do this you need two solves:
 - Investment solve 
 - Dispatch solve
 
-Both solves should solve the *same* periods using *different* `timeblockSet` to represent these periods. This example has only one period p2020 describing a year. The investment solve uses a representative sample `timeblockSet` *5weeks* to do the investment decisions. These are then passed to the dispatch solve that uses complete timeline *fullYear*.
+Both solves should solve the *same* periods using *different* `timeset` to represent these periods. This example has only one period p2020 describing a year. The investment solve uses a representative sample `timeset` *5weeks* to do the investment decisions. These are then passed to the dispatch solve that uses complete timeline *fullYear*.
 
 Investment solve requires the parameters:
 
 - `Invest_periods`: Array of periods where investments can be made
 - `realised_invest_periods`: Array of periods that are output for investment decisions
-- `period_timeblockSet`: Uses the *5weeks* as the timeblock 
+- `period_timeset`: Uses the *5weeks* as the timeset 
 
 Note that the `realized_invest_periods` is used instead of `realized_periods`, because we want the investment solve to only output investments.
 Additionally some of the units, connections or storages will need investment parameters (`invest_cost`, `lifetime`...) see [How to make investments (storage/unit)](#how-to-make-investments-storageunit)
@@ -737,7 +737,7 @@ Additionally some of the units, connections or storages will need investment par
 The dispatch solve requires the parameters:
 
 - `realized_periods`: Array of output periods
-- `period_timeblockSet`: Uses the *fullYear* as the timeblock
+- `period_timeset`: Uses the *fullYear* as the timeset
 
 The sequence of solves is defined by the `model` parameter `solves`. Here it is an array where the first item is an investment_solve *5weeks_only_invest* and the second is the dispatch solve *y2020_fullYear_dispatch*. This is enough for the model to know to pass the investment decisions of the period to the period of the same name in the second solve.
 
@@ -747,7 +747,7 @@ Note that the picture has two `model`: *solves* parameters defined one for each 
 
 ## How to create a multi-year model
 
-A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. This means that all periods can use the same timeblockset *5weeks* from the same timeline *y2020*, but one can also make separate timelines for each year, if data is available for this. The `inflow` time series are scaled to match the value in `annual_flow` that is mapped for each period. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be a `discount_rate` parameter set for the `model` entity *flexTool* if something else than the model default of 5% (0.05 value) is to be used.
+A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. This means that all periods can use the same timeset *5weeks* from the same timeline *y2020*, but one can also make separate timelines for each year, if data is available for this. The `inflow` time series are scaled to match the value in `annual_flow` that is mapped for each period. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be a `discount_rate` parameter set for the `model` entity *flexTool* if something else than the model default of 5% (0.05 value) is to be used.
 
 ![Multi-year inflow](./multi_year_inflow.PNG)
 
@@ -756,12 +756,12 @@ A multi-year model could be solved at one go (multi_year_one_solve) or by rollin
 ### Multi year with one solve
 **(examples.sqlite scenario: multi_year_one_solve)**
 
-In this example, one solve is used for all the four periods. All the four periods need to be added to the solve arrays `invest_periods` and `realized_periods`. Here the same timeblock is used for all the four periods, so only difference between them is the increasing inflow set above. The parameters that need to be added to the `solve` entity:
+In this example, one solve is used for all the four periods. All the four periods need to be added to the solve arrays `invest_periods` and `realized_periods`. Here the same timeset is used for all the four periods, so only difference between them is the increasing inflow set above. The parameters that need to be added to the `solve` entity:
 
 - `years_represented` parameter is used by the model to calculate the discounting factors for the periods in the model (often future years). It should state the number of years each period will be representing. For example, a period for 2025 could represent the years 2025-2029 if its `years_represented` is set to 5. Any investments would be taking place at the start of 2025 and discounted to the beginning of 2025, but the operational costs would accrue from each year in 2025-2029 each with a different discounting factor (decreasing based on the interest rate).
 - `invest_periods` the periods in which the model is allowed to make investments.
 - `realized_periods` the periods that will be realized in this solve (outputs dispatch results for these periods).
-- `period_timeblockset` defines the set of representative 'periods' (timeblocks in FlexTool) to be used in each FlexTool `period`.
+- `period_timeset` defines the set of representative 'periods' (timesets in FlexTool) to be used in each FlexTool `period`.
 
 ![Multi-year one solve](./multi_year_one_solve.PNG)
 
@@ -782,7 +782,7 @@ Next figure shows the values needed to define one solve (out of the four solves 
 - `invest_periods` the periods in which the model is allowed to make investments. To be given for each solve.
 - `realized_periods` the periods that will be realized in this solve (outputs dispatch results for these periods). To be given for each solve.
 - `invest_realized_periods` parameter states the periods that will realize the investment decisions. If not stated, it will use `realized_periods`.
-- `period_timeblockset` defines the set of representative 'periods' (timeblocks in FlexTool) to be used in each FlexTool `period`.
+- `period_timeset` defines the set of representative 'periods' (timesets in FlexTool) to be used in each FlexTool `period`.
 
 Note the the `solve_mode`: *rolling_window* is not used! This is not for investment runs (without nesting) as it rolls freely, and investments should only be made at the start of the period. This example is called 'manual rolling' later when those are discussed.
 
@@ -835,12 +835,12 @@ Considerations on the rolling times:
 
 - The `rolling_jump` and `rolling_horizon` must be large enough to make the model faster. If too small intervals are used, the creation of solves and moving data from solve to another might take too much time.
 - If you are not using 1-hour timesteps, preferably use multiples of the timestep you are using as the `rolling_jump` and `rolling_horizon`. The steps included in each solve are calculated by summing the step durations until they are larger or equal to the hours given. So, if multiples are not used, the rolls might not be exactly the same size.
-- The model can roll over timeblock and period jumps, which might cause some issues if storage constraints are used. Using timeblock length or its multiples is therefore recommended. For example, the `rolling_jump` could be a half of a timeblock and the `rolling_horizon` whole timeblock or `rolling_jump` a timeblock and `rolling_horizon` three timeblocks. Of course, when running e.g. a full year dispatch, there is only one timeblock of 8760 hours, which makes the choices more simple.
+- The model can roll over timeset and period jumps, which might cause some issues if storage constraints are used. Using timeset length or its multiples is therefore recommended. For example, the `rolling_jump` could be a half of a timeset and the `rolling_horizon` whole timeset or `rolling_jump` a timeset and `rolling_horizon` three timesets. Of course, when running e.g. a full year dispatch, there is only one timeset of 8760 hours, which makes the choices more simple.
 
 Considerations on storage parameters:
 
 - `storage_solve_horizon_method` *use_reference_value* or *use_reference_price* are the preferred means to bind storage values. They can be used together with the `storage_state_start_end_method`: *start*, which would then set the initial storage state. These methods bind either the storage value or the storage price at the end of *horizon* (not the end of *jump*). This allows the storage to use the part of the horizon that is not output to improve the behaviour of the storage in the part that is output (as defined by `rolling_horizon` and `rolling_jump`). 
-- `bind_within_timeblock` does not work correctly if the rolls don't include whole timeblocks. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeblock. Do not use in nested solves if you are not using whole timeblocks or its multiples as `rolling_jump`
+- `bind_within_timeset` does not work correctly if the rolls don't include whole timesets. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeset. Do not use in nested solves if you are not using whole timesets or its multiples as `rolling_jump`
 - the same applies to the `bind_within_period` (but in relation to periods - do not use this unless you are `rolling_jump` is as long as a period or its multiples).
 - `storage_start_end_method` can be used to set the first timestep of the first roll and/or the last timestep of the last roll (in conjunction with `storage_state_start` and `storage_state_end`).
 - `bind_within_solve` binds the start state to the end state of each *roll* not the start and end of the whole model timeline. Use with caution (and probably best not to use together with `storage_solve_horizon_method` *use_reference_value*).
@@ -909,7 +909,7 @@ The other model parameters apply to *all* of the solves. Therefore, the consider
 - Storage levels can be fixed with `storage_solve_horizon_method`: *use_reference_value* or *use_reference_price*, these will fix the end of each horizon not each jump.
 - `storage_start_end_method` fixes the starts and/or ends of each solve level, meaning the first step of the first roll and the last step of the last roll.
 - In most cases the `bind_storage_method` should be left as *bind_forward_only*
-- Do not use `bind_within_timeblock` if you are not using full timeblock or its multiples as the `rolling_jump` in the dispatch model, otherwise you might cause an infeasible problem. 
+- Do not use `bind_within_timeset` if you are not using full timeset or its multiples as the `rolling_jump` in the dispatch model, otherwise you might cause an infeasible problem. 
 - Do not use `bind_within_period` if you are not using full periods or its multiples as the `rolling_jump` in the dispatch model, otherwise you might cause an infeasible problem. 
 - Do not use `bind_within_solve`
 
@@ -924,11 +924,11 @@ How to create the three lower information solve types for investment and storage
 
 To create a lower resolution (longer timesteps) solve:
 
-- Make a new `timeblockSet`, but use the same `timeline` and `block_duration` for it as with the high resolution solve
-- Set `timeblockSet` parameter `new_stepduration`: Hours
-- In the `solve` use this new `timeblockSet` in the `period_timeblockSet`
+- Make a new `timeset`, but use the same `timeline` and `timeset_duration` for it as with the high resolution solve
+- Set `timeset` parameter `new_stepduration`: Hours
+- In the `solve` use this new `timeset` in the `period_timeset`
 
-The model will create a new timeline for this solve with the `new_stepduration`. All the timestep map data like `inflow` or `profile` will be either summed or averaged for the new timeline. Again, the `new_stepduration` should be multiple of the old step duration. If the `block_duration` is not a multiple of the `new_stepduration` the last timestep will be shorter than the rest.
+The model will create a new timeline for this solve with the `new_stepduration`. All the timestep map data like `inflow` or `profile` will be either summed or averaged for the new timeline. Again, the `new_stepduration` should be multiple of the old step duration. If the `timeset_duration` is not a multiple of the `new_stepduration` the last timestep will be shorter than the rest.
 ![New step duration](./new_stepduration.PNG)
 
 Note that if the last timestep of the dispatch horizon is not in the storage solve timeline, it will use the last available timestep to fix the storage. This can happen at the end of the timeline when the dispatch solve with a lower step size can fit an extra step after the last time step of the storage solve.
@@ -936,7 +936,7 @@ Other reason might be that both dispatch and storage solves are aggregated with 
 
 To create a sample solve with representative periods:
 
-The tutorial contains an example of representaive periods under alternative *5weeks* where the year is represented with five sample weeks. It is done with the `timeblockSet` parameter `block_duration` where instead of choosing the whole timeline by setting the first timestep and the duration of whole timeline, you choose multiple starting points with smaller durations. The example for the *5weeks* is below.
+The tutorial contains an example of representaive periods under alternative *5weeks* where the year is represented with five sample weeks. It is done with the `timeset` parameter `timeset_duration` where instead of choosing the whole timeline by setting the first timestep and the duration of whole timeline, you choose multiple starting points with smaller durations. The example for the *5weeks* is below.
 
 ![New step duration](./5weeks.PNG)
 
@@ -1003,7 +1003,7 @@ Notes about the storage options with stochastics:
 ### Single solve stochastics
 **(stochastics.sqlite scenario: 2_day_stochastic_dispatch)**
 
-In this scenario, 24 hours are realized with an uncertain forecast for the next day. The timeblock length is therefore 48 hours and the branching will happen at the timestep t0025. 
+In this scenario, 24 hours are realized with an uncertain forecast for the next day. The timeset length is therefore 48 hours and the branching will happen at the timestep t0025. 
 To set up a stochastic solve, we need three things: The stochastic branch information, the stochastic timeseries and choosing which parts of the model use stochastic timeseries.
 
 The information about the branches are set with the *solve* parameter `stochastic_branches`. This is a 4 dimensional map. (Edit -> choose map -> right click -> add columns).

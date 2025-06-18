@@ -1,7 +1,7 @@
 import json
 import os
 import argparse
-from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError
+from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError, to_database
 
 
 def migrate_database(database_path):
@@ -21,7 +21,7 @@ def migrate_database(database_path):
             version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
         next_version = int(version) + 1
-        new_version = 24
+        new_version = 25
 
         while next_version <= new_version:
             if next_version == 0:
@@ -117,6 +117,10 @@ def migrate_database(database_path):
             elif next_version == 24:
                 db.add_update_item("parameter_definition", entity_class_name= "connection", name= "delay", parameter_type_list = ("float","1d_map"), parameter_value_list_name = None, description = "[hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.")
                 db.add_update_item("parameter_definition", entity_class_name= "unit", name= "delay", parameter_type_list = ("float","1d_map"), parameter_value_list_name = None, description = "[hours] A time delay between the input nodes and the output nodes. Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.")
+            elif next_version == 25:
+                update_timestructure(db)
+                db.add_update_item("parameter_definition", entity_class_name= "model", name= "periods_available", parameter_type_list = ("array",), parameter_value_list_name = None, description = "(Optional) Array of periods available for the model. Periods that are in the data, but are not in period_timeset.")
+                db.add_update_item("parameter_definition", entity_class_name= "solve", name= "contains_solves", parameter_type_list = ("str","array"), parameter_value_list_name = None, description = "Array of solves - used for nested solve sequencesArray of solves - used for nested solve sequences")
             else:
                 print("Version invalid")
             next_version += 1
@@ -253,6 +257,44 @@ def change_optional_output_type(db, filepath):
     except SpineDBAPIError:
         print("This change has been done before, continuing") 
     return 0
+
+def update_timestructure(db):
+   
+    timeblocks__timelines = db.find_entities(entity_class_name="timeblockSet__timeline")
+    block_durations = db.find_parameter_values(entity_class_name="timeblockSet", parameter_definition_name="block_duration")
+    timeblock_entity_class_item = db.item(db.mapped_table("entity_class"), name="timeblockSet")
+    db.update_entity_class(id = timeblock_entity_class_item["id"], name='timeset')
+    db.add_parameter_definition(entity_class_name= "timeset", name= "timeline", parameter_type_list = ("str",), parameter_value_list_name = None, description = "The name of the timeline that the timeset uses. (String)")
+    for timeblocks__timeline in timeblocks__timelines:
+        for block_duration in block_durations:
+            if timeblocks__timeline["entity_byname"][0] == block_duration["entity_byname"][0]:
+                value_x, type_ = to_database(timeblocks__timeline["entity_byname"][1])
+                param_table = db.mapped_table("parameter_value")
+                db.add(
+                    param_table, 
+                    entity_class_name="timeset", 
+                    parameter_definition_name="timeline",
+                    entity_byname=(timeblocks__timeline["entity_byname"][0],),
+                    alternative_name=block_duration["alternative_name"],
+                    value=value_x,
+                    type=type_,
+                )
+    t__t_entity_class_item = db.item(db.mapped_table("entity_class"), name="timeblockSet__timeline")
+    db.remove_entity_class(id = t__t_entity_class_item["id"])
+    #rename params or their description if timeblockSet is mentioned
+    parameter_definitions = db.mapped_table("parameter_definition")
+    param = db.item(parameter_definitions, entity_class_name= "solve", name = "period_timeblockSet")
+    db.update_parameter_definition(id = param["id"], name = "period_timeset", description = "Map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name.")
+    param = db.item(parameter_definitions, entity_class_name= "timeset", name = "block_duration")
+    db.update_parameter_definition(id = param["id"], name = "timeset_duration", description = "Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps")
+    param = db.item(parameter_definitions, entity_class_name= "timeset", name = "new_stepduration")
+    db.update_parameter_definition(id = param["id"], description = "Hours. Creates a new `timeline` from the old for this `timeset` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.")
+    param = db.item(parameter_definitions, entity_class_name= "node", name = "storage_binding_method")
+    db.update_parameter_definition(id = param["id"], description = "Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over any holes in the used timeline, but will not bind end to the start. Meanwhile 'bind_between_timesets' will bind the storage end state at the end of the timeset to the beginning of the timeset. 'bind_within_period', 'bind_within_solve' and bind_within_model' will act similarly but over increasingly longer time span. Separate parameters (e.g. 'storage_state_start') can force bindings. By default, storage start state is bound to 0.")
+    p_value, p_type = to_database("bind_within_timeblock") 
+    param_list_value = db.item(db.mapped_table("list_value"), parameter_value_list_name = "storage_binding_methods", value = p_value, type = p_type)
+    p_value, p_type = to_database("bind_within_timeset") 
+    db.update_list_value(id = param_list_value["id"], value = p_value, type = p_type)
 
 def update_parameter_types_v23(db):
     type_list = get_parameter_type_list_v23()

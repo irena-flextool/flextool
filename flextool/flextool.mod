@@ -27,8 +27,8 @@ set commodity 'c - Stuff that is being processed';
 set period_time '(d, t) - Time steps in the time periods of the whole timeline' dimen 2;
 set period__time_first within period_time;
 set period__time_last within period_time;
-set solve_period_timeblockset '(solve, d, tb) - All solve, period, timeblockset combinations in the model instance' dimen 3;
-set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeblockset} (s, d);
+set solve_period_timeset '(solve, d, tb) - All solve, period, timeset combinations in the model instance' dimen 3;
+set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeset} (s, d);
 set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
 set solve_current 'current solve name' dimen 1;
 set period 'd - Time periods in the current solve' := setof {(d, t) in period_time} (d);
@@ -42,9 +42,9 @@ set period__year dimen 2;
 set year 'y - Years for discount calculations' := setof{(d, y) in period__year}(y);
 set timeline__timestep__duration dimen 3;
 set time 't - Time steps in the current timelines' := setof {(tl, t, duration) in timeline__timestep__duration} (t); 
-set timeblockset__timeline dimen 2;
-set timeline := setof{(tb, tl) in timeblockset__timeline} (tl);
-set period__timeline := {d in period, tl in timeline : sum{(s, d, tb) in solve_period_timeblockset : s in solve_current && (tb, tl) in timeblockset__timeline} 1};
+set timeset__timeline dimen 2;
+set timeline := setof{(tb, tl) in timeset__timeline} (tl);
+set period__timeline := {d in period, tl in timeline : sum{(s, d, tb) in solve_period_timeset : s in solve_current && (tb, tl) in timeset__timeline} 1};
 set method 'm - Type of process that transfers, converts or stores commodities';
 set upDown 'upward and downward directions for some variables';
 set ct_method;
@@ -257,7 +257,7 @@ set commodity_node dimen 2 within {commodity, node};
 set dt dimen 2 within period_time;
 param dt_jump {(d, t) in dt};
 set dtttdt dimen 6;
-set dtt := setof {(d, t, t_previous, previous_within_block, previous_period, previous_within_solve) in dtttdt} (d, t, t_previous);
+set dtt := setof {(d, t, t_previous, previous_within_timeset, previous_period, previous_within_solve) in dtttdt} (d, t, t_previous);
 set period_invest dimen 1 within period;
 set d_realize_invest dimen 1 within period;
 set period_with_history dimen 1 within periodAll;
@@ -490,8 +490,8 @@ table data IN 'CSV' 'input/process__startup_method.csv' : process__startup_metho
 table data IN 'CSV' 'input/process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
 table data IN 'CSV' 'input/process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
 table data IN 'CSV' 'input/reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
-table data IN 'CSV' 'input/timeblocks_in_use.csv' : solve_period_timeblockset <- [solve,period,timeblocks];
-table data IN 'CSV' 'input/timeblocks__timeline.csv' : timeblockset__timeline <- [timeblocks,timeline];
+table data IN 'CSV' 'input/timesets_in_use.csv' : solve_period_timeset <- [solve,period,timesets];
+table data IN 'CSV' 'input/timesets__timeline.csv' : timeset__timeline <- [timesets,timeline];
 table data IN 'CSV' 'solve_data/solve_current.csv' : solve_current <- [solve];
 table data IN 'CSV' 'input/p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
 table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
@@ -552,7 +552,7 @@ table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,
 table data IN 'CSV' 'solve_data/first_timesteps.csv' : period__time_first <- [period,step];
 table data IN 'CSV' 'solve_data/last_timesteps.csv' : period__time_last <- [period,step];
 table data IN 'CSV' 'solve_data/last_realized_timestep.csv' : realized_period__time_last <- [period,step];
-table data IN 'CSV' 'solve_data/step_previous.csv' : dtttdt <- [period, time, previous, previous_within_block, previous_period, previous_within_solve];
+table data IN 'CSV' 'solve_data/step_previous.csv' : dtttdt <- [period, time, previous, previous_within_timeset, previous_period, previous_within_solve];
 table data IN 'CSV' 'solve_data/step_previous.csv' : [period, time], dt_jump~jump;
 table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <- [period], p_period_from_solve~param;
 table data IN 'CSV' 'solve_data/realized_invest_periods_of_current_solve.csv' : d_realize_invest <- [period];
@@ -1446,19 +1446,19 @@ set process_source_sink_ramp :=
 	union process_source_sink_ramp_cost;
 
 set process_source_sink_dtttdt_ramp_limit_source_up :=
-        {(p, source, sink) in process_source_sink_ramp_limit_source_up, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt :
+        {(p, source, sink) in process_source_sink_ramp_limit_source_up, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
  		    p_process_source[p, source, 'ramp_speed_up'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
         };
 set process_source_sink_dtttdt_ramp_limit_sink_up :=
-        {(p, source, sink) in process_source_sink_ramp_limit_sink_up, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt :
+        {(p, source, sink) in process_source_sink_ramp_limit_sink_up, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
  		    p_process_sink[p, sink, 'ramp_speed_up'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
         };
 set process_source_sink_dtttdt_ramp_limit_source_down :=
-        {(p, source, sink) in process_source_sink_ramp_limit_source_down, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt :
+        {(p, source, sink) in process_source_sink_ramp_limit_source_down, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
  		    p_process_source[p, source, 'ramp_speed_down'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
         };
 set process_source_sink_dtttdt_ramp_limit_sink_down :=
-        {(p, source, sink) in process_source_sink_ramp_limit_sink_down, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt :
+        {(p, source, sink) in process_source_sink_ramp_limit_sink_down, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
  		    p_process_sink[p, sink, 'ramp_speed_down'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
         };
 
@@ -1736,8 +1736,8 @@ check {p in process_minload, (d,t) in dt} pdtProcess[p, 'min_load', d, t] < 1.0;
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
 check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
 
-printf 'Checking: Is there a timeline connected to a timeblockset\n';
-check sum{(tb, tl) in timeblockset__timeline} 1 > 0;
+printf 'Checking: Is there a timeline connected to a timeset\n';
+check sum{(tb, tl) in timeset__timeline} 1 > 0;
 
 printf 'Checking: Are discount factors set in models with investments and multiple periods\n';
 check {d in period : d not in period_first && (sum{(e, d) in ed_invest} 1 || sum{(e, d) in ed_divest} 1)} : p_discount_years[d] != 0;
@@ -1763,15 +1763,15 @@ check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((
 && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
   p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t];
 
-check {n in nodeState, (d,t,t_previous,t_previous_within_block,d_previous,t_previous_within_solve) in dtttdt: 
+check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt: 
 ((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
-&& (n, 'bind_within_timeblock') in node__storage_binding_method
+&& (n, 'bind_within_timeset') in node__storage_binding_method
 && dt_jump[d,t] != 1}:
   p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t] && p_node[n,'storage_state_end'] <= pdtNode[n,'availability', d, t_previous];
 
-check {n in nodeState, (d,t,t_previous,t_previous_within_block,d_previous,t_previous_within_solve) in dtttdt: 
+check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt: 
 ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
-&& (n, 'bind_within_timeblock') in node__storage_binding_method
+&& (n, 'bind_within_timeset') in node__storage_binding_method
 && dt_jump[d,t] != 1}:
   (p_node[n,'storage_state_start'] <= pdtNode[n, 'availability', d, t] && p_node[n,'storage_state_start'] <= pdtNode[n,'availability', d, t_previous]);
 
@@ -1781,7 +1781,7 @@ check {n in nodeState, (d,t) in period__time_last:
    && (n, 'fix_start_end') not in node__storage_start_end_method
    && (n, 'bind_within_solve') not in node__storage_binding_method
    && (n, 'bind_within_period') not in node__storage_binding_method
-   && (n, 'bind_within_timeblock') not in node__storage_binding_method}:
+   && (n, 'bind_within_timeset') not in node__storage_binding_method}:
   pdtNode[n,'storage_state_reference_value', d, t] <= pdtNode[n, 'availability', d, t];
 
 printf 'Checking: transfer_method no_losses_no_variable_cost\n';
@@ -1988,11 +1988,11 @@ param w_total_cost := gmtime() - datetime0 - setup1 - w_calc_slope - setup2;
 display w_total_cost;
 
 # Energy balance in each node  
-s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
-  + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n] )
+  + (if n in nodeState && (n, 'bind_within_timeset') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_timeset]) * p_entity_unitsize[n] )
   + (if n in nodeState && (d, t) in period__time_first && d in period_first_of_solve && not p_nested_model['solveFirst'] then (v_state[n,d,t] * p_entity_unitsize[n] - p_roll_continue_state[n])) 
   + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && (d, t) in period__time_first && d in period_first_of_solve && p_nested_model['solveFirst'] 
     && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
@@ -2393,7 +2393,7 @@ s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in peri
    && (n, 'fix_start_end') not in node__storage_start_end_method
    && (n, 'bind_within_solve') not in node__storage_binding_method
    && (n, 'bind_within_period') not in node__storage_binding_method
-   && (n, 'bind_within_timeblock') not in node__storage_binding_method
+   && (n, 'bind_within_timeset') not in node__storage_binding_method
    && sum{(d2,d) in period__branch, (d, t, t2) in dtt_timeline_matching: n in n_fix_storage_price} 1 = 0
    && sum{(d2,d) in period__branch, (d, t, t2) in dtt_timeline_matching: n in n_fix_storage_quantity} 1 = 0
    && sum{(d2,d) in period__branch, (d, t, t2) in dtt_timeline_matching: n in n_fix_storage_usage} 1 = 0)} :
@@ -2655,14 +2655,14 @@ s.t. maxOnline {p in process_online, (d, t) in dt} :
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 ;
 
-s.t. online__startup_linear {p in process_online_linear, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. online__startup_linear {p in process_online_linear, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + v_startup_linear[p, d, t]
   >=
   + v_online_linear[p, d, t] 
   - v_online_linear[p, d_previous, t_previous_within_solve]
 ;
 
-s.t. online__startup_integer {p in process_online_integer, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. online__startup_integer {p in process_online_integer, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + v_startup_integer[p, d, t]
   >=
   + v_online_integer[p, d, t] 
@@ -2678,14 +2678,14 @@ s.t. maxStartup {p in process_online, (d, t) in dt} :
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 ;
 
-s.t. online__shutdown_linear {p in process_online_linear, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. online__shutdown_linear {p in process_online_linear, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + v_shutdown_linear[p, d, t]
   >=
   - v_online_linear[p, d, t] 
   + v_online_linear[p, d_previous, t_previous_within_solve]
 ;
 
-s.t. online__shutdown_integer {p in process_online_integer, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. online__shutdown_integer {p in process_online_integer, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + v_shutdown_integer[p, d, t]
   >=
   - v_online_integer[p, d, t] 
@@ -2721,14 +2721,14 @@ s.t. maxShutdown {p in process_online, (d, t) in dt} :
 #	)
 #;
 
-s.t. ramp_up_variable {(p, source, sink) in process_source_sink_ramp, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. ramp_up_variable {(p, source, sink) in process_source_sink_ramp, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + v_ramp[p, source, sink, d, t]
   =
   + v_flow[p, source, sink, d, t]  * step_duration[d, t]
   - v_flow[p, source, sink, d, t_previous] * step_duration[d, t]
 ;
 
-s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_up} :
+s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_up} :
   + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'up', source) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'up', source, d, t] * p_entity_unitsize[p] / step_duration[d, t])
@@ -2744,7 +2744,7 @@ s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_w
   + ( if p in process_online_integer then v_startup_integer[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
 ;
 
-s.t. ramp_sink_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_sink_up} :
+s.t. ramp_sink_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_sink_up} :
   + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'up', sink, d, t] * p_entity_unitsize[p] / step_duration[d, t])
@@ -2760,7 +2760,7 @@ s.t. ramp_sink_up_constraint {(p, source, sink, d, t, t_previous, t_previous_wit
   + ( if p in process_online_integer then v_startup_integer[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
 ;
 
-s.t. ramp_source_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_down} :
+s.t. ramp_source_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_down} :
   + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'down', source) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'down', source, d, t] * p_entity_unitsize[p] / step_duration[d, t])
@@ -2776,7 +2776,7 @@ s.t. ramp_source_down_constraint {(p, source, sink, d, t, t_previous, t_previous
   - ( if p in process_online_integer then v_shutdown_integer[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
 ;
 
-s.t. ramp_sink_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_sink_down} :
+s.t. ramp_sink_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_sink_down} :
   + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'down', sink) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'down', sink, d, t] * p_entity_unitsize[p] / step_duration[d, t])
@@ -3211,7 +3211,7 @@ s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
   ) * pdGroup[g, 'non_synchronous_limit', d]
 ;
 
-s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : d in period_invest} :
+s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : d in period_invest} :
   # profile limited units producing to a node in the group (based on available capacity)
   + sum {(p, source, sink, f, m) in process__source__sink__profile__profile_method 
          : m = 'upper_limit' || m = 'fixed'
@@ -3268,7 +3268,7 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
       + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
-      + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n])
+      + (if n in nodeState && (n, 'bind_within_timeset') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_timeset]) * p_entity_unitsize[n])
       + (if n in nodeState && (d, t) in period__time_first && d in period_first_of_solve && not p_nested_model['solveFirst'] then (v_state[n,d,t] * p_entity_unitsize[n] - p_roll_continue_state[n])) 
       + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && (d, t) in period__time_first && d in period_first_of_solve && p_nested_model['solveFirst'] 
       && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
@@ -3468,11 +3468,11 @@ param r_connection_to_right_node__d{c in process_connection, d in d_realized_per
   + sum {(d, t) in dt_realize_dispatch} r_connection_to_right_node__dt[c, d, t] * step_duration[d, t]
 ;
 
-param r_nodeState_change_dt{n in nodeState, (d, t) in dt_realize_dispatch} := sum {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} (
+param r_nodeState_change_dt{n in nodeState, (d, t) in dt_realize_dispatch} := sum {(d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} (
       + (if (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
-      + (if (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n])
+      + (if (n, 'bind_within_timeset') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_timeset]) * p_entity_unitsize[n])
       + (if (d, t) in period__time_first && d in period_first_of_solve && not p_nested_model['solveFirst'] then (v_state[n,d,t] * p_entity_unitsize[n] - p_roll_continue_state[n])) 
       + (if (n, 'bind_forward_only') in node__storage_binding_method && (d, t) in period__time_first && d in period_first_of_solve && p_nested_model['solveFirst'] 
       && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
@@ -3804,9 +3804,9 @@ for {i in 1..1 : p_model['solveFirst']}
 for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear also after before each time values are outputted, to avoid duplicates
   { printf 'period,step,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
   }
-for {c in solve_current, (n,'fix_price') in node__storage_nested_fix_method, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt: (d, t) in dt_fix_storage_timesteps}
+for {c in solve_current, (n,'fix_price') in node__storage_nested_fix_method, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt: (d, t) in dt_fix_storage_timesteps}
   {
-    printf '%s,%s,%s,%.12g\n', d, t, n,  -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective >> fn_fix_price_nodeState__dt;
+    printf '%s,%s,%s,%.12g\n', d, t, n,  -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective >> fn_fix_price_nodeState__dt;
   }
 
 printf 'Write node state usage for fixed timesteps ..\n';
@@ -4947,11 +4947,11 @@ for {i in 1..1 : p_model['solveFirst']}
       { printf ',%s', n >> fn_nodal_prices__dt; }
   }
 for {s in solve_current: 'yes' not in exclude_entity_outputs}
-  { for {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in dt_realize_dispatch}
+  { for {(d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : (d, t) in dt_realize_dispatch}
     { printf '\n%s,%s,%s', s, d, t >> fn_nodal_prices__dt;
       for {c in solve_current, n in nodeBalance}
       {
-        printf ',%8g', -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d]  / scale_the_objective >> fn_nodal_prices__dt;
+        printf ',%8g', -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d]  / scale_the_objective >> fn_nodal_prices__dt;
         }
   }}
 
@@ -5492,7 +5492,7 @@ display w_full;
 #display {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
-#display {c in current_solve, n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective;
+#display {c in current_solve, n in nodeBalance, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective;
 #display {(r, ud, g, r_m) in reserve__upDown__group__method_timeseries, (d, t) in dt : (d, t) in test_dt}: reserveBalance_timeseries_eq[r, ud, g, r_m, d, t].dual;
 #display {(p, source, sink) in process_source_sink, (d, t) in dt : (d, t) in test_dt && (p, sink) in process_sink}: maxToSink[p, source, sink, d, t].ub;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
