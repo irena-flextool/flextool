@@ -281,6 +281,8 @@ def update_timestructure(db):
                 )
     t__t_entity_class_item = db.item(db.mapped_table("entity_class"), name="timeblockSet__timeline")
     db.remove_entity_class(id = t__t_entity_class_item["id"])
+    timeline_duration_in_years = db.item(db.mapped_table("parameter_definition"), entity_class_name="timeline", name = "timeline_duration_in_years")
+    db.remove_parameter_definition(id = timeline_duration_in_years["id"])
     #rename params or their description if timeblockSet is mentioned
     parameter_definitions = db.mapped_table("parameter_definition")
     param = db.item(parameter_definitions, entity_class_name= "solve", name = "period_timeblockSet")

@@ -274,6 +274,9 @@ set realized_period__time_last dimen 2 within period_time;
 set dt_complete dimen 2 within period_time;
 set complete_time_in_use := setof {(d, t) in dt_complete} (t);
 param complete_step_duration{(d, t) in dt_complete};
+set timeline_steps := setof{(tl, t, duration) in timeline__timestep__duration}(tl, t);
+param p_timeline_step_duration{timeline_steps};
+param p_timeline_duration_in_years{tl in timeline}:= sum{(tl,t) in timeline_steps} p_timeline_step_duration[tl,t] /8760;
 
 set dt_fix_storage_timesteps dimen 2 within period_time;
 set d_fix_storage_period := setof {(d, t) in dt_fix_storage_timesteps} (d);
@@ -358,7 +361,6 @@ param p_node_constraint_state_coefficient {node, constraint};
 param step_duration{(d, t) in dt};
 param p_hole_multiplier {solve_current} default 1;
 
-param p_timeline_duration_in_years{timeline};
 param p_years_represented{d in period, y in year} default 1;
 param p_years_from_solve{d in period, y in year} default 0;
 param p_discount_years{d in period} default 0;
@@ -526,7 +528,7 @@ table data IN 'CSV' 'input/pd_process_source.csv' : process__source__param__peri
 table data IN 'CSV' 'input/pd_process_sink.csv' : process__sink__param__period <- [process, sink, sourceSinkPeriodParam, period], pd_process_sink~pd_process_sink;
 table data IN 'CSV' 'input/p_profile.csv' : [profile], p_profile;
 table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
-table data IN 'CSV' 'input/timeline_duration_in_years.csv' : [timeline], p_timeline_duration_in_years;
+table data IN 'CSV' 'input/timeline.csv' : [timeline,timestep], p_timeline_step_duration~duration;
 table data IN 'CSV' 'solve_data/p_discount_years.csv' : [period], p_discount_years~param;
 table data IN 'CSV' 'solve_data/p_years_represented.csv' : period__year <- [period,years_from_solve], p_years_represented~p_years_represented, p_years_from_solve~p_years_from_solve;
 table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
