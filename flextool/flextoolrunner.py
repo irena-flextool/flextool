@@ -2023,6 +2023,7 @@ class FlexToolRunner:
                             "input/groupOutputAggregateFlows.csv", filter_in_value="yes", no_value=True)
             write_parameter(db, [("model", "exclude_entity_outputs")], "value", "input/exclude_entity_outputs.csv")
             write_parameter(db, [("model", "solves")], "model,solve", "input/model__solve.csv")
+            write_parameter(db, [("model", "periods_available")], "model,period_from_model", "input/periods_available.csv")
             write_entity(db, ["node"], "node", "input/node.csv")
             write_parameter(db, [("node", "constraint_capacity_coefficient")],
                             "node,constraint,p_node_constraint_capacity_coefficient",

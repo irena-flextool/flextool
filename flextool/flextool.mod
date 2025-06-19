@@ -31,7 +31,9 @@ set solve_period_timeset '(solve, d, tb) - All solve, period, timeset combinatio
 set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeset} (s, d);
 set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
 set solve_current 'current solve name' dimen 1;
-set period 'd - Time periods in the current solve' := setof {(d, t) in period_time} (d);
+set period_from_model dimen 1;
+set period_from_period_time := setof {(d, t) in period_time} (d);
+set period 'd - Time periods in the current solve' := period_from_model union period_from_period_time;
 set period_first dimen 1 within period;
 set period_last dimen 1 within period;
 set branch_all dimen 1;
@@ -447,6 +449,7 @@ table data IN 'CSV' 'input/profile.csv': profile <- [profile];
 table data IN 'CSV' 'input/optional_outputs.csv': optional_outputs <- [output, value];
 table data IN 'CSV' 'input/exclude_entity_outputs.csv': exclude_entity_outputs <- [value];
 table data IN 'CSV' 'input/groupIncludeStochastics.csv' : groupStochastic <- [group];
+table data IN 'CSV' 'input/periods_available.csv': period_from_model <- [period_from_model];
 
 # Single dimension membership sets
 table data IN 'CSV' 'input/process_connection.csv': process_connection <- [process_connection];
