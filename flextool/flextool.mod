@@ -1327,7 +1327,6 @@ param pdtProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in p
 	      )
     )
 ;
-
 set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : pdtProcess__source__sink__dt_varCost[p, source, sink, d, t]};
 set pssdt_varCost_eff_unit_source := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && pdtProcess_source[p, source, 'other_operational_cost', d, t]};
 set pssdt_varCost_eff_unit_sink := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && pdtProcess_sink[p, sink, 'other_operational_cost', d, t]};
@@ -1338,8 +1337,8 @@ set ed_invest_period := {(e, d) in ed_invest : (e, 'invest_period') in entity__i
 set e_invest_total := {e in entityInvest : (e, 'invest_total') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method 
                                                || (e, 'invest_retire_total') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
 set ed_invest_cumulative := {(e, d) in ed_invest : (e, 'cumulative_limits') in entity__invest_method}; 
-set edd_history_choice := {e in entity, d_history in period_with_history, d in period : (e, 'reinvest_choice') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history] && p_years_d[d] < p_years_d[d_history] + pdEntity_lifetime[e, d_history]};
-set edd_history_automatic := {e in entity, d_history in period_with_history, d in period : (e, 'reinvest_automatic') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history]};
+set edd_history_choice := {e in entity, d_history in period_with_history, d in period_with_history : (e, 'reinvest_choice') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history] && p_years_d[d] < p_years_d[d_history] + pdEntity_lifetime[e, d_history]};
+set edd_history_automatic := {e in entity, d_history in period_with_history, d in period_with_history : (e, 'reinvest_automatic') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history]};
 set edd_history := edd_history_choice union edd_history_automatic;
 set edd_history_invest := {(e, d_invest, d) in edd_history : e in entityInvest};
 set edd_invest := {(e, d_invest, d) in edd_history_invest : d_invest in period_invest};
@@ -1363,6 +1362,8 @@ set gd_divest_period := {(g, d) in gd_invest : (g, 'retire_period') in group__in
                                                || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
 set g_divest_total := {g in group_divest : (g, 'retire_total') in group__invest_method || (g, 'retire_period_total') in group__invest_method 
                                                || (g, 'invest_retire_total') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
+display edd_history_choice;
+display edd_history_automatic;
 
 param e_invest_max_total{e in entityInvest} :=
   + (if e in process then p_process[e, 'invest_max_total'])
@@ -1751,7 +1752,7 @@ printf 'Checking: Does a node with has_storage also have has_balance set to yes\
 check {n in nodeState} : n in nodeBalance;
 
 printf 'Checking: The nodes with scaling methods should have the inflow parameter set\n';
-check {n in node, d in period: (n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method ||
+check {n in node, d in period_in_use: (n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method ||
         (n, 'scale_to_annual_and_peak_flow') in node__inflow_method}:
   sum{(d, t) in dt_complete} ptNode_inflow[n, t] != 0;
 
