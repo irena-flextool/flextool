@@ -2185,7 +2185,6 @@ class FlexToolRunner:
             write_parameter(db, [("unit", "efficiency"),
                                  ("unit", "efficiency_at_min_load"),
                                  ("unit", "min_load"),
-                                 ("unit", "other_operational_cost"),
                                  ("unit", "availability"),
                                  ("connection", "efficiency"),
                                  ("connection", "efficiency_at_min_load"),
@@ -2204,15 +2203,17 @@ class FlexToolRunner:
             write_parameter(db, [("unit__node__profile", "profile_method")], "process,node,profile,profile_method",
                             "input/process__node__profile__profile_method.csv")
             write_parameter(db, [("unit__inputNode", "inertia_constant"),
+                                 ("unit__inputNode", "other_operational_cost"),
                                  ("unit__inputNode", "ramp_cost"),
                                  ("unit__inputNode", "ramp_speed_down"),
                                  ("unit__inputNode", "ramp_speed_up")], "process,source,sourceSinkParam,p_process_source",
-                            "input/p_process_source.csv", param_print=True)
+                            "input/p_process_source.csv", filter_in_type=["float"], param_print=True)
             write_parameter(db, [("unit__outputNode", "inertia_constant"),
+                                 ("unit__outputNode", "other_operational_cost"),
                                  ("unit__outputNode", "ramp_cost"),
                                  ("unit__outputNode", "ramp_speed_down"),
                                  ("unit__outputNode", "ramp_speed_up")], "process,sink,sourceSinkParam,p_process_sink",
-                            "input/p_process_sink.csv", param_print=True)
+                            "input/p_process_sink.csv", filter_in_type=["float"], param_print=True)
             write_parameter(db, [("reserve__upDown__unit__node", "increase_reserve_ratio"),
                                  ("reserve__upDown__unit__node", "large_failure_ratio"),
                                  ("reserve__upDown__unit__node", "max_share"),
@@ -2341,7 +2342,6 @@ class FlexToolRunner:
                                  ("unit", "interest_rate"),
                                  ("unit", "lifetime"),
                                  ("unit", "fixed_cost"),
-                                 ("unit", "other_operational_cost"),
                                  ("unit", "existing"),
                                  ("unit", "cumulative_max_capacity"),
                                  ("unit", "cumulative_min_capacity"),
@@ -2387,7 +2387,6 @@ class FlexToolRunner:
             write_parameter(db, [("unit", "efficiency"),
                                  ("unit", "efficiency_at_min_load"),
                                  ("unit", "min_load"),
-                                 ("unit", "other_operational_cost"),
                                  ("unit", "availability"),
                                  ("connection", "efficiency"),
                                  ("connection", "efficiency_at_min_load"),
