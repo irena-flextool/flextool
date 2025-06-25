@@ -60,6 +60,7 @@ class FlexToolRunner:
             db.fetch_all("parameter_value")
             self.check_version(db=db)
             self.timelines = self.params_to_dict(db=db, cl="timeline", par="timestep_duration", mode="defaultdict")
+            self.model = self.get_single_entities(db=db, entity_class_name="model")
             self.model_solve = self.params_to_dict(db=db, cl="model", par="solves", mode="defaultdict")
             self.solve_modes = self.params_to_dict(db=db, cl="solve", par="solve_mode", mode="dict")
             self.roll_counter = self.make_roll_counter()
@@ -100,8 +101,9 @@ class FlexToolRunner:
             self.realized_periods = self.periods_to_tuples(db=db, cl="solve", par="realized_periods")
             self.realized_invest_periods = self.periods_to_tuples(db=db, cl="solve", par="realized_invest_periods")
             self.fix_storage_periods = self.periods_to_tuples(db=db, cl="solve", par="fix_storage_periods")
+            self.periods_available = self.params_to_dict(db=db, cl="model", par="periods_available", mode="dict")
 
-
+        self.create_assumptive_timestructure_parts()
         self.stochastic_timesteps = defaultdict(list)
         self.original_timeline = defaultdict()
         self.create_timeline_from_timestep_duration()
@@ -168,7 +170,14 @@ class FlexToolRunner:
                                                                                     param_value.values[i]))
         return timesets_used_by_solves
 
-
+    def get_single_entities(self, db, entity_class_name):
+        """
+        Get all entities of a given class from the database.
+        :param db: Database object
+        :param entity_class_name: Name of the entity class
+        :return: List of entities
+        """
+        return [entity["entity_byname"][0] for entity in db.find_entities(entity_class_name=entity_class_name)]
 
     def check_version(self, db):
         db_version_item = db.get_parameter_definition_item(entity_class_name="model",
@@ -377,6 +386,88 @@ class FlexToolRunner:
                             row = [node__value[0],timeline_row[0],value]
                             filewriter.writerow(row)
 
+    def create_assumptive_timestructure_parts(self):
+
+        """If no timesets defined and only one timeline exists, create a full timeline timeset"""
+
+        if not self.timesets and len(self.timelines.keys()) == 1:
+            timeset_name = "full_timeline"
+            self.timesets__timeline[timeset_name] = list(self.timelines.keys())[0]
+            self.timesets[timeset_name] = [(list(self.timelines.values())[0][0][0], len(list(self.timelines.values())[0]))]
+
+        """If timeset: timeline is not defined and only one timeline exists, use that timeline"""
+
+        for timeset_name, block in self.timesets.items():
+            if timeset_name not in self.timesets__timeline.keys():
+                if len(self.timelines.keys()) == 1:
+                    self.timesets__timeline[timeset_name] = list(self.timelines.keys())[0]
+                elif len(self.timelines.keys()) > 1:
+                    self.logger.error("""More than one timeline available and FlexTool does not know which ones to use. 
+                                      Please use 'timeline' parameter of 'timeset' class to define which timelines are part of the timeset(s) in the model instance""")
+                    sys.exit(-1)
+        
+        """If model: solves does not exist and only one solve exists, use that"""
+
+        if not self.model_solve.keys():
+            if len(self.model) == 1:
+                solve = None
+                if len(self.timesets_used_by_solves.keys()) == 1:
+                    solve = list(self.timesets_used_by_solves.keys())[0]
+                elif len(self.timesets_used_by_solves.keys()) > 1:
+                    self.logger.error("""'Data contains multiple solve entities and FlexTool does not know which to use. 
+                                    Please use 'solves' parameter of 'model' class to inform which solves are to be included in the model instance.""")
+                    sys.exit(-1)
+                for solve_period in self.realized_periods + self.invest_periods:
+                    if solve:
+                        if solve_period[0] != solve:
+                            self.logger.error("""'Data contains multiple solve entities and FlexTool does not know which to use. 
+                                    Please use 'solves' parameter of 'model' class to inform which solves are to be included in the model instance.""")
+                            sys.exit(-1)
+                    else:  
+                        solve = solve_period[0]
+                self.model_solve[self.model[0]] = [solve]
+            else:
+                self.logger.error("""'More than one model entity found in the database and FlexTool does not know which to use.""")
+                sys.exit(-1)
+
+        """If no solve entity, for model:solves, create a solve entity that has all available periods as realized.
+          In combination of the assumptions two below, will create a solvable timelines for all periods."""
+
+        for model, solves in self.model_solve.items():
+            for solve in solves:
+                if not any(solve == solve_period[0] for solve_period in self.realized_periods) and \
+                not any(solve == solve_period[0] for solve_period in self.invest_periods) and \
+                solve not in self.timesets_used_by_solves.keys():
+                    if model in self.periods_available.keys():
+                        for period in self.periods_available[model]:
+                            self.realized_periods.append((solve,period))
+                    else:
+                        self.logger.error(f'The solve {solve} in the model: solves array does not have any periods defined: \
+                                          (period_timeset, realized_periods, invest_periods)\n \
+                                        Alternatively add periods_available to the model to create simple full timelines for those periods')
+                        sys.exit(-1)
+
+        """If solve: period_timeset does not exist and only one timeset exists, create timesets for all realized and invested periods"""
+        for solve in list(self.model_solve.values())[0]:
+            if solve not in list(self.timesets_used_by_solves.keys()):
+                if len(self.timesets.keys()) == 1:
+                    period__timeset_list = list()
+                    for solve_period in self.realized_periods + self.invest_periods:
+                        if solve_period[0] == solve:
+                            period__timeset_list.append((solve_period[1],list(self.timesets.keys())[0]))
+                    self.timesets_used_by_solves[solve] = period__timeset_list
+                else:
+                    self.logger.error("""More than one timeset available and FlexTool does not know which ones to use. 
+                                      Please use 'period_timeset' parameter of 'solve' class to define which periods 
+                                      and which timesets are part of the solve(s) in the model instance""")
+                    sys.exit(-1)
+        
+        """If realized_periods does not exist, but period__timeset exist, assume all periods to be realized"""
+        for solve in list(self.model_solve.values())[0]:
+            if not any(solve == solve_period[0] for solve_period in self.realized_periods) and solve in self.timesets_used_by_solves.keys():
+                for period_timeset in self.timesets_used_by_solves[solve]:
+                    self.realized_periods.append((solve,period_timeset[0]))
+        
 
     def make_steps(self, start, stop):
         """
@@ -851,6 +942,30 @@ class FlexToolRunner:
                         jump = active_time[j][1] - active_time_list[previous_period_name][-1][1]
                         step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], previous_period_name, active_time_list[previous_period_name][-1][0], jump))
         return step_lengths
+    
+    def write_timesets(self, timesets_used_by_solves, timeset__timeline):
+        """
+        write timesets_in_use.csv and timeset__timeline.csv. 
+        Only exists as a separate function, because of the 'create_assumptive_timestructure_parts' function might create new timesets.
+
+        :param timesets_used_by_solves: dict of solves and their period__timesets
+        :param timeset__timeline: dict of timesets and their timelines
+        :return:
+        """
+        headers = ("solve", "period", "timesets")
+        with open("input/timesets_in_use.csv", 'w', newline='\n') as timesetfile:
+            writer = csv.writer(timesetfile, delimiter=',')
+            writer.writerow(headers)
+            for solve, period_timeset_list in timesets_used_by_solves.items():
+                for period, timeset in period_timeset_list:
+                    writer.writerow((solve, period, timeset))
+
+        headers = ("timesets", "timeline")
+        with open("input/timesets__timeline.csv", 'w', newline='\n') as timesetfile:
+            writer = csv.writer(timesetfile, delimiter=',')
+            writer.writerow(headers)
+            for timeset, timeline in timeset__timeline.items():
+                writer.writerow((timeset, timeline))
 
     def write_step_jump(self, step_lengths):
         """
@@ -1793,6 +1908,7 @@ class FlexToolRunner:
             self.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
             self.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete = True)
             self.write_step_jump(jump_lists[solve])
+            self.write_timesets(self.timesets_used_by_solves, self.timesets__timeline)
             self.logger.info("Creating period data")
             self.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], 'solve_data/period_with_history.csv')
             self.write_periods(complete_solve[solve], self.realized_invest_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
@@ -2168,21 +2284,7 @@ class FlexToolRunner:
                             "input/solve__fix_storage_period.csv", filter_in_type=["array", "1d_map"])
             write_parameter(db, [("solve", "invest_periods")], "solve,period", "input/solve__invest_period.csv",
                             filter_in_type=["array", "1d_map"])
-            write_parameter(db, [("solve", "years_represented")], "solve,period,years_represented",
-                            "input/solve__period__years_represented.csv")
-            write_parameter(db, [("solve", "stochastic_branches")], "solve,period,branch,start_time,realized,weight",
-                            "input/stochastic_branches.csv")
             write_parameter(db, [("timeline", "timestep_duration")], "timeline,timestep,duration", "input/timeline.csv")
-            write_parameter(db, [("timeline", "timeline_duration_in_years")], "timeline,p_timeline_duration_in_years",
-                            "input/timeline_duration_in_years.csv")
-            write_parameter(db, [("timeset", "timeset_duration")], "timesets,start,duration", "input/timesets.csv")
-            write_parameter(db, [("timeset", "timeline")], "timesets,timeline", "input/timesets__timeline.csv")
-            write_parameter(db, [("solve", "period_timeset")], "solve,roll,period,timesets",
-                            "input/timesets_in_use_2d.csv", filter_in_type=["2d_map"])
-            write_parameter(db, [("solve", "period_timeset")], "solve,period,timesets", "input/timesets_in_use.csv",
-                            filter_in_type=["1d_map"])
-            write_parameter(db, [("timeset", "new_stepduration")], "timeset,step_duration",
-                            "input/timeset__new_stepduration.csv", filter_out_index="time")
             write_parameter(db, [("unit", "efficiency"),
                                  ("unit", "efficiency_at_min_load"),
                                  ("unit", "min_load"),
