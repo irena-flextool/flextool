@@ -452,7 +452,7 @@ class FlexToolRunner:
             if solve not in list(self.timesets_used_by_solves.keys()):
                 if len(self.timesets.keys()) == 1:
                     period__timeset_list = list()
-                    for solve_period in self.realized_periods + self.invest_periods:
+                    for solve_period in self.invest_periods + self.realized_periods:
                         if solve_period[0] == solve:
                             period__timeset_list.append((solve_period[1],list(self.timesets.keys())[0]))
                     self.timesets_used_by_solves[solve] = period__timeset_list
