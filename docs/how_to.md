@@ -52,7 +52,7 @@ To define a temporal structure for a model instance, you need to create the foll
 - `timeline` entity called *y2020* with a map-type parameter `timestep_duration` that defines the timeline the time series data in the model will need to use. It contains, in the first column, the name of each timestep (e.g. *t0001* or *2022-01-01-01*) and, in the second column, the length of the timestep in hours (e.g. *1.0*). The timestep names here must match the timestep names in other time series like `inflow` or `profile`. Here all of the three options use the same full year timeline i.e. timesteps from t0001 to t8760 with a step size of one hour.
 - `timeset` entities called *full-year*, *2day* and *5week*. Each of them need a map-type parameter `timeset_duration` to define a timeset using a timestep name to indicate where the timeset starts and a number to define the duration of the timeset in timesteps: (*t0001*, *8760*) for the *full-year* and (*t4001* and *48.0*) for the 48h. The timeline is larger than the 48 hours, but this way the solver uses 48 hours specified. The *5week* needs five starting points
 *t2521*, *t4538*, *t5041*, *t7057* and *t8233* with all having the length of *168.0*
-- `timeset` needs to be connected to the timeline. This is done by adding the `timeset__timeline` entities (*full-year*| *y2020*), (*2day*| *y2020*), (*5weeks*| *y2020*). 
+- `timeset` needs to be connected to the timeline. This is done by adding the `timeset` parameter `timeline`. Each of the three `timesets` include the value *y2020*.
 - `solve` entities called *full-year-dispatch*, *2day-dispatch* and *5week-invest*. In addition, they need the following parameters:
 
   - a map-type parameter `period_timeset` to define the timeset to be used by each period. Here each of the three use their `timeset` to describe the same period *p2020*. The first column of the map has the period: *p2020* and the second column the `timeset`: *full-year*, *2day* or *5week*
@@ -61,10 +61,19 @@ To define a temporal structure for a model instance, you need to create the foll
 
 - Finally, a `model` entity will define the solves to be included in a one model instance. They are defined in the array parameter `solves`. For these examples, the model name is *flextool* and for each `solve` the name of the `solve` should be given in the `solves` array (distinguished by the alternative): *full-year-dispatch*, *2day-dispatch* or *5week-invest*.
 
-Be careful when choosing datatypes! Maps need to be maps not arrays. (In the future, an update is coming to toolbox to ensure compliance.) 
+Be careful when choosing datatypes! Maps need to be maps not arrays. You will see a red exclamation mark if you are using the wrong datatype. (In the future, an update is coming to toolbox to ensure compliance.) 
 
 ![Time_parameters](./first_model.png)
 
+The tool includes some assumptions about the time structure, in case something is missing. These will work if there is only one option for the model to choose. The assuptions are the following:
+
+ - If `timeset`: `timeline` is not set and only one `timeline` is defined, it is used
+ - If no `timeset` is exist and only one `timeline` is defined, create a full timeline timeset
+ - If `period_timeset` is defined, but no `realized_periods` or `invest_periods` exists, all periods are realized
+ - If `period_timeset` does not exist and only one `timeset` exists, create `timesets` for all `realized_periods` and `invest_periods`
+ - If `model`: `solves` does not exist, and only one `solve` exists, that it is used
+ - If a `solve` in `model`: `solves` does not exist, create a `solve` where all `periods_available` are realized
+ 
 ## How to create a PV, wind or run-of-river hydro power plant
 
 **(examples.sqlite scenario: wind)**

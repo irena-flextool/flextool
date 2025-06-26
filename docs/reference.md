@@ -33,9 +33,11 @@ The second time varying dimension is `period`, which is typically used to depict
 
 A parameter of particular type can be either constant/time-varying or constant/period-based. For example `inflow` is either a constant or time-varying, but it cannot be period-based.
 
-### timesets
+### Timesets
 
-timesets pick one or more sections from the `timeline` to form a `timeset`. Each timeset defines a start and a duration. The aim of timesets is to allow the modeller to create models with representative periods often used in the investment planning.
+Timesets pick one or more sections from the `timeline` to form a `timeset`. Each timeset defines a start and a duration. The aim of timesets is to allow the modeller to create models with representative periods often used in the investment planning.
+
+![Time structure](./time_structure.png)
 
 ### Definitions
 
@@ -44,6 +46,7 @@ timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   - *solves*: sequence of solves in the model represented with an array of solve names.
   - *discount_offset_investment*: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.
   - *discount_offset_operations*: [years] Offset from the period (often year) start to the payment of operational costs.
+  - *available_periods*: (Optional) Array of periods available for the model. Use this for periods that are in the data, but are not in period_timeset.
   
 - `solve`: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timesets to connect with a timeline.
 
@@ -77,10 +80,11 @@ timesets pick one or more sections from the `timeline` to form a `timeset`. Each
     - *solver_precommand* the commandline text in front of the call for the commercial (CPLEX) solver. For a possibility of reserving a floating licence for the duration of the solve
     - *solver_arguments* Array of additional commands passed to the commercial solver. Made for setting optimization parameters.
 
-- `timeset`: timesets are sets of timesets with a start (from timeline) and a duration (number of time steps)
+- `timeset`: timesets are sets of time with a start (from timeline) and a duration (number of time steps)
 
   - *timeset_duration* a map with index *timestep_name* that starts the timeset and value that defines the duration of the timeset (how many timesteps)
-  - *new_stepduration*: Hours. Creates a new `timeline` from the old for this `timeset` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps. 
+  - *timeline* The name of the timeline that the timeset uses. (String)
+  - *new_stepduration*: Hours. Creates a new `timeline` from the old for this `timeset` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.
 
 
 - `timeline`: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.
@@ -88,7 +92,19 @@ timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   - *timestep_duration*: a map with *timestep_name* as an index and *duration* as a value.
   - *timeline_duration_in_years* Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.
 
-- `timeset__timeline`: defines which timeline entity particular timeset is using.
+### Time structure assumptions
+
+The tool includes some assumptions about the time structure, in case something parts are missing. These will work if there is only one option for the model to choose. The assuptions are the following:
+
+ - If `timeset`: `timeline` is not set and only one `timeline` is defined, it is used
+ - If no `timeset` is exist and only one `timeline` is defined, create a full timeline timeset
+ - If `period_timeset` is defined, but no `realized_periods` or `invest_periods` exists, all periods are realized
+ - If `period_timeset` does not exist and only one `timeset` exists, create `timesets` for all `realized_periods` and `invest_periods`
+ - If `model`: `solves` does not exist, and only one `solve` exists, that it is used
+ - If a `solve` in `model`: `solves` does not exist, create a `solve` where all `periods_available` are realized
+ 
+ For example in the case above, it would have been possible to not fill the `timeset`: `timeline` as there is only one `timeline` to choose. Leaving out the `period_timeset` would result in an error as there are multiple `timesets` to choose.
+
 
 
 ## Nodes
