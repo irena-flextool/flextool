@@ -40,6 +40,11 @@
                     "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Tool/open_summary.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/migrate_database.json"
                 }
             ]
         },
@@ -270,106 +275,18 @@
                     "FlexTool",
                     "left"
                 ],
-                "options": {
-                    "require_scenario_filter": true
-                },
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input_data": {
                             "scenario_filter": {
-                                "5weeks_invest_fullYear_dispatch_coal_wind": false,
-                                "aggregate_outputs_network_coal_wind_chp": false,
-                                "all": false,
-                                "base": false,
-                                "capacity_margin": false,
-                                "coal": false,
-                                "coal_chp": false,
-                                "coal_co2": false,
-                                "coal_min_load": false,
-                                "coal_min_load_MIP_wind": false,
-                                "coal_min_load_wind": false,
-                                "coal_ramp_limit": false,
-                                "coal_retire": false,
-                                "coal_wind_ev": false,
-                                "coal_wind_inertia": false,
-                                "dr_decrease_demand": false,
-                                "dr_increase_demand": false,
-                                "dr_shift_demand": false,
-                                "fullYear": false,
-                                "fusion": false,
-                                "multi_fullYear_battery": false,
-                                "multi_fullYear_battery_nested_24h_invest_one_solve": false,
-                                "multi_fullYear_battery_nested_multi_invest": false,
-                                "multi_fullYear_battery_nested_sample_invest_one_solve": false,
-                                "multi_year": false,
-                                "multi_year_one_solve": false,
-                                "multi_year_one_solve_battery": false,
-                                "multi_year_one_solve_co2_limit": false,
-                                "network_coal_wind": true,
-                                "network_coal_wind_battery_co2_fullYear_availability": false,
-                                "network_coal_wind_battery_invest_cumulative": false,
-                                "network_coal_wind_capacity_margin": false,
-                                "network_coal_wind_reserve": false,
-                                "network_coal_wind_reserve_co2_capacity_margin": false,
-                                "network_coal_wind_reserve_n_1": false,
-                                "network_wind_coal_battery_fullYear_invest": false,
-                                "scale_to_peak_flow": false,
-                                "water_pump": false,
-                                "wind": false,
-                                "wind_battery": false,
-                                "wind_battery_invest": true,
-                                "wind_battery_invest_lifetime_choice": false,
-                                "wind_battery_invest_lifetime_renew": false,
-                                "wind_battery_invest_lifetime_renew_4solve": true
+                                "Base": true,
+                                "Battery": false,
+                                "Inertia": false,
+                                "Invest": false
                             },
                             "alternative_filter": {
-                                "5weeks": true,
-                                "5weeks_only_invest": true,
-                                "aggregate_outputs": true,
-                                "availability": true,
-                                "battery": true,
-                                "battery_invest": true,
-                                "capacity_margin": true,
-                                "co2_limit": true,
-                                "co2_price": true,
-                                "coal": true,
-                                "coal_chp": true,
-                                "coal_invest": true,
-                                "coal_min_load": true,
-                                "coal_min_load_MIP": true,
-                                "coal_ramp": true,
-                                "cumulative_investment": true,
-                                "dr_decrease_demand": true,
-                                "dr_increase_demand": true,
-                                "dr_shift_demand": true,
-                                "ev": true,
-                                "fullYear": true,
-                                "fullYear_invest_24h": true,
-                                "fullYear_invest_sample": true,
-                                "fullYear_multi_invest": true,
-                                "fullYear_roll": true,
-                                "fullYear_storage_6h": true,
-                                "fusion": true,
-                                "group_wind_coal_max_invest": true,
-                                "heat": true,
-                                "inertia": true,
-                                "init": true,
-                                "lifetime_choice": true,
-                                "lifetime_renew": true,
-                                "multi_fullYear_one_solve": true,
-                                "multi_year": true,
-                                "multi_year_one_solve": true,
-                                "nested_solve_storage": true,
-                                "network": true,
-                                "reserve": true,
-                                "reserve_n_1": true,
-                                "retire": true,
-                                "scale_to_peak_flow": true,
-                                "unlimited_investment": true,
-                                "water_pump": true,
-                                "west": true,
-                                "wind": true,
-                                "wind_invest": true
+                                "Base": false,
+                                "Reserve_transfer": false
                             }
                         }
                     },
@@ -412,17 +329,140 @@
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Results": {
-                            "scenario_filter": {
-                                "base": true,
-                                "multi_fullYear_battery_nested_24h_invest_one_solve": true
-                            },
+                            "scenario_filter": {},
                             "alternative_filter": {
-                                "Base": true,
-                                "base__Import_results@2025-01-26T09:52:05": true,
-                                "multi_fullYear_battery_nested_24h_invest_one_solve__Import_results@2025-01-26T09:52:05": true
+                                "1_week_rolling_wind__Import_results@2025-06-27T16:30:18": true,
+                                "1_week_rolling_wind__Import_results@2025-06-27T16:55:09": true,
+                                "2_day_stochastic_dispatch__Import_results@2025-06-27T16:30:18": true,
+                                "2_day_stochastic_dispatch__Import_results@2025-06-27T16:55:09": true,
+                                "5weeks_invest_fullYear_dispatch_coal_wind__Import_results@2025-06-26T16:15:44": true,
+                                "5weeks_invest_fullYear_dispatch_coal_wind__Import_results@2025-06-26T16:17:31": true,
+                                "5weeks_invest_fullYear_dispatch_coal_wind__Import_results@2025-06-27T10:41:55": true,
+                                "5weeks_invest_fullYear_dispatch_coal_wind__Import_results@2025-06-27T10:50:42": true,
+                                "5weeks_invest_fullYear_dispatch_coal_wind__Import_results@2025-06-27T12:10:45": true,
+                                "5weeks_invest_fullYear_dispatch_coal_wind__Import_results@2025-06-27T12:39:24": true,
+                                "5weeks_invest_fullYear_dispatch_coal_wind__Import_results@2025-06-27T13:01:49": true,
+                                "5weeks_invest_fullYear_dispatch_coal_wind__Import_results@2025-06-27T13:03:17": true,
+                                "5weeks_invest_fullYear_dispatch_coal_wind__Import_results@2025-06-27T15:41:05": true,
+                                "5weeks_invest_fullYear_dispatch_coal_wind__Import_results@2025-06-27T16:10:05": true,
+                                "aggregate_outputs_network_coal_wind_chp__Import_results@2025-06-26T16:15:44": true,
+                                "aggregate_outputs_network_coal_wind_chp__Import_results@2025-06-26T16:17:31": true,
+                                "all__Import_results@2025-06-26T16:15:44": true,
+                                "all__Import_results@2025-06-26T16:17:31": true,
+                                "base__Import_results@2025-06-26T16:15:44": true,
+                                "base__Import_results@2025-06-26T16:17:31": true,
+                                "capacity_margin__Import_results@2025-06-26T16:15:44": true,
+                                "capacity_margin__Import_results@2025-06-26T16:17:31": true,
+                                "coal__Import_results@2025-06-26T16:15:44": true,
+                                "coal__Import_results@2025-06-26T16:17:31": true,
+                                "coal_chp__Import_results@2025-06-26T17:22:38": true,
+                                "coal_co2__Import_results@2025-06-26T16:43:53": true,
+                                "coal_co2__Import_results@2025-06-26T17:22:38": true,
+                                "coal_min_load_MIP_wind__Import_results@2025-06-26T16:43:53": true,
+                                "coal_min_load_MIP_wind__Import_results@2025-06-26T17:22:38": true,
+                                "coal_min_load__Import_results@2025-06-26T16:43:53": true,
+                                "coal_min_load__Import_results@2025-06-26T17:22:38": true,
+                                "coal_min_load_wind__Import_results@2025-06-26T16:43:53": true,
+                                "coal_min_load_wind__Import_results@2025-06-26T17:22:38": true,
+                                "coal_ramp_limit__Import_results@2025-06-26T17:22:38": true,
+                                "coal_retire__Import_results@2025-06-26T17:22:38": true,
+                                "coal_wind_ev__Import_results@2025-06-26T16:43:53": true,
+                                "coal_wind_ev__Import_results@2025-06-26T17:24:01": true,
+                                "coal_wind_inertia__Import_results@2025-06-26T17:24:01": true,
+                                "dr_decrease_demand__Import_results@2025-06-26T16:43:53": true,
+                                "dr_decrease_demand__Import_results@2025-06-26T17:24:01": true,
+                                "dr_increase_demand__Import_results@2025-06-26T16:43:53": true,
+                                "dr_increase_demand__Import_results@2025-06-26T17:24:01": true,
+                                "dr_shift_demand__Import_results@2025-06-26T16:43:53": true,
+                                "dr_shift_demand__Import_results@2025-06-26T17:24:01": true,
+                                "fullYear__Import_results@2025-06-26T16:43:53": true,
+                                "fullYear__Import_results@2025-06-26T17:24:01": true,
+                                "fusion__Import_results@2025-06-26T16:43:53": true,
+                                "fusion__Import_results@2025-06-26T17:04:01": true,
+                                "fusion__Import_results@2025-06-26T17:24:01": true,
+                                "multi_fullYear_battery__Import_results@2025-06-26T17:36:52": true,
+                                "multi_fullYear_battery__Import_results@2025-06-26T17:43:22": true,
+                                "multi_fullYear_battery__Import_results@2025-06-27T15:41:05": true,
+                                "multi_fullYear_battery__Import_results@2025-06-27T16:10:05": true,
+                                "multi_fullYear_battery_nested_24h_invest_one_solve__Import_results@2025-06-26T17:36:52": true,
+                                "multi_fullYear_battery_nested_24h_invest_one_solve__Import_results@2025-06-26T17:43:22": true,
+                                "multi_fullYear_battery_nested_24h_invest_one_solve__Import_results@2025-06-27T15:41:05": true,
+                                "multi_fullYear_battery_nested_24h_invest_one_solve__Import_results@2025-06-27T16:10:05": true,
+                                "multi_fullYear_battery_nested_multi_invest__Import_results@2025-06-26T17:36:52": true,
+                                "multi_fullYear_battery_nested_multi_invest__Import_results@2025-06-26T17:43:22": true,
+                                "multi_fullYear_battery_nested_multi_invest__Import_results@2025-06-27T15:41:05": true,
+                                "multi_fullYear_battery_nested_multi_invest__Import_results@2025-06-27T16:10:05": true,
+                                "multi_fullYear_battery_nested_sample_invest_one_solve__Import_results@2025-06-26T17:36:52": true,
+                                "multi_fullYear_battery_nested_sample_invest_one_solve__Import_results@2025-06-26T17:43:22": true,
+                                "multi_fullYear_battery_nested_sample_invest_one_solve__Import_results@2025-06-27T15:41:05": true,
+                                "multi_fullYear_battery_nested_sample_invest_one_solve__Import_results@2025-06-27T16:10:05": true,
+                                "multi_year__Import_results@2025-06-26T17:36:52": true,
+                                "multi_year__Import_results@2025-06-26T17:43:22": true,
+                                "multi_year__Import_results@2025-06-27T13:34:43": true,
+                                "multi_year__Import_results@2025-06-27T15:31:44": true,
+                                "multi_year__Import_results@2025-06-27T17:26:47": true,
+                                "multi_year_one_solve__Import_results@2025-06-26T17:36:52": true,
+                                "multi_year_one_solve__Import_results@2025-06-26T17:43:22": true,
+                                "multi_year_one_solve__Import_results@2025-06-27T15:41:05": true,
+                                "multi_year_one_solve__Import_results@2025-06-27T17:26:47": true,
+                                "multi_year_one_solve_battery__Import_results@2025-06-26T17:36:52": true,
+                                "multi_year_one_solve_battery__Import_results@2025-06-26T17:43:22": true,
+                                "multi_year_one_solve_battery__Import_results@2025-06-27T17:26:47": true,
+                                "multi_year_one_solve_co2_limit__Import_results@2025-06-26T17:36:52": true,
+                                "multi_year_one_solve_co2_limit__Import_results@2025-06-26T17:43:22": true,
+                                "multi_year_one_solve_co2_limit__Import_results@2025-06-27T17:26:47": true,
+                                "network_coal_wind__Import_results@2025-06-26T16:43:53": true,
+                                "network_coal_wind__Import_results@2025-06-26T17:25:08": true,
+                                "network_coal_wind_battery_co2_fullYear_availability__Import_results@2025-06-26T16:43:53": true,
+                                "network_coal_wind_battery_co2_fullYear_availability__Import_results@2025-06-26T17:25:08": true,
+                                "network_coal_wind_battery_co2_fullYear_availability__Import_results@2025-06-27T16:10:05": true,
+                                "network_coal_wind_battery_invest_cumulative__Import_results@2025-06-26T17:25:08": true,
+                                "network_coal_wind_capacity_margin__Import_results@2025-06-26T16:43:53": true,
+                                "network_coal_wind_capacity_margin__Import_results@2025-06-26T17:25:08": true,
+                                "network_coal_wind_reserve__Import_results@2025-06-26T16:43:53": true,
+                                "network_coal_wind_reserve__Import_results@2025-06-26T17:25:08": true,
+                                "network_coal_wind_reserve_co2_capacity_margin__Import_results@2025-06-26T17:25:08": true,
+                                "network_coal_wind_reserve_n_1__Import_results@2025-06-26T16:43:53": true,
+                                "network_coal_wind_reserve_n_1__Import_results@2025-06-26T17:25:08": true,
+                                "network_wind_coal_battery_fullYear_invest__Import_results@2025-06-26T17:25:08": true,
+                                "scale_to_peak_flow__Import_results@2025-06-26T16:43:53": true,
+                                "scale_to_peak_flow__Import_results@2025-06-26T17:26:49": true,
+                                "water_pump__Import_results@2025-06-26T17:26:49": true,
+                                "water_pump_delayed__Import_results@2025-06-26T16:43:53": true,
+                                "water_pump_delayed__Import_results@2025-06-26T17:26:49": true,
+                                "wind__Import_results@2025-06-26T17:26:49": true,
+                                "wind_battery__Import_results@2025-06-26T16:43:53": true,
+                                "wind_battery__Import_results@2025-06-26T17:26:49": true,
+                                "wind_battery_invest__Import_results@2025-06-26T17:26:49": true,
+                                "wind_battery_invest__Import_results@2025-06-27T16:10:05": true,
+                                "wind_battery_invest__Import_results@2025-06-27T17:32:39": true,
+                                "wind_battery_invest_lifetime_choice__Import_results@2025-06-26T17:26:49": true,
+                                "wind_battery_invest_lifetime_renew_4solve__Import_results@2025-06-26T16:43:53": true,
+                                "wind_battery_invest_lifetime_renew_4solve__Import_results@2025-06-26T17:26:49": true,
+                                "wind_battery_invest_lifetime_renew__Import_results@2025-06-26T16:43:53": true,
+                                "wind_battery_invest_lifetime_renew__Import_results@2025-06-26T17:26:49": true
                             }
                         }
                     },
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Migrate database version to Input_data",
+                "from": [
+                    "Migrate database version",
+                    "right"
+                ],
+                "to": [
+                    "Input_data",
+                    "bottom"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": false,
@@ -437,8 +477,8 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -142.73199559480022,
-            "y": -44.860546248644276,
+            "x": -143.73852182762346,
+            "y": -44.86761682382257,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -446,7 +486,7 @@
                 "database": {
                     "type": "path",
                     "relative": true,
-                    "path": "input_data.sqlite"
+                    "path": "test3.sqlite"
                 },
                 "schema": ""
             }
@@ -454,7 +494,7 @@
         "Import_results": {
             "type": "Importer",
             "description": "",
-            "x": 99.38353134706215,
+            "x": 108.50590261907608,
             "y": -42.10275330778297,
             "specification": "Import_flex3",
             "cancel_on_error": false,
@@ -486,8 +526,8 @@
         "To_Excel": {
             "type": "Exporter",
             "description": "",
-            "x": 248.3409237713697,
-            "y": 74.19999380519317,
+            "x": 275.70803758741147,
+            "y": 83.32236507720708,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -521,8 +561,8 @@
         "Plot_settings": {
             "type": "Data Connection",
             "description": "",
-            "x": 368.0503907263098,
-            "y": 73.41469323783318,
+            "x": 378.18635880632525,
+            "y": 83.55066131784864,
             "file_references": [
                 {
                     "type": "path",
@@ -535,8 +575,8 @@
         "Open_summary": {
             "type": "Tool",
             "description": "",
-            "x": 36.556334335387156,
-            "y": 70.72034717880291,
+            "x": 38.583527951390245,
+            "y": 79.84271845081682,
             "specification": "open_summary",
             "execute_in_work": true,
             "cmd_line_args": [],
@@ -546,8 +586,8 @@
         "Excel input": {
             "type": "Data Connection",
             "description": "",
-            "x": -436.8582078041219,
-            "y": -50.02852490816406,
+            "x": -460.14972266262254,
+            "y": -43.96108521051141,
             "file_references": [
                 {
                     "type": "path",
@@ -560,8 +600,8 @@
         "Examples": {
             "type": "Data Store",
             "description": "",
-            "x": -407.79421234090034,
-            "y": 63.57610369303393,
+            "x": -450.3652782769653,
+            "y": 67.63049092504008,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -577,8 +617,8 @@
         "Replace with Excel input": {
             "type": "Importer",
             "description": "",
-            "x": -310.39469337686535,
-            "y": -49.61188242041004,
+            "x": -330.6666295368962,
+            "y": -45.55749518840386,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "on_conflict": "replace",
@@ -592,16 +632,32 @@
         "Replace with examples": {
             "type": "Merger",
             "description": "",
-            "x": -292.34501446245423,
-            "y": 64.41673246241092,
+            "x": -334.9160803985192,
+            "y": 68.47111969441713,
             "cancel_on_error": true
         },
         "FlexTool": {
             "type": "Tool",
             "description": "",
-            "x": -21.674299212718452,
+            "x": -12.55192794070453,
             "y": -44.07720561930852,
             "specification": "FlexTool3",
+            "execute_in_work": true,
+            "cmd_line_args": [
+                {
+                    "type": "resource",
+                    "arg": "db_url@Input_data"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "Migrate database version": {
+            "type": "Tool",
+            "description": "",
+            "x": -194.61058713629697,
+            "y": 79.0605510241206,
+            "specification": "migrate_database",
             "execute_in_work": true,
             "cmd_line_args": [
                 {
