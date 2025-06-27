@@ -1,3 +1,13 @@
+## Release 3.13.0 (27.6.2025)
+**Bug fixes**
+- Added missing fixed costs to operational models
+- Catching infeasible models better
+
+**New features**
+- Changed the time structure to have timeset instead of timeblockSet
+- Added periods_available for the model entity, to have periods in the data that are not used without domain errors
+- Added assumptions about the model timestructure to ease the defining of it.
+
 ## Release 3.12.0 (22.5.2025)
 **Bug fixes**
 - Decimal points in node_balance_t were causing some grievance.
