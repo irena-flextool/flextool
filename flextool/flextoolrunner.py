@@ -462,12 +462,14 @@ class FlexToolRunner:
                                       and which timesets are part of the solve(s) in the model instance""")
                     sys.exit(-1)
         
-        """If realized_periods does not exist, but period__timeset exist, assume all periods to be realized"""
+        """If realized_periods or invest_periods do not exist, but period__timeset exist, assume all periods to be realized"""
         for solve in list(self.model_solve.values())[0]:
-            if not any(solve == solve_period[0] for solve_period in self.realized_periods) and solve in self.timesets_used_by_solves.keys():
+            if not any(solve == solve_period[0] for solve_period in self.realized_periods) and \
+            not any(solve == solve_period[0] for solve_period in self.invest_periods) \
+            and solve in self.timesets_used_by_solves.keys():
                 for period_timeset in self.timesets_used_by_solves[solve]:
                     self.realized_periods.append((solve,period_timeset[0]))
-        
+
 
     def make_steps(self, start, stop):
         """
