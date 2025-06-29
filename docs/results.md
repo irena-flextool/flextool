@@ -57,7 +57,7 @@ Annualization scales the sum to correspond with full year time series.
 ## Capacity factors
 
 - `unit__node` entity `cf` parameter - [per unit] average capacity factor of the flow, i.e. the utilization rate of the flow from/to the unit. Average of flow [MWh/h] divided by capacity [MW] of the input or output to the unit.
-- `connection` entity `cf` parameter - [per unit] average capacity factor of the flow, i.e. the utilization rate of the connection where flows in both directions are considered as utilization. Average of the absolute flow [MWh/h] divided by the capacity of the connection.
+- `connection` entity `cf` parameter - [per unit] average capacity factor of the absolute flow, i.e. the utilization rate of the connection where flows in both directions are considered as utilization. Time-average of the absolute flow [MWh/h] divided by the capacity of the connection.
 
 ## Energy balance in nodes
 
@@ -110,6 +110,8 @@ Annualization scales the sum to correspond with full year time series.
 
 - `unit__reserve__upDown__node` entity `reservation_t` parameter - [MW] how much upward or downward reserve particular unit was providing to a particular node in given timestep
 - `unit__reserve__upDown__node` entity `reservation_average` parameter - [MW] how much upward or downward reserve particular unit was providing to a particular node in average during the period
+- `connection__reserve__upDown__node` entity `reservation_t` parameter - [MW] how much upward or downward reserve particular connection was providing to a particular node in given timestep
+- `connection__reserve__upDown__node` entity `reservation_average` parameter - [MW] how much upward or downward reserve particular connection was providing to a particular node in average during the period
 - `group__reserve__upDown` entity `slack_reserve_t` parameter - [MW] use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement in each timestep
 - `group__reserve__upDown` entity `slack_reserve` parameter - [MW] cumulative use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement during the period
 
