@@ -84,7 +84,7 @@ Even though the model is very simple and will not do anything interesting, it ca
 
 ![Add scenario](./add_scenario.png)
 
-Note that the order of the alternatives matters if there are conflicts between the alternatives. The alternatives lower down override the alternatives higher up on the list. In this example the *init* alternative has a full-year timeblock, but because the *init_2day-test* is lower in the scenario tree, the tool uses its `model`-*flextool*: solves parameter which points to the solve to be included in the model (*2day-dispatch*) and only it will be solved.
+Note that the order of the alternatives matters if there are conflicts between the alternatives. The alternatives lower down override the alternatives higher up on the list. In this example the *init* alternative has a full-year timeset, but because the *init_2day-test* is lower in the scenario tree, the tool uses its `model`-*flextool*: solves parameter which points to the solve to be included in the model (*2day-dispatch*) and only it will be solved.
 
 Same logic will apply if you would add a parameter `inflow` with a value -100 to the *west* node in the alternative `init`. The model would use that instead of the previously set timeseries, because the `init` alternative is lower down in the alternative list of the scenario.
 
