@@ -3701,7 +3701,7 @@ param r_group_output__group_aggregate_Group_to_unit__d{(g, ga) in group_output__
 param r_group_output__group_aggregate_Connection__dt{(g, ga) in group_output__group_aggregate_Connection, (d, t) in dt_realize_dispatch} :=
   + sum{(g, ga, c, source, sink) in group_output__group_aggregate__process__connection__to_node}
     ( + r_process__source__sink_Flow__dt[c, c, sink, d, t])
-  - sum{(g, ga, c, source, sink) in group_output__group_aggregate__process__node__to_connection}
+  + sum{(g, ga, c, source, sink) in group_output__group_aggregate__process__node__to_connection}
     ( - r_process__source__sink_Flow__dt[c, source, c, d, t]);
 param r_group_output__group_aggregate_Connection__d{(g, ga) in group_output__group_aggregate_Connection, d in d_realized_period} :=
   + sum{(d, t) in dt_realize_dispatch} r_group_output__group_aggregate_Connection__dt[g, ga, d, t];
