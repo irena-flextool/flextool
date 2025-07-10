@@ -4080,10 +4080,10 @@ for {s in solve_current, d in d_realized_period}
   for {g in groupOutput_process}
     {
       printf ',%.8g', 
-          + sum{(p, source, n) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_sink} 
-                r_process_source_sink_flow_d[p, source, n, d] / complete_period_share_of_year[d] 
-          - sum{(p, n, sink) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_source}
-              r_process_source_sink_flow_d[p, n, sink, d] / complete_period_share_of_year[d]
+          + sum{(p, p_source, n_sink) in process_source_sink_alwaysProcess : (g, p, n_sink) in group_process_node}
+                 r_process__source__sink_Flow__d[p, p_source, n_sink, d] / complete_period_share_of_year[d]
+          - sum{(p, n_source, p_sink) in process_source_sink_alwaysProcess : (g, p, n_source) in group_process_node}
+		         r_process__source__sink_Flow__d[p, n_source, p_sink, d] / complete_period_share_of_year[d]
       >> fn_groupProcessNode__d;
     }
   }
@@ -4104,10 +4104,10 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
 	for {g in groupOutput_process}
 	  {
 	    printf ',%.8g',
-         + sum{(p, source, n) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_sink} 
-	             r_process__source__sink_Flow__dt[p, source, n, d, t]
-         - sum{(p, n, sink) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_source}
-		         r_process__source__sink_Flow__dt[p, n, sink, d, t]
+         + sum{(p, p_source, n_sink) in process_source_sink_alwaysProcess : (g, p, n_sink) in group_process_node}
+	             r_process__source__sink_Flow__dt[p, p_source, n_sink, d, t]
+         - sum{(p, n_source, p_sink) in process_source_sink_alwaysProcess : (g, p, n_source) in group_process_node}
+		         r_process__source__sink_Flow__dt[p, n_source, p_sink, d, t]
 	    >> fn_groupProcessNode__dt;
 	  }
   }
@@ -5504,4 +5504,6 @@ display v_invest, v_divest, solve_current, total_cost;
 #display test_dt;
 #display {n in nodeBalancePeriod, (d, t) in dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {n in nodeBalancePeriod, (d, t) in dt}: pdtNodeInflow[n, d, t];
+display process_source_sink_alwaysProcess, r_process__source__sink_Flow__dt;
+
 end;
