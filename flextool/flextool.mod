@@ -1673,7 +1673,7 @@ param p_flow_min{(p, source, sink, d, t) in peedt} :=
   else 0
 ;
 
-set process_VRE := {p in process_unit : not (sum{(p, source) in process_source} 1)
+set process_VRE := {p in process_unit : sum{(p, source) in process_source} 1 == 0
                                         && (sum{(p, n, prof, m) in process__node__profile__profile_method : m = 'upper_limit'} 1)};
 
 param p_state_slack_share{(g,n) in group_node, (d,t) in dt: g in group_loss_share} :=
@@ -4085,10 +4085,10 @@ for {s in solve_current, d in d_realized_period}
   for {g in groupOutput_process}
     {
       printf ',%.8g', 
-          + sum{(p, source, n) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_sink} 
-                r_process_source_sink_flow_d[p, source, n, d] / complete_period_share_of_year[d] 
-          + sum{(p, n, sink) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_source} 
-              r_process_source_sink_flow_d[p, n, sink, d] / complete_period_share_of_year[d]
+          + sum{(p, p_source, n_sink) in process_source_sink_alwaysProcess : (g, p, n_sink) in group_process_node}
+                 r_process__source__sink_Flow__d[p, p_source, n_sink, d] / complete_period_share_of_year[d]
+          - sum{(p, n_source, p_sink) in process_source_sink_alwaysProcess : (g, p, n_source) in group_process_node}
+		         r_process__source__sink_Flow__d[p, n_source, p_sink, d] / complete_period_share_of_year[d]
       >> fn_groupProcessNode__d;
     }
   }
@@ -4109,10 +4109,10 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
 	for {g in groupOutput_process}
 	  {
 	    printf ',%.8g',
-         + sum{(p, source, n) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_sink} 
-	             r_process__source__sink_Flow__dt[p, source, n, d, t]
-         + sum{(p, n, sink) in process_source_sink_alwaysProcess : (g, p, n) in group_process_node && (p, n) in process_source} 
-		         r_process__source__sink_Flow__dt[p, n, sink, d, t]
+         + sum{(p, p_source, n_sink) in process_source_sink_alwaysProcess : (g, p, n_sink) in group_process_node}
+	             r_process__source__sink_Flow__dt[p, p_source, n_sink, d, t]
+         - sum{(p, n_source, p_sink) in process_source_sink_alwaysProcess : (g, p, n_source) in group_process_node}
+		         r_process__source__sink_Flow__dt[p, n_source, p_sink, d, t]
 	    >> fn_groupProcessNode__dt;
 	  }
   }
@@ -4681,7 +4681,7 @@ for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_ou
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
 	  { printf ',%.6f', sum{(d, t) in dt_realize_dispatch} ( if entity_all_capacity[c, d] 
 	                                        then ( abs(r_connection_dt[c, d, t]) 
-	                                               / complete_hours_in_period[d] 
+	                                               / complete_hours_in_period[d]
 											       / entity_all_capacity[c, d] )
 										    else 0 ) >> fn_connection_cf__d; }
   }
