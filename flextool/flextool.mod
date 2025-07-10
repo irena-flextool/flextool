@@ -5504,6 +5504,5 @@ display v_invest, v_divest, solve_current, total_cost;
 #display test_dt;
 #display {n in nodeBalancePeriod, (d, t) in dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {n in nodeBalancePeriod, (d, t) in dt}: pdtNodeInflow[n, d, t];
-display process_source_sink_alwaysProcess, r_process__source__sink_Flow__dt;
 
 end;
