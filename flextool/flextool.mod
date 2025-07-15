@@ -3611,9 +3611,8 @@ param r_cost_entity_divest_d{(e, d) in ed_divest} :=
 ;
 
 param r_cost_entity_existing_fixed{e in entity, d in period_in_use} :=
-  + p_entity_all_existing[e, d]
-    + ( + p_entity_all_existing[e, d]
-    + sum {(e, d_invest, d) in edd_invest: d_invest != d} v_invest[e, d_invest] * p_entity_unitsize[e])
+  + ( + p_entity_all_existing[e, d]
+      + sum {(e, d_invest, d) in edd_invest: d_invest != d} v_invest[e, d_invest] * p_entity_unitsize[e])
       * ( + if e in process then pdProcess[e, 'fixed_cost', d] else 0 
 	      + if e in node then pdNode[e, 'fixed_cost', d] else 0 
 		)
