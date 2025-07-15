@@ -3445,7 +3445,7 @@
             "connection_constraint_c": {},
             "rolling_parameters": {},
             "optional_outputs": {},
-            "unit_node_p": {},
+            "unit_node_p": {}
         },
         "table_types": {
             "solve_sequence": {
@@ -3497,7 +3497,7 @@
                 "9": "string",
                 "10": "string",
                 "11": "string",
-                "12": "string",
+                "12": "float",
                 "13": "float",
                 "14": "float",
                 "15": "float",
@@ -3518,10 +3518,7 @@
                 "30": "float",
                 "31": "float",
                 "32": "float",
-                "33": "float",
-                "34": "float",
-                "35": "float",
-                "36": "float"
+                "33": "float"
             },
             "node_p": {
                 "0": "string",
