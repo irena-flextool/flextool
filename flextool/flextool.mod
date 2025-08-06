@@ -27,11 +27,13 @@ set commodity 'c - Stuff that is being processed';
 set period_time '(d, t) - Time steps in the time periods of the whole timeline' dimen 2;
 set period__time_first within period_time;
 set period__time_last within period_time;
-set solve_period_timeblockset '(solve, d, tb) - All solve, period, timeblockset combinations in the model instance' dimen 3;
-set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeblockset} (s, d);
+set solve_period_timeset '(solve, d, tb) - All solve, period, timeset combinations in the model instance' dimen 3;
+set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeset} (s, d);
 set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
 set solve_current 'current solve name' dimen 1;
-set period 'd - Time periods in the current solve' := setof {(d, t) in period_time} (d);
+set period_from_model dimen 1;
+set period_from_period_time := setof {(d, t) in period_time} (d);
+set period 'd - Time periods in the current solve' := period_from_model union period_from_period_time;
 set period_first dimen 1 within period;
 set period_last dimen 1 within period;
 set branch_all dimen 1;
@@ -42,9 +44,9 @@ set period__year dimen 2;
 set year 'y - Years for discount calculations' := setof{(d, y) in period__year}(y);
 set timeline__timestep__duration dimen 3;
 set time 't - Time steps in the current timelines' := setof {(tl, t, duration) in timeline__timestep__duration} (t); 
-set timeblockset__timeline dimen 2;
-set timeline := setof{(tb, tl) in timeblockset__timeline} (tl);
-set period__timeline := {d in period, tl in timeline : sum{(s, d, tb) in solve_period_timeblockset : s in solve_current && (tb, tl) in timeblockset__timeline} 1};
+set timeset__timeline dimen 2;
+set timeline := setof{(tb, tl) in timeset__timeline} (tl);
+set period__timeline := {d in period, tl in timeline : sum{(s, d, tb) in solve_period_timeset : s in solve_current && (tb, tl) in timeset__timeline} 1};
 set method 'm - Type of process that transfers, converts or stores commodities';
 set upDown 'upward and downward directions for some variables';
 set ct_method;
@@ -257,7 +259,7 @@ set commodity_node dimen 2 within {commodity, node};
 set dt dimen 2 within period_time;
 param dt_jump {(d, t) in dt};
 set dtttdt dimen 6;
-set dtt := setof {(d, t, t_previous, previous_within_block, previous_period, previous_within_solve) in dtttdt} (d, t, t_previous);
+set dtt := setof {(d, t, t_previous, previous_within_timeset, previous_period, previous_within_solve) in dtttdt} (d, t, t_previous);
 set period_invest dimen 1 within period;
 set d_realize_invest dimen 1 within period;
 set period_with_history dimen 1 within periodAll;
@@ -274,6 +276,9 @@ set realized_period__time_last dimen 2 within period_time;
 set dt_complete dimen 2 within period_time;
 set complete_time_in_use := setof {(d, t) in dt_complete} (t);
 param complete_step_duration{(d, t) in dt_complete};
+set timeline_steps := setof{(tl, t, duration) in timeline__timestep__duration}(tl, t);
+param p_timeline_step_duration{timeline_steps};
+param p_timeline_duration_in_years{tl in timeline}:= sum{(tl,t) in timeline_steps} p_timeline_step_duration[tl,t] /8760;
 
 set dt_fix_storage_timesteps dimen 2 within period_time;
 set d_fix_storage_period := setof {(d, t) in dt_fix_storage_timesteps} (d);
@@ -358,7 +363,6 @@ param p_node_constraint_state_coefficient {node, constraint};
 param step_duration{(d, t) in dt};
 param p_hole_multiplier {solve_current} default 1;
 
-param p_timeline_duration_in_years{timeline};
 param p_years_represented{d in period, y in year} default 1;
 param p_years_from_solve{d in period, y in year} default 0;
 param p_discount_years{d in period} default 0;
@@ -445,6 +449,7 @@ table data IN 'CSV' 'input/profile.csv': profile <- [profile];
 table data IN 'CSV' 'input/optional_outputs.csv': optional_outputs <- [output, value];
 table data IN 'CSV' 'input/exclude_entity_outputs.csv': exclude_entity_outputs <- [value];
 table data IN 'CSV' 'input/groupIncludeStochastics.csv' : groupStochastic <- [group];
+table data IN 'CSV' 'input/periods_available.csv': period_from_model <- [period_from_model];
 
 # Single dimension membership sets
 table data IN 'CSV' 'input/process_connection.csv': process_connection <- [process_connection];
@@ -490,8 +495,8 @@ table data IN 'CSV' 'input/process__startup_method.csv' : process__startup_metho
 table data IN 'CSV' 'input/process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
 table data IN 'CSV' 'input/process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
 table data IN 'CSV' 'input/reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
-table data IN 'CSV' 'input/timeblocks_in_use.csv' : solve_period_timeblockset <- [solve,period,timeblocks];
-table data IN 'CSV' 'input/timeblocks__timeline.csv' : timeblockset__timeline <- [timeblocks,timeline];
+table data IN 'CSV' 'input/timesets_in_use.csv' : solve_period_timeset <- [solve,period,timesets];
+table data IN 'CSV' 'input/timesets__timeline.csv' : timeset__timeline <- [timesets,timeline];
 table data IN 'CSV' 'solve_data/solve_current.csv' : solve_current <- [solve];
 table data IN 'CSV' 'input/p_process_source.csv' : process__source__param <- [process, source, sourceSinkParam];
 table data IN 'CSV' 'input/p_process_sink.csv' : process__sink__param <- [process, sink, sourceSinkParam];
@@ -526,7 +531,7 @@ table data IN 'CSV' 'input/pd_process_source.csv' : process__source__param__peri
 table data IN 'CSV' 'input/pd_process_sink.csv' : process__sink__param__period <- [process, sink, sourceSinkPeriodParam, period], pd_process_sink~pd_process_sink;
 table data IN 'CSV' 'input/p_profile.csv' : [profile], p_profile;
 table data IN 'CSV' 'input/p_reserve__upDown__group.csv' : [reserve, upDown, group, reserveParam], p_reserve_upDown_group;
-table data IN 'CSV' 'input/timeline_duration_in_years.csv' : [timeline], p_timeline_duration_in_years;
+table data IN 'CSV' 'input/timeline.csv' : [timeline,timestep], p_timeline_step_duration~duration;
 table data IN 'CSV' 'solve_data/p_discount_years.csv' : [period], p_discount_years~param;
 table data IN 'CSV' 'solve_data/p_years_represented.csv' : period__year <- [period,years_from_solve], p_years_represented~p_years_represented, p_years_from_solve~p_years_from_solve;
 table data IN 'CSV' 'input/p_discount_rate.csv' : model <- [model];
@@ -552,7 +557,7 @@ table data IN 'CSV' 'solve_data/steps_in_timeline.csv' : period_time <- [period,
 table data IN 'CSV' 'solve_data/first_timesteps.csv' : period__time_first <- [period,step];
 table data IN 'CSV' 'solve_data/last_timesteps.csv' : period__time_last <- [period,step];
 table data IN 'CSV' 'solve_data/last_realized_timestep.csv' : realized_period__time_last <- [period,step];
-table data IN 'CSV' 'solve_data/step_previous.csv' : dtttdt <- [period, time, previous, previous_within_block, previous_period, previous_within_solve];
+table data IN 'CSV' 'solve_data/step_previous.csv' : dtttdt <- [period, time, previous, previous_within_timeset, previous_period, previous_within_solve];
 table data IN 'CSV' 'solve_data/step_previous.csv' : [period, time], dt_jump~jump;
 table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <- [period], p_period_from_solve~param;
 table data IN 'CSV' 'solve_data/realized_invest_periods_of_current_solve.csv' : d_realize_invest <- [period];
@@ -793,7 +798,7 @@ param p_process_delay_weight {(p, td) in process_delayed__duration} :=
     then 1
     else p_process_delay_weighted[p, td];
 
-param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} := 
+param pdCommodity {c in commodity, param in commodityPeriodParam, d in period_in_use} := 
         + if (c, param, d) in commodity__param__period
 		  then pd_commodity[c, param, d]
 		  else if exists{(c, param, db) in commodity__param__period: (db, d) in period__branch} 1
@@ -807,7 +812,7 @@ param pdtCommodity {c in commodity, param in commodityTimeParam, (d, t) in dt} :
 		     then pd_commodity[c, param, d]
 	      else p_commodity[c, param];
 
-param pdGroup {g in group, param in groupPeriodParam, d in period} :=
+param pdGroup {g in group, param in groupPeriodParam, d in period_in_use} :=
         + if (g, param, d) in group__param__period
 		  then pd_group[g, param, d]
       else if exists{(g, param, db) in group__param__period : (db,d) in period__branch} 1
@@ -1116,59 +1121,59 @@ set prundt := {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt
 set pdt_online_linear := {p in process_online_linear, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
 set pdt_online_integer := {p in process_online_integer, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
 
-param hours_in_period{d in period} := sum {(d, t) in dt} (step_duration[d, t]);
+param hours_in_period{d in period_in_use} := sum {(d, t) in dt} (step_duration[d, t]);
 param hours_in_solve := sum {(d, t) in dt} (step_duration[d, t]);
-param period_share_of_year{d in period} := hours_in_period[d] / 8760;
+param period_share_of_year{d in period_in_use} := hours_in_period[d] / 8760;
 param solve_share_of_year := hours_in_solve / 8760;
 param p_years_d{d in period_with_history} := p_period_from_solve[d];
 #param p_years_d{d in periodAll} := sum {y in year : (d, y) in period__year} p_years_represented[d, y];
 
-param complete_hours_in_period{d in period} := sum {(d2, t) in dt_complete: (d2, d) in period__branch} (complete_step_duration[d2, t]);
-param complete_period_share_of_year{d in period} := complete_hours_in_period[d] / 8760;
+param complete_hours_in_period{d in period_in_use} := sum {(d2, t) in dt_complete: (d2, d) in period__branch} (complete_step_duration[d2, t]);
+param complete_period_share_of_year{d in period_in_use} := complete_hours_in_period[d] / 8760;
 
-param period_share_of_annual_flow {n in node, d in period : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
+param period_share_of_annual_flow {n in node, d in period_in_use : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
         && pdNode[n, 'annual_flow', d]} := abs(sum{(d, t) in dt_complete} (ptNode_inflow[n, t])) / pdNode[n, 'annual_flow', d];
-param period_flow_annual_multiplier {n in node, d in period : ((n, 'scale_to_annual_flow') in node__inflow_method)
+param period_flow_annual_multiplier {n in node, d in period_in_use : ((n, 'scale_to_annual_flow') in node__inflow_method)
         && pdNode[n, 'annual_flow', d]} := complete_period_share_of_year[d] / period_share_of_annual_flow[n, d];
-param orig_flow_sum {n in node, d in period : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
+param orig_flow_sum {n in node, d in period_in_use : ((n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method)
         && pdNode[n, 'annual_flow', d]}  := sum{t in complete_time_in_use} ptNode_inflow[n, t];
-param period_flow_proportional_multiplier {n in node, d in period : (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d]} :=
+param period_flow_proportional_multiplier {n in node, d in period_in_use : (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d]} :=
         pdNode[n, 'annual_flow', d] / (abs(sum{t in time} (ptNode_inflow[n, t])) / sum{(d, tl) in period__timeline} p_timeline_duration_in_years[tl]);
-param new_peak_sign{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+param new_peak_sign{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
         (if pdNode[n, 'peak_inflow', d] >= 0 then 1 else -1);
-param old_peak_max{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+param old_peak_max{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
         if (n, 'inflow') in node__time_inflow
 		then max{t in time} ptNode_inflow[n, t]
 		else p_node[n, 'inflow'];
-param old_peak_min{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+param old_peak_min{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
         if (n, 'inflow') in node__time_inflow
 		then min{t in time} ptNode_inflow[n, t]
 		else p_node[n, 'inflow'];
-param old_peak_sign{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
+param old_peak_sign{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
 		( if (n, 'inflow') in node__time_inflow
 		  then (if abs(old_peak_max[n, d]) >= abs(old_peak_min[n, d]) then 1 else -1)
 		  else (if p_node[n, 'inflow'] >= 0 then 1 else -1)
 		);
-param old_peak{n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
+param old_peak{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
         (if old_peak_sign[n, d] >= 0 then old_peak_max[n, d] else old_peak_min[n, d]);
 printf ('Checking if the sign of new peak inflow is the same as the sign ');
 printf ('of the peak inflow in the original inflow time series\n');
-check {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} new_peak_sign[n, d] = old_peak_sign[n, d];
+check {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} new_peak_sign[n, d] = old_peak_sign[n, d];
 
-param new_peak_divided_by_old_peak {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+param new_peak_divided_by_old_peak {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
         pdNode[n, 'peak_inflow', d] / old_peak[n, d];
-param new_peak_divide_by_old_peak_sum_inflow {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+param new_peak_divide_by_old_peak_sum_inflow {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
         new_peak_divided_by_old_peak[n, d] * orig_flow_sum[n, d] / complete_period_share_of_year[d];
-param new_peak_inflow_sum {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+param new_peak_inflow_sum {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
         pdNode[n, 'peak_inflow', d] * 8760;
-param new_old_multiplier {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
+param new_old_multiplier {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
         old_peak_sign[n, d] *
 		( old_peak_sign[n, d] * new_peak_divide_by_old_peak_sum_inflow[n, d] - pdNode[n, 'annual_flow', d] 
 		)
 		/ ( new_peak_inflow_sum[n, d] - new_peak_divide_by_old_peak_sum_inflow[n, d] );
-param new_old_slope {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
+param new_old_slope {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
         new_peak_divided_by_old_peak[n, d] * ( 1 + new_old_multiplier[n, d] );
-param new_old_section {n in node, d in period : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
+param new_old_section {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
         pdNode[n, 'peak_inflow', d] * new_old_multiplier[n, d];
 param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  := 
         + (if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, tb, ts, t) in node__branch__time_inflow} 1 
@@ -1192,24 +1197,21 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 		               then + ptNode_inflow[n, t])
 		  );
 
-param node_capacity_for_scaling{n in node, d in period} := ( if   sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
+param node_capacity_for_scaling{n in node, d in period_in_use} := ( if   sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
                                                              then sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
 															 else 1000 ); 
-param group_capacity_for_scaling{g in group, d in period} := ( if   sum{(g, n) in group_node} node_capacity_for_scaling[n, d]
+param group_capacity_for_scaling{g in group, d in period_in_use} := ( if   sum{(g, n) in group_node} node_capacity_for_scaling[n, d]
                                                                then sum{(g, n) in group_node} node_capacity_for_scaling[n, d]
 															   else 1000 );
 
-set period__period_next := {d in period, dNext in period : 1 + sum{d2 in period : d2 <=d} 1 = sum{dNext2 in period : dNext2 <=dNext} 1};
 param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0.05);
 param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_discount_offset_investment[m] else 0);
 param p_disc_offset_operations := (if sum{m in model} 1 then max{m in model} p_discount_offset_operations[m] else 0.5);
-param p_discount_factor_investment{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_investment);
-param p_discount_factor_operations{d in period} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_operations);
 param p_discount_factor_investment_yearly{d in period} := 
 		if sum{y in year} p_years_represented[d, y]
 		then sum{(d, y) in period__year} ( ( 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_investment) ) * p_years_represented[d, y] )
 		else 1;
-param p_discount_factor_operations_yearly{d in period} := 
+param p_discount_factor_operations_yearly{d in period_in_use} := 
 		if sum{y in year} p_years_represented[d, y]
 		then sum{(d, y) in period__year} ( ( 1/(1 + p_disc_rate) ^ (p_years_from_solve[d, y] + p_disc_offset_operations) ) * p_years_represented[d, y] )
 		else 1;
@@ -1240,7 +1242,7 @@ param ed_entity_annual{e in entityInvest, d in period_invest} :=
 param ed_entity_annual_discounted{e in entityInvest, d in period_invest} :=
         + sum{(e,m) in entity__lifetime_method : m = 'reinvest_choice'}
           ( + ed_entity_annual[e, d] 
-			    * sum{d_all in period 
+			    * sum{d_all in period_in_use 
 				    :    p_discount_years[d_all] >= p_discount_years[d] 
 					  && p_discount_years[d_all] < p_discount_years[d] + pdEntity_lifetime[e, d]
 				  }
@@ -1249,12 +1251,13 @@ param ed_entity_annual_discounted{e in entityInvest, d in period_invest} :=
         + sum{(e,m) in entity__lifetime_method : m = 'reinvest_automatic'}
 		  (
             + ed_entity_annual[e, d] 
-			    * sum{d_all in period 
+			    * sum{d_all in period_in_use 
 				    :    p_discount_years[d_all] >= p_discount_years[d] 
 				  }
 				    ( p_discount_factor_investment_yearly[d_all] )
 		  )
 ;
+
 param ed_entity_annual_divest{e in entityDivest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in divest_method_not_allowed}
           ( + (pdNode[e, 'salvage_value', d] * 1000 * ( pdNode[e, 'interest_rate', d] 
@@ -1271,7 +1274,7 @@ param ed_entity_annual_divest{e in entityDivest, d in period_invest} :=
 param ed_entity_annual_divest_discounted{e in entityDivest, d in period_invest} :=
         if (e in node) then 
           ( + ed_entity_annual_divest[e, d] 
-			    * sum{d_all in period 
+			    * sum{d_all in period_in_use 
 				   :    p_discount_years[d_all] >= p_discount_years[d] 
 				     && p_discount_years[d_all] < p_discount_years[d] + pdNode[e, 'lifetime', d]
 				  }
@@ -1280,7 +1283,7 @@ param ed_entity_annual_divest_discounted{e in entityDivest, d in period_invest} 
 		else if (e in process) then
 		  (
             + ed_entity_annual_divest[e, d] 
-			    * sum{d_all in period 
+			    * sum{d_all in period_in_use 
 				    :    p_discount_years[d_all] >= p_discount_years[d] 
 					  && p_discount_years[d_all] < p_discount_years[d] + pdProcess[e, 'lifetime', d]
 				  }
@@ -1322,7 +1325,6 @@ param pdtProcess__source__sink__dt_varCost_alwaysProcess {(p, source, sink) in p
 	      )
     )
 ;
-
 set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, t) in dt : pdtProcess__source__sink__dt_varCost[p, source, sink, d, t]};
 set pssdt_varCost_eff_unit_source := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && pdtProcess_source[p, source, 'other_operational_cost', d, t]};
 set pssdt_varCost_eff_unit_sink := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && pdtProcess_sink[p, sink, 'other_operational_cost', d, t]};
@@ -1333,8 +1335,8 @@ set ed_invest_period := {(e, d) in ed_invest : (e, 'invest_period') in entity__i
 set e_invest_total := {e in entityInvest : (e, 'invest_total') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method 
                                                || (e, 'invest_retire_total') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
 set ed_invest_cumulative := {(e, d) in ed_invest : (e, 'cumulative_limits') in entity__invest_method}; 
-set edd_history_choice := {e in entity, d_history in period_with_history, d in period : (e, 'reinvest_choice') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history] && p_years_d[d] < p_years_d[d_history] + pdEntity_lifetime[e, d_history]};
-set edd_history_automatic := {e in entity, d_history in period_with_history, d in period : (e, 'reinvest_automatic') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history]};
+set edd_history_choice := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'reinvest_choice') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history] && p_years_d[d] < p_years_d[d_history] + pdEntity_lifetime[e, d_history]};
+set edd_history_automatic := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'reinvest_automatic') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history]};
 set edd_history := edd_history_choice union edd_history_automatic;
 set edd_history_invest := {(e, d_invest, d) in edd_history : e in entityInvest};
 set edd_invest := {(e, d_invest, d) in edd_history_invest : d_invest in period_invest};
@@ -1446,19 +1448,19 @@ set process_source_sink_ramp :=
 	union process_source_sink_ramp_cost;
 
 set process_source_sink_dtttdt_ramp_limit_source_up :=
-        {(p, source, sink) in process_source_sink_ramp_limit_source_up, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt :
+        {(p, source, sink) in process_source_sink_ramp_limit_source_up, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
  		    p_process_source[p, source, 'ramp_speed_up'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
         };
 set process_source_sink_dtttdt_ramp_limit_sink_up :=
-        {(p, source, sink) in process_source_sink_ramp_limit_sink_up, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt :
+        {(p, source, sink) in process_source_sink_ramp_limit_sink_up, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
  		    p_process_sink[p, sink, 'ramp_speed_up'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
         };
 set process_source_sink_dtttdt_ramp_limit_source_down :=
-        {(p, source, sink) in process_source_sink_ramp_limit_source_down, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt :
+        {(p, source, sink) in process_source_sink_ramp_limit_source_down, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
  		    p_process_source[p, source, 'ramp_speed_down'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
         };
 set process_source_sink_dtttdt_ramp_limit_sink_down :=
-        {(p, source, sink) in process_source_sink_ramp_limit_sink_down, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt :
+        {(p, source, sink) in process_source_sink_ramp_limit_sink_down, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
  		    p_process_sink[p, sink, 'ramp_speed_down'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
         };
 
@@ -1473,7 +1475,7 @@ set process_reserve_upDown_node_large_failure_ratio :=
 set process_large_failure := setof {(p, r, ud, n) in process_reserve_upDown_node_large_failure_ratio} p;
  
 set gcndt_co2_price := 
-        {g in group, (c,n) in commodity_node, d in period, t in time_in_use: (d,t) in dt 
+        {g in group, (c,n) in commodity_node, d in period_in_use, t in time_in_use: (d,t) in dt 
         && (g, n) in group_node 
         && p_commodity[c, 'co2_content']
         && g in group_co2_price
@@ -1481,7 +1483,7 @@ set gcndt_co2_price :=
       };
 
 set group_commodity_node_period_co2_period :=
-        {g in group, (c, n) in commodity_node, d in period : 
+        {g in group, (c, n) in commodity_node, d in period_in_use : 
 		    (g, n) in group_node 
 			&& p_commodity[c, 'co2_content'] 
 			&& g in group_co2_max_period
@@ -1596,7 +1598,7 @@ param p_positive_inflow{n in node, (d,t) in dt: (n, 'no_inflow') not in node__in
 param p_negative_inflow{n in node, (d,t) in dt} := 
   +(if pdtNodeInflow[n,d,t] < 0 then pdtNodeInflow[n,d,t] else 0);
 
-param p_entity_existing_capacity_first_solve {e in entity, d in period} :=
+param p_entity_existing_capacity_first_solve {e in entity, d in period_in_use} :=
   + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in process && not p_process[e, 'virtual_unitsize'] then pdProcess[e, 'existing', d])
   + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in process && p_process[e, 'virtual_unitsize'] then pdProcess[e, 'existing', d] * p_process[e, 'virtual_unitsize'])
   + (if (e, 'reinvest_automatic') in entity__lifetime_method && p_model['solveFirst'] && e in node && not p_node[e, 'virtual_unitsize'] then pdNode[e, 'existing', d])
@@ -1606,26 +1608,26 @@ param p_entity_existing_capacity_first_solve {e in entity, d in period} :=
   + (if (e, 'reinvest_choice') in entity__lifetime_method && p_model['solveFirst'] && e in node && not p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + pdEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d])
   + (if (e, 'reinvest_choice') in entity__lifetime_method && p_model['solveFirst'] && e in node && p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + pdEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d] * p_node[e, 'virtual_unitsize'])
 ;
-param p_entity_existing_capacity_later_solves {e in entity, d in period} :=
+param p_entity_existing_capacity_later_solves {e in entity, d in period_in_use} :=
   + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_existing_capacity[e, d_history]);
   
-param p_entity_all_existing {e in entity, d in period} :=
+param p_entity_all_existing {e in entity, d in period_in_use} :=
   + (if p_model['solveFirst'] then p_entity_existing_capacity_first_solve[e, d])
   + (if not p_model['solveFirst'] then p_entity_existing_capacity_later_solves[e, d])
   - (if not p_model['solveFirst'] && e in entityDivest then p_entity_divested[e])
 ;
 
-param p_entity_existing_count {e in entity, d in period} :=
+param p_entity_existing_count {e in entity, d in period_in_use} :=
   + p_entity_all_existing[e, d] 
     / p_entity_unitsize[e];
 		  
-param p_entity_existing_integer_count {e in entity, d in period} :=
+param p_entity_existing_integer_count {e in entity, d in period_in_use} :=
   + round( p_entity_existing_count[e, d] );
 
-param p_entity_previously_invested_capacity {e in entity, d in period} :=
+param p_entity_previously_invested_capacity {e in entity, d in period_in_use} :=
   + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_invested_capacity[e, d_history]);
 
-param p_entity_max_capacity {e in entity, d in period} :=
+param p_entity_max_capacity {e in entity, d in period_in_use} :=
   + if (e, d) in ed_invest_cumulative
     then ed_cumulative_max_capacity[e, d] 
 	else 
@@ -1736,17 +1738,17 @@ check {p in process_minload, (d,t) in dt} pdtProcess[p, 'min_load', d, t] < 1.0;
 printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
 check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
 
-printf 'Checking: Is there a timeline connected to a timeblockset\n';
-check sum{(tb, tl) in timeblockset__timeline} 1 > 0;
+printf 'Checking: Is there a timeline connected to a timeset\n';
+check sum{(tb, tl) in timeset__timeline} 1 > 0;
 
 printf 'Checking: Are discount factors set in models with investments and multiple periods\n';
-check {d in period : d not in period_first && (sum{(e, d) in ed_invest} 1 || sum{(e, d) in ed_divest} 1)} : p_discount_years[d] != 0;
+check {d in period_in_use : d not in period_first && (sum{(e, d) in ed_invest} 1 || sum{(e, d) in ed_divest} 1)} : p_discount_years[d] != 0;
 
 printf 'Checking: Does a node with has_storage also have has_balance set to yes\n';
 check {n in nodeState} : n in nodeBalance;
 
 printf 'Checking: The nodes with scaling methods should have the inflow parameter set\n';
-check {n in node, d in period: (n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method ||
+check {n in node, d in period_in_use: (n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method ||
         (n, 'scale_to_annual_and_peak_flow') in node__inflow_method}:
   sum{(d, t) in dt_complete} ptNode_inflow[n, t] != 0;
 
@@ -1763,15 +1765,15 @@ check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((
 && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
   p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t];
 
-check {n in nodeState, (d,t,t_previous,t_previous_within_block,d_previous,t_previous_within_solve) in dtttdt: 
+check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt: 
 ((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
-&& (n, 'bind_within_timeblock') in node__storage_binding_method
+&& (n, 'bind_within_timeset') in node__storage_binding_method
 && dt_jump[d,t] != 1}:
   p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t] && p_node[n,'storage_state_end'] <= pdtNode[n,'availability', d, t_previous];
 
-check {n in nodeState, (d,t,t_previous,t_previous_within_block,d_previous,t_previous_within_solve) in dtttdt: 
+check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt: 
 ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
-&& (n, 'bind_within_timeblock') in node__storage_binding_method
+&& (n, 'bind_within_timeset') in node__storage_binding_method
 && dt_jump[d,t] != 1}:
   (p_node[n,'storage_state_start'] <= pdtNode[n, 'availability', d, t] && p_node[n,'storage_state_start'] <= pdtNode[n,'availability', d, t_previous]);
 
@@ -1781,7 +1783,7 @@ check {n in nodeState, (d,t) in period__time_last:
    && (n, 'fix_start_end') not in node__storage_start_end_method
    && (n, 'bind_within_solve') not in node__storage_binding_method
    && (n, 'bind_within_period') not in node__storage_binding_method
-   && (n, 'bind_within_timeblock') not in node__storage_binding_method}:
+   && (n, 'bind_within_timeset') not in node__storage_binding_method}:
   pdtNode[n,'storage_state_reference_value', d, t] <= pdtNode[n, 'availability', d, t];
 
 printf 'Checking: transfer_method no_losses_no_variable_cost\n';
@@ -1988,11 +1990,11 @@ param w_total_cost := gmtime() - datetime0 - setup1 - w_calc_slope - setup2;
 display w_total_cost;
 
 # Energy balance in each node  
-s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
-  + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n] )
+  + (if n in nodeState && (n, 'bind_within_timeset') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_timeset]) * p_entity_unitsize[n] )
   + (if n in nodeState && (d, t) in period__time_first && d in period_first_of_solve && not p_nested_model['solveFirst'] then (v_state[n,d,t] * p_entity_unitsize[n] - p_roll_continue_state[n])) 
   + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && (d, t) in period__time_first && d in period_first_of_solve && p_nested_model['solveFirst'] 
     && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
@@ -2040,7 +2042,7 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
 ;
 
 # Energy balance within period in each node  
-s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in period : n not in nodeState} :
+s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in period_in_use : n not in nodeState} :
   0
   =
   # n is sink
@@ -2393,7 +2395,7 @@ s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in peri
    && (n, 'fix_start_end') not in node__storage_start_end_method
    && (n, 'bind_within_solve') not in node__storage_binding_method
    && (n, 'bind_within_period') not in node__storage_binding_method
-   && (n, 'bind_within_timeblock') not in node__storage_binding_method
+   && (n, 'bind_within_timeset') not in node__storage_binding_method
    && sum{(d2,d) in period__branch, (d, t, t2) in dtt_timeline_matching: n in n_fix_storage_price} 1 = 0
    && sum{(d2,d) in period__branch, (d, t, t2) in dtt_timeline_matching: n in n_fix_storage_quantity} 1 = 0
    && sum{(d2,d) in period__branch, (d, t, t2) in dtt_timeline_matching: n in n_fix_storage_usage} 1 = 0)} :
@@ -2655,14 +2657,14 @@ s.t. maxOnline {p in process_online, (d, t) in dt} :
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 ;
 
-s.t. online__startup_linear {p in process_online_linear, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. online__startup_linear {p in process_online_linear, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + v_startup_linear[p, d, t]
   >=
   + v_online_linear[p, d, t] 
   - v_online_linear[p, d_previous, t_previous_within_solve]
 ;
 
-s.t. online__startup_integer {p in process_online_integer, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. online__startup_integer {p in process_online_integer, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + v_startup_integer[p, d, t]
   >=
   + v_online_integer[p, d, t] 
@@ -2678,14 +2680,14 @@ s.t. maxStartup {p in process_online, (d, t) in dt} :
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 ;
 
-s.t. online__shutdown_linear {p in process_online_linear, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. online__shutdown_linear {p in process_online_linear, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + v_shutdown_linear[p, d, t]
   >=
   - v_online_linear[p, d, t] 
   + v_online_linear[p, d_previous, t_previous_within_solve]
 ;
 
-s.t. online__shutdown_integer {p in process_online_integer, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. online__shutdown_integer {p in process_online_integer, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + v_shutdown_integer[p, d, t]
   >=
   - v_online_integer[p, d, t] 
@@ -2721,14 +2723,14 @@ s.t. maxShutdown {p in process_online, (d, t) in dt} :
 #	)
 #;
 
-s.t. ramp_up_variable {(p, source, sink) in process_source_sink_ramp, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. ramp_up_variable {(p, source, sink) in process_source_sink_ramp, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + v_ramp[p, source, sink, d, t]
   =
   + v_flow[p, source, sink, d, t]  * step_duration[d, t]
   - v_flow[p, source, sink, d, t_previous] * step_duration[d, t]
 ;
 
-s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_up} :
+s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_up} :
   + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'up', source) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'up', source, d, t] * p_entity_unitsize[p] / step_duration[d, t])
@@ -2744,7 +2746,7 @@ s.t. ramp_source_up_constraint {(p, source, sink, d, t, t_previous, t_previous_w
   + ( if p in process_online_integer then v_startup_integer[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
 ;
 
-s.t. ramp_sink_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_sink_up} :
+s.t. ramp_sink_up_constraint {(p, source, sink, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_sink_up} :
   + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'up', sink) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'up', sink, d, t] * p_entity_unitsize[p] / step_duration[d, t])
@@ -2760,7 +2762,7 @@ s.t. ramp_sink_up_constraint {(p, source, sink, d, t, t_previous, t_previous_wit
   + ( if p in process_online_integer then v_startup_integer[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can startup despite ramp limits.
 ;
 
-s.t. ramp_source_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_down} :
+s.t. ramp_source_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_source_down} :
   + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'down', source) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'down', source, d, t] * p_entity_unitsize[p] / step_duration[d, t])
@@ -2776,7 +2778,7 @@ s.t. ramp_source_down_constraint {(p, source, sink, d, t, t_previous, t_previous
   - ( if p in process_online_integer then v_shutdown_integer[p, d, t] * p_entity_unitsize[p] )  # To make sure that units can shutdown despite ramp limits.
 ;
 
-s.t. ramp_sink_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_sink_down} :
+s.t. ramp_sink_down_constraint {(p, source, sink, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in process_source_sink_dtttdt_ramp_limit_sink_down} :
   + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p]
   + sum {r in reserve : (p, r, 'down', sink) in process_reserve_upDown_node_active} 
          (v_reserve[p, r, 'down', sink, d, t] * p_entity_unitsize[p] / step_duration[d, t])
@@ -2854,28 +2856,28 @@ s.t. minDivestGroup_entity_period {(g, d) in gd_divest_period} :
 ;
 
 s.t. maxInvestGroup_entity_total {g in g_invest_total, d in period_invest} :
-  + sum{(g, e) in group_entity, d_invest in period : (e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity, d_invest in period_in_use : (e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e]
   + sum{(g, e) in group_entity} p_entity_previously_invested_capacity[e, d]
   <=
   + p_group[g, 'invest_max_total']
 ;
 
 s.t. maxDivestGroup_entity_total {g in g_divest_total} :
-  + sum{(g, e) in group_entity, d in period : e in entityDivest} v_divest[e, d] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity, d in period_in_use : e in entityDivest} v_divest[e, d] * p_entity_unitsize[e]
   + sum{(g, e) in group_entity : e in entityDivest} (if not p_model['solveFirst'] then p_entity_divested[e])
   <=
   + p_group[g, 'retire_max_total']
 ;
 
 s.t. minInvestGroup_entity_total {g in g_invest_total, d in period_invest} :
-  + sum{(g, e) in group_entity, d_invest in period : (e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity, d_invest in period_in_use : (e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e]
   + sum{(g, e) in group_entity} p_entity_previously_invested_capacity[e, d]
   >=
   + p_group[g, 'invest_min_total']
 ;
 
 s.t. minDivestGroup_entity_total {g in g_divest_total} :
-  + sum{(g, e) in group_entity, d in period : e in entityDivest} v_divest[e, d] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity, d in period_in_use : e in entityDivest} v_divest[e, d] * p_entity_unitsize[e]
   + sum{(g, e) in group_entity : e in entityDivest} (if not p_model['solveFirst'] then p_entity_divested[e])
   >=
   + p_group[g, 'retire_min_total']
@@ -3003,7 +3005,7 @@ s.t. minCumulative_flow_solve {g in group : p_group[g, 'min_cumulative_flow']} :
       * hours_in_solve
 ;
 
-s.t. maxCumulative_flow_period {g in group, d in period : pdGroup[g, 'max_cumulative_flow', d]} :
+s.t. maxCumulative_flow_period {g in group, d in period_in_use : pdGroup[g, 'max_cumulative_flow', d]} :
   + sum{(g, p, n) in group_process_node, (d, t) in dt} (
       # n is sink
       + sum {(p, source, n) in process_source_sink} (
@@ -3030,7 +3032,7 @@ s.t. maxCumulative_flow_period {g in group, d in period : pdGroup[g, 'max_cumula
       * hours_in_period[d]
 ;
 
-s.t. minCumulative_flow_period {g in group, d in period : pdGroup[g, 'min_cumulative_flow', d]} :
+s.t. minCumulative_flow_period {g in group, d in period_in_use : pdGroup[g, 'min_cumulative_flow', d]} :
   + sum{(g, p, n) in group_process_node, (d, t) in dt} (
       # n is sink
       + sum {(p, source, n) in process_source_sink} (
@@ -3211,7 +3213,7 @@ s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
   ) * pdGroup[g, 'non_synchronous_limit', d]
 ;
 
-s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : d in period_invest} :
+s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : d in period_invest} :
   # profile limited units producing to a node in the group (based on available capacity)
   + sum {(p, source, sink, f, m) in process__source__sink__profile__profile_method 
          : m = 'upper_limit' || m = 'fixed'
@@ -3268,7 +3270,7 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
       + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
-      + (if n in nodeState && (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n])
+      + (if n in nodeState && (n, 'bind_within_timeset') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_timeset]) * p_entity_unitsize[n])
       + (if n in nodeState && (d, t) in period__time_first && d in period_first_of_solve && not p_nested_model['solveFirst'] then (v_state[n,d,t] * p_entity_unitsize[n] - p_roll_continue_state[n])) 
       + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && (d, t) in period__time_first && d in period_first_of_solve && p_nested_model['solveFirst'] 
       && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
@@ -3467,11 +3469,11 @@ param r_connection_to_right_node__d{c in process_connection, d in d_realized_per
   + sum {(d, t) in dt_realize_dispatch} r_connection_to_right_node__dt[c, d, t] * step_duration[d, t]
 ;
 
-param r_nodeState_change_dt{n in nodeState, (d, t) in dt_realize_dispatch} := sum {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt} (
+param r_nodeState_change_dt{n in nodeState, (d, t) in dt_realize_dispatch} := sum {(d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} (
       + (if (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n])
       + (if (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n])
-      + (if (n, 'bind_within_timeblock') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_block]) * p_entity_unitsize[n])
+      + (if (n, 'bind_within_timeset') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_timeset]) * p_entity_unitsize[n])
       + (if (d, t) in period__time_first && d in period_first_of_solve && not p_nested_model['solveFirst'] then (v_state[n,d,t] * p_entity_unitsize[n] - p_roll_continue_state[n])) 
       + (if (n, 'bind_forward_only') in node__storage_binding_method && (d, t) in period__time_first && d in period_first_of_solve && p_nested_model['solveFirst'] 
       && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
@@ -3607,8 +3609,9 @@ param r_cost_entity_divest_d{(e, d) in ed_divest} :=
 	  * p_discount_factor_operations_yearly[d]
 ;
 
-param r_cost_entity_existing_fixed{e in entity, d in d_realize_invest : (e, d) not in ed_invest} :=
-  + p_entity_all_existing[e, d]
+param r_cost_entity_existing_fixed{e in entity, d in period_in_use} :=
+  + ( + p_entity_all_existing[e, d]
+      + sum {(e, d_invest, d) in edd_invest: d_invest != d} v_invest[e, d_invest] * p_entity_unitsize[e])
       * ( + if e in process then pdProcess[e, 'fixed_cost', d] else 0 
 	      + if e in node then pdNode[e, 'fixed_cost', d] else 0 
 		)
@@ -3649,22 +3652,22 @@ param r_costPenalty_inertia_d{g in groupInertia, d in d_realized_period} := sum{
 param r_costPenalty_non_synchronous_d{g in groupNonSync, d in d_realized_period} := sum{(d, t) in dt_realize_dispatch} r_costPenalty_non_synchronous_dt[g, d, t];
 param r_costPenalty_reserve_upDown_d{(r, ud, ng) in reserve__upDown__group, d in d_realized_period} := sum{(d, t) in dt_realize_dispatch} r_costPenalty_reserve_upDown_dt[r, ud, ng, d, t];
 
-param r_costOper_d{d in period} := sum{(d, t) in dt} r_costOper_dt[d, t] ;
-param r_costPenalty_d{d in period} := sum{(d, t) in dt} r_costPenalty_dt[d, t] + sum{g in groupCapacityMargin : d in period_invest} r_costPenalty_capacity_margin_d[g, d];
-param r_costOper_and_penalty_d{d in period} := + r_costOper_d[d] + r_costPenalty_d[d];
+param r_costOper_d{d in period_in_use} := sum{(d, t) in dt} r_costOper_dt[d, t] ;
+param r_costPenalty_d{d in period_in_use} := sum{(d, t) in dt} r_costPenalty_dt[d, t] + sum{g in groupCapacityMargin : d in period_invest} r_costPenalty_capacity_margin_d[g, d];
+param r_costOper_and_penalty_d{d in period_in_use} := + r_costOper_d[d] + r_costPenalty_d[d];
 
-param r_costInvestUnit_d{d in period} := sum{(e, d) in ed_invest : e in process_unit} r_cost_entity_invest_d[e, d];
-param r_costDivestUnit_d{d in period} := sum{(e, d) in ed_divest : e in process_unit} r_cost_entity_divest_d[e, d];
-param r_costInvestConnection_d{d in period} := sum{(e, d) in ed_invest : e in process_connection} r_cost_entity_invest_d[e, d];
-param r_costDivestConnection_d{d in period} := sum{(e, d) in ed_divest : e in process_connection} r_cost_entity_divest_d[e, d];
-param r_costInvestState_d{d in period} := sum{(e, d) in ed_invest : e in nodeState} r_cost_entity_invest_d[e, d];
-param r_costDivestState_d{d in period} := sum{(e, d) in ed_divest : e in nodeState} r_cost_entity_divest_d[e, d];
+param r_costInvestUnit_d{d in period_in_use} := sum{(e, d) in ed_invest : e in process_unit} r_cost_entity_invest_d[e, d];
+param r_costDivestUnit_d{d in period_in_use} := sum{(e, d) in ed_divest : e in process_unit} r_cost_entity_divest_d[e, d];
+param r_costInvestConnection_d{d in period_in_use} := sum{(e, d) in ed_invest : e in process_connection} r_cost_entity_invest_d[e, d];
+param r_costDivestConnection_d{d in period_in_use} := sum{(e, d) in ed_divest : e in process_connection} r_cost_entity_divest_d[e, d];
+param r_costInvestState_d{d in period_in_use} := sum{(e, d) in ed_invest : e in nodeState} r_cost_entity_invest_d[e, d];
+param r_costDivestState_d{d in period_in_use} := sum{(e, d) in ed_divest : e in nodeState} r_cost_entity_divest_d[e, d];
 
-param r_costInvest_d{d in period} := r_costInvestUnit_d[d] + r_costInvestConnection_d[d] + r_costInvestState_d[d];
-param r_costDivest_d{d in period} := r_costDivestUnit_d[d] + r_costDivestConnection_d[d] + r_costDivestState_d[d];
-param r_costExistingFixed_d{d in period} := sum{e in entity : (e, d) not in ed_invest} r_cost_entity_existing_fixed[e, d];
+param r_costInvest_d{d in period_in_use} := r_costInvestUnit_d[d] + r_costInvestConnection_d[d] + r_costInvestState_d[d];
+param r_costDivest_d{d in period_in_use} := r_costDivestUnit_d[d] + r_costDivestConnection_d[d] + r_costDivestState_d[d];
+param r_costExistingFixed_d{d in period_in_use} := sum{e in entity} r_cost_entity_existing_fixed[e, d];
 
-param pdNodeInflow{n in node, d in period} := 
+param pdNodeInflow{n in node, d in period_in_use} := 
   + (if n in nodeBalance && (n, 'no_inflow') not in node__inflow_method then sum{(d, t) in dt} pdtNodeInflow[n, d, t])
   + (if n in nodeBalancePeriod then pdNode[n, 'annual_flow', d]);
 
@@ -3802,9 +3805,9 @@ for {i in 1..1 : p_model['solveFirst']}
 for {(d,t) in period__time_first: (d, t) in dt_fix_storage_timesteps} #clear also after before each time values are outputted, to avoid duplicates
   { printf 'period,step,node,p_fix_storage_price\n' > fn_fix_price_nodeState__dt;
   }
-for {c in solve_current, (n,'fix_price') in node__storage_nested_fix_method, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt: (d, t) in dt_fix_storage_timesteps}
+for {c in solve_current, (n,'fix_price') in node__storage_nested_fix_method, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt: (d, t) in dt_fix_storage_timesteps}
   {
-    printf '%s,%s,%s,%.12g\n', d, t, n,  -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective >> fn_fix_price_nodeState__dt;
+    printf '%s,%s,%s,%.12g\n', d, t, n,  -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective >> fn_fix_price_nodeState__dt;
   }
 
 printf 'Write node state usage for fixed timesteps ..\n';
@@ -3903,20 +3906,20 @@ printf '"Investment costs for realized periods (M CUR)",%.12g\n', sum{d in d_rea
            + r_costInvest_d[d] / 1000000 >> fn_summary;
 printf '"Retirement costs (negative salvage value) for realized periods (M CUR)",%.12g\n', sum{d in d_realize_invest} 
            + r_costDivest_d[d] / 1000000 >> fn_summary;
-printf '"Fixed costs for existing units (M CUR)",%.12g\n', sum{d in d_realize_invest} r_costExistingFixed_d[d] / 1000000 >> fn_summary;
+printf '"Fixed costs for existing units (M CUR)",%.12g\n', sum{d in d_realized_period} r_costExistingFixed_d[d] / 1000000 >> fn_summary;
 printf '"Penalty (slack) costs for realized periods (M CUR)",%.12g\n', sum{d in d_realized_period} 
            + r_costPenalty_d[d] * p_discount_factor_operations_yearly[d] / complete_period_share_of_year[d] / 1000000 >> fn_summary;
 printf '\nPeriod' >> fn_summary;
-for {d in period}
+for {d in period_in_use}
   { printf ',%s', d >> fn_summary; }
 printf '\n"Time in use in years"' >> fn_summary;
-for {d in period}
+for {d in period_in_use}
   { printf ',%.12g', complete_period_share_of_year[d] >> fn_summary; }
 printf '\n"Operational discount factor"' >> fn_summary;
-for {d in period}
+for {d in period_in_use}
   { printf ',%.12g', p_discount_factor_operations_yearly[d] >> fn_summary; }
 printf '\n"Investment discount factor"' >> fn_summary;
-for {d in period}
+for {d in period_in_use}
   { printf ',%.12g', p_discount_factor_operations_yearly[d] >> fn_summary; }
 printf '\n' >> fn_summary;
 
@@ -4026,7 +4029,7 @@ param fn_groupNode__dt_VRE_share symbolic := "output/group_node_VRE_share__perio
 for {i in 1..1 : p_model['solveFirst']}
   { 
     printf 'solve,period,time' > fn_groupNode__dt_VRE_share;
-	for {g in groupOutput_node : sum{(g, n) in group_node, d in period} pdNodeInflow[n, d]}
+	for {g in groupOutput_node : sum{(g, n) in group_node, d in period_in_use} pdNodeInflow[n, d]}
 	  { printf ',%s', g >> fn_groupNode__dt_VRE_share; }
   }
 for {s in solve_current, (d, t) in dt_realize_dispatch}
@@ -4165,7 +4168,7 @@ for {s in solve_current}
 	  sum{d in d_realize_invest} (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / 1000000,
     sum{d in d_realize_invest} (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / 1000000,
     sum{d in d_realize_invest} (r_costInvestState_d[d] + r_costDivestState_d[d]) / 1000000,
-	  sum{d in d_realize_invest} (r_costExistingFixed_d[d]) / 1000000,
+	  sum{d in d_realized_period} (r_costExistingFixed_d[d]) / 1000000,
 	  sum{d in d_realized_period} (r_cost_commodity_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) / 1000000,
 	  sum{d in d_realized_period} (r_cost_co2_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) / 1000000,
 	  sum{d in d_realized_period} (r_cost_variable_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) / 1000000,
@@ -4186,7 +4189,7 @@ printf 'param_costs,costs_discounted\n' > fn_costs_discounted;
 printf '"unit investment/retirement",%.12g\n', costs_discounted["unit investment/retirement"] + sum{d in d_realize_invest} (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / 1000000 >> fn_costs_discounted;
 printf '"connection investment/retirement",%.12g\n', costs_discounted["connection investment/retirement"] + sum{d in d_realize_invest} (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / 1000000 >> fn_costs_discounted;
 printf '"storage investment/retirement",%.12g\n', costs_discounted["storage investment/retirement"] + sum{d in d_realize_invest} (r_costInvestState_d[d] + r_costDivestState_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"fixed cost of existing assets",%.12g\n', costs_discounted["fixed cost of existing assets"] + sum{d in d_realize_invest} (r_costExistingFixed_d[d]) / 1000000 >> fn_costs_discounted;
+printf '"fixed cost of existing assets",%.12g\n', costs_discounted["fixed cost of existing assets"] + sum{d in d_realized_period} (r_costExistingFixed_d[d]) / 1000000 >> fn_costs_discounted;
 printf '"commodity",%.12g\n', costs_discounted["commodity"] + sum{d in d_realized_period} (r_cost_commodity_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) / 1000000 >> fn_costs_discounted;
 printf '"CO2",%.12g\n', costs_discounted["CO2"] + sum{d in d_realized_period} (r_cost_co2_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) / 1000000 >> fn_costs_discounted;
 printf '"variable cost",%.12g\n', costs_discounted["variable cost"] + sum{d in d_realized_period} (r_cost_variable_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) / 1000000 >> fn_costs_discounted;
@@ -4216,7 +4219,7 @@ for {s in solve_current, d in (d_realized_period union d_realize_invest)}
     (if d in d_realize_invest then (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0),
     (if d in d_realize_invest then  (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0),
     (if d in d_realize_invest then  (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0),
-	  (if d in d_realize_invest then  r_costExistingFixed_d[d] / p_discount_factor_operations_yearly[d] / 1000000 else 0),
+	  (if d in d_realized_period then  r_costExistingFixed_d[d] / p_discount_factor_operations_yearly[d] / 1000000 else 0),
     (if d in d_realize_invest then sum{g in groupCapacityMargin : d in period_invest} (r_costPenalty_capacity_margin_d[g, d] / p_discount_factor_operations_yearly[d]) / 1000000 else 0),
     (if d in d_realized_period then  r_cost_commodity_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
 	  (if d in d_realized_period then r_cost_co2_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
@@ -4945,11 +4948,11 @@ for {i in 1..1 : p_model['solveFirst']}
       { printf ',%s', n >> fn_nodal_prices__dt; }
   }
 for {s in solve_current: 'yes' not in exclude_entity_outputs}
-  { for {(d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in dt_realize_dispatch}
+  { for {(d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : (d, t) in dt_realize_dispatch}
     { printf '\n%s,%s,%s', s, d, t >> fn_nodal_prices__dt;
       for {c in solve_current, n in nodeBalance}
       {
-        printf ',%8g', -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d]  / scale_the_objective >> fn_nodal_prices__dt;
+        printf ',%8g', -nodeBalance_eq[c, n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d]  / scale_the_objective >> fn_nodal_prices__dt;
         }
   }}
 
@@ -5490,7 +5493,7 @@ display w_full;
 #display {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
-#display {c in current_solve, n in nodeBalance, (d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve) in dtttdt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_block, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective;
+#display {c in current_solve, n in nodeBalance, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective;
 #display {(r, ud, g, r_m) in reserve__upDown__group__method_timeseries, (d, t) in dt : (d, t) in test_dt}: reserveBalance_timeseries_eq[r, ud, g, r_m, d, t].dual;
 #display {(p, source, sink) in process_source_sink, (d, t) in dt : (d, t) in test_dt && (p, sink) in process_sink}: maxToSink[p, source, sink, d, t].ub;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;
