@@ -2309,7 +2309,7 @@ s.t. storage_state_start_binding {n in nodeState, (d, t) in period__time_first
 	  )
 ;
 
-s.t. storage_state_end {n in nodeState, (d, t) in period__time_last 
+s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
      : p_nested_model['solveLast'] 
 	 && d in period_last 
 	 && ((n, 'fix_end') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
@@ -2367,7 +2367,7 @@ s.t. storage_usage_fix_realized{n in n_fix_storage_usage, (d,t) in period__time_
       + v_flow[p, source, n, d, t3] * p_entity_unitsize[p] * step_duration[d, t3]
   )  
   # n is source
-  + sum {(p, n, sink) in process_source_sink_eff, (d2,t3) in dt_realize_dispatch} ( 
+  + sum {(p, n, sink) in process_source_sink_eff, (d2,t3) in dt_realize_dispatch} (
       + v_flow[p, n, sink, d, t3] * p_entity_unitsize[p]
         * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t3] else 1 / pdtProcess[p, 'efficiency', d, t3])
       * (if p in process_unit then 1 / (p_process_sink_coefficient[p, sink] * p_process_source_coefficient[p, n]) else 1)
@@ -3762,8 +3762,7 @@ printf 'entity,period,p_entity_period_existing_capacity,p_entity_period_invested
 for {(e, d) in ed_history_realized union {e in entity, d in d_realize_invest}}
   {
     printf '%s,%s,%.12g,%.12g\n', e, d,
-	  + (if p_model['solveFirst'] && e in process && d in period_first then p_process[e, 'existing'])
-	  + (if p_model['solveFirst'] && e in node    && d in period_first then    p_node[e, 'existing'])
+	  + (if p_model['solveFirst'] && d in period_first then p_entity_existing_capacity_first_solve[e, d])
 	  + (if not p_model['solveFirst'] && (e, d) in ed_history_realized then p_entity_period_existing_capacity[e, d])
 	  + (if (e, d) in ed_invest && d in d_realize_invest then ( v_invest[e, d].val ) * p_entity_unitsize[e]),
 	  + (if not p_model['solveFirst'] && (e, d) in ed_history_realized  then p_entity_period_invested_capacity[e, d])
