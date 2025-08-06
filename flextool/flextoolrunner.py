@@ -189,7 +189,7 @@ class FlexToolRunner:
         tool_version = 25.0
         if float(database_version) < tool_version:
             self.logger.error(
-                "The input database is in an older version than the tool. Please migrate the database to the new version: python migrate_database.py path_to_database")
+                "The input database is in an older version than the tool.\nPlease migrate the database to the new version:\n- Make sure FlexTool python environment is activated\n- cd to flextool directory\n- run command: python migrate_database.py path_to_database\nwhere path_to_database is replaced by the filepath of your current input database")
             sys.exit(-1)
 
 

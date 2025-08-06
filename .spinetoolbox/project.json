@@ -486,7 +486,7 @@
                 "database": {
                     "type": "path",
                     "relative": true,
-                    "path": "test3.sqlite"
+                    "path": "input_data.sqlite"
                 },
                 "schema": ""
             }
