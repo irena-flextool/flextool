@@ -1314,14 +1314,14 @@ Each example will either include an example database file that is located in the
 <p>To define a temporal structure for a model instance, you need to create the following entities:</p>
 <ul>
 <li><code>timeline</code> entity called <em>y2020</em> with a map-type parameter <code>timestep_duration</code> that defines the timeline the time series data in the model will need to use. It contains, in the first column, the name of each timestep (e.g. <em>t0001</em> or <em>2022-01-01-01</em>) and, in the second column, the length of the timestep in hours (e.g. <em>1.0</em>). The timestep names here must match the timestep names in other time series like <code>inflow</code> or <code>profile</code>. Here all of the three options use the same full year timeline i.e. timesteps from t0001 to t8760 with a step size of one hour.</li>
-<li><code>timeblockset</code> entities called <em>full-year</em>, <em>2day</em> and <em>5week</em>. Each of them need a map-type parameter <code>block_duration</code> to define a time block using a timestep name to indicate where the timeblock starts and a number to define the duration of the timeblock in timesteps: (<em>t0001</em>, <em>8760</em>) for the <em>full-year</em> and (<em>t4001</em> and <em>48.0</em>) for the 48h. The timeline is larger than the 48 hours, but this way the solver uses 48 hours specified. The <em>5week</em> needs five starting points
+<li><code>timeset</code> entities called <em>full-year</em>, <em>2day</em> and <em>5week</em>. Each of them need a map-type parameter <code>timeset_duration</code> to define a timeset using a timestep name to indicate where the timeset starts and a number to define the duration of the timeset in timesteps: (<em>t0001</em>, <em>8760</em>) for the <em>full-year</em> and (<em>t4001</em> and <em>48.0</em>) for the 48h. The timeline is larger than the 48 hours, but this way the solver uses 48 hours specified. The <em>5week</em> needs five starting points
 <em>t2521</em>, <em>t4538</em>, <em>t5041</em>, <em>t7057</em> and <em>t8233</em> with all having the length of <em>168.0</em></li>
-<li><code>timeblockset</code> needs to be connected to the timeline. This is done by adding the <code>timeblockset__timeline</code> entities (<em>full-year</em>| <em>y2020</em>), (<em>2day</em>| <em>y2020</em>), (<em>5weeks</em>| <em>y2020</em>). </li>
+<li><code>timeset</code> needs to be connected to the timeline. This is done by adding the <code>timeset</code> parameter <code>timeline</code>. Each of the three <code>timesets</code> include the value <em>y2020</em>.</li>
 <li>
 <p><code>solve</code> entities called <em>full-year-dispatch</em>, <em>2day-dispatch</em> and <em>5week-invest</em>. In addition, they need the following parameters:</p>
 </li>
 <li>
-<p>a map-type parameter <code>period_timeblockSet</code> to define the timeblockset to be used by each period. Here each of the three use their <code>timeblockSet</code> to describe the same period <em>p2020</em>. The first column of the map has the period: <em>p2020</em> and the second column the <code>timeblockSet</code>: <em>full-year</em>, <em>2day</em> or <em>5week</em></p>
+<p>a map-type parameter <code>period_timeset</code> to define the timeset to be used by each period. Here each of the three use their <code>timeset</code> to describe the same period <em>p2020</em>. The first column of the map has the period: <em>p2020</em> and the second column the <code>timeset</code>: <em>full-year</em>, <em>2day</em> or <em>5week</em></p>
 </li>
 <li>an array-type parameter <code>realized_periods</code> to define the periods that are realised from the <code>solve</code> named by the entity (the first column of an array is an index number starting with <em>0</em>, the second column contains the period to be realized in the results: <em>p2020</em> for all the solves here)</li>
 <li>
@@ -1331,8 +1331,17 @@ Each example will either include an example database file that is located in the
 <p>Finally, a <code>model</code> entity will define the solves to be included in a one model instance. They are defined in the array parameter <code>solves</code>. For these examples, the model name is <em>flextool</em> and for each <code>solve</code> the name of the <code>solve</code> should be given in the <code>solves</code> array (distinguished by the alternative): <em>full-year-dispatch</em>, <em>2day-dispatch</em> or <em>5week-invest</em>.</p>
 </li>
 </ul>
-<p>Be careful when choosing datatypes! Maps need to be maps not arrays. (In the future, an update is coming to toolbox to ensure compliance.) </p>
+<p>Be careful when choosing datatypes! Maps need to be maps not arrays. You will see a red exclamation mark if you are using the wrong datatype. (In the future, an update is coming to toolbox to ensure compliance.) </p>
 <p><img alt="Time_parameters" src="../first_model.png" /></p>
+<p>The tool includes some assumptions about the time structure, in case something is missing. These will work if there is only one option for the model to choose. The assuptions are the following:</p>
+<ul>
+<li>If <code>timeset</code>: <code>timeline</code> is not set and only one <code>timeline</code> is defined, it is used</li>
+<li>If no <code>timeset</code> is exist and only one <code>timeline</code> is defined, create a full timeline timeset</li>
+<li>If <code>period_timeset</code> is defined, but no <code>realized_periods</code> or <code>invest_periods</code> exists, all periods are realized</li>
+<li>If <code>period_timeset</code> does not exist and only one <code>timeset</code> exists, create <code>timesets</code> for all <code>realized_periods</code> and <code>invest_periods</code></li>
+<li>If <code>model</code>: <code>solves</code> does not exist, and only one <code>solve</code> exists, that it is used</li>
+<li>If a <code>solve</code> in <code>model</code>: <code>solves</code> does not exist, create a <code>solve</code> where all <code>periods_available</code> are realized</li>
+</ul>
 <h2 id="how-to-create-a-pv-wind-or-run-of-river-hydro-power-plant">How to create a PV, wind or run-of-river hydro power plant</h2>
 <p><strong>(examples.sqlite scenario: wind)</strong>
 <strong><em>init - west - wind</em></strong></p>
@@ -1430,7 +1439,7 @@ In the example, the <em>wind_plant</em> alone is not able to meet the load in al
 <li><code>storage_state_start</code> and <code>storage_state_end</code> set these values.</li>
 </ul>
 </li>
-<li><code>storage_bind_method</code>: Forces the start and end values to be the same for the chosen  time interval (timeblock, period or solve)</li>
+<li><code>storage_bind_method</code>: Forces the start and end values to be the same for the chosen  time interval (timeset, period or solve)</li>
 <li><code>storage_solve_horizon_method</code>: Fixes the state of the storage at the end of the solve horizon or sets a price for the stored energy at the end of the solve horizon<ul>
 <li><code>storage_state_reference_value</code> and <code>storage_state_reference_price</code> set these values</li>
 </ul>
@@ -1572,7 +1581,7 @@ For the other option of converting the volume to potential energy in the reservo
 <li><code>existing</code>: The maximum size of the reservoir [m^3]</li>
 <li><code>penalty_up</code>: a larger number than with the demand node to not allow creating extra water if not enough electricity is being created</li>
 <li><code>penalty_down</code>: 0 or a large number (spilling or not)</li>
-<li>a <code>storage_method</code> to set the behaviour on how the storage levels should be managed - for short duration storages <em>bind_within_timeblock</em> may be best and for seasonal storages it could be best to use <em>bind_within_solve</em>. If historical storage level time series are available, it can be beneficial to use <em>fix_start</em> in the <code>storage_start_end_method</code> together with <code>storage_solve_horizon_method</code> <em>use_reference_value</em>, which will pick the storage level at the end of each solve from the time series provided as a reference (<em>storage_state_reference_value</em>).</li>
+<li>a <code>storage_method</code> to set the behaviour on how the storage levels should be managed - for short duration storages <em>bind_within_timeset</em> may be best and for seasonal storages it could be best to use <em>bind_within_solve</em>. If historical storage level time series are available, it can be beneficial to use <em>fix_start</em> in the <code>storage_start_end_method</code> together with <code>storage_solve_horizon_method</code> <em>use_reference_value</em>, which will pick the storage level at the end of each solve from the time series provided as a reference (<em>storage_state_reference_value</em>).</li>
 <li><code>is_active</code>: yes (if Toolbox 0.7, before 5/2024)</li>
 </ul>
 <p>The <code>unit</code> is connected to the <em>reservoir</em> <code>node</code> and the output <code>node</code> <em>demand_node</em> (unit_c and unit_node_c in excel):</p>
@@ -1658,7 +1667,7 @@ In this implementation of reservoir hydro power, there is an option to spill wat
 <li><code>existing</code>: The maximum size of the reservoir as the potential energy [MWh]</li>
 <li><code>penalty_up</code>: a large number to prefer not creating energy from nowhere</li>
 <li><code>penalty_down</code>: 0 or a large number (spilling or not)</li>
-<li>a <code>storage_method</code> to set the behaviour on how the storage levels should be managed - for short duration storages <em>bind_within_timeblock</em> may be best and for seasonal storages it could be best to use <em>bind_within_solve</em>. If historical storage level time series are available, it can be beneficial to use <em>fix_start</em> in the <code>storage_start_end_method</code> together with <code>storage_solve_horizon_method</code> <em>use_reference_value</em>, which will pick the storage level at the end of each solve from the time series provided as a reference (<em>storage_state_reference_value</em>).</li>
+<li>a <code>storage_method</code> to set the behaviour on how the storage levels should be managed - for short duration storages <em>bind_within_timeset</em> may be best and for seasonal storages it could be best to use <em>bind_within_solve</em>. If historical storage level time series are available, it can be beneficial to use <em>fix_start</em> in the <code>storage_start_end_method</code> together with <code>storage_solve_horizon_method</code> <em>use_reference_value</em>, which will pick the storage level at the end of each solve from the time series provided as a reference (<em>storage_state_reference_value</em>).</li>
 <li><code>is_active</code>: yes (if Toolbox 0.7, before 5/2024)</li>
 </ul>
 <p>The <code>unit</code> is connected to the <em>reservoir</em> <code>node</code> and the output <code>node</code> <em>nodeA</em> (unit_c and unit_node_c in excel):</p>
@@ -1684,9 +1693,9 @@ In this implementation of reservoir hydro power, there is an option to spill wat
 <ul>
 <li><code>fix_start_end_method</code>: <em>fix_start</em></li>
 <li><code>storage_state_start</code>: 0.5</li>
-<li><code>bind_storage_method</code>: <em>bind_with_timeblock</em></li>
+<li><code>bind_storage_method</code>: <em>bind_with_timeset</em></li>
 </ul>
-<p>This sets the starting storage levels to be 50%. The binding will also constrain the state of the storage at the end of of each timeblock to be the same as in the beginning of the timeblock.</p>
+<p>This sets the starting storage levels to be 50%. The binding will also constrain the state of the storage at the end of of each timeset to be the same as in the beginning of the timeset.</p>
 <p>Then create the pump unit and add it to an alternative in the <code>Entity Alternative</code> sheet (if Toolbox 0.8, after 5/2024). </p>
 <p>It only needs three parameters:</p>
 <ul>
@@ -1847,35 +1856,35 @@ and <em>wind_flow</em> <code>group</code> with <code>group_unit_node</code> rela
 <li>Investment solve </li>
 <li>Dispatch solve</li>
 </ul>
-<p>Both solves should solve the <em>same</em> periods using <em>different</em> <code>timeblockSet</code> to represent these periods. This example has only one period p2020 describing a year. The investment solve uses a representative sample <code>timeblockSet</code> <em>5weeks</em> to do the investment decisions. These are then passed to the dispatch solve that uses complete timeline <em>fullYear</em>.</p>
+<p>Both solves should solve the <em>same</em> periods using <em>different</em> <code>timeset</code> to represent these periods. This example has only one period p2020 describing a year. The investment solve uses a representative sample <code>timeset</code> <em>5weeks</em> to do the investment decisions. These are then passed to the dispatch solve that uses complete timeline <em>fullYear</em>.</p>
 <p>Investment solve requires the parameters:</p>
 <ul>
 <li><code>Invest_periods</code>: Array of periods where investments can be made</li>
 <li><code>realised_invest_periods</code>: Array of periods that are output for investment decisions</li>
-<li><code>period_timeblockSet</code>: Uses the <em>5weeks</em> as the timeblock </li>
+<li><code>period_timeset</code>: Uses the <em>5weeks</em> as the timeset </li>
 </ul>
 <p>Note that the <code>realized_invest_periods</code> is used instead of <code>realized_periods</code>, because we want the investment solve to only output investments.
 Additionally some of the units, connections or storages will need investment parameters (<code>invest_cost</code>, <code>lifetime</code>...) see <a href="#how-to-make-investments-storageunit">How to make investments (storage/unit)</a></p>
 <p>The dispatch solve requires the parameters:</p>
 <ul>
 <li><code>realized_periods</code>: Array of output periods</li>
-<li><code>period_timeblockSet</code>: Uses the <em>fullYear</em> as the timeblock</li>
+<li><code>period_timeset</code>: Uses the <em>fullYear</em> as the timeset</li>
 </ul>
 <p>The sequence of solves is defined by the <code>model</code> parameter <code>solves</code>. Here it is an array where the first item is an investment_solve <em>5weeks_only_invest</em> and the second is the dispatch solve <em>y2020_fullYear_dispatch</em>. This is enough for the model to know to pass the investment decisions of the period to the period of the same name in the second solve.</p>
 <p>Note that the picture has two <code>model</code>: <em>solves</em> parameters defined one for each alternative. Only the parameter from the <em>5weeks_only_invest</em> is used as the lower alternatives in the scenario tree override the values from the higher alternatives and only one model can be run.</p>
 <p><img alt="Invest_and_dispatch" src="../Invest_and_dispatch.PNG" /></p>
 <h2 id="how-to-create-a-multi-year-model">How to create a multi-year model</h2>
-<p>A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the <em>west</em> <code>node</code>. This means that all periods can use the same timeblockset <em>5weeks</em> from the same timeline <em>y2020</em>, but one can also make separate timelines for each year, if data is available for this. The <code>inflow</code> time series are scaled to match the value in <code>annual_flow</code> that is mapped for each period. The model is using the <code>inflow_method</code> <em>scale_to_annual</em> in order to achieve this (default is <em>use_original</em> that would not perform scaling). There should also be a <code>discount_rate</code> parameter set for the <code>model</code> entity <em>flexTool</em> if something else than the model default of 5% (0.05 value) is to be used.</p>
+<p>A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the <em>west</em> <code>node</code>. This means that all periods can use the same timeset <em>5weeks</em> from the same timeline <em>y2020</em>, but one can also make separate timelines for each year, if data is available for this. The <code>inflow</code> time series are scaled to match the value in <code>annual_flow</code> that is mapped for each period. The model is using the <code>inflow_method</code> <em>scale_to_annual</em> in order to achieve this (default is <em>use_original</em> that would not perform scaling). There should also be a <code>discount_rate</code> parameter set for the <code>model</code> entity <em>flexTool</em> if something else than the model default of 5% (0.05 value) is to be used.</p>
 <p><img alt="Multi-year inflow" src="../multi_year_inflow.PNG" /></p>
 <p>A multi-year model could be solved at one go (multi_year_one_solve) or by rolling through several solves (multi-year) where each solve has a foresight horizon and a realisation horizon. Next we will go through both options.</p>
 <h3 id="multi-year-with-one-solve">Multi year with one solve</h3>
 <p><strong>(examples.sqlite scenario: multi_year_one_solve)</strong></p>
-<p>In this example, one solve is used for all the four periods. All the four periods need to be added to the solve arrays <code>invest_periods</code> and <code>realized_periods</code>. Here the same timeblock is used for all the four periods, so only difference between them is the increasing inflow set above. The parameters that need to be added to the <code>solve</code> entity:</p>
+<p>In this example, one solve is used for all the four periods. All the four periods need to be added to the solve arrays <code>invest_periods</code> and <code>realized_periods</code>. Here the same timeset is used for all the four periods, so only difference between them is the increasing inflow set above. The parameters that need to be added to the <code>solve</code> entity:</p>
 <ul>
 <li><code>years_represented</code> parameter is used by the model to calculate the discounting factors for the periods in the model (often future years). It should state the number of years each period will be representing. For example, a period for 2025 could represent the years 2025-2029 if its <code>years_represented</code> is set to 5. Any investments would be taking place at the start of 2025 and discounted to the beginning of 2025, but the operational costs would accrue from each year in 2025-2029 each with a different discounting factor (decreasing based on the interest rate).</li>
 <li><code>invest_periods</code> the periods in which the model is allowed to make investments.</li>
 <li><code>realized_periods</code> the periods that will be realized in this solve (outputs dispatch results for these periods).</li>
-<li><code>period_timeblockset</code> defines the set of representative 'periods' (timeblocks in FlexTool) to be used in each FlexTool <code>period</code>.</li>
+<li><code>period_timeset</code> defines the set of representative 'periods' (timesets in FlexTool) to be used in each FlexTool <code>period</code>.</li>
 </ul>
 <p><img alt="Multi-year one solve" src="../multi_year_one_solve.PNG" /></p>
 <h3 id="multi-year-with-rolling-solves">Multi year with rolling solves</h3>
@@ -1890,7 +1899,7 @@ Additionally some of the units, connections or storages will need investment par
 <li><code>invest_periods</code> the periods in which the model is allowed to make investments. To be given for each solve.</li>
 <li><code>realized_periods</code> the periods that will be realized in this solve (outputs dispatch results for these periods). To be given for each solve.</li>
 <li><code>invest_realized_periods</code> parameter states the periods that will realize the investment decisions. If not stated, it will use <code>realized_periods</code>.</li>
-<li><code>period_timeblockset</code> defines the set of representative 'periods' (timeblocks in FlexTool) to be used in each FlexTool <code>period</code>.</li>
+<li><code>period_timeset</code> defines the set of representative 'periods' (timesets in FlexTool) to be used in each FlexTool <code>period</code>.</li>
 </ul>
 <p>Note the the <code>solve_mode</code>: <em>rolling_window</em> is not used! This is not for investment runs (without nesting) as it rolls freely, and investments should only be made at the start of the period. This example is called 'manual rolling' later when those are discussed.</p>
 <p>In the examples.sqlite, the solve entities have solver parameters: <code>highs_method</code>, <code>highs_parallel</code> and <code>highs_presolve</code>. They only affect the speed and not the results, but usually the default values are good enough and the user should only change them if they understand how the solvers work.</p>
@@ -1936,12 +1945,12 @@ Additionally some of the units, connections or storages will need investment par
 <ul>
 <li>The <code>rolling_jump</code> and <code>rolling_horizon</code> must be large enough to make the model faster. If too small intervals are used, the creation of solves and moving data from solve to another might take too much time.</li>
 <li>If you are not using 1-hour timesteps, preferably use multiples of the timestep you are using as the <code>rolling_jump</code> and <code>rolling_horizon</code>. The steps included in each solve are calculated by summing the step durations until they are larger or equal to the hours given. So, if multiples are not used, the rolls might not be exactly the same size.</li>
-<li>The model can roll over timeblock and period jumps, which might cause some issues if storage constraints are used. Using timeblock length or its multiples is therefore recommended. For example, the <code>rolling_jump</code> could be a half of a timeblock and the <code>rolling_horizon</code> whole timeblock or <code>rolling_jump</code> a timeblock and <code>rolling_horizon</code> three timeblocks. Of course, when running e.g. a full year dispatch, there is only one timeblock of 8760 hours, which makes the choices more simple.</li>
+<li>The model can roll over timeset and period jumps, which might cause some issues if storage constraints are used. Using timeset length or its multiples is therefore recommended. For example, the <code>rolling_jump</code> could be a half of a timeset and the <code>rolling_horizon</code> whole timeset or <code>rolling_jump</code> a timeset and <code>rolling_horizon</code> three timesets. Of course, when running e.g. a full year dispatch, there is only one timeset of 8760 hours, which makes the choices more simple.</li>
 </ul>
 <p>Considerations on storage parameters:</p>
 <ul>
 <li><code>storage_solve_horizon_method</code> <em>use_reference_value</em> or <em>use_reference_price</em> are the preferred means to bind storage values. They can be used together with the <code>storage_state_start_end_method</code>: <em>start</em>, which would then set the initial storage state. These methods bind either the storage value or the storage price at the end of <em>horizon</em> (not the end of <em>jump</em>). This allows the storage to use the part of the horizon that is not output to improve the behaviour of the storage in the part that is output (as defined by <code>rolling_horizon</code> and <code>rolling_jump</code>). </li>
-<li><code>bind_within_timeblock</code> does not work correctly if the rolls don't include whole timeblocks. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeblock. Do not use in nested solves if you are not using whole timeblocks or its multiples as <code>rolling_jump</code></li>
+<li><code>bind_within_timeset</code> does not work correctly if the rolls don't include whole timesets. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeset. Do not use in nested solves if you are not using whole timesets or its multiples as <code>rolling_jump</code></li>
 <li>the same applies to the <code>bind_within_period</code> (but in relation to periods - do not use this unless you are <code>rolling_jump</code> is as long as a period or its multiples).</li>
 <li><code>storage_start_end_method</code> can be used to set the first timestep of the first roll and/or the last timestep of the last roll (in conjunction with <code>storage_state_start</code> and <code>storage_state_end</code>).</li>
 <li><code>bind_within_solve</code> binds the start state to the end state of each <em>roll</em> not the start and end of the whole model timeline. Use with caution (and probably best not to use together with <code>storage_solve_horizon_method</code> <em>use_reference_value</em>).</li>
@@ -2003,7 +2012,7 @@ Additionally some of the units, connections or storages will need investment par
 <li>Storage levels can be fixed with <code>storage_solve_horizon_method</code>: <em>use_reference_value</em> or <em>use_reference_price</em>, these will fix the end of each horizon not each jump.</li>
 <li><code>storage_start_end_method</code> fixes the starts and/or ends of each solve level, meaning the first step of the first roll and the last step of the last roll.</li>
 <li>In most cases the <code>bind_storage_method</code> should be left as <em>bind_forward_only</em></li>
-<li>Do not use <code>bind_within_timeblock</code> if you are not using full timeblock or its multiples as the <code>rolling_jump</code> in the dispatch model, otherwise you might cause an infeasible problem. </li>
+<li>Do not use <code>bind_within_timeset</code> if you are not using full timeset or its multiples as the <code>rolling_jump</code> in the dispatch model, otherwise you might cause an infeasible problem. </li>
 <li>Do not use <code>bind_within_period</code> if you are not using full periods or its multiples as the <code>rolling_jump</code> in the dispatch model, otherwise you might cause an infeasible problem. </li>
 <li>Do not use <code>bind_within_solve</code></li>
 </ul>
@@ -2015,16 +2024,16 @@ Additionally some of the units, connections or storages will need investment par
 <p>How to create the three lower information solve types for investment and storage solves discussed above?</p>
 <p>To create a lower resolution (longer timesteps) solve:</p>
 <ul>
-<li>Make a new <code>timeblockSet</code>, but use the same <code>timeline</code> and <code>block_duration</code> for it as with the high resolution solve</li>
-<li>Set <code>timeblockSet</code> parameter <code>new_stepduration</code>: Hours</li>
-<li>In the <code>solve</code> use this new <code>timeblockSet</code> in the <code>period_timeblockSet</code></li>
+<li>Make a new <code>timeset</code>, but use the same <code>timeline</code> and <code>timeset_duration</code> for it as with the high resolution solve</li>
+<li>Set <code>timeset</code> parameter <code>new_stepduration</code>: Hours</li>
+<li>In the <code>solve</code> use this new <code>timeset</code> in the <code>period_timeset</code></li>
 </ul>
-<p>The model will create a new timeline for this solve with the <code>new_stepduration</code>. All the timestep map data like <code>inflow</code> or <code>profile</code> will be either summed or averaged for the new timeline. Again, the <code>new_stepduration</code> should be multiple of the old step duration. If the <code>block_duration</code> is not a multiple of the <code>new_stepduration</code> the last timestep will be shorter than the rest.
+<p>The model will create a new timeline for this solve with the <code>new_stepduration</code>. All the timestep map data like <code>inflow</code> or <code>profile</code> will be either summed or averaged for the new timeline. Again, the <code>new_stepduration</code> should be multiple of the old step duration. If the <code>timeset_duration</code> is not a multiple of the <code>new_stepduration</code> the last timestep will be shorter than the rest.
 <img alt="New step duration" src="../new_stepduration.PNG" /></p>
 <p>Note that if the last timestep of the dispatch horizon is not in the storage solve timeline, it will use the last available timestep to fix the storage. This can happen at the end of the timeline when the dispatch solve with a lower step size can fit an extra step after the last time step of the storage solve.
 Other reason might be that both dispatch and storage solves are aggregated with the <code>new_stepduration</code>. In that case, it is usually best to use values for the <code>new_stepduration</code> that are dividable.  </p>
 <p>To create a sample solve with representative periods:</p>
-<p>The tutorial contains an example of representaive periods under alternative <em>5weeks</em> where the year is represented with five sample weeks. It is done with the <code>timeblockSet</code> parameter <code>block_duration</code> where instead of choosing the whole timeline by setting the first timestep and the duration of whole timeline, you choose multiple starting points with smaller durations. The example for the <em>5weeks</em> is below.</p>
+<p>The tutorial contains an example of representaive periods under alternative <em>5weeks</em> where the year is represented with five sample weeks. It is done with the <code>timeset</code> parameter <code>timeset_duration</code> where instead of choosing the whole timeline by setting the first timestep and the duration of whole timeline, you choose multiple starting points with smaller durations. The example for the <em>5weeks</em> is below.</p>
 <p><img alt="New step duration" src="../5weeks.PNG" /></p>
 <p>To create an investment solve sequence, you have two options:</p>
 <ul>
@@ -2079,7 +2088,7 @@ Other reason might be that both dispatch and storage solves are aggregated with 
 <p><img alt="Stocahstic system" src="../stochastic_system.PNG" /></p>
 <h3 id="single-solve-stochastics">Single solve stochastics</h3>
 <p><strong>(stochastics.sqlite scenario: 2_day_stochastic_dispatch)</strong></p>
-<p>In this scenario, 24 hours are realized with an uncertain forecast for the next day. The timeblock length is therefore 48 hours and the branching will happen at the timestep t0025. 
+<p>In this scenario, 24 hours are realized with an uncertain forecast for the next day. The timeset length is therefore 48 hours and the branching will happen at the timestep t0025. 
 To set up a stochastic solve, we need three things: The stochastic branch information, the stochastic timeseries and choosing which parts of the model use stochastic timeseries.</p>
 <p>The information about the branches are set with the <em>solve</em> parameter <code>stochastic_branches</code>. This is a 4 dimensional map. (Edit -&gt; choose map -&gt; right click -&gt; add columns).
 The columns are: period, branch, analysis_time (starting time of the branch), realized (yes/no) and the value is the weight of the branch. Each starting time, including the first timestep, should have one and only one realized branch. This realized branch is used for the non-stochastic parts of the model with a stochastic timeseries. In this example we have three branches: mid, upper and lower representing the three wind forecasts. The weight will influence the relative weight of each branch in the objective function (model costs). The weights are normalized, so that the total weight is always one in each timestep.</p>

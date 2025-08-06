@@ -490,9 +490,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#timeblocksets" class="md-nav__link">
+  <a href="#timesets" class="md-nav__link">
     <span class="md-ellipsis">
-      Timeblocksets
+      Timesets
     </span>
   </a>
   
@@ -502,6 +502,15 @@
   <a href="#definitions" class="md-nav__link">
     <span class="md-ellipsis">
       Definitions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#time-structure-assumptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Time structure assumptions
     </span>
   </a>
   
@@ -1027,9 +1036,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#timeblocksets" class="md-nav__link">
+  <a href="#timesets" class="md-nav__link">
     <span class="md-ellipsis">
-      Timeblocksets
+      Timesets
     </span>
   </a>
   
@@ -1039,6 +1048,15 @@
   <a href="#definitions" class="md-nav__link">
     <span class="md-ellipsis">
       Definitions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#time-structure-assumptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Time structure assumptions
     </span>
   </a>
   
@@ -1385,8 +1403,9 @@
 <p>FlexTool has two different kinds of time varying parameters. The first one represents a regular timeline based on timesteps. The duration of each timestep can be defined by the user. There can be multiple timelines in the database - the user needs to define which timeline to use (and what parts of the timeline should be used, as will be explained later). The timestep names in the timeline are defined by the user - they can be abstract like 't0001' or follow a datetime format of choice. However, the timestep names between different timelines must remain unique (usually there should be only one timeline in a database and therefore no issues).</p>
 <p>The second time varying dimension is <code>period</code>, which is typically used to depict assumptions about the future. One model can include multiple <code>solves</code> that the model will solve in sequence (to allow multi-stage modelling). Each solve can include multiple <code>periods</code> (so that the user can change parameter values for different parts of the future).</p>
 <p>A parameter of particular type can be either constant/time-varying or constant/period-based. For example <code>inflow</code> is either a constant or time-varying, but it cannot be period-based.</p>
-<h3 id="timeblocksets">Timeblocksets</h3>
-<p>Timeblocks pick one or more sections from the <code>timeline</code> to form a <code>timeblockset</code>. Each timeblock defines a start and a duration. The aim of timeblocksets is to allow the modeller to create models with representative periods often used in the investment planning.</p>
+<h3 id="timesets">Timesets</h3>
+<p>Timesets pick one or more sections from the <code>timeline</code> to form a <code>timeset</code>. Each timeset defines a start and a duration. The aim of timesets is to allow the modeller to create models with representative periods often used in the investment planning.</p>
+<p><img alt="Time structure" src="../time_structure.png" /></p>
 <h3 id="definitions">Definitions</h3>
 <ul>
 <li>
@@ -1396,14 +1415,15 @@
 <p><em>solves</em>: sequence of solves in the model represented with an array of solve names.</p>
 </li>
 <li><em>discount_offset_investment</em>: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.</li>
+<li><em>discount_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs.</li>
 <li>
-<p><em>discount_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs.</p>
+<p><em>available_periods</em>: (Optional) Array of periods available for the model. Use this for periods that are in the data, but are not in period_timeset.</p>
 </li>
 <li>
-<p><code>solve</code>: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timeblocksets to connect with a timeline.</p>
+<p><code>solve</code>: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timesets to connect with a timeline.</p>
 </li>
 <li>
-<p><em>period_timeblockset</em>: map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name.</p>
+<p><em>period_timeset</em>: map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name.</p>
 </li>
 <li><em>realized_periods</em>: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve</li>
 <li><em>realized_invest_periods</em> Array of the periods that will realize the investment decisions. If this is not defined when the invest_periods exist, the realized_periods are used to realize the invests as well</li>
@@ -1443,13 +1463,14 @@
 </ul>
 </li>
 <li>
-<p><code>timeblockset</code>: timeblocksets are sets of timeblocks with a start (from timeline) and a duration (number of time steps)</p>
+<p><code>timeset</code>: timesets are sets of time with a start (from timeline) and a duration (number of time steps)</p>
 </li>
 <li>
-<p><em>block_duration</em> a map with index <em>timestep_name</em> that starts the timeblock and value that defines the duration of the block (how many timesteps)</p>
+<p><em>timeset_duration</em> a map with index <em>timestep_name</em> that starts the timeset and value that defines the duration of the timeset (how many timesteps)</p>
 </li>
+<li><em>timeline</em> The name of the timeline that the timeset uses. (String)</li>
 <li>
-<p><em>new_stepduration</em>: Hours. Creates a new <code>timeline</code> from the old for this <code>timeblockSet</code> with this timestep duration. The new timeline will sum or average the other timeseries data like <code>profile</code> and <code>inflow</code> for the new timesteps. </p>
+<p><em>new_stepduration</em>: Hours. Creates a new <code>timeline</code> from the old for this <code>timeset</code> with this timestep duration. The new timeline will sum or average the other timeseries data like <code>profile</code> and <code>inflow</code> for the new timesteps.</p>
 </li>
 <li>
 <p><code>timeline</code>: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.</p>
@@ -1457,13 +1478,19 @@
 <li>
 <p><em>timestep_duration</em>: a map with <em>timestep_name</em> as an index and <em>duration</em> as a value.</p>
 </li>
-<li>
-<p><em>timeline_duration_in_years</em> Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.</p>
-</li>
-<li>
-<p><code>timeblockset__timeline</code>: defines which timeline entity particular timeblockset is using.</p>
-</li>
+<li><em>timeline_duration_in_years</em> Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.</li>
 </ul>
+<h3 id="time-structure-assumptions">Time structure assumptions</h3>
+<p>The tool includes some assumptions about the time structure, in case something parts are missing. These will work if there is only one option for the model to choose. The assuptions are the following:</p>
+<ul>
+<li>If <code>timeset</code>: <code>timeline</code> is not set and only one <code>timeline</code> is defined, it is used</li>
+<li>If no <code>timeset</code> is exist and only one <code>timeline</code> is defined, create a full timeline timeset</li>
+<li>If <code>period_timeset</code> is defined, but no <code>realized_periods</code> or <code>invest_periods</code> exists, all periods are realized</li>
+<li>If <code>period_timeset</code> does not exist and only one <code>timeset</code> exists, create <code>timesets</code> for all <code>realized_periods</code> and <code>invest_periods</code></li>
+<li>If <code>model</code>: <code>solves</code> does not exist, and only one <code>solve</code> exists, that it is used</li>
+<li>If a <code>solve</code> in <code>model</code>: <code>solves</code> does not exist, create a <code>solve</code> where all <code>periods_available</code> are realized</li>
+</ul>
+<p>For example in the case above, it would have been possible to not fill the <code>timeset</code>: <code>timeline</code> as there is only one <code>timeline</code> to choose. Leaving out the <code>period_timeset</code> would result in an error as there are multiple <code>timesets</code> to choose.</p>
 <h2 id="nodes">Nodes</h2>
 <h3 id="defining-how-the-node-functions">Defining how the node functions</h3>
 <p>These parameters will define how the node will behave and use the data it is given (available choices are marked in <em>italics</em>):</p>
@@ -1514,11 +1541,11 @@ Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alterna
 </ul>
 <h3 id="using-nodes-as-storages">Using nodes as storages</h3>
 <p>FlexTool manages storages through nodes. A regular node maintains an energy/material balance between all inputs and outputs (<code>has_balance</code> set to <em>yes</em>). A storage node includes an additional state variable, which means that the node can also use charging and discharging of the storage while maintaining the energy balance. A storage node is created by setting <code>has_storage</code> to <em>yes</em> and by adding storage capacity using the <code>existing</code> parameter and/or by letting the model invest in storage capacity (<code>invest_method</code>, <code>invest_cost</code>, <code>invest_max_period</code> and <code>invest_max_total</code> parameters).</p>
-<p>Since FlexTool allows different temporal structures (multi-periods, rolling optimization, etc.) there needs to be ways to define how the storages behave when the model timeline is not fully consequtive. By default, storages are forced to match start level to the end level within timeblocks. This is an acceptable setting for small storages that do not carry meaningful amounts of energy between longer time periods in the model.</p>
+<p>Since FlexTool allows different temporal structures (multi-periods, rolling optimization, etc.) there needs to be ways to define how the storages behave when the model timeline is not fully consequtive. By default, storages are forced to match start level to the end level within timesets. This is an acceptable setting for small storages that do not carry meaningful amounts of energy between longer time periods in the model.</p>
 <p>There are three methods associated with storage start and end values: <code>storage_binding_method</code>, <code>storage_start_end_method</code> and <code>storage_solve_horizon_method</code>. </p>
 <ul>
 <li>The most simple one of these is the <code>storage_start_end_method</code> and it overrides the other methods, since it forces the start and/or the end state of the storage to a predefined value based on the proportional parameters <code>storage_state_start</code> and <code>storage_state_end</code> (proportional means that the parameter needs to be set between 0-1 and will be scaled by the storage capacity in the model). These two parameters affect only the first and the last timesteps of the entire model (even when the model has more than one solve).</li>
-<li><code>storage_binding_method</code> states how the storage should behave over discontinuities in the model timeline. Model timeline can have jumps for three different reasons: timeblocks, periods, and solves. If <code>storage_binding_method</code> is <em>bind_within_timeblock</em>, then the storage has to match the state of the storage between the beginning and the end of each timeblock. In effect, <strong>storage_state_at_start_of_timeblock</strong> equals <strong>storage_state_at_end_of_timeblock</strong> plus <strong>charging</strong> minus <strong>discharging</strong> minus <strong>self_discharge_loss</strong> at the last timestep. Similarly, <em>bind_within_period</em> will force the start and end between periods, but it will treat the jumps between timeblocks as continuous from the storage perspective (the storage will continue from where it was at the end of the previous timeblock). <em>bind_within_solve</em> does effectively the same when there are multiple periods within one solve. <em>bind_within_model</em> (NOT IMPLEMENTED 19.3.2023) will extend the continuity to multiple solves and force the end state of the storage at the end of the last solve to match the beginning state of the storage at the start of the first solve. Finally, <em>bind_forward_only</em> will force continuity in the storage state over the whole model without forcing the end state to match the beginning state.</li>
+<li><code>storage_binding_method</code> states how the storage should behave over discontinuities in the model timeline. Model timeline can have jumps for three different reasons: timesets, periods, and solves. If <code>storage_binding_method</code> is <em>bind_within_timeset</em>, then the storage has to match the state of the storage between the beginning and the end of each timeset. In effect, <strong>storage_state_at_start_of_timeset</strong> equals <strong>storage_state_at_end_of_timeset</strong> plus <strong>charging</strong> minus <strong>discharging</strong> minus <strong>self_discharge_loss</strong> at the last timestep. Similarly, <em>bind_within_period</em> will force the start and end between periods, but it will treat the jumps between timesets as continuous from the storage perspective (the storage will continue from where it was at the end of the previous timeset). <em>bind_within_solve</em> does effectively the same when there are multiple periods within one solve. <em>bind_within_model</em> (NOT IMPLEMENTED 19.3.2023) will extend the continuity to multiple solves and force the end state of the storage at the end of the last solve to match the beginning state of the storage at the start of the first solve. Finally, <em>bind_forward_only</em> will force continuity in the storage state over the whole model without forcing the end state to match the beginning state.</li>
 <li><code>storage_solve_horizon_method</code> is meant for models that roll forward between solves and have an overlapping temporal window between those solves (e.g. a model with 36 hour horizon rolls forward 24 hours at each solve - those 12 last hours will be overwritten by the next solve). In these cases, the end state of the storage will be replaced by the next solve, but it can be valuable to have some guidance for the end level of storage, since it will affect storage behaviour. There are three methods: <em>free</em> is the default and will simply let the model choose where the storage state ends (usually the storage will be emptied, since it would have no monetary value). <em>use_reference_value</em> will use the value set by <code>storage_state_reference_value</code> to force the end state in each solve to match the reference value. <em>use_reference_price</em> will give monetary value for the storage content at the end of the solve horizon set by the <code>storage_state_reference_price</code> parameter - the model is free to choose how much it stores at the end of horizon based on this monetary value.</li>
 </ul>
 <p>-Method hierarchy:</p>

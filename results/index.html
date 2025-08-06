@@ -889,7 +889,7 @@ Annualization scales the sum to correspond with full year time series.</li>
 <h2 id="capacity-factors">Capacity factors</h2>
 <ul>
 <li><code>unit__node</code> entity <code>cf</code> parameter - [per unit] average capacity factor of the flow, i.e. the utilization rate of the flow from/to the unit. Average of flow [MWh/h] divided by capacity [MW] of the input or output to the unit.</li>
-<li><code>connection</code> entity <code>cf</code> parameter - [per unit] average capacity factor of the flow, i.e. the utilization rate of the connection where flows in both directions are considered as utilization. Average of the absolute flow [MWh/h] divided by the capacity of the connection.</li>
+<li><code>connection</code> entity <code>cf</code> parameter - [per unit] average capacity factor of the absolute flow, i.e. the utilization rate of the connection where flows in both directions are considered as utilization. Time-average of the absolute flow [MWh/h] divided by the capacity of the connection.</li>
 </ul>
 <h2 id="energy-balance-in-nodes">Energy balance in nodes</h2>
 <ul>
@@ -942,6 +942,8 @@ Annualization scales the sum to correspond with full year time series.</li>
 <ul>
 <li><code>unit__reserve__upDown__node</code> entity <code>reservation_t</code> parameter - [MW] how much upward or downward reserve particular unit was providing to a particular node in given timestep</li>
 <li><code>unit__reserve__upDown__node</code> entity <code>reservation_average</code> parameter - [MW] how much upward or downward reserve particular unit was providing to a particular node in average during the period</li>
+<li><code>connection__reserve__upDown__node</code> entity <code>reservation_t</code> parameter - [MW] how much upward or downward reserve particular connection was providing to a particular node in given timestep</li>
+<li><code>connection__reserve__upDown__node</code> entity <code>reservation_average</code> parameter - [MW] how much upward or downward reserve particular connection was providing to a particular node in average during the period</li>
 <li><code>group__reserve__upDown</code> entity <code>slack_reserve_t</code> parameter - [MW] use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement in each timestep</li>
 <li><code>group__reserve__upDown</code> entity <code>slack_reserve</code> parameter - [MW] cumulative use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement during the period</li>
 </ul>
