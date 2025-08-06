@@ -4,7 +4,7 @@
     "includes": [
         "migrate_database.py"
     ],
-    "description": "",
+    "description": "Update/migrate the active input database to the latest version. Take a backup if unsure (there is no going back).",
     "inputfiles": [],
     "inputfiles_opt": [],
     "outputfiles": [],

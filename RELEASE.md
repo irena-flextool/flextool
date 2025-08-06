@@ -1,9 +1,20 @@
+## Release 3.14.0 (6.8.2025)
+**Bug fixes**
+- Fixing problems with group results (wrong signs)
+- Fix broken importer
+- Fix calculation of VRE shares in the results
+- Other operational costs for units had gone missing in 3.12.0 (22.5.). Now they are back.
+
+**New features**
+- There is a new migrate button in the workflow to update the active input database to the latest version.
+
 ## Release 3.13.0 (27.6.2025)
 **Bug fixes**
 - Added missing fixed costs to operational models
 - Catching infeasible models better
 
 **New features**
+- Time structure has been simplified, see ´https://irena-flextool.github.io/flextool/reference/#how-to-define-the-temporal-properties-of-the-model'
 - Changed the time structure to have timeset instead of timeblockSet
 - Added periods_available for the model entity, to have periods in the data that are not used without domain errors
 - Added assumptions about the model timestructure to ease the defining of it.
