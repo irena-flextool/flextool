@@ -1207,8 +1207,6 @@ param group_capacity_for_scaling{g in group, d in period_in_use} := ( if   sum{(
 param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0.05);
 param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_discount_offset_investment[m] else 0);
 param p_disc_offset_operations := (if sum{m in model} 1 then max{m in model} p_discount_offset_operations[m] else 0.5);
-param p_discount_factor_investment{d in period_in_use} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_investment);
-param p_discount_factor_operations{d in period_in_use} := 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_operations);
 param p_discount_factor_investment_yearly{d in period} := 
 		if sum{y in year} p_years_represented[d, y]
 		then sum{(d, y) in period__year} ( ( 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_investment) ) * p_years_represented[d, y] )
@@ -1217,7 +1215,7 @@ param p_discount_factor_operations_yearly{d in period_in_use} :=
 		if sum{y in year} p_years_represented[d, y]
 		then sum{(d, y) in period__year} ( ( 1/(1 + p_disc_rate) ^ (p_years_from_solve[d, y] + p_disc_offset_operations) ) * p_years_represented[d, y] )
 		else 1;
-display p_discount_factor_investment_yearly;
+
 # Check for division by zero
 printf 'Checking: node lifetime parameter > 0, if the node is using investments';
 check {e in entityInvest, d in period_invest : e in node} pdNode[e, 'lifetime', d] > 0 ;
@@ -1259,6 +1257,7 @@ param ed_entity_annual_discounted{e in entityInvest, d in period_invest} :=
 				    ( p_discount_factor_investment_yearly[d_all] )
 		  )
 ;
+
 param ed_entity_annual_divest{e in entityDivest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in divest_method_not_allowed}
           ( + (pdNode[e, 'salvage_value', d] * 1000 * ( pdNode[e, 'interest_rate', d] 
