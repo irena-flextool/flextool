@@ -270,20 +270,26 @@ def update_timestructure(db):
     timeblock_entity_class_item = db.item(db.mapped_table("entity_class"), name="timeblockSet")
     db.update_entity_class(id = timeblock_entity_class_item["id"], name='timeset')
     db.add_parameter_definition(entity_class_name= "timeset", name= "timeline", parameter_type_list = ("str",), parameter_value_list_name = None, description = "The name of the timeline that the timeset uses. (String)")
-    for timeblocks__timeline in timeblocks__timelines:
-        for block_duration in block_durations:
+    for block_duration in block_durations:
+        timeline_found = False
+        for timeblocks__timeline in timeblocks__timelines:
             if timeblocks__timeline["entity_byname"][0] == block_duration["entity_byname"][0]:
-                value_x, type_ = to_database(timeblocks__timeline["entity_byname"][1])
-                param_table = db.mapped_table("parameter_value")
-                db.add(
-                    param_table, 
-                    entity_class_name="timeset", 
-                    parameter_definition_name="timeline",
-                    entity_byname=(timeblocks__timeline["entity_byname"][0],),
-                    alternative_name=block_duration["alternative_name"],
-                    value=value_x,
-                    type=type_,
-                )
+                if timeline_found:
+                    print(f'More than one timeline connected to the timeblockSet {timeblocks__timeline["entity_byname"][0]}. Converting only one to timeset - timeline')
+                else: 
+                    value_x, type_ = to_database(timeblocks__timeline["entity_byname"][1])
+                    param_table = db.mapped_table("parameter_value")
+                    db.add(
+                        param_table, 
+                        entity_class_name="timeset", 
+                        parameter_definition_name="timeline",
+                        entity_byname=(timeblocks__timeline["entity_byname"][0],),
+                        alternative_name=block_duration["alternative_name"],
+                        value=value_x,
+                        type=type_,
+                    )
+                    timeline_found = True
+    
     t__t_entity_class_item = db.item(db.mapped_table("entity_class"), name="timeblockSet__timeline")
     db.remove_entity_class(id = t__t_entity_class_item["id"])
     timeline_duration_in_years = db.item(db.mapped_table("parameter_definition"), entity_class_name="timeline", name = "timeline_duration_in_years")
