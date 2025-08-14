@@ -119,6 +119,15 @@ def migrate_project(old_path, new_path):
         old_dict["project"]["connections"].append({"name": "from FlexTool3 to Open_summary", "from": ["FlexTool3","bottom"],"to": ["Open_summary","right"]})
         old_dict["project"]["specifications"]["Tool"].append({"type": "path","relative": True,"path": ".spinetoolbox/specifications/Tool/open_summary.json"})
 
+    if ("Migrate database version" not in old_dict["items"].keys()) and ("Migrate database version" in new_dict["items"].keys()):
+        old_dict["items"]["Migrate database version"] = new_dict["items"]["Migrate database version"]
+        old_dict["project"]["connections"].append({"name": "from Migrate database version to Input_data", 
+                                                   "from": ["Migrate database version","right"],
+                                                   "to": ["Input_data","bottom"]})
+        old_dict["project"]["specifications"]["Tool"].append({  "type": "path",
+                                                                "relative": True,
+                                                                "path": ".spinetoolbox/specifications/Tool/migrate_database.json"})
+
     
     with open("./.spinetoolbox/project_temp2.json", "w") as outfile: 
         json.dump(old_dict, outfile, indent=4)
