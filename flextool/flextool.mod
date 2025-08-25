@@ -1142,15 +1142,15 @@ param period_flow_proportional_multiplier {n in node, d in period_in_use : (n, '
 param new_peak_sign{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
         (if pdNode[n, 'peak_inflow', d] >= 0 then 1 else -1);
 param old_peak_max{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
-        if (n, 'inflow') in node__time_inflow
+        if sum{(n, t) in node__time_inflow : t in time} 1
 		then max{t in time} ptNode_inflow[n, t]
 		else p_node[n, 'inflow'];
 param old_peak_min{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} := 
-        if (n, 'inflow') in node__time_inflow
+         if sum{(n, t) in node__time_inflow : t in time} 1
 		then min{t in time} ptNode_inflow[n, t]
 		else p_node[n, 'inflow'];
 param old_peak_sign{n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
-		( if (n, 'inflow') in node__time_inflow
+		(  if sum{(n, t) in node__time_inflow : t in time} 1
 		  then (if abs(old_peak_max[n, d]) >= abs(old_peak_min[n, d]) then 1 else -1)
 		  else (if p_node[n, 'inflow'] >= 0 then 1 else -1)
 		);
