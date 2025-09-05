@@ -421,6 +421,8 @@ param scale_the_state;
 
 set param_costs dimen 1;
 param costs_discounted {param_costs} default 0;
+set param_co2 dimen 1;
+param model_co2 {param_co2} default 0;
 
 set class_paramName_default dimen 2;
 param default_value {class_paramName_default};
@@ -599,6 +601,7 @@ table data IN 'CSV' 'solve_data/p_entity_period_existing_capacity.csv' : [entity
 
 # Reading results from previous solves
 table data IN 'CSV' 'output/costs_discounted.csv' : [param_costs], costs_discounted;
+table data IN 'CSV' 'output/co2.csv' : [param_co2], model_co2~model_wide;
 
 #check
 set nodeBalancePeriod := {n in node : (n, 'balance_within_period') in node__node_type};
@@ -3924,8 +3927,8 @@ for {d in period_in_use}
 printf '\n' >> fn_summary;
 
 printf '\nEmissions\n' >> fn_summary;
-printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for all periods"\n', sum{(c, n) in commodity_node_co2, d in d_realized_period} (r_emissions_co2_d[c, n, d] ) / 1000000 >> fn_summary;
-printf '"CO2 (Mt)",%.6g,"System-wide annualized CO2 emissions for realized periods"\n', sum{(c, n) in commodity_node_co2, d in d_realized_period} (r_emissions_co2_d[c, n, d]) / 1000000 >> fn_summary;
+# printf '"CO2 [Mt]",%.6g,"System-wide annualized CO2 emissions for all periods"\n', sum{(c, n) in commodity_node_co2, d in d_realized_period} (r_emissions_co2_d[c, n, d] ) / 1000000 >> fn_summary;
+printf '"CO2 [Mt]",%.6g,"System-wide annualized CO2 emissions for realized periods"\n', sum{(c, n) in commodity_node_co2, d in d_realized_period} (r_emissions_co2_d[c, n, d]) / 1000000 >> fn_summary;
 
 printf '\n"Slack variables (creating or removing energy/matter, creating inertia, ' >> fn_summary;
 printf 'changing non-synchronous generation to synchronous)"\n' >> fn_summary;
@@ -3971,6 +3974,10 @@ for {g in groupCapacityMargin}
 
 param w_summary := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity;
 display w_summary;
+
+param fn_model_co2 symbolic := "output/co2.csv";
+printf 'param_co2,model_wide\n' > fn_model_co2;
+printf '"CO2 [Mt]",%.6g\n', model_co2["CO2 [Mt]"] + sum{(c, n) in commodity_node_co2, d in d_realized_period} (r_emissions_co2_d[c, n, d]) / 1000000 >> fn_model_co2;
 
 printf 'Write group results for nodes for realized periods...\n';
 param fn_groupNode__d symbolic := "output/group_node__period.csv";
@@ -4909,7 +4916,7 @@ for {n in node, s in solve_current, d in d_realized_period : 'yes' not in exclud
 printf 'Write process CO2 results for periods...\n';
 param fn_process_co2__d symbolic := "output/process__period_co2.csv";
 for {i in 1..1 : p_model['solveFirst']}
-  { printf 'class,process,solve,period,"CO2 [Mt/a]"\n' > fn_process_co2__d; }  # Print the header on the first solve 
+  { printf 'class,process,solve,period,"CO2 [t/a]"\n' > fn_process_co2__d; }  # Print the header on the first solve
 for {p in process_co2, s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_outputs}
   {
     printf '%s,%s,%s,%s,%.8g\n'

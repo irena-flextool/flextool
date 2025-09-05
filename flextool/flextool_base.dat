@@ -222,6 +222,7 @@ set param_costs := "unit investment/retirement","connection investment/retiremen
                    "fixed cost of existing assets",commodity,CO2,"variable cost",starts,"upward penalty","downward penalty",
 				   "inertia penalty","non-synchronous penalty","capacity margin penalty","upward reserve penalty",
 				   "downward reserve penalty";
+set param_co2 := "CO2 [Mt]";
 
 #set test_t := t0001;
 #set test_dt := (23year, t000001) (23year, t000002) (23year, t026205);
