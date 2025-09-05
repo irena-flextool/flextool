@@ -1977,12 +1977,12 @@ minimize total_cost:
     # Only one period investment is supported with stochastics
     # The branch weight should be added if this is changed.
       + v_invest[e, d]
-      * p_entity_unitsize[e]
-      * ed_entity_annual_discounted[e, d]
+        * p_entity_unitsize[e]
+        * ed_entity_annual_discounted[e, d]
   - sum {(e, d) in ed_divest} 
       + v_divest[e, d]
-      * p_entity_unitsize[e]
-      * ed_entity_annual_divest_discounted[e, d]
+        * p_entity_unitsize[e]
+        * ed_entity_annual_divest_discounted[e, d]
   + sum {g in groupCapacityMargin, d in period_invest}
     + vq_capacity_margin[g, d] * group_capacity_for_scaling[g, d]
 	  * pdGroup[g, 'penalty_capacity_margin', d]
@@ -3601,15 +3601,13 @@ param r_costPenalty_reserve_upDown_dt{(r, ud, ng) in reserve__upDown__group, (d,
 param r_cost_entity_invest_d{(e, d) in ed_invest} :=
   + v_invest[e, d]
       * p_entity_unitsize[e]
-      * ed_entity_annual[e, d]
-	  * p_discount_factor_operations_yearly[d]
+      * ed_entity_annual_discounted[e, d]
 ;
 
 param r_cost_entity_divest_d{(e, d) in ed_divest} :=
   - v_divest[e, d]
       * p_entity_unitsize[e]
-      * ed_entity_annual_divest[e, d]
-	  * p_discount_factor_operations_yearly[d]
+      * ed_entity_annual_divest_discounted[e, d]
 ;
 
 param r_cost_entity_existing_fixed{e in entity, d in period_in_use} :=
