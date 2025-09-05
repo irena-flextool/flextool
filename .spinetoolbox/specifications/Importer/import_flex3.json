@@ -3839,6 +3839,65 @@
                         ]
                     }
                 }
+            ],
+            "co2": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "model"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden",
+                                "value": "model"
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "co2_Mt_total"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValue",
+                                "position": 1
+                            }
+                        ]
+                    }
+                }
+            ],
+            "model_co2": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
@@ -3892,7 +3951,8 @@
             "unit_curtailment_share__outputnode__period",
             "unit_curtailment__outputnode__period__t",
             "group_process_co2__period",
-            "group_node_vre_share__period__t"
+            "group_node_vre_share__period__t",
+            "co2"
         ],
         "table_options": {
             "node__period": {},
@@ -4026,7 +4086,11 @@
             "group_node_vre_share__period__t": {
                 "has_header": false
             },
-            "reserve_price__updown__group__period__t": {}
+            "reserve_price__updown__group__period__t": {},
+            "co2": {
+                "has_header": true
+            },
+            "model_co2": {}
         },
         "table_types": {
             "unit_capacity__period": {
@@ -4391,6 +4455,10 @@
                 "0": "string",
                 "1": "string",
                 "2": "string"
+            },
+            "co2": {
+                "0": "string",
+                "1": "float"
             }
         },
         "table_default_column_type": {
