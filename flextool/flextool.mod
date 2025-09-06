@@ -3975,7 +3975,9 @@ display w_summary;
 
 param fn_model_co2 symbolic := "output/co2.csv";
 printf 'param_co2,model_wide\n' > fn_model_co2;
-printf '"CO2 [Mt]",%.6g\n', model_co2["CO2 [Mt]"] + sum{(c, n) in commodity_node_co2, d in d_realized_period} (r_emissions_co2_d[c, n, d]) / 1000000 >> fn_model_co2;
+printf '"CO2 [Mt]",%.6g\n', model_co2["CO2 [Mt]"] + sum{(c, n) in commodity_node_co2, d in d_realized_period}
+                                                         (r_emissions_co2_d[c, n, d]
+                                                            * sum{y in year} p_years_represented[d, y]) / 1000000 >> fn_model_co2;
 
 printf 'Write group results for nodes for realized periods...\n';
 param fn_groupNode__d symbolic := "output/group_node__period.csv";
