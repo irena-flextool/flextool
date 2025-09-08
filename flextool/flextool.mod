@@ -1806,6 +1806,10 @@ printf 'Checking: node not in more than one loss of load sharing group\n';
 check {n in node}:
   sum{(g,n) in group_node: g in group_loss_share} 1 < 2;
 
+printf 'Checking: Groups with investment constraints have entities that can be invested in\n';
+check {g in group_invest, d in period_invest}:
+  sum{(g,e) in group_entity: e in entityInvest } 1 > 0;
+
 printf'Checking: If stochastic timeseries data given,\n';
 printf'the realized branch is set for the period in stochastic_branches\n';
 printf'and the period start time is a branch start time is the timeseries\n';
