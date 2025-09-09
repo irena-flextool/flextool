@@ -1976,6 +1976,7 @@ class FlexToolRunner:
                 self.write_empty_storage_fix_file()
                 self.write_headers_for_empty_output_files('output/costs_discounted.csv', 'param_costs,costs_discounted')
                 self.write_headers_for_empty_output_files('output/co2.csv', 'param_co2,model_wide')
+                self.write_headers_for_empty_output_files('solve_data/period_capacity.csv', 'period')
             self.logger.info("Starting model creation")
             exit_status = self.model_run(complete_solve[solve])
             if exit_status == 0:

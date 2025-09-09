@@ -29,6 +29,7 @@ set period__time_first within period_time;
 set period__time_last within period_time;
 set solve_period_timeset '(solve, d, tb) - All solve, period, timeset combinations in the model instance' dimen 3;
 set solve_period '(solve, d) - Time periods in the solves to extract periods that can be found in the full data' := setof {(s, d, tb) in solve_period_timeset} (s, d);
+set period_capacity;  # Periods for which capacities have been already been output
 set period_solve 'picking up periods from solve_period' := setof {(s,d) in solve_period} (d);
 set solve_current 'current solve name' dimen 1;
 set period_from_model dimen 1;
@@ -272,6 +273,7 @@ set dt_realize_dispatch_input dimen 2 within period_time;
 set dt_realize_dispatch := if 'output_horizon' in enable_optional_outputs then dt else dt_realize_dispatch_input;
 set d_realized_period := setof {(d, t) in dt_realize_dispatch} (d);
 set realized_period__time_last dimen 2 within period_time;
+set d_realize_dispatch_or_invest := d_realized_period union d_realize_invest;
 #dt_complete is the timesteps of the whole rolling_window set, not just single roll. For single_solve it is the same as dt
 set dt_complete dimen 2 within period_time;
 set complete_time_in_use := setof {(d, t) in dt_complete} (t);
@@ -602,6 +604,7 @@ table data IN 'CSV' 'solve_data/p_entity_period_existing_capacity.csv' : [entity
 # Reading results from previous solves
 table data IN 'CSV' 'output/costs_discounted.csv' : [param_costs], costs_discounted;
 table data IN 'CSV' 'output/co2.csv' : [param_co2], model_co2~model_wide;
+table data IN 'CSV' 'solve_data/period_capacity.csv' : period_capacity <- [period];
 
 #check
 set nodeBalancePeriod := {n in node : (n, 'balance_within_period') in node__node_type};
@@ -3844,7 +3847,7 @@ printf 'Write unit capacity results...\n';
 param fn_unit_capacity symbolic := "output/unit_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'unit,solve,period,existing,invested,divested,total\n' > fn_unit_capacity; }  # Clear the file on the first solve
-for {s in solve_current, p in process_unit, d in d_realize_invest: 'yes' not in exclude_entity_outputs}
+for {s in solve_current, p in process_unit, d in d_realize_dispatch_or_invest: 'yes' not in exclude_entity_outputs && d not in period_capacity}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
 	        p_entity_all_existing[p, d], 
@@ -3860,7 +3863,7 @@ printf 'Write connection capacity results...\n';
 param fn_connection_capacity symbolic := "output/connection_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'connection,solve,period,existing,invested,divested,total\n' > fn_connection_capacity; }  # Clear the file on the first solve
-for {s in solve_current, p in process_connection, d in d_realize_invest: 'yes' not in exclude_entity_outputs}
+for {s in solve_current, p in process_connection, d in d_realize_dispatch_or_invest: 'yes' not in exclude_entity_outputs && d not in period_capacity}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', p, s, d, 
 	        p_entity_all_existing[p, d],
@@ -3874,7 +3877,7 @@ printf 'Write node/storage capacity results...\n';
 param fn_node_capacity symbolic := "output/node_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,existing,invested,divested,total\n' > fn_node_capacity; }  # Clear the file on the first solve
-for {s in solve_current, e in nodeState, d in d_realize_invest: 'yes' not in exclude_entity_outputs}
+for {s in solve_current, e in nodeState, d in d_realize_dispatch_or_invest: 'yes' not in exclude_entity_outputs && d not in period_capacity}
   {
     printf '%s,%s,%s,%.8g,%.8g,%.8g,%.8g\n', e, s, d, 
 	        p_entity_all_existing[e, d],
@@ -3982,6 +3985,11 @@ printf 'param_co2,model_wide\n' > fn_model_co2;
 printf '"CO2 [Mt]",%.6g\n', model_co2["CO2 [Mt]"] + sum{(c, n) in commodity_node_co2, d in d_realized_period}
                                                          (r_emissions_co2_d[c, n, d]
                                                             * p_years_represented_d[d]) / 1000000 >> fn_model_co2;
+
+param fn_period_capacity symbolic := "solve_data/period_capacity.csv";
+printf 'period\n' > fn_period_capacity;
+for {d in period_capacity union d_realize_dispatch_or_invest}
+  { printf '%s\n', d >> fn_period_capacity; }
 
 printf 'Write group results for nodes for realized periods...\n';
 param fn_groupNode__d symbolic := "output/group_node__period.csv";
