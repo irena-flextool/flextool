@@ -1202,7 +1202,7 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 				   + (if n in nodeBalance && (n, 'use_original') in node__inflow_method
 		               then + ptNode_inflow[n, t])
 		  );
-
+display pdtNodeInflow;
 param node_capacity_for_scaling{n in node, d in period_in_use} := ( if   sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
                                                              then sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
 															 else 1000 ); 
@@ -5503,7 +5503,7 @@ display w_full;
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val;
 #display {n in nodeBalance union nodeBalancePeriod, (d, t) in dt : (d, t) in test_dt}: pdtNodeInflow[n, d, t];
 #display {n in nodeBalance union nodeBalancePeriod, (d, t) in dt : (d, t) in test_dt}: pdtNode[n, 'penalty_up', d, t];
-#display {n in nodeBalance union nodeBalancePeriod, (d, t) in dt : (d, t) in test_dt}: pdtNode[n, 'availability', d, t];
+#display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: pdtNode[n, 'availability', d, t];
 #display {n in nodeState, (d, t) in dt : (d, t) in test_dt}: v_state[n, d, t].val * p_entity_unitsize[n];
 #display {(p, r, ud, n, d, t) in prundt : (d, t) in test_dt}: v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p];
 #display {(r, ud, ng) in reserve__upDown__group, (d, t) in test_dt}: vq_reserve[r, ud, ng, d, t].val * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t];
@@ -5521,7 +5521,4 @@ display v_invest, v_divest, solve_current, total_cost;
 #display {(p, source, sink) in process_source_sink, (d, t) in test_dt}: pdtProcess__source__sink__dt_varCost[p, source, sink, d, t];
 #display p_entity_all_existing;
 #display test_dt;
-#display {n in nodeBalancePeriod, (d, t) in dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
-#display {n in nodeBalancePeriod, (d, t) in dt}: pdtNodeInflow[n, d, t];
-
 end;
