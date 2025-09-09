@@ -165,134 +165,6 @@
                     }
                 }
             ],
-            "timeblockSet": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "EntityClass",
-                                "position": "hidden",
-                                "value": "timeblockSet"
-                            },
-                            {
-                                "map_type": "Entity",
-                                "position": 1
-                            },
-                            {
-                                "map_type": "EntityMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterDefinition",
-                                "position": -2
-                            },
-                            {
-                                "map_type": "Alternative",
-                                "position": 0
-                            },
-                            {
-                                "map_type": "ParameterValueMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValueType",
-                                "position": "hidden",
-                                "value": "map"
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 2
-                            },
-                            {
-                                "map_type": "ExpandedValue",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "timeline_c": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "EntityClass",
-                                "position": "hidden",
-                                "value": "timeline"
-                            },
-                            {
-                                "map_type": "Entity",
-                                "position": 1
-                            },
-                            {
-                                "map_type": "EntityMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterDefinition",
-                                "position": -2
-                            },
-                            {
-                                "map_type": "Alternative",
-                                "position": 0
-                            },
-                            {
-                                "map_type": "ParameterValueMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValue",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "timeblockSet_timeline": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "EntityClass",
-                                "position": "hidden",
-                                "value": "timeblockSet__timeline"
-                            },
-                            {
-                                "map_type": "Dimension",
-                                "position": "header",
-                                "value": 0
-                            },
-                            {
-                                "map_type": "Dimension",
-                                "position": "header",
-                                "value": 1
-                            },
-                            {
-                                "map_type": "Entity",
-                                "position": "hidden",
-                                "value": "relationship"
-                            },
-                            {
-                                "map_type": "Element",
-                                "position": 0,
-                                "import_entities": true
-                            },
-                            {
-                                "map_type": "Element",
-                                "position": 1
-                            },
-                            {
-                                "map_type": "EntityMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
             "node_c": [
                 {
                     "Mapping 1": {
@@ -1712,7 +1584,9 @@
                                 "value": "solve",
                                 "skip_columns": [
                                     5,
-                                    6
+                                    6,
+                                    7,
+                                    8
                                 ]
                             },
                             {
@@ -1908,57 +1782,6 @@
                             {
                                 "map_type": "ExpandedValue",
                                 "position": 2
-                            }
-                        ]
-                    }
-                }
-            ],
-            "timeline_t": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "EntityClass",
-                                "position": "hidden",
-                                "value": "timeline"
-                            },
-                            {
-                                "map_type": "Entity",
-                                "position": 1
-                            },
-                            {
-                                "map_type": "EntityMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterDefinition",
-                                "position": -2
-                            },
-                            {
-                                "map_type": "Alternative",
-                                "position": 0
-                            },
-                            {
-                                "map_type": "ParameterValueMetadata",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "ParameterValueType",
-                                "position": "hidden",
-                                "value": "map"
-                            },
-                            {
-                                "map_type": "IndexName",
-                                "position": "hidden",
-                                "value": "timestep"
-                            },
-                            {
-                                "map_type": "ParameterValueIndex",
-                                "position": 2
-                            },
-                            {
-                                "map_type": "ExpandedValue",
-                                "position": "hidden"
                             }
                         ]
                     }
@@ -3323,13 +3146,150 @@
                         ]
                     }
                 }
+            ],
+            "timeline": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "timeline"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden",
+                                "value": "timestep"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "timeset_blocks": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "timeset",
+                                "read_start_row": 2
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": "hidden",
+                                "value": "timeset_duration"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueType",
+                                "position": "hidden",
+                                "value": "map"
+                            },
+                            {
+                                "map_type": "IndexName",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValueIndex",
+                                "position": 2
+                            },
+                            {
+                                "map_type": "ExpandedValue",
+                                "position": 3
+                            }
+                        ]
+                    }
+                }
+            ],
+            "timeset_timeline": [
+                {
+                    "Mapping 1": {
+                        "mapping": [
+                            {
+                                "map_type": "EntityClass",
+                                "position": "hidden",
+                                "value": "timeset"
+                            },
+                            {
+                                "map_type": "Entity",
+                                "position": 1
+                            },
+                            {
+                                "map_type": "EntityMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "Alternative",
+                                "position": 0
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
+                            },
+                            {
+                                "map_type": "ParameterValueMetadata",
+                                "position": "hidden"
+                            },
+                            {
+                                "map_type": "ParameterValue",
+                                "position": "hidden"
+                            }
+                        ]
+                    }
+                }
             ]
         },
         "selected_tables": [
             "solve_sequence",
-            "timeblockSet",
-            "timeline_c",
-            "timeblockSet_timeline",
             "node_c",
             "node_p",
             "node_t",
@@ -3355,7 +3315,6 @@
             "commodity_p",
             "commodity_node",
             "solve_period",
-            "timeline_t",
             "group_p",
             "unit_node_c",
             "unit_node_p",
@@ -3370,18 +3329,15 @@
             "unit_constraint_c",
             "connection_constraint_c",
             "rolling_parameters",
-            "optional_outputs"
+            "optional_outputs",
+            "timeline",
+            "timeset_blocks",
+            "timeset_timeline"
         ],
         "table_options": {
             "solve_sequence": {
                 "read_until_col": false,
                 "row": 0
-            },
-            "timeblockSet": {},
-            "timeline_c": {},
-            "timeblockSet_timeline": {
-                "row": 0,
-                "header": true
             },
             "node_c": {},
             "node_p": {},
@@ -3424,7 +3380,6 @@
                 "header": true
             },
             "solve_period": {},
-            "timeline_t": {},
             "group_p": {},
             "unit_node_c": {},
             "unit_node_t": {},
@@ -3445,7 +3400,13 @@
             "connection_constraint_c": {},
             "rolling_parameters": {},
             "optional_outputs": {},
-            "unit_node_p": {}
+            "unit_node_p": {},
+            "timeline": {},
+            "timeset_blocks": {},
+            "timeset_timeline": {
+                "row": 0,
+                "header": false
+            }
         },
         "table_types": {
             "solve_sequence": {
@@ -3467,22 +3428,6 @@
                 "15": "string",
                 "16": "string",
                 "17": "string"
-            },
-            "timeblockSet": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "float",
-                "4": "float"
-            },
-            "timeline_c": {
-                "0": "string",
-                "1": "string",
-                "2": "float"
-            },
-            "timeblockSet_timeline": {
-                "0": "string",
-                "1": "string"
             },
             "node_c": {
                 "0": "string",
@@ -3882,12 +3827,6 @@
                 "7": "string",
                 "8": "string"
             },
-            "timeline_t": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "float"
-            },
             "group_p": {
                 "0": "string",
                 "1": "string",
@@ -3916,12 +3855,7 @@
                 "8": "string",
                 "9": "float",
                 "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float"
+                "11": "float"
             },
             "unit_node_t": {
                 "0": "string",
@@ -4072,17 +4006,28 @@
                 "8": "float",
                 "9": "float",
                 "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float"
+                "11": "float"
+            },
+            "timeline": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float"
+            },
+            "timeset_blocks": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float"
+            },
+            "timeset_timeline": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float"
             }
         },
         "table_default_column_type": {
-            "timeblockSet": "float",
-            "timeline_c": "float",
             "node_c": "float",
             "node_p": "float",
             "node_t": "float",
@@ -4101,7 +4046,6 @@
             "reserve_group_t": "float",
             "reserve_unit_node_c": "float",
             "commodity_p": "float",
-            "timeline_t": "float",
             "group_p": "float",
             "unit_node_c": "float",
             "unit_node_t": "float",
@@ -4114,18 +4058,13 @@
             "unit_constraint_c": "float",
             "connection_constraint_c": "float",
             "solve_sequence": "string",
-            "optional_outputs": "string"
+            "optional_outputs": "string",
+            "timeset_timeline": "string"
         },
         "table_row_types": {
             "solve_sequence": {
                 "1": "string",
                 "0": "string"
-            },
-            "timeblockSet": {
-                "1": "string"
-            },
-            "timeline_c": {
-                "1": "string"
             },
             "node_c": {
                 "1": "string",
@@ -4191,9 +4130,6 @@
             "solve_period": {
                 "1": "string"
             },
-            "timeline_t": {
-                "1": "string"
-            },
             "unit_node_c": {
                 "1": "string"
             },
@@ -4240,6 +4176,17 @@
             },
             "unit_node_p": {
                 "1": "string"
+            },
+            "timeline": {
+                "1": "string"
+            },
+            "timeset_blocks": {
+                "0": "string",
+                "1": "string"
+            },
+            "timeset_timeline": {
+                "1": "string",
+                "0": "string"
             }
         },
         "source_type": "ExcelReader"
