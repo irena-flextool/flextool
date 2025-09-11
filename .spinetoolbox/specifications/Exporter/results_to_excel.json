@@ -1271,12 +1271,13 @@
                 },
                 {
                     "map_type": "EntityClass",
-                    "position": "hidden"
+                    "position": "hidden",
+                    "filter_re": "^unit$|^connection$"
                 },
                 {
                     "map_type": "ParameterDefinition",
                     "position": "hidden",
-                    "filter_re": "^co2$"
+                    "filter_re": "^CO2_annualized$"
                 },
                 {
                     "map_type": "ParameterValueList",
@@ -1289,7 +1290,7 @@
                 },
                 {
                     "map_type": "Alternative",
-                    "position": -2
+                    "position": 0
                 },
                 {
                     "map_type": "ParameterValueType",
@@ -1302,7 +1303,7 @@
                 },
                 {
                     "map_type": "ParameterValueIndex",
-                    "position": 0
+                    "position": 1
                 },
                 {
                     "map_type": "IndexName",
@@ -1310,7 +1311,7 @@
                 },
                 {
                     "map_type": "ParameterValueIndex",
-                    "position": 1
+                    "position": 2
                 },
                 {
                     "map_type": "ExpandedValue",

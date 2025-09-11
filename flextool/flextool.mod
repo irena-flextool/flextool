@@ -1202,7 +1202,6 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 				   + (if n in nodeBalance && (n, 'use_original') in node__inflow_method
 		               then + ptNode_inflow[n, t])
 		  );
-display pdtNodeInflow;
 param node_capacity_for_scaling{n in node, d in period_in_use} := ( if   sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
                                                              then sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
 															 else 1000 ); 
