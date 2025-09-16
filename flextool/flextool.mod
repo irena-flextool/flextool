@@ -1204,10 +1204,10 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 		  );
 param node_capacity_for_scaling{n in node, d in period_in_use} := ( if   sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
                                                              then sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
-															 else 1000 ); 
+															 else 1000 ) / 1000;
 param group_capacity_for_scaling{g in group, d in period_in_use} := ( if   sum{(g, n) in group_node} node_capacity_for_scaling[n, d]
                                                                then sum{(g, n) in group_node} node_capacity_for_scaling[n, d]
-															   else 1000 );
+															   else 1000 ) / 1000;
 
 param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0.05);
 param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_discount_offset_investment[m] else 0);
@@ -1701,7 +1701,7 @@ param dq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} default 0
 #########################
 # Variable declarations
 var v_flow {(p, source, sink, d, t) in peedt} >= p_flow_min[p, source, sink, d, t], <= p_flow_max[p, source, sink, d, t];
-var v_ramp {(p, source, sink) in process_source_sink_ramp, (d, t) in dt} <= p_entity_max_units[p, d];
+var v_ramp {(p, source, sink) in process_source_sink_ramp, (d, t) in dt} >=-p_entity_max_units[p, d], <= p_entity_max_units[p, d];
 var v_reserve {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } >= 0, <= p_entity_max_units[p, d];
 var v_state {n in nodeState, (d, t) in dt} >= 0, <= p_entity_max_units[n, d];
 var v_online_linear {p in process_online_linear,(d, t) in dt} >=0, <= p_entity_max_units[p, d];
@@ -2239,7 +2239,7 @@ display indirect;
 s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t]
       + sum{(p, r, 'up', sink) in process_reserve_upDown_node} v_reserve[p, r, 'up', sink, d, t]
-	)
+	) * 1000
   <=
   + pdtProfile[f, d, t]
     * ( + p_entity_existing_count[p, d]
@@ -2247,12 +2247,13 @@ s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__s
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 	  )
       * pdtProcess[p, 'availability', d, t]
+      * 1000
 ;
 
 s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t]
       - sum{(p, r, 'down', sink) in process_reserve_upDown_node} v_reserve[p, r, 'down', sink, d, t]
-    )
+    ) * 1000
   >=
   + pdtProfile[f, d, t]
     * ( + p_entity_existing_count[p, d]
@@ -2260,10 +2261,11 @@ s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__s
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 	  )
       * pdtProcess[p, 'availability', d, t]
+      * 1000
 ;
 
 s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink__profile__profile_method, (d, t) in dt} :
-  + v_flow[p, source, sink, d, t]
+  + v_flow[p, source, sink, d, t] * 1000
   =
   + pdtProfile[f, d, t]
     * ( + p_entity_existing_count[p, d]
@@ -2271,10 +2273,11 @@ s.t. profile_flow_fixed {(p, source, sink, f, 'fixed') in process__source__sink_
         - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 	  )
       * pdtProcess[p, 'availability', d, t]
+      * 1000
 ;
 
 s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_method, (d, t) in dt} :
-  + v_state[n, d, t]
+  + v_state[n, d, t] * 1000
   <=
   + pdtProfile[f, d, t]
     * ( + p_entity_existing_count[n, d]
@@ -2282,10 +2285,11 @@ s.t. profile_state_upper_limit {(n, f, 'upper_limit') in node__profile__profile_
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest]
 	  )
       * pdtNode[n, 'availability', d, t]
+      * 1000
 ;
 
 s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_method, (d, t) in dt} :
-  + v_state[n, d, t]
+  + v_state[n, d, t] * 1000
   >=
   + pdtProfile[f, d, t]
     * ( + p_entity_existing_count[n, d]
@@ -2293,10 +2297,11 @@ s.t. profile_state_lower_limit {(n, f, 'lower_limit') in node__profile__profile_
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest]
 	  )
       * pdtNode[n, 'availability', d, t]
+      * 1000
 ;
 
 s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, t) in dt} :
-  + v_state[n, d, t]
+  + v_state[n, d, t] * 1000
   =
   + pdtProfile[f, d, t]
     * ( + p_entity_existing_count[n, d]
@@ -2304,6 +2309,7 @@ s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, 
         - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest]
 	  )
       * pdtNode[n, 'availability', d, t]
+      * 1000
 ;
 
 
@@ -3137,7 +3143,7 @@ s.t. inertia_constraint {g in groupInertia, (d, t) in dt} :
 s.t. co2_max_period{g in group_co2_max_period, d in period_in_use} :
   + sum{(g, c, n, d) in group_commodity_node_period_co2_period }
     ( 
-      + p_commodity[c, 'co2_content']  
+      + p_commodity[c, 'co2_content'] / 1000
         * (
             # CO2 increases 
             + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt } 
@@ -3160,13 +3166,13 @@ s.t. co2_max_period{g in group_co2_max_period, d in period_in_use} :
           ) / complete_period_share_of_year[d]
     )
   <=
-  + pdGroup[g, 'co2_max_period', d]
+  + pdGroup[g, 'co2_max_period', d] / 1000
 ;
 
 s.t. co2_max_total{g in group_co2_max_total} :
   + sum{(g, c, n) in group_commodity_node_period_co2_total }
     ( 
-      + p_commodity[c, 'co2_content']  
+      + p_commodity[c, 'co2_content'] / 1000
         * (
             # CO2 increases 
             + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt } 
@@ -3190,7 +3196,7 @@ s.t. co2_max_total{g in group_co2_max_total} :
           )
     )
   <=
-  + p_group[g, 'co2_max_total']
+  + p_group[g, 'co2_max_total'] / 1000
 ;
 
 s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
