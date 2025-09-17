@@ -1202,12 +1202,15 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
 				   + (if n in nodeBalance && (n, 'use_original') in node__inflow_method
 		               then + ptNode_inflow[n, t])
 		  );
-param node_capacity_for_scaling{n in node, d in period_in_use} := ( if   sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
-                                                             then sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
-															 else 1000 ) / 1000;
-param group_capacity_for_scaling{g in group, d in period_in_use} := ( if   sum{(g, n) in group_node} node_capacity_for_scaling[n, d]
-                                                               then sum{(g, n) in group_node} node_capacity_for_scaling[n, d]
-															   else 1000 ) / 1000;
+
+param node_capacity_for_scaling{n in node, d in period_in_use} := 1;
+param group_capacity_for_scaling{g in group, d in period_in_use} := 1;
+#param node_capacity_for_scaling{n in node, d in period_in_use} := ( if   sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
+#                                                             then sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
+#															 else 1000 ) / 1000;
+#param group_capacity_for_scaling{g in group, d in period_in_use} := ( if   sum{(g, n) in group_node} node_capacity_for_scaling[n, d]
+#                                                               then sum{(g, n) in group_node} node_capacity_for_scaling[n, d]
+#															   else 1 );
 
 param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0.05);
 param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_discount_offset_investment[m] else 0);
@@ -1717,7 +1720,8 @@ var vq_state_down {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt} >= 
 var vq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} >= 0, <= 1;
 var vq_inertia {g in groupInertia, (d, t) in dt} >= 0, <= 1;
 var vq_non_synchronous {g in groupNonSync, (d, t) in dt} >= 0;
-var vq_capacity_margin {g in groupCapacityMargin, d in period_invest} >= 0, <= ceil((pdGroup[g, 'capacity_margin', d] + group_capacity_for_scaling[g, d]) / group_capacity_for_scaling[g, d]);
+# var vq_capacity_margin {g in groupCapacityMargin, d in period_invest} >= 0, <= ceil((pdGroup[g, 'capacity_margin', d] + group_capacity_for_scaling[g, d]) / group_capacity_for_scaling[g, d]);
+var vq_capacity_margin {g in groupCapacityMargin, d in period_invest} >= 0;
 var vq_state_up_group {g in group_loss_share, (d,t) in dt} >= 0;
 
 #########################
@@ -2311,7 +2315,6 @@ s.t. profile_state_fixed {(n, f, 'fixed') in node__profile__profile_method, (d, 
       * pdtNode[n, 'availability', d, t]
       * 1000
 ;
-
 
 s.t. storage_state_start_binding {n in nodeState, (d, t) in period__time_first
      : p_nested_model['solveFirst'] && (n, 'bind_forward_only') not in node__storage_binding_method
