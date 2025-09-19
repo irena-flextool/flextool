@@ -1970,7 +1970,6 @@ minimize total_cost:
                                             * pdtNode[n, 'penalty_down', d, t] * p_discount_factor_operations_yearly[d] / complete_period_share_of_year[d]
   + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} pdt_branch_weight[d,t] * vq_reserve[r, ud, ng, d, t]  * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
                                             * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve']  * p_discount_factor_operations_yearly[d] / complete_period_share_of_year[d]
-
   - sum {n in nodeState, (d, t) in period__time_last : (n, 'use_reference_price') in node__storage_solve_horizon_method && d in period_last}
     (+ p_storage_state_reference_price[n,d]
         * v_state[n, d, t] * p_entity_unitsize[n]
@@ -3201,32 +3200,39 @@ s.t. co2_max_total{g in group_co2_max_total} :
   <=
   + p_group[g, 'co2_max_total'] / 1000
 ;
-
+display process__group_inside_group_nonSync, process__sink_nonSync, process_source_sink_noEff, process_source_sink_eff;
 s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
-  + sum {(p, source, sink) in process_source_sink : (p, sink) in process__sink_nonSync && (g, sink) in group_node && (p,g) not in process__group_inside_group_nonSync}
+# Sum all incoming non-synchronous flows to the group nodes (and possibly decrease them with penalty)
+  # Include incoming non-sync flows if they come from outside of the node group (and ignore sync and non-sync flows within the node group)
+  + sum {(p, source, sink) in process_source_sink : (g, sink) in group_node && (p, sink) in process__sink_nonSync && (p, g) not in process__group_inside_group_nonSync}
     ( + v_flow[p, source, sink, d, t] 
 	    * p_entity_unitsize[p]  
 		* step_duration[d, t] )
+  # Assumes that exogenous inflows are always non-synchronous (there is no separate parameter for this)
   + sum {(g, n) in group_node} p_positive_inflow[n,d,t]
   - vq_non_synchronous[g, d, t] * group_capacity_for_scaling[g, d]
   <=
-  ( + sum {(p, source, sink) in process_source_sink_noEff : (g, source) in group_node  && (p,g) not in process__group_inside_group_nonSync} 
+# Sum all outgoing flows from the group nodes and multiply that with the non-sync limit
+  ( + sum {(p, source, sink) in process_source_sink_noEff : (g, source) in group_node && (p,g) not in process__group_inside_group_nonSync}
       ( + v_flow[p, source, sink, d, t] 
 		  * p_entity_unitsize[p] 
 	  ) * step_duration[d, t]
-    + sum {(p, source, sink) in process_source_sink_eff: (g, source) in group_node}
+    + sum {(p, source, sink) in process_source_sink_eff: (g, source) in group_node && (p,g) not in process__group_inside_group_nonSync}
       ( + v_flow[p, source, sink, d, t]
-	      * (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
-	      * (if p in process_unit then 1 / ( p_process_sink_coefficient[p, sink] * p_process_source_coefficient[p, source]) else 1)
+	      * ( if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t]
+	          else 1 / pdtProcess[p, 'efficiency', d, t] )
+	      * ( if p in process_unit then 1 / ( p_process_sink_coefficient[p, sink] * p_process_source_coefficient[p, source])
+	          else 1 )
   	    + ( if (p, 'min_load_efficiency') in process__ct_method then 
 	        + ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
 	            + (if p in process_online_integer then v_online_integer[p, d, t])
 	          )
 		      * pdtProcess_section[p, d, t]
 	      )
-        -(if (p,g) in process__group_inside_group_nonSync then v_flow[p, source, sink, d, t] else 0)
+        # -(if (p,g) in process__group_inside_group_nonSync then v_flow[p, source, sink, d, t] else 0)
 	  )	* p_entity_unitsize[p]
 		* step_duration[d, t]
+    # Add exogenous outflow (demand)
     + sum {(g, n) in group_node} -p_negative_inflow[n,d,t]
   ) * pdGroup[g, 'non_synchronous_limit', d]
 ;
