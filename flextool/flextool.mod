@@ -3683,14 +3683,7 @@ param potentialVREgen_dt{(p, n) in process_sink, (d, t) in dt_realize_dispatch: 
   + sum{(p, source, n, f, m) in process__source__sink__profile__profile_method: m = 'upper_limit'} 
       + pdtProfile[f, d, t] * entity_all_capacity[p, d]
         * pdtProcess[p, 'availability', d, t]
-        / (if (p, 'min_load_efficiency') in process__ct_method then pdtProcess_slope[p, d, t] else 1 / pdtProcess[p, 'efficiency', d, t])
-      + ( if (p, 'min_load_efficiency') in process__ct_method then 
-            ( + (if p in process_online_linear then v_online_linear[p, d, t]) 
-              + (if p in process_online_integer then v_online_integer[p, d, t])
-            )
-            * pdtProcess_section[p, d, t] * p_entity_unitsize[p]
-            * pdtProcess[p, 'availability', d, t]
-        );
+  ;
 
 param potentialVREgen{(p, n) in process_sink, d in d_realized_period : p in process_VRE} :=
   + sum{(p, source, n, f, m) in process__source__sink__profile__profile_method, (d, t) in dt_realize_dispatch : m = 'upper_limit'} 
