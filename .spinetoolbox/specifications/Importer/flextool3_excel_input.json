@@ -1103,12 +1103,16 @@
                                 "position": "hidden"
                             },
                             {
-                                "map_type": "ParameterDefinition",
-                                "position": -2
-                            },
-                            {
                                 "map_type": "Alternative",
                                 "position": 0
+                            },
+                            {
+                                "map_type": "EntityAlternativeActivity",
+                                "position": 5
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
                             },
                             {
                                 "map_type": "ParameterValueMetadata",
@@ -1412,12 +1416,16 @@
                                 "position": "hidden"
                             },
                             {
-                                "map_type": "ParameterDefinition",
-                                "position": -2
-                            },
-                            {
                                 "map_type": "Alternative",
                                 "position": 0
+                            },
+                            {
+                                "map_type": "EntityAlternativeActivity",
+                                "position": 5
+                            },
+                            {
+                                "map_type": "ParameterDefinition",
+                                "position": -2
                             },
                             {
                                 "map_type": "ParameterValueMetadata",
@@ -3741,13 +3749,7 @@
                 "6": "float",
                 "7": "float",
                 "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float"
+                "9": "float"
             },
             "reserve_group_c": {
                 "0": "string",
@@ -3788,14 +3790,7 @@
                 "5": "string",
                 "6": "float",
                 "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float"
+                "8": "float"
             },
             "commodity_p": {
                 "0": "string",
