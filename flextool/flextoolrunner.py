@@ -49,7 +49,6 @@ class FlexToolRunner:
             self.bin_dir = Path(__file__).parent.parent / "bin"
         if root_dir is None:
             self.root_dir = Path(__file__).parent.parent
-        print(str(self.root_dir))
         # read the data in
         # open connection to input db
         if scenario_name:
@@ -57,11 +56,22 @@ class FlexToolRunner:
         with (DatabaseMapping(input_db_url) as db):
             if scenario_name:
                 api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
+            scen_names = db.get_scenario_items()
+            self.logger.info(" Work dir: " + str(self.root_dir) + "\nDB URL: " + str(db.sa_url) + "\nScenario name: " + scen_names[0]['name'])
+            if len(scen_names) == 0:
+                self.logger.error("No scenario found")
+                sys.exit(-1)
+            if len(db.get_scenario_alternative_items(scenario_name=scen_names[0]['name'])) == 0:
+                self.logger.error("No alternatives in the scenario, i.e. empty scenario.")
+                sys.exit(-1)
             db.fetch_all("parameter_value")
             self.check_version(db=db)
             self.timelines = self.params_to_dict(db=db, cl="timeline", par="timestep_duration", mode="defaultdict")
             self.model = self.get_single_entities(db=db, entity_class_name="model")
             self.model_solve = self.params_to_dict(db=db, cl="model", par="solves", mode="defaultdict")
+            solves_temp = self.get_single_entities(db=db, entity_class_name='solve')
+            if len(self.model_solve) == 0 and len(solves_temp) == 1:
+                self.model_solve['flextool'] = [solves_temp[0]]
             self.solve_modes = self.params_to_dict(db=db, cl="solve", par="solve_mode", mode="dict")
             self.roll_counter = self.make_roll_counter()
             self.highs_presolve = self.params_to_dict(db=db, cl="solve", par="highs_presolve", mode="dict")
@@ -69,7 +79,8 @@ class FlexToolRunner:
             self.highs_parallel = self.params_to_dict(db=db, cl="solve", par="highs_parallel", mode="dict")
             self.solve_period_years_represented = self.params_to_dict(db=db, cl="solve", par="years_represented", mode="defaultdict")
             self.solvers = self.params_to_dict(db=db, cl="solve", par="solver", mode="dict")
-            self.timesets = self.params_to_dict(db=db, cl="timeset", par="timeset_duration", mode="defaultdict")
+            self.timesets = self.get_single_entities(db=db, entity_class_name="timeset")
+            self.timeset_durations = self.params_to_dict(db=db, cl="timeset", par="timeset_duration", mode="defaultdict")
             self.timesets__timeline = self.params_to_dict(db=db, cl="timeset", par = "timeline", mode="defaultdict")
             self.stochastic_branches = self.params_to_dict(db=db, cl="solve", par="stochastic_branches", mode="defaultdict")
             self.solver_precommand = self.params_to_dict(db=db, cl="solve", par="solver_precommand", mode="dict")
@@ -229,7 +240,7 @@ class FlexToolRunner:
 
 
     def create_timeline_from_timestep_duration(self):
-        for timeset_name, timeset in list(self.timesets.items()):
+        for timeset_name, timeset in list(self.timeset_durations.items()):
             if timeset_name in self.new_step_durations.keys():
                 step_duration= float(self.new_step_durations[timeset_name])
                 #create the new timeline
@@ -255,10 +266,10 @@ class FlexToolRunner:
                     new_steps.append((first_step,str(step_counter)))
                     added_steps += 1
                     new_timesets.append((timeset[0], added_steps))
-                self.timesets[timeset_name] = new_timesets 
+                self.timeset_durations[timeset_name] = new_timesets 
                 new_timeline_name = timeline_name+ "_"+ timeset_name 
                 self.timelines[new_timeline_name] = new_steps
-                self.timesets__timeline[timeset_name] = new_timeline_name
+                self.timeset_durations__timeline[timeset_name] = new_timeline_name
                 self.original_timeline[new_timeline_name] = timeline_name
 
     def create_averaged_timeseries(self,solve):
@@ -388,16 +399,21 @@ class FlexToolRunner:
 
     def create_assumptive_timestructure_parts(self):
 
-        """If no timesets defined and only one timeline exists, create a full timeline timeset"""
-
+        """If no timeset defined and only one timeline exists, create a timeset from timeline"""
         if not self.timesets and len(self.timelines.keys()) == 1:
             timeset_name = "full_timeline"
-            self.timesets__timeline[timeset_name] = list(self.timelines.keys())[0]
-            self.timesets[timeset_name] = [(list(self.timelines.values())[0][0][0], len(list(self.timelines.values())[0]))]
+            self.timesets = list(timeset_name)
+
+        """If no timeset_durations defined for a timeset and only one timeline exists, create a full timeline timeset"""
+
+        for timeset_name in self.timesets:
+            if not self.timeset_durations and len(self.timelines.keys()) == 1:
+                self.timesets__timeline[timeset_name] = list(self.timelines.keys())[0]
+                self.timeset_durations[timeset_name] = [(list(self.timelines.values())[0][0][0], len(list(self.timelines.values())[0]))]
 
         """If timeset: timeline is not defined and only one timeline exists, use that timeline"""
 
-        for timeset_name, block in self.timesets.items():
+        for timeset_name, block in self.timeset_durations.items():
             if timeset_name not in self.timesets__timeline.keys():
                 if len(self.timelines.keys()) == 1:
                     self.timesets__timeline[timeset_name] = list(self.timelines.keys())[0]
@@ -450,11 +466,11 @@ class FlexToolRunner:
         """If solve: period_timeset does not exist and only one timeset exists, create timesets for all realized and invested periods"""
         for solve in list(self.model_solve.values())[0]:
             if solve not in list(self.timesets_used_by_solves.keys()):
-                if len(self.timesets.keys()) == 1:
+                if len(self.timeset_durations.keys()) == 1:
                     period__timeset_list = list()
                     for solve_period in self.invest_periods + self.realized_periods:
                         if solve_period[0] == solve:
-                            period__timeset_list.append((solve_period[1],list(self.timesets.keys())[0]))
+                            period__timeset_list.append((solve_period[1],list(self.timeset_durations.keys())[0]))
                     self.timesets_used_by_solves[solve] = period__timeset_list
                 else:
                     self.logger.error("""More than one timeset available and FlexTool does not know which ones to use. 
@@ -624,13 +640,15 @@ class FlexToolRunner:
         if solver == "glpsol":
             only_glpsol = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '--cbg','-w', glp_solution_file] + sys.argv[3:]
             try:
-                completed = subprocess.run(only_glpsol)
+                returncode = self.run_glpsol(only_glpsol)
+                if returncode != 0:
+                    sys.exit(returncode)
             except Exception as e:
                 self.logger.exception(f"Error occurred: {e}")
                 sys.exit(1)
-            if completed.returncoode != 0:
-                self.logger.error(f'glpsol failed: {completed.returncode}')
-                sys.exit(completed.returncode)
+            if returncode != 0:
+                self.logger.error(f'glpsol failed: {returncode}')
+                sys.exit(returncode)
             
             #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
             with open('glpsol_solution.txt','r') as inf_file:
@@ -642,11 +660,9 @@ class FlexToolRunner:
         elif solver == "highs" or solver == "cplex":
             highs_step1 = [glpsol_file, '--check', '--model', flextool_model_file, '-d', flextool_base_data_file,
                            '--wfreemps', mps_file] + sys.argv[3:]
-            completed = subprocess.run(highs_step1)
-            if completed.returncode != 0:
-                self.logger.error(f'glpsol mps writing failed: {completed.returncode}')
-                sys.exit(completed.returncode)
-            print("GLPSOL wrote the problem as MPS file\n")
+            returncode = self.run_glpsol(highs_step1)
+            if returncode != 0:
+                sys.exit(returncode)
 
             #check if the problem has columns(nodes)
             with open(mps_file, 'r') as mps_file_handle:
@@ -711,13 +727,62 @@ class FlexToolRunner:
 
             highs_step3 = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '-r',
                         flextool_sol_file] + sys.argv[3:]
-            completed = subprocess.run(highs_step3)
-            if completed.returncode == 0:
+            returncode = self.run_glpsol(highs_step3)
+            if returncode != 0:
+                sys.exit(returncode)
+            if returncode == 0:
                 print("GLPSOL wrote the results into csv files\n")
         else:
             self.logger.error(f"Unknown solver '{solver}'. Currently supported options: highs, glpsol, cplex.")
             sys.exit(-1)
-        return completed.returncode
+        return returncode
+
+    def run_glpsol(self, command_args):
+        """
+        Run glpsol with filtered output.
+        
+        Args:
+            command_args: List of command arguments (e.g., [glpsol_file, '--model', ...])
+        
+        Returns:
+            returncode: Process exit code
+        """
+        process = subprocess.Popen(command_args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        
+        buffer = []
+        in_check = False
+        
+        for line in process.stdout:
+            if line.startswith('Reading') or line.startswith('Display statement'):
+                continue
+            
+            if line.startswith('Generating ') or line.startswith('Write '):
+                print(line.replace('Generating ', '').rstrip(), end='  ')
+                continue
+
+            if line.startswith('Checking'):
+                in_check = True
+                buffer = [line]
+            elif in_check:
+                buffer.append(line)
+                if 'error' in line.lower() or 'failed' in line.lower() or 'assertion' in line.lower():
+                    output = ''.join(buffer)
+                    output = output.replace('Checking (line', ' (flextool/flextool.mod line')
+                    print(output)
+                    buffer = []
+                    in_check = False
+                elif line.strip() == '' or (not line.startswith(' ') and not line.startswith('Created')):
+                    buffer = []
+                    in_check = False
+            else:
+                print(line, end='')
+        
+        process.wait()
+        
+        if process.returncode != 0 and self.logger:
+            self.logger.error(f'glpsol failed with exit code: {process.returncode}')
+        
+        return process.returncode
 
     def cplex_to_glpsol(self,cplexfile,solutionfile): 
         
@@ -1516,7 +1581,7 @@ class FlexToolRunner:
         solves=[]
 
         #check that the lower level solves have periods only from of upper_level realizations
-        full_active_time_list_own = self.get_active_time(solve, self.timesets_used_by_solves, self.timesets,self.timelines, self.timesets__timeline)
+        full_active_time_list_own = self.get_active_time(solve, self.timesets_used_by_solves, self.timeset_durations,self.timelines, self.timesets__timeline)
         if len(realized) != 0:
             # Make full_active_time_list to include only timesteps that are found in 'realized' periods.
             # After that, remove any periods from 'realised' are not in fix_storage, realized or realized_invest periods
@@ -1905,7 +1970,7 @@ class FlexToolRunner:
         previous_complete_solve = None
         for i, solve in enumerate(all_solves):
             self.logger.info("Creating timelines for solve " + solve + " (" + str(i) + ")")
-            complete_active_time_lists = self.get_active_time(complete_solve[solve], self.timesets_used_by_solves, self.timesets, self.timelines, self.timesets__timeline)
+            complete_active_time_lists = self.get_active_time(complete_solve[solve], self.timesets_used_by_solves, self.timeset_durations, self.timelines, self.timesets__timeline)
             self.write_full_timelines(self.stochastic_timesteps[solve], self.timesets_used_by_solves[complete_solve[solve]], self.timesets__timeline, self.timelines, 'solve_data/steps_in_timeline.csv')
             self.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
             self.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete = True)
