@@ -269,7 +269,7 @@ class FlexToolRunner:
                 self.timeset_durations[timeset_name] = new_timesets 
                 new_timeline_name = timeline_name+ "_"+ timeset_name 
                 self.timelines[new_timeline_name] = new_steps
-                self.timeset_durations__timeline[timeset_name] = new_timeline_name
+                self.timesets__timeline[timeset_name] = new_timeline_name
                 self.original_timeline[new_timeline_name] = timeline_name
 
     def create_averaged_timeseries(self,solve):
