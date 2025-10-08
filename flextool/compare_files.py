@@ -84,12 +84,17 @@ def get_different_columns(file1_lines: List[str], file2_lines: List[str]) -> Tup
     # Parse all header rows
     header_values = [parse_csv_line(h) for h in headers1]
 
-    # Use first header row for column structure
-    col_names = [h for h in header_values[0] if h]
-    different_cols = set(range(len(col_names)))
+    # Check first 5 data rows to determine max columns
+    data_start = len(headers1)
+    sample_rows = file1_lines[data_start:data_start + 5]
+    sample_parsed = [parse_csv_line(row) for row in sample_rows if row]
+
+    # Use maximum number of columns from headers and sample data
+    all_rows = header_values + sample_parsed
+    num_cols = max(len(row) for row in all_rows) if all_rows else 0
+    different_cols = set(range(num_cols))
 
     return header_values, different_cols
-
 
 def compare_files(file1_path: str, file2_path: str) -> Tuple[
     bool, int, int, List[Tuple[str, str]], List[str], Set[int]]:
@@ -144,7 +149,7 @@ def write_report(results: Dict, output_file: str, n_lines: int,
             f.write("\n")
 
         f.write("File Details\n===========\n")
-        for filename, (is_diff, diff_lines, total_lines, differences, header_rows, diff_cols) in results.items():
+        for filename, (is_diff, diff_lines, total_lines, differences, header_rows, diff_cols) in sorted(results.items()):
             if is_diff:
                 f.write(f"\n{filename}:\n")
                 f.write(f"Different lines: {diff_lines} out of {total_lines}\n")
@@ -195,7 +200,7 @@ def main():
     common_files = files1 & files2
     results = {}
 
-    for filename in common_files:
+    for filename in sorted(common_files):
         file1_path = os.path.join(args.dir1, filename)
         file2_path = os.path.join(args.dir2, filename)
         results[filename] = compare_files(file1_path, file2_path)
