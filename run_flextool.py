@@ -41,6 +41,9 @@ def main():
     parser.add_argument('input_db_url', help='Database URL to connect to (can be copied from Toolbox workflow db item')
     parser.add_argument('scenario_name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
+    parser.add_argument('--output-database', metavar='DB_URL', help='Save results to database')
+    
 
     args = parser.parse_args()
     input_db_url = args.input_db_url
@@ -68,6 +71,20 @@ def main():
     except Exception as e:
         logging.error(f"Model run failed: {str(e)}\nTraceback:\n{traceback.format_exc()}")
         sys.exit(1)
+    
+    if return_code == 0:
+        # Output to spreadsheet if requested
+        if args.output_spreadsheet:
+            runner.process_outputs('spreadsheet', args.output_spreadsheet)
+        
+        # Output to database if requested
+        if args.output_database:
+            runner.process_outputs('database', args.output_database)
+        
+        # Or if neither specified, could default to spreadsheet
+        if not args.output_spreadsheet and not args.output_database:
+            runner.process_outputs('spreadsheet', 'results.xlsx')
+
     print(__file__)
     print("--- full time %.12s seconds ---------------------------------------" % (time.time() - start_time))
     print("--------------------------------------------------------------------------\n\n")
