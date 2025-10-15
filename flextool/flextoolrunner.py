@@ -2175,7 +2175,7 @@ class FlexToolRunner:
     def write_input(self, input_db_url, scenario_name=None):
         if scenario_name:
             scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
-        with (DatabaseMapping(input_db_url) as db):
+        with DatabaseMapping(input_db_url) as db:
             #it is faster to fetch all now than fetching multiple times
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
@@ -3160,28 +3160,28 @@ class FlexToolRunner:
         r_penalty_inertia = pd.DataFrame(index=self.v.q_inertia.index, columns=self.s.groupInertia)
         for g in self.s.groupInertia:
             if g in self.v.q_inertia.columns:
-                penalty = self.v.q_inertia[g].copy()
-                for idx in penalty.index:
-                    d = idx[0]
-                    penalty.loc[idx] *= (self.p.step_duration.loc[idx] * 
-                                        self.p.group_inertia_limit.loc[d, g] * 
-                                        self.p.group_penalty_inertia.loc[d, g])
+                penalty = self.v.q_inertia[g] * self.p.step_duration
+                for d in self.p.group_inertia_limit.index:
+                    if g in self.p.group_inertia_limit.columns:
+                        period_mask = penalty.index.get_level_values('period') == d
+                        penalty.loc[period_mask] *= (self.p.group_inertia_limit.loc[d, g] * 
+                                                    self.p.group_penalty_inertia.loc[d, g])
                 r_penalty_inertia[g] = penalty
         self.r.costPenalty_inertia_dt = r_penalty_inertia
-        
+
         # r_costPenalty_non_synchronous_dt
         r_penalty_nonsync = pd.DataFrame(index=self.v.q_non_synchronous.index, columns=self.s.groupNonSync)
         for g in self.s.groupNonSync:
             if g in self.v.q_non_synchronous.columns:
-                penalty = self.v.q_non_synchronous[g].copy()
-                for idx in penalty.index:
-                    d = idx[0]
-                    penalty.loc[idx] *= (self.p.step_duration.loc[idx] * 
-                                        self.p.group_capacity_for_scaling.loc[d, g] * 
-                                        self.p.group_penalty_non_synchronous.loc[d, g])
+                penalty = self.v.q_non_synchronous[g] * self.p.step_duration
+                for d in self.p.group_capacity_for_scaling.index:
+                    if g in self.p.group_capacity_for_scaling.columns:
+                        period_mask = penalty.index.get_level_values('period') == d
+                        penalty.loc[period_mask] *= (self.p.group_capacity_for_scaling.loc[d, g] * 
+                                                    self.p.group_penalty_non_synchronous.loc[d, g])
                 r_penalty_nonsync[g] = penalty
         self.r.costPenalty_non_synchronous_dt = r_penalty_nonsync
-        
+
         # r_costPenalty_capacity_margin_d
         r_penalty_cap_margin = pd.DataFrame(index=self.s.period_invest, columns=self.s.groupCapacityMargin)
         for g in self.s.groupCapacityMargin:
@@ -3198,14 +3198,12 @@ class FlexToolRunner:
         r_penalty_reserve = pd.DataFrame(index=self.v.q_reserve.index, columns=self.v.q_reserve.columns)
         for col in self.v.q_reserve.columns:
             r, ud, ng = col
-            penalty = self.v.q_reserve[col].copy()
-            for idx in penalty.index:
-                penalty.loc[idx] *= (self.p.step_duration.loc[idx] * 
-                                    self.p.reserve_upDown_group_penalty.loc[(r, ud, ng), 'penalty_reserve'] * 
-                                    self.p.reserve_upDown_group_reservation.loc[idx, col])
+            penalty = (self.v.q_reserve[col] * self.p.step_duration * 
+                    self.p.reserve_upDown_group_penalty.loc[(r, ud, ng), 'value'] * 
+                    self.p.reserve_upDown_group_reservation[col])
             r_penalty_reserve[col] = penalty
         self.r.costPenalty_reserve_upDown_dt = r_penalty_reserve
-        
+
         # r_cost_entity_invest_d
         r_invest_cost = pd.DataFrame(index=self.v.invest.index, columns=self.v.invest.columns)
         for e in self.v.invest.columns:
@@ -3232,7 +3230,8 @@ class FlexToolRunner:
             for d in self.s.period_in_use:
                 capacity = self.p.entity_all_existing.loc[d, e]
                 if not self.s.edd_invest.empty:
-                    for e_inv, d_inv, d_use in self.s.edd_invest:
+                    for row in self.s.edd_invest.itertuples(index=False):
+                        e_inv, d_inv, d_use = row.entity, row.d_invest, row.d
                         if e_inv == e and d_use == d and d_inv != d:
                             capacity += self.v.invest.loc[d_inv, e] * self.p.entity_unitsize['value'][e]
                 fixed_cost = 0

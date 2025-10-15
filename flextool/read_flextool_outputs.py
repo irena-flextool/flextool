@@ -349,7 +349,7 @@ def read_parameters(output_dir='output'):
     p.nested_model = df.set_index('param')
     
     # p_roll_continue_state
-    df = pd.read_csv(output_path / 'p_roll_continue_state.csv', dtype={'node': str, 'value': float})
+    df = pd.read_csv('solve_data/p_roll_continue_state.csv', dtype={'node': str, 'value': float})
     p.roll_continue_state = df.set_index('node')
     
     return p
