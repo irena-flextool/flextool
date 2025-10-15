@@ -69,8 +69,10 @@ def main():
         logging.error(f"Model run failed: {str(e)}\nTraceback:\n{traceback.format_exc()}")
         sys.exit(1)
     print(__file__)
-    print("--- full time %s seconds ---" % (time.time() - start_time))
-
+    print("--- full time %.12s seconds ---------------------------------------" % (time.time() - start_time))
+    print("--------------------------------------------------------------------------\n\n")
+    
+    
 
 # Debug flag
 DEBUG = False  # Set via environment variable or config
