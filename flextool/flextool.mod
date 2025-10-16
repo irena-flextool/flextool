@@ -20,7 +20,6 @@ display datetime0;
 # Fundamental sets of the model
 set entity 'e - contains both nodes and processes';
 set process 'p - Particular activity that transfers, converts or stores commodities' within entity;
-set processUnit 'Unit processes' within process;
 set node 'n - Any location where a balance needs to be maintained' within entity;
 set group 'g - Any group of entities that have a set of common constraints';
 set commodity 'c - Stuff that is being processed';
@@ -396,7 +395,7 @@ param p_branch_weight_input {b in branch} default 1;
 param pd_branch_weight {d in period_in_use} := 
 p_branch_weight_input[d] /(sum{(d2,b) in period__branch, (b, ts) in period__time_first: (d,ts) in period__time_first && (d2,d) in period__branch} p_branch_weight_input[b]);
 
-param pdt_branch_weight {(d,t) in dt} := 
+param pdt_branch_weight {(d,t) in dt} :=
 p_branch_weight_input[d] /(sum{(d2,b) in period__branch: (b,t) in dt && (d2,d) in period__branch} p_branch_weight_input[b]);
 
 set dt_non_anticipativity := dt_realize_dispatch_input union dt_fix_storage_timesteps;
@@ -1190,7 +1189,7 @@ param new_old_slope {n in node, d in period_in_use : (n, 'scale_to_annual_and_pe
         new_peak_divided_by_old_peak[n, d] * ( 1 + new_old_multiplier[n, d] );
 param new_old_section {n in node, d in period_in_use : (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]} :=
         pdNode[n, 'peak_inflow', d] * new_old_multiplier[n, d];
-param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  := 
+param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inflow_method}  :=
         + (if exists{(d,ts) in period__time_first, (d,tb) in solve_branch__time_branch: (n, tb, ts, t) in node__branch__time_inflow} 1 
               && exists{(g,n) in group_node: g in groupStochastic} 1
            then sum{(d,ts) in period__time_first,(d,tb) in solve_branch__time_branch} pbt_node_inflow[n, tb, ts, t]
@@ -1312,7 +1311,7 @@ set process_minload := {p in process : (p, 'min_load_efficiency') in process__ct
 
 param pdtConversion_rate{p in process, (d, t) in dt} := round(1 / pdtProcess[p, 'efficiency', d, t], 6);
 
-param pdtProcess_section{p in process_minload, (d, t) in dt} := 
+param pdtProcess_section{p in process_minload, (d, t) in dt} :=
         + pdtConversion_rate[p, d, t]
     	- round(
     	    ( pdtConversion_rate[p, d, t] - pdtProcess[p, 'min_load', d, t] * (1 / pdtProcess[p, 'efficiency_at_min_load', d, t]) )
@@ -1493,7 +1492,7 @@ set process_reserve_upDown_node_large_failure_ratio :=
 set process_large_failure := setof {(p, r, ud, n) in process_reserve_upDown_node_large_failure_ratio} p;
  
 set gcndt_co2_price := 
-        {g in group, (c,n) in commodity_node, d in period_in_use, t in time_in_use: (d,t) in dt 
+        {g in group, (c,n) in commodity_node, d in period_in_use, t in time_in_use: (d,t) in dt
         && (g, n) in group_node 
         && p_commodity[c, 'co2_content']
         && g in group_co2_price
@@ -1610,10 +1609,10 @@ set group_output__group_aggregate_Unit_to_group :=
 set group_output__group_aggregate_Group_to_unit :=
     setof {(g, ga, p, source, sink) in group_output__group_aggregate__process__node__to_unit} (g, ga);
 
-param p_positive_inflow{n in node, (d,t) in dt: (n, 'no_inflow') not in node__inflow_method} := 
+param p_positive_inflow{n in node, (d,t) in dt: (n, 'no_inflow') not in node__inflow_method} :=
   +(if pdtNodeInflow[n,d,t] >= 0 then pdtNodeInflow[n,d,t] else 0);
 
-param p_negative_inflow{n in node, (d,t) in dt} := 
+param p_negative_inflow{n in node, (d,t) in dt} :=
   +(if pdtNodeInflow[n,d,t] < 0 then pdtNodeInflow[n,d,t] else 0);
 
 param p_entity_existing_capacity_first_solve {e in entity, d in period_in_use} :=
@@ -1784,13 +1783,13 @@ check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((
 && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
   p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t];
 
-check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt: 
+check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt:
 ((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
 && (n, 'bind_within_timeset') in node__storage_binding_method
 && dt_jump[d,t] != 1}:
   p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t] && p_node[n,'storage_state_end'] <= pdtNode[n,'availability', d, t_previous];
 
-check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt: 
+check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt:
 ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
 && (n, 'bind_within_timeset') in node__storage_binding_method
 && dt_jump[d,t] != 1}:
@@ -1815,7 +1814,7 @@ check {g in groupNonSync, (p,source,sink) in process_source_sink:
 
 printf 'Checking: transfer_method no_losses_no_variable_cost ';
 printf 'is not allowed to have other_operational_cost\n';
-check {(p,m) in process_method, (d,t) in dt: m in method_2way_1var}: 
+check {(p,m) in process_method, (d,t) in dt: m in method_2way_1var}:
   pdtProcess[p, 'other_operational_cost', d, t] = 0;
 
 printf 'Checking: node not in more than one loss of load sharing group\n';
@@ -2073,7 +2072,7 @@ s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in peri
       + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t]
 	)  
   # n is source
-  - sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } ( 
+  - sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } (
       + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 	      * pdtProcess_slope[p, d, t]
 		  * (if p in process_unit then 1 / (p_process_sink_coefficient[p, sink] * p_process_source_coefficient[p, n]) else 1)
@@ -2085,7 +2084,7 @@ s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in peri
 				* p_entity_unitsize[p]
 		)
     ) * step_duration[d, t]		
-  - sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt} 
+  - sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt}
     ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
     ) * step_duration[d, t]
   + pdNode[n, 'annual_flow', d] * period_share_of_year[d]
@@ -2370,7 +2369,7 @@ s.t. storage_usage_fix{n in n_fix_storage_usage, (d,t) in period__time_last, (d2
       + v_flow[p, source, n, d, t3] * p_entity_unitsize[p] * step_duration[d, t3]
   )  
   # n is source
-  + sum {(p, n, sink) in process_source_sink_eff, (d,t3) in dt} ( 
+  + sum {(p, n, sink) in process_source_sink_eff, (d,t3) in dt} (
       + v_flow[p, n, sink, d, t3] * p_entity_unitsize[p]
         * pdtProcess_slope[p, d, t3]
       * (if p in process_unit then 1 / (p_process_sink_coefficient[p, sink] * p_process_source_coefficient[p, n]) else 1)
@@ -2382,7 +2381,7 @@ s.t. storage_usage_fix{n in n_fix_storage_usage, (d,t) in period__time_last, (d2
         * p_entity_unitsize[p]
     )
     ) * step_duration[d, t3]		
-  + sum {(p, n, sink) in process_source_sink_noEff, (d,t3) in dt} 
+  + sum {(p, n, sink) in process_source_sink_noEff, (d,t3) in dt}
     ( + v_flow[p, n, sink, d, t3] * p_entity_unitsize[p]
     ) * step_duration[d, t3]
   <= 
@@ -2409,7 +2408,7 @@ s.t. storage_usage_fix_realized{n in n_fix_storage_usage, (d,t) in period__time_
         * p_entity_unitsize[p]
     )
     ) * step_duration[d, t3]		
-  + sum {(p, n, sink) in process_source_sink_noEff, (d2,t3) in dt_realize_dispatch} 
+  + sum {(p, n, sink) in process_source_sink_noEff, (d2,t3) in dt_realize_dispatch}
     ( + v_flow[p, n, sink, d, t3] * p_entity_unitsize[p]
     ) * step_duration[d, t3]
   <= 
@@ -3159,9 +3158,9 @@ s.t. co2_max_period{g in group_co2_max_period, d in period_in_use} :
       + p_commodity[c, 'co2_content'] / 1000
         * (
             # CO2 increases 
-            + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt } 
+            + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt }
               ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t] )
-            + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } 
+            + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt }
               ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t]
                   * pdtProcess_slope[p, d, t]
                   * (if p in process_unit then 1 / (p_process_sink_coefficient[p, sink] * p_process_source_coefficient[p, n]) else 1)
@@ -3174,7 +3173,7 @@ s.t. co2_max_period{g in group_co2_max_period, d in period_in_use} :
                   )	  
               ) 
             # CO2 removals
-            - sum {(p, source, n) in process_source_sink, (d, t) in dt } 
+            - sum {(p, source, n) in process_source_sink, (d, t) in dt }
               ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t] )  
           ) / complete_period_share_of_year[d]
     )
@@ -3188,9 +3187,9 @@ s.t. co2_max_total{g in group_co2_max_total} :
       + p_commodity[c, 'co2_content'] / 1000
         * (
             # CO2 increases 
-            + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt } 
+            + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt }
               ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t] )
-            + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } 
+            + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt }
               ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t]
                   * pdtProcess_slope[p, d, t]
                   * (if p in process_unit then 1 / (p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n]) else 1)
@@ -3203,7 +3202,7 @@ s.t. co2_max_total{g in group_co2_max_total} :
 				  )
               )	  
           # CO2 removals
-            - sum {(p, source, n) in process_source_sink, (d, t) in dt } 
+            - sum {(p, source, n) in process_source_sink, (d, t) in dt }
               ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t]
               )  
           )
@@ -3379,7 +3378,7 @@ s.t. non_anticipativity_online_linear{p in process_online_linear, (d,b) in perio
   = 
   + v_online_linear[p,b,t] 
 ;
-s.t. non_anticipativity_reserve{(p, r, ud, n) in process_reserve_upDown_node_active, (d,b) in period__branch, (d,t) in dt_non_anticipativity: sum{(r, ud, g) in reserve__upDown__group} 1 && b in period_in_use}: 
+s.t. non_anticipativity_reserve{(p, r, ud, n) in process_reserve_upDown_node_active, (d,b) in period__branch, (d,t) in dt_non_anticipativity: sum{(r, ud, g) in reserve__upDown__group} 1 && b in period_in_use}:
   + v_reserve[p, r, ud, n, d, t]
   =
   + v_reserve[p, r, ud, n, b, t]
@@ -3396,940 +3395,1100 @@ display w_solve;
 printf("\nOutputs:\n");
 
 # Write v_flow
-printf "period,time" > "output/v_flow_pivot.csv";
-for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "output/v_flow_pivot.csv";}
-printf "\n," >> "output/v_flow_pivot.csv";
-for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "output/v_flow_pivot.csv";}
-printf "\n," >> "output/v_flow_pivot.csv";
-for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "output/v_flow_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/v_flow_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/v_flow.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "output_raw/v_flow.csv";}
+  printf "\n,," >> "output_raw/v_flow.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "output_raw/v_flow.csv";}
+  printf "\n,," >> "output_raw/v_flow.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "output_raw/v_flow.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/v_flow.csv";
     for {(p, source, sink) in process_source_sink} {
-        printf ",%g", v_flow[p, source, sink, d, t].val >> "output/v_flow_pivot.csv";
+        printf ",%g", v_flow[p, source, sink, d, t].val >> "output_raw/v_flow.csv";
     }
 }
 
 # Write v_ramp
-printf "period,time" > "output/v_ramp_pivot.csv";
-for {(p, source, sink) in process_source_sink_ramp} {printf ",%s", p >> "output/v_ramp_pivot.csv";}
-printf "\n," >> "output/v_ramp_pivot.csv";
-for {(p, source, sink) in process_source_sink_ramp} {printf ",%s", source >> "output/v_ramp_pivot.csv";}
-printf "\n," >> "output/v_ramp_pivot.csv";
-for {(p, source, sink) in process_source_sink_ramp} {printf ",%s", sink >> "output/v_ramp_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/v_ramp_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/v_ramp.csv";
+  for {(p, source, sink) in process_source_sink_ramp} {printf ",%s", p >> "output_raw/v_ramp.csv";}
+  printf "\n,," >> "output_raw/v_ramp.csv";
+  for {(p, source, sink) in process_source_sink_ramp} {printf ",%s", source >> "output_raw/v_ramp.csv";}
+  printf "\n,," >> "output_raw/v_ramp.csv";
+  for {(p, source, sink) in process_source_sink_ramp} {printf ",%s", sink >> "output_raw/v_ramp.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/v_ramp.csv";
     for {(p, source, sink) in process_source_sink_ramp} {
-        printf ",%g", v_ramp[p, source, sink, d, t].val >> "output/v_ramp_pivot.csv";
+        printf ",%g", v_ramp[p, source, sink, d, t].val >> "output_raw/v_ramp.csv";
     }
 }
 
 # Write v_reserve
-printf "period,time" > "output/v_reserve_pivot.csv";
-for {(p, r, ud, n) in process_reserve_upDown_node_active} {printf ",%s", p >> "output/v_reserve_pivot.csv";}
-printf "\n," >> "output/v_reserve_pivot.csv";
-for {(p, r, ud, n) in process_reserve_upDown_node_active} {printf ",%s", r >> "output/v_reserve_pivot.csv";}
-printf "\n," >> "output/v_reserve_pivot.csv";
-for {(p, r, ud, n) in process_reserve_upDown_node_active} {printf ",%s", ud >> "output/v_reserve_pivot.csv";}
-printf "\n," >> "output/v_reserve_pivot.csv";
-for {(p, r, ud, n) in process_reserve_upDown_node_active} {printf ",%s", n >> "output/v_reserve_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/v_reserve_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/v_reserve.csv";
+  for {(p, r, ud, n) in process_reserve_upDown_node_active} {printf ",%s", p >> "output_raw/v_reserve.csv";}
+  printf "\n,," >> "output_raw/v_reserve.csv";
+  for {(p, r, ud, n) in process_reserve_upDown_node_active} {printf ",%s", r >> "output_raw/v_reserve.csv";}
+  printf "\n,," >> "output_raw/v_reserve.csv";
+  for {(p, r, ud, n) in process_reserve_upDown_node_active} {printf ",%s", ud >> "output_raw/v_reserve.csv";}
+  printf "\n,," >> "output_raw/v_reserve.csv";
+  for {(p, r, ud, n) in process_reserve_upDown_node_active} {printf ",%s", n >> "output_raw/v_reserve.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/v_reserve.csv";
     for {(p, r, ud, n) in process_reserve_upDown_node_active} {
-        printf ",%g", (if (p, r, ud, n, d, t) in prundt then v_reserve[p, r, ud, n, d, t].val else 0) >> "output/v_reserve_pivot.csv";
+        printf ",%g", (if (p, r, ud, n, d, t) in prundt then v_reserve[p, r, ud, n, d, t].val else 0) >> "output_raw/v_reserve.csv";
     }
 }
 
 # Write v_state
-printf "period,time" > "output/v_state_pivot.csv";
-for {n in nodeState} {printf ",%s", n >> "output/v_state_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/v_state_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/v_state.csv";
+  for {n in nodeState} {printf ",%s", n >> "output_raw/v_state.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/v_state.csv";
     for {n in nodeState} {
-        printf ",%g", v_state[n, d, t].val >> "output/v_state_pivot.csv";
+        printf ",%g", v_state[n, d, t].val >> "output_raw/v_state.csv";
     }
 }
 
 # Write v_online_linear
-printf "period,time" > "output/v_online_linear_pivot.csv";
-for {p in process_online_linear} {printf ",%s", p >> "output/v_online_linear_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/v_online_linear_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/v_online_linear.csv";
+  for {p in process_online_linear} {printf ",%s", p >> "output_raw/v_online_linear.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/v_online_linear.csv";
     for {p in process_online_linear} {
-        printf ",%g", v_online_linear[p, d, t].val >> "output/v_online_linear_pivot.csv";
+        printf ",%g", v_online_linear[p, d, t].val >> "output_raw/v_online_linear.csv";
     }
 }
 
 # Write v_startup_linear
-printf "period,time" > "output/v_startup_linear_pivot.csv";
-for {p in process_online_linear} {printf ",%s", p >> "output/v_startup_linear_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/v_startup_linear_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/v_startup_linear.csv";
+  for {p in process_online_linear} {printf ",%s", p >> "output_raw/v_startup_linear.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/v_startup_linear.csv";
     for {p in process_online_linear} {
-        printf ",%g", v_startup_linear[p, d, t].val >> "output/v_startup_linear_pivot.csv";
+        printf ",%g", v_startup_linear[p, d, t].val >> "output_raw/v_startup_linear.csv";
     }
 }
 
 # Write v_shutdown_linear
-printf "period,time" > "output/v_shutdown_linear_pivot.csv";
-for {p in process_online_linear} {printf ",%s", p >> "output/v_shutdown_linear_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/v_shutdown_linear_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/v_shutdown_linear.csv";
+  for {p in process_online_linear} {printf ",%s", p >> "output_raw/v_shutdown_linear.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/v_shutdown_linear.csv";
     for {p in process_online_linear} {
-        printf ",%g", v_shutdown_linear[p, d, t].val >> "output/v_shutdown_linear_pivot.csv";
+        printf ",%g", v_shutdown_linear[p, d, t].val >> "output_raw/v_shutdown_linear.csv";
     }
 }
 
 # Write v_online_integer
-printf "period,time" > "output/v_online_integer_pivot.csv";
-for {p in process_online_integer} {printf ",%s", p >> "output/v_online_integer_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/v_online_integer_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/v_online_integer.csv";
+  for {p in process_online_integer} {printf ",%s", p >> "output_raw/v_online_integer.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/v_online_integer.csv";
     for {p in process_online_integer} {
-        printf ",%g", v_online_integer[p, d, t].val >> "output/v_online_integer_pivot.csv";
+        printf ",%g", v_online_integer[p, d, t].val >> "output_raw/v_online_integer.csv";
     }
 }
 
 # Write v_startup_integer
-printf "period,time" > "output/v_startup_integer_pivot.csv";
-for {p in process_online_integer} {printf ",%s", p >> "output/v_startup_integer_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/v_startup_integer_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/v_startup_integer.csv";
+  for {p in process_online_integer} {printf ",%s", p >> "output_raw/v_startup_integer.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/v_startup_integer.csv";
     for {p in process_online_integer} {
-        printf ",%g", v_startup_integer[p, d, t].val >> "output/v_startup_integer_pivot.csv";
+        printf ",%g", v_startup_integer[p, d, t].val >> "output_raw/v_startup_integer.csv";
     }
 }
 
 # Write v_shutdown_integer
-printf "period,time" > "output/v_shutdown_integer_pivot.csv";
-for {p in process_online_integer} {printf ",%s", p >> "output/v_shutdown_integer_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/v_shutdown_integer_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/v_shutdown_integer.csv";
+  for {p in process_online_integer} {printf ",%s", p >> "output_raw/v_shutdown_integer.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/v_shutdown_integer.csv";
     for {p in process_online_integer} {
-        printf ",%g", v_shutdown_integer[p, d, t].val >> "output/v_shutdown_integer_pivot.csv";
+        printf ",%g", v_shutdown_integer[p, d, t].val >> "output_raw/v_shutdown_integer.csv";
     }
 }
 
 # Write v_invest (only period dimension)
-printf "period" > "output/v_invest_pivot.csv";
-for {e in entityInvest} {printf ",%s", e >> "output/v_invest_pivot.csv";}
-for {d in period_invest} {
-    printf "\n%s", d >> "output/v_invest_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/v_invest.csv";
+  for {e in entityInvest} {printf ",%s", e >> "output_raw/v_invest.csv";}
+}
+for {s in solve_current, d in d_realize_dispatch_or_invest} {
+    printf "\n%s,%s", s, d >> "output_raw/v_invest.csv";
     for {e in entityInvest} {
-        printf ",%g", (if (e, d) in ed_invest then v_invest[e, d].val else 0) >> "output/v_invest_pivot.csv";
+        printf ",%g", (if (e, d) in ed_invest then v_invest[e, d].val else 0) >> "output_raw/v_invest.csv";
     }
 }
 
 # Write v_divest (only period dimension)
-printf "period" > "output/v_divest_pivot.csv";
-for {e in entityDivest} {printf ",%s", e >> "output/v_divest_pivot.csv";}
-for {d in period_invest} {
-    printf "\n%s", d >> "output/v_divest_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/v_divest.csv";
+  for {e in entityDivest} {printf ",%s", e >> "output_raw/v_divest.csv";}
+}
+for {s in solve_current, d in d_realize_dispatch_or_invest} {
+    printf "\n%s,%s", s, d >> "output_raw/v_divest.csv";
     for {e in entityDivest} {
-        printf ",%g", (if (e, d) in ed_divest then v_divest[e, d].val else 0) >> "output/v_divest_pivot.csv";
+        printf ",%g", (if (e, d) in ed_divest then v_divest[e, d].val else 0) >> "output_raw/v_divest.csv";
     }
 }
 
 # Write vq_state_up
-printf "period,time" > "output/vq_state_up_pivot.csv";
-for {n in (nodeBalance union nodeBalancePeriod)} {printf ",%s", n >> "output/vq_state_up_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/vq_state_up_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/vq_state_up.csv";
+  for {n in (nodeBalance union nodeBalancePeriod)} {printf ",%s", n >> "output_raw/vq_state_up.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_state_up.csv";
     for {n in (nodeBalance union nodeBalancePeriod)} {
-        printf ",%g", vq_state_up[n, d, t].val >> "output/vq_state_up_pivot.csv";
+        printf ",%g", vq_state_up[n, d, t].val >> "output_raw/vq_state_up.csv";
     }
 }
 
 # Write vq_state_down
-printf "period,time" > "output/vq_state_down_pivot.csv";
-for {n in (nodeBalance union nodeBalancePeriod)} {printf ",%s", n >> "output/vq_state_down_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/vq_state_down_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/vq_state_down.csv";
+  for {n in (nodeBalance union nodeBalancePeriod)} {printf ",%s", n >> "output_raw/vq_state_down.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_state_down.csv";
     for {n in (nodeBalance union nodeBalancePeriod)} {
-        printf ",%g", vq_state_down[n, d, t].val >> "output/vq_state_down_pivot.csv";
+        printf ",%g", vq_state_down[n, d, t].val >> "output_raw/vq_state_down.csv";
     }
 }
 
 # Write vq_reserve
-printf "period,time" > "output/vq_reserve_pivot.csv";
-for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", r >> "output/vq_reserve_pivot.csv";}
-printf "\n," >> "output/vq_reserve_pivot.csv";
-for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", ud >> "output/vq_reserve_pivot.csv";}
-printf "\n," >> "output/vq_reserve_pivot.csv";
-for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", ng >> "output/vq_reserve_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/vq_reserve_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/vq_reserve.csv";
+  for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", r >> "output_raw/vq_reserve.csv";}
+  printf "\n,," >> "output_raw/vq_reserve.csv";
+  for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", ud >> "output_raw/vq_reserve.csv";}
+  printf "\n,," >> "output_raw/vq_reserve.csv";
+  for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", ng >> "output_raw/vq_reserve.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_reserve.csv";
     for {(r, ud, ng) in reserve__upDown__group} {
-        printf ",%g", vq_reserve[r, ud, ng, d, t].val >> "output/vq_reserve_pivot.csv";
+        printf ",%g", vq_reserve[r, ud, ng, d, t].val >> "output_raw/vq_reserve.csv";
     }
 }
 
 # Write vq_inertia
-printf "period,time" > "output/vq_inertia_pivot.csv";
-for {g in groupInertia} {printf ",%s", g >> "output/vq_inertia_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/vq_inertia_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/vq_inertia.csv";
+  for {g in groupInertia} {printf ",%s", g >> "output_raw/vq_inertia.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_inertia.csv";
     for {g in groupInertia} {
-        printf ",%g", vq_inertia[g, d, t].val >> "output/vq_inertia_pivot.csv";
+        printf ",%g", vq_inertia[g, d, t].val >> "output_raw/vq_inertia.csv";
     }
 }
 
 # Write vq_non_synchronous
-printf "period,time" > "output/vq_non_synchronous_pivot.csv";
-for {g in groupNonSync} {printf ",%s", g >> "output/vq_non_synchronous_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/vq_non_synchronous_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/vq_non_synchronous.csv";
+  for {g in groupNonSync} {printf ",%s", g >> "output_raw/vq_non_synchronous.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_non_synchronous.csv";
     for {g in groupNonSync} {
-        printf ",%g", vq_non_synchronous[g, d, t].val >> "output/vq_non_synchronous_pivot.csv";
+        printf ",%g", vq_non_synchronous[g, d, t].val >> "output_raw/vq_non_synchronous.csv";
     }
 }
 
 # Write vq_capacity_margin
-printf "period" > "output/vq_capacity_margin_pivot.csv";
-for {g in groupCapacityMargin} {printf ",%s", g >> "output/vq_capacity_margin_pivot.csv";}
-for {d in period_invest} {
-    printf "\n%s", d >> "output/vq_capacity_margin_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/vq_capacity_margin.csv";
+  for {g in groupCapacityMargin} {printf ",%s", g >> "output_raw/vq_capacity_margin.csv";}
+}
+for {s in solve_current, d in d_realize_dispatch_or_invest} {
+    printf "\n%s,%s", s, d >> "output_raw/vq_capacity_margin.csv";
     for {g in groupCapacityMargin} {
-        printf ",%g", vq_capacity_margin[g, d].val >> "output/vq_capacity_margin_pivot.csv";
+        printf ",%g", vq_capacity_margin[g, d].val >> "output_raw/vq_capacity_margin.csv";
     }
 }
 
 # Write vq_state_up_group
-printf "period,time" > "output/vq_state_up_group_pivot.csv";
-for {g in group_loss_share} {printf ",%s", g >> "output/vq_state_up_group_pivot.csv";}
-for {(d, t) in dt} {
-    printf "\n%s,%s", d, t >> "output/vq_state_up_group_pivot.csv";
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/vq_state_up_group.csv";
+  for {g in group_loss_share} {printf ",%s", g >> "output_raw/vq_state_up_group.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/vq_state_up_group.csv";
     for {g in group_loss_share} {
-        printf ",%g", vq_state_up_group[g, d, t].val >> "output/vq_state_up_group_pivot.csv";
+        printf ",%g", vq_state_up_group[g, d, t].val >> "output_raw/vq_state_up_group.csv";
     }
 }
 
 
-# Parameters with (d, t) dimensions - PIVOT
-if p_model['solveFirst'] then {
-
-  # Write step_duration
-  printf "period,time,value" > "output/p_step_duration_pivot.csv";
-  for {(d, t) in dt} {
-      printf "\n%s,%s,%.8g", d, t, step_duration[d, t] >> "output/p_step_duration_pivot.csv";
-  }
-
-  # Write p_flow_min
-  printf "period,time" > "output/p_flow_min_pivot.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "output/p_flow_min_pivot.csv";}
-  printf "\n," >> "output/p_flow_min_pivot.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "output/p_flow_min_pivot.csv";}
-  printf "\n," >> "output/p_flow_min_pivot.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "output/p_flow_min_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/p_flow_min_pivot.csv";
-      for {(p, source, sink) in process_source_sink} {
-          printf ",%g", p_flow_min[p, source, sink, d, t] >> "output/p_flow_min_pivot.csv";
-      }
-  }
-
-  # Write p_flow_max
-  printf "period,time" > "output/p_flow_max_pivot.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "output/p_flow_max_pivot.csv";}
-  printf "\n," >> "output/p_flow_max_pivot.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "output/p_flow_max_pivot.csv";}
-  printf "\n," >> "output/p_flow_max_pivot.csv";
-  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "output/p_flow_max_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/p_flow_max_pivot.csv";
-      for {(p, source, sink) in process_source_sink} {
-          printf ",%g", p_flow_max[p, source, sink, d, t] >> "output/p_flow_max_pivot.csv";
-      }
-  }
-
-  # Write pdtProcess_slope
-  printf "period,time" > "output/pdtProcess_slope_pivot.csv";
-  for {p in process} {printf ",%s", p >> "output/pdtProcess_slope_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/pdtProcess_slope_pivot.csv";
-      for {p in process} {
-          printf ",%g", pdtProcess_slope[p, d, t] >> "output/pdtProcess_slope_pivot.csv";
-      }
-  }
-
-  # Write pdtProcess_section
-  printf "period,time" > "output/pdtProcess_section_pivot.csv";
-  for {p in process_minload} {printf ",%s", p >> "output/pdtProcess_section_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/pdtProcess_section_pivot.csv";
-      for {p in process_minload} {
-          printf ",%g", pdtProcess_section[p, d, t] >> "output/pdtProcess_section_pivot.csv";
-      }
-  }
-
-  # Write pdtProcess (availability)
-  printf "period,time" > "output/pdtProcess_availability_pivot.csv";
-  for {p in process} {printf ",%s", p >> "output/pdtProcess_availability_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/pdtProcess_availability_pivot.csv";
-      for {p in process} {
-          printf ",%g", pdtProcess[p, 'availability', d, t] >> "output/pdtProcess_availability_pivot.csv";
-      }
-  }
-
-  # Write pdtProcess_source_sink_varCost
-  printf "period,time" > "output/pdtProcess_source_sink_varCost_pivot.csv";
-  for {(p, source, sink) in process_source_sink_alwaysProcess} {printf ",%s", p >> "output/pdtProcess_source_sink_varCost_pivot.csv";}
-  printf "\n," >> "output/pdtProcess_source_sink_varCost_pivot.csv";
-  for {(p, source, sink) in process_source_sink_alwaysProcess} {printf ",%s", source >> "output/pdtProcess_source_sink_varCost_pivot.csv";}
-  printf "\n," >> "output/pdtProcess_source_sink_varCost_pivot.csv";
-  for {(p, source, sink) in process_source_sink_alwaysProcess} {printf ",%s", sink >> "output/pdtProcess_source_sink_varCost_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/pdtProcess_source_sink_varCost_pivot.csv";
-      for {(p, source, sink) in process_source_sink_alwaysProcess} {
-          printf ",%g", pdtProcess__source__sink__dt_varCost_alwaysProcess[p, source, sink, d, t] >> "output/pdtProcess_source_sink_varCost_pivot.csv";
-      }
-  }
-
-  # Write pdtNode (self_discharge_loss, penalty_up, penalty_down)
-  printf "period,time" > "output/pdtNode_self_discharge_loss_pivot.csv";
-  for {n in nodeSelfDischarge} {printf ",%s", n >> "output/pdtNode_self_discharge_loss_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/pdtNode_self_discharge_loss_pivot.csv";
-      for {n in nodeSelfDischarge} {
-          printf ",%g", pdtNode[n, 'self_discharge_loss', d, t] >> "output/pdtNode_self_discharge_loss_pivot.csv";
-      }
-  }
-
-  printf "period,time" > "output/pdtNode_penalty_up_pivot.csv";
-  for {n in nodeBalance union nodeBalancePeriod} {printf ",%s", n >> "output/pdtNode_penalty_up_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/pdtNode_penalty_up_pivot.csv";
-      for {n in nodeBalance union nodeBalancePeriod} {
-          printf ",%g", pdtNode[n, 'penalty_up', d, t] >> "output/pdtNode_penalty_up_pivot.csv";
-      }
-  }
-
-  printf "period,time" > "output/pdtNode_penalty_down_pivot.csv";
-  for {n in nodeBalance union nodeBalancePeriod} {printf ",%s", n >> "output/pdtNode_penalty_down_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/pdtNode_penalty_down_pivot.csv";
-      for {n in nodeBalance union nodeBalancePeriod} {
-          printf ",%g", pdtNode[n, 'penalty_down', d, t] >> "output/pdtNode_penalty_down_pivot.csv";
-      }
-  }
-
-  # Write pdtNodeInflow
-  printf "period,time" > "output/pdtNodeInflow_pivot.csv";
-  for {n in node} {printf ",%s", n >> "output/pdtNodeInflow_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/pdtNodeInflow_pivot.csv";
-      for {n in node} {
-          printf ",%g", pdtNodeInflow[n, d, t] >> "output/pdtNodeInflow_pivot.csv";
-      }
-  }
-
-  # Write pdtCommodity (price)
-  printf "period,time" > "output/pdtCommodity_price_pivot.csv";
-  for {c in commodity} {printf ",%s", c >> "output/pdtCommodity_price_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/pdtCommodity_price_pivot.csv";
-      for {c in commodity} {
-          printf ",%g", pdtCommodity[c, 'price', d, t] >> "output/pdtCommodity_price_pivot.csv";
-      }
-  }
-
-  # Write pdtGroup (co2_price)
-  printf "period,time" > "output/pdtGroup_co2_price_pivot.csv";
-  for {g in group} {printf ",%s", g >> "output/pdtGroup_co2_price_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/pdtGroup_co2_price_pivot.csv";
-      for {g in group} {
-          printf ",%g", pdtGroup[g, 'co2_price', d, t] >> "output/pdtGroup_co2_price_pivot.csv";
-      }
-  }
-
-  # Write pdtReserve_upDown_group (reservation)
-  printf "period,time" > "output/pdtReserve_upDown_group_reservation_pivot.csv";
-  for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", r >> "output/pdtReserve_upDown_group_reservation_pivot.csv";}
-  printf "\n," >> "output/pdtReserve_upDown_group_reservation_pivot.csv";
-  for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", ud >> "output/pdtReserve_upDown_group_reservation_pivot.csv";}
-  printf "\n," >> "output/pdtReserve_upDown_group_reservation_pivot.csv";
-  for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", ng >> "output/pdtReserve_upDown_group_reservation_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/pdtReserve_upDown_group_reservation_pivot.csv";
-      for {(r, ud, ng) in reserve__upDown__group} {
-          printf ",%g", pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t] >> "output/pdtReserve_upDown_group_reservation_pivot.csv";
-      }
-  }
-
-  # Write pdtProfile
-  printf "period,time" > "output/pdtProfile_pivot.csv";
-  for {f in profile} {printf ",%s", f >> "output/pdtProfile_pivot.csv";}
-  for {(d, t) in dt} {
-      printf "\n%s,%s", d, t >> "output/pdtProfile_pivot.csv";
-      for {f in profile} {
-          printf ",%g", pdtProfile[f, d, t] >> "output/pdtProfile_pivot.csv";
-      }
-  }
-
-  # Parameters with only d dimension - PIVOT
-
-  # Write p_years_d
-  printf "period" > "output/p_years_d_pivot.csv";
-  for {d in period} {
-      printf "\n%s,%g", d, p_years_d[d] >> "output/p_years_d_pivot.csv";
-  }
-
-  # Write p_entity_max_units
-  printf "period" > "output/p_entity_max_units_pivot.csv";
-  for {e in entity} {printf ",%s", e >> "output/p_entity_max_units_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/p_entity_max_units_pivot.csv";
-      for {e in entity} {
-          printf ",%g", p_entity_max_units[e, d] >> "output/p_entity_max_units_pivot.csv";
-      }
-  }
-
-  # Write p_entity_all_existing
-  printf "period" > "output/p_entity_all_existing_pivot.csv";
-  for {e in entity} {printf ",%s", e >> "output/p_entity_all_existing_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/p_entity_all_existing_pivot.csv";
-      for {e in entity} {
-          printf ",%g", p_entity_all_existing[e, d] >> "output/p_entity_all_existing_pivot.csv";
-      }
-  }
-
-  # Write pdProcess (startup_cost, fixed_cost)
-  printf "period" > "output/pdProcess_startup_cost_pivot.csv";
-  for {p in process_online: sum{d in period} pdProcess[p, 'startup_cost', d]} {printf ",%s", p >> "output/pdProcess_startup_cost_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/pdProcess_startup_cost_pivot.csv";
-      for {p in process_online: pdProcess[p, 'startup_cost', d]} {
-          printf ",%g", pdProcess[p, 'startup_cost', d] >> "output/pdProcess_startup_cost_pivot.csv";
-      }
-  }
-
-  printf "period" > "output/pdProcess_fixed_cost_pivot.csv";
-  for {p in process} {printf ",%s", p >> "output/pdProcess_fixed_cost_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/pdProcess_fixed_cost_pivot.csv";
-      for {p in process} {
-          printf ",%g", pdProcess[p, 'fixed_cost', d] >> "output/pdProcess_fixed_cost_pivot.csv";
-      }
-  }
-
-  # Write p_node
-  printf "node,param,value\n" > "output/p_node.csv";
-  for {n in node, param in nodeParam} {
-      printf "%s,%s,%g\n", n, param, p_node[n, param] >> "output/p_node.csv";
-  }
-
-  # Write pdNode (fixed_cost, annual_flow)
-  printf "period" > "output/pdNode_fixed_cost_pivot.csv";
-  for {(n, 'fixed_cost') in node__PeriodParam_in_use} {printf ",%s", n >> "output/pdNode_fixed_cost_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/pdNode_fixed_cost_pivot.csv";
-      for {(n, 'fixed_cost') in node__PeriodParam_in_use} {
-          printf ",%g", pdNode[n, 'fixed_cost', d] >> "output/pdNode_fixed_cost_pivot.csv";
-      }
-  }
-
-  printf "period" > "output/pdNode_annual_flow_pivot.csv";
-  for {(n, 'annual_flow') in node__PeriodParam_in_use} {printf ",%s", n >> "output/pdNode_annual_flow_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/pdNode_annual_flow_pivot.csv";
-      for {(n, 'annual_flow') in node__PeriodParam_in_use} {
-          printf ",%g", pdNode[n, 'annual_flow', d] >> "output/pdNode_annual_flow_pivot.csv";
-      }
-  }
-
-  # Write pdGroup (penalty_inertia, penalty_non_synchronous, penalty_capacity_margin, inertia_limit, capacity_margin)
-  printf "period" > "output/pdGroup_penalty_inertia_pivot.csv";
-  for {g in group} {printf ",%s", g >> "output/pdGroup_penalty_inertia_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/pdGroup_penalty_inertia_pivot.csv";
-      for {g in group} {
-          printf ",%g", pdGroup[g, 'penalty_inertia', d] >> "output/pdGroup_penalty_inertia_pivot.csv";
-      }
-  }
-
-  printf "period" > "output/pdGroup_penalty_non_synchronous_pivot.csv";
-  for {g in group} {printf ",%s", g >> "output/pdGroup_penalty_non_synchronous_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/pdGroup_penalty_non_synchronous_pivot.csv";
-      for {g in group} {
-          printf ",%g", pdGroup[g, 'penalty_non_synchronous', d] >> "output/pdGroup_penalty_non_synchronous_pivot.csv";
-      }
-  }
-
-  printf "period" > "output/pdGroup_penalty_capacity_margin_pivot.csv";
-  for {g in group} {printf ",%s", g >> "output/pdGroup_penalty_capacity_margin_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/pdGroup_penalty_capacity_margin_pivot.csv";
-      for {g in group} {
-          printf ",%g", pdGroup[g, 'penalty_capacity_margin', d] >> "output/pdGroup_penalty_capacity_margin_pivot.csv";
-      }
-  }
-
-  printf "period" > "output/pdGroup_inertia_limit_pivot.csv";
-  for {g in group} {printf ",%s", g >> "output/pdGroup_inertia_limit_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/pdGroup_inertia_limit_pivot.csv";
-      for {g in group} {
-          printf ",%g", pdGroup[g, 'inertia_limit', d] >> "output/pdGroup_inertia_limit_pivot.csv";
-      }
-  }
-
-  printf "period" > "output/pdGroup_capacity_margin_pivot.csv";
-  for {g in group} {printf ",%s", g >> "output/pdGroup_capacity_margin_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/pdGroup_capacity_margin_pivot.csv";
-      for {g in group} {
-          printf ",%g", pdGroup[g, 'capacity_margin', d] >> "output/pdGroup_capacity_margin_pivot.csv";
-      }
-  }
-
-  # Write ed_entity_annual_discounted
-  printf "period" > "output/ed_entity_annual_discounted_pivot.csv";
-  for {e in entityInvest} {printf ",%s", e >> "output/ed_entity_annual_discounted_pivot.csv";}
-  for {d in period_invest} {
-      printf "\n%s", d >> "output/ed_entity_annual_discounted_pivot.csv";
-      for {e in entityInvest} {
-          printf ",%g", (if (e, d) in ed_invest then ed_entity_annual_discounted[e, d] else 0) >> "output/ed_entity_annual_discounted_pivot.csv";
-      }
-  }
-
-  # Write ed_entity_annual_divest_discounted
-  printf "period" > "output/ed_entity_annual_divest_discounted_pivot.csv";
-  for {e in entityDivest} {printf ",%s", e >> "output/ed_entity_annual_divest_discounted_pivot.csv";}
-  for {d in period_invest} {
-      printf "\n%s", d >> "output/ed_entity_annual_divest_discounted_pivot.csv";
-      for {e in entityDivest} {
-          printf ",%g", (if (e, d) in ed_divest then ed_entity_annual_divest_discounted[e, d] else 0) >> "output/ed_entity_annual_divest_discounted_pivot.csv";
-      }
-  }
-
-  # Write p_discount_factor_operations_yearly
-  printf "period" > "output/p_discount_factor_operations_yearly_pivot.csv";
-  for {d in period} {
-      printf "\n%s,%g", d, p_discount_factor_operations_yearly[d] >> "output/p_discount_factor_operations_yearly_pivot.csv";
-  }
-
-  # Write node_capacity_for_scaling
-  printf "period" > "output/node_capacity_for_scaling_pivot.csv";
-  for {n in node} {printf ",%s", n >> "output/node_capacity_for_scaling_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/node_capacity_for_scaling_pivot.csv";
-      for {n in node} {
-          printf ",%g", node_capacity_for_scaling[n, d] >> "output/node_capacity_for_scaling_pivot.csv";
-      }
-  }
-
-  # Write group_capacity_for_scaling
-  printf "period" > "output/group_capacity_for_scaling_pivot.csv";
-  for {g in group} {printf ",%s", g >> "output/group_capacity_for_scaling_pivot.csv";}
-  for {d in period} {
-      printf "\n%s", d >> "output/group_capacity_for_scaling_pivot.csv";
-      for {g in group} {
-          printf ",%g", group_capacity_for_scaling[g, d] >> "output/group_capacity_for_scaling_pivot.csv";
-      }
-  }
-
-  # Write complete_period_share_of_year
-  printf "period" > "output/complete_period_share_of_year_pivot.csv";
-  for {d in period} {
-      printf "\n%s,%g", d, complete_period_share_of_year[d] >> "output/complete_period_share_of_year_pivot.csv";
-  }
-
-  # Parameters without d or (d,t) dimensions - TREE FORMAT (using table command)
+# Parameters with (d, t) dimensions
+display p_model;
+# Write step_duration
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time,value" > "output_raw/p_step_duration.csv";
 }
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s,%.8g", s, d, t, step_duration[d, t] >> "output_raw/p_step_duration.csv";
+}
+
+# Write p_flow_min
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/p_flow_min.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "output_raw/p_flow_min.csv";}
+  printf "\n,," >> "output_raw/p_flow_min.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "output_raw/p_flow_min.csv";}
+  printf "\n,," >> "output_raw/p_flow_min.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "output_raw/p_flow_min.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/p_flow_min.csv";
+    for {(p, source, sink) in process_source_sink} {
+        printf ",%g", p_flow_min[p, source, sink, d, t] >> "output_raw/p_flow_min.csv";
+    }
+}
+
+# Write p_flow_max
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/p_flow_max.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", p >> "output_raw/p_flow_max.csv";}
+  printf "\n,," >> "output_raw/p_flow_max.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", source >> "output_raw/p_flow_max.csv";}
+  printf "\n,," >> "output_raw/p_flow_max.csv";
+  for {(p, source, sink) in process_source_sink} {printf ",%s", sink >> "output_raw/p_flow_max.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/p_flow_max.csv";
+    for {(p, source, sink) in process_source_sink} {
+        printf ",%g", p_flow_max[p, source, sink, d, t] >> "output_raw/p_flow_max.csv";
+    }
+}
+
+# Write pdtProcess_slope
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/pdtProcess_slope.csv";
+  for {p in process} {printf ",%s", p >> "output_raw/pdtProcess_slope.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtProcess_slope.csv";
+    for {p in process} {
+        printf ",%g", pdtProcess_slope[p, d, t] >> "output_raw/pdtProcess_slope.csv";
+    }
+}
+
+# Write pdtProcess_section
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/pdtProcess_section.csv";
+  for {p in process_minload} {printf ",%s", p >> "output_raw/pdtProcess_section.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtProcess_section.csv";
+    for {p in process_minload} {
+        printf ",%g", pdtProcess_section[p, d, t] >> "output_raw/pdtProcess_section.csv";
+    }
+}
+
+# Write pdtProcess (availability)
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/pdtProcess_availability.csv";
+  for {p in process} {printf ",%s", p >> "output_raw/pdtProcess_availability.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtProcess_availability.csv";
+    for {p in process} {
+        printf ",%g", pdtProcess[p, 'availability', d, t] >> "output_raw/pdtProcess_availability.csv";
+    }
+}
+
+# Write pdtProcess_source_sink_varCost
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/pdtProcess_source_sink_varCost.csv";
+  for {(p, source, sink) in process_source_sink_alwaysProcess} {printf ",%s", p >> "output_raw/pdtProcess_source_sink_varCost.csv";}
+  printf "\n,," >> "output_raw/pdtProcess_source_sink_varCost.csv";
+  for {(p, source, sink) in process_source_sink_alwaysProcess} {printf ",%s", source >> "output_raw/pdtProcess_source_sink_varCost.csv";}
+  printf "\n,," >> "output_raw/pdtProcess_source_sink_varCost.csv";
+  for {(p, source, sink) in process_source_sink_alwaysProcess} {printf ",%s", sink >> "output_raw/pdtProcess_source_sink_varCost.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtProcess_source_sink_varCost.csv";
+    for {(p, source, sink) in process_source_sink_alwaysProcess} {
+        printf ",%g", pdtProcess__source__sink__dt_varCost_alwaysProcess[p, source, sink, d, t] >> "output_raw/pdtProcess_source_sink_varCost.csv";
+    }
+}
+
+# Write pdtNode (self_discharge_loss, penalty_up, penalty_down)
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/pdtNode_self_discharge_loss.csv";
+  for {n in nodeSelfDischarge} {printf ",%s", n >> "output_raw/pdtNode_self_discharge_loss.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtNode_self_discharge_loss.csv";
+    for {n in nodeSelfDischarge} {
+        printf ",%g", pdtNode[n, 'self_discharge_loss', d, t] >> "output_raw/pdtNode_self_discharge_loss.csv";
+    }
+}
+
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/pdtNode_penalty_up.csv";
+  for {n in nodeBalance union nodeBalancePeriod} {printf ",%s", n >> "output_raw/pdtNode_penalty_up.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtNode_penalty_up.csv";
+    for {n in nodeBalance union nodeBalancePeriod} {
+        printf ",%g", pdtNode[n, 'penalty_up', d, t] >> "output_raw/pdtNode_penalty_up.csv";
+    }
+}
+
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/pdtNode_penalty_down.csv";
+  for {n in nodeBalance union nodeBalancePeriod} {printf ",%s", n >> "output_raw/pdtNode_penalty_down.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtNode_penalty_down.csv";
+    for {n in nodeBalance union nodeBalancePeriod} {
+        printf ",%g", pdtNode[n, 'penalty_down', d, t] >> "output_raw/pdtNode_penalty_down.csv";
+    }
+}
+
+# Write pdtNodeInflow
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/pdtNodeInflow.csv";
+  for {n in node} {printf ",%s", n >> "output_raw/pdtNodeInflow.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtNodeInflow.csv";
+    for {n in node} {
+        printf ",%g", pdtNodeInflow[n, d, t] >> "output_raw/pdtNodeInflow.csv";
+    }
+}
+
+# Write pdtCommodity (price)
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/pdtCommodity_price.csv";
+  for {c in commodity} {printf ",%s", c >> "output_raw/pdtCommodity_price.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtCommodity_price.csv";
+    for {c in commodity} {
+        printf ",%g", pdtCommodity[c, 'price', d, t] >> "output_raw/pdtCommodity_price.csv";
+    }
+}
+
+# Write pdtGroup (co2_price)
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/pdtGroup_co2_price.csv";
+  for {g in group} {printf ",%s", g >> "output_raw/pdtGroup_co2_price.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtGroup_co2_price.csv";
+    for {g in group} {
+        printf ",%g", pdtGroup[g, 'co2_price', d, t] >> "output_raw/pdtGroup_co2_price.csv";
+    }
+}
+
+# Write pdtReserve_upDown_group (reservation)
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/pdtReserve_upDown_group_reservation.csv";
+  for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", r >> "output_raw/pdtReserve_upDown_group_reservation.csv";}
+  printf "\n,," >> "output_raw/pdtReserve_upDown_group_reservation.csv";
+  for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", ud >> "output_raw/pdtReserve_upDown_group_reservation.csv";}
+  printf "\n,," >> "output_raw/pdtReserve_upDown_group_reservation.csv";
+  for {(r, ud, ng) in reserve__upDown__group} {printf ",%s", ng >> "output_raw/pdtReserve_upDown_group_reservation.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtReserve_upDown_group_reservation.csv";
+    for {(r, ud, ng) in reserve__upDown__group} {
+        printf ",%g", pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t] >> "output_raw/pdtReserve_upDown_group_reservation.csv";
+    }
+}
+
+# Write pdtProfile
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/pdtProfile.csv";
+  for {f in profile} {printf ",%s", f >> "output_raw/pdtProfile.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtProfile.csv";
+    for {f in profile} {
+        printf ",%g", pdtProfile[f, d, t] >> "output_raw/pdtProfile.csv";
+    }
+}
+
+# Write p_years_d
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,value" > "output_raw/p_years_d.csv";
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s,%g", s, d, p_years_d[d] >> "output_raw/p_years_d.csv";
+}
+
+# Write p_entity_max_units
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/p_entity_max_units.csv";
+  for {e in entity} {printf ",%s", e >> "output_raw/p_entity_max_units.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/p_entity_max_units.csv";
+    for {e in entity} {
+        printf ",%g", p_entity_max_units[e, d] >> "output_raw/p_entity_max_units.csv";
+    }
+}
+
+# Write p_entity_all_existing
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/p_entity_all_existing.csv";
+  for {e in entity} {printf ",%s", e >> "output_raw/p_entity_all_existing.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/p_entity_all_existing.csv";
+    for {e in entity} {
+        printf ",%g", p_entity_all_existing[e, d] >> "output_raw/p_entity_all_existing.csv";
+    }
+}
+
+# Write pdProcess (startup_cost, fixed_cost)
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/pdProcess_startup_cost.csv";
+  for {p in process_online: sum{d in d_realized_period} pdProcess[p, 'startup_cost', d]} {printf ",%s", p >> "output_raw/pdProcess_startup_cost.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/pdProcess_startup_cost.csv";
+    for {p in process_online: pdProcess[p, 'startup_cost', d]} {
+        printf ",%g", pdProcess[p, 'startup_cost', d] >> "output_raw/pdProcess_startup_cost.csv";
+    }
+}
+
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/pdProcess_fixed_cost.csv";
+  for {p in process} {printf ",%s", p >> "output_raw/pdProcess_fixed_cost.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/pdProcess_fixed_cost.csv";
+    for {p in process} {
+        printf ",%g", pdProcess[p, 'fixed_cost', d] >> "output_raw/pdProcess_fixed_cost.csv";
+    }
+}
+
+# Write pdNode (fixed_cost, annual_flow)
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/pdNode_fixed_cost.csv";
+  for {(n, 'fixed_cost') in node__PeriodParam_in_use} {printf ",%s", n >> "output_raw/pdNode_fixed_cost.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/pdNode_fixed_cost.csv";
+    for {(n, 'fixed_cost') in node__PeriodParam_in_use} {
+        printf ",%g", pdNode[n, 'fixed_cost', d] >> "output_raw/pdNode_fixed_cost.csv";
+    }
+}
+
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/pdNode_annual_flow.csv";
+  for {(n, 'annual_flow') in node__PeriodParam_in_use} {printf ",%s", n >> "output_raw/pdNode_annual_flow.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/pdNode_annual_flow.csv";
+    for {(n, 'annual_flow') in node__PeriodParam_in_use} {
+        printf ",%g", pdNode[n, 'annual_flow', d] >> "output_raw/pdNode_annual_flow.csv";
+    }
+}
+
+# Write pdGroup (penalty_inertia, penalty_non_synchronous, penalty_capacity_margin, inertia_limit, capacity_margin)
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/pdGroup_penalty_inertia.csv";
+  for {g in group} {printf ",%s", g >> "output_raw/pdGroup_penalty_inertia.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/pdGroup_penalty_inertia.csv";
+    for {g in group} {
+        printf ",%g", pdGroup[g, 'penalty_inertia', d] >> "output_raw/pdGroup_penalty_inertia.csv";
+    }
+}
+
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/pdGroup_penalty_non_synchronous.csv";
+  for {g in group} {printf ",%s", g >> "output_raw/pdGroup_penalty_non_synchronous.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/pdGroup_penalty_non_synchronous.csv";
+    for {g in group} {
+        printf ",%g", pdGroup[g, 'penalty_non_synchronous', d] >> "output_raw/pdGroup_penalty_non_synchronous.csv";
+    }
+}
+
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/pdGroup_penalty_capacity_margin.csv";
+  for {g in group} {printf ",%s", g >> "output_raw/pdGroup_penalty_capacity_margin.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/pdGroup_penalty_capacity_margin.csv";
+    for {g in group} {
+        printf ",%g", pdGroup[g, 'penalty_capacity_margin', d] >> "output_raw/pdGroup_penalty_capacity_margin.csv";
+    }
+}
+
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/pdGroup_inertia_limit.csv";
+  for {g in group} {printf ",%s", g >> "output_raw/pdGroup_inertia_limit.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/pdGroup_inertia_limit.csv";
+    for {g in group} {
+        printf ",%g", pdGroup[g, 'inertia_limit', d] >> "output_raw/pdGroup_inertia_limit.csv";
+    }
+}
+
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/pdGroup_capacity_margin.csv";
+  for {g in group} {printf ",%s", g >> "output_raw/pdGroup_capacity_margin.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/pdGroup_capacity_margin.csv";
+    for {g in group} {
+        printf ",%g", pdGroup[g, 'capacity_margin', d] >> "output_raw/pdGroup_capacity_margin.csv";
+    }
+}
+
+# Write ed_entity_annual_discounted
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/ed_entity_annual_discounted.csv";
+  for {e in entityInvest} {printf ",%s", e >> "output_raw/ed_entity_annual_discounted.csv";}
+}
+for {s in solve_current, d in d_realize_dispatch_or_invest} {
+    printf "\n%s,%s", s, d >> "output_raw/ed_entity_annual_discounted.csv";
+    for {e in entityInvest} {
+        printf ",%g", (if (e, d) in ed_invest then ed_entity_annual_discounted[e, d] else 0) >> "output_raw/ed_entity_annual_discounted.csv";
+    }
+}
+
+# Write ed_entity_annual_divest_discounted
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/ed_entity_annual_divest_discounted.csv";
+  for {e in entityDivest} {printf ",%s", e >> "output_raw/ed_entity_annual_divest_discounted.csv";}
+}
+for {s in solve_current, d in d_realize_dispatch_or_invest} {
+    printf "\n%s,%s", s, d >> "output_raw/ed_entity_annual_divest_discounted.csv";
+    for {e in entityDivest} {
+        printf ",%g", (if (e, d) in ed_divest then ed_entity_annual_divest_discounted[e, d] else 0) >> "output_raw/ed_entity_annual_divest_discounted.csv";
+    }
+}
+
+# Write p_discount_factor_operations_yearly
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,value" > "output_raw/p_discount_factor_operations_yearly.csv";
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s,%g", s, d, p_discount_factor_operations_yearly[d] >> "output_raw/p_discount_factor_operations_yearly.csv";
+}
+
+# Write p_discount_factor_investment_yearly
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,value" > "output_raw/p_discount_factor_investment_yearly.csv";
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s,%g", s, d, p_discount_factor_investment_yearly[d] >> "output_raw/p_discount_factor_investment_yearly.csv";
+}
+
+# Write node_capacity_for_scaling
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/node_capacity_for_scaling.csv";
+  for {n in node} {printf ",%s", n >> "output_raw/node_capacity_for_scaling.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/node_capacity_for_scaling.csv";
+    for {n in node} {
+        printf ",%g", node_capacity_for_scaling[n, d] >> "output_raw/node_capacity_for_scaling.csv";
+    }
+}
+
+# Write group_capacity_for_scaling
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/group_capacity_for_scaling.csv";
+  for {g in group} {printf ",%s", g >> "output_raw/group_capacity_for_scaling.csv";}
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s", s, d >> "output_raw/group_capacity_for_scaling.csv";
+    for {g in group} {
+        printf ",%g", group_capacity_for_scaling[g, d] >> "output_raw/group_capacity_for_scaling.csv";
+    }
+}
+
+# Write complete_period_share_of_year
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,value" > "output_raw/complete_period_share_of_year.csv";
+}
+for {s in solve_current, d in d_realized_period} {
+    printf "\n%s,%s,%g", s, d, complete_period_share_of_year[d] >> "output_raw/complete_period_share_of_year.csv";
+}
+
+
+# Parameters and sets without d or (d,t) dimensions written only at first solve
+
+if p_model['solveFirst'] then {
+  # Write p_node
+  printf "param" > "output_raw/p_node.csv";
+  for {n in node} printf ",%s", n >> "output_raw/p_node.csv";
+  for {param in nodeParam} {
+      printf "\n%s", param >> "output_raw/p_node.csv";
+      for {n in node} {
+        printf ",%g", p_node[n, param] >> "output_raw/p_node.csv";
+      }
+  }
+
+  # Write p_unit
+  printf "param" > "output_raw/p_unit.csv";
+  for {p in process_unit} printf ",%s", p >> "output_raw/p_unit.csv";
+  for {param in processParam} {
+      printf "\n%s", param >> "output_raw/p_unit.csv";
+      for {p in process_unit} {
+        printf ",%g", p_process[p, param] >> "output_raw/p_unit.csv";
+      }
+  }
+
+  # Write p_connection
+  printf "param" > "output_raw/p_connection.csv";
+  for {p in process_connection} printf ",%s", p >> "output_raw/p_connection.csv";
+  for {param in processParam} {
+      printf "\n%s", param >> "output_raw/p_connection.csv";
+      for {p in process_connection} {
+        printf ",%g", p_process[p, param] >> "output_raw/p_connection.csv";
+      }
+  }
+
   # Write p_entity_unitsize
-  table tab_p_entity_unitsize{e in entity} OUT "CSV" "output/p_entity_unitsize.csv":
-      e~entity, p_entity_unitsize[e]~value;
+  printf "entity" > "output_raw/p_entity_unitsize.csv";
+  for {e in entity} printf ",%s", e >> "output_raw/p_entity_unitsize.csv";
+  printf "\nvalue" >> "output_raw/p_entity_unitsize.csv";
+  for {e in entity} {
+    printf ",%g", p_entity_unitsize[e] >> "output_raw/p_entity_unitsize.csv";
+  }
 
   # Write p_process_sink_coefficient
-  table tab_p_process_sink_coefficient{(p, sink) in process_sink} OUT "CSV" "output/p_process_sink_coefficient.csv":
-      p~process, sink~sink, p_process_sink_coefficient[p,sink]~value;
+  printf "process" > "output_raw/p_process_sink_coefficient.csv";
+  for {(p, sink) in process_sink} printf ",%s", p >> "output_raw/p_process_sink_coefficient.csv";
+  printf "\nsink" >>  "output_raw/p_process_sink_coefficient.csv";
+  for {(p, sink) in process_sink} printf ",%s", sink >> "output_raw/p_process_sink_coefficient.csv";
+  printf "\nvalue" >> "output_raw/p_process_sink_coefficient.csv";
+  for {(p, sink) in process_sink} {
+    printf ",%g", p_process_sink_coefficient[p, sink] >> "output_raw/p_process_sink_coefficient.csv";
+  }
 
   # Write p_process_source_coefficient
-  table tab_p_process_source_coefficient{(p, source) in process_source} OUT "CSV" "output/p_process_source_coefficient.csv":
-      p~process, source~source, p_process_source_coefficient[p,source]~value;
-
-  # Write p_commodity
-  table tab_p_commodity{c in commodity} OUT "CSV" "output/p_commodity_co2_content.csv":
-      c~commodity, p_commodity[c,'co2_content']~value;
-
-  # Write p_reserve_upDown_group
-  table tab_p_reserve_upDown_group{(r, ud, ng) in reserve__upDown__group} OUT "CSV" "output/p_reserve_upDown_group_penalty.csv":
-      r~reserve, ud~updown, ng~node_group, p_reserve_upDown_group[r,ud,ng,'penalty_reserve']~value;
-
-if p_model['solveFirst'] then {
-  # Write p_nested_model (solveFirst)
-  printf "param,value" > "output/p_nested_model.csv";
-  for {param_name in {"solveFirst"}} {
-      printf "\n%s,%g", param_name, p_nested_model[param_name] >> "output/p_nested_model.csv";
+  printf "process" > "output_raw/p_process_source_coefficient.csv";
+  for {(p, sr) in process_source} printf ",%s", p >> "output_raw/p_process_source_coefficient.csv";
+  printf "\nsource" >> "output_raw/p_process_source_coefficient.csv";
+  for {(p, sr) in process_source} printf ",%s", sr >> "output_raw/p_process_source_coefficient.csv";
+  printf "\nvalue" >> "output_raw/p_process_source_coefficient.csv";
+  for {(p, sr) in process_source} {
+    printf ",%g", p_process_source_coefficient[p, sr] >> "output_raw/p_process_source_coefficient.csv";
   }
 
+  # Write p_commodity_co2_content
+  printf "commodity" > "output_raw/p_commodity_co2_content.csv";
+  for {c in commodity} printf ",%s", c >> "output_raw/p_commodity_co2_content.csv";
+  printf "\n" >> "output_raw/p_commodity_co2_content.csv";
+  for {c in commodity} {
+    printf "%g", p_commodity[c, 'co2_content'] >> "output_raw/p_commodity_co2_content.csv";
+  }
+  printf "\n" >> "output_raw/p_commodity_co2_content.csv";
 
-  # Sets needed for hours_in_realized_period and realized_period_share_of_year
-
-  # d_realized_period - subset of periods
-  printf "period\n" > "output/set_d_realized_period.csv";
-  for {d in d_realized_period} {
-      printf "%s\n", d >> "output/set_d_realized_period.csv";
+  # Write p_reserve_upDown_group_penalty
+  printf "reserve" > "output_raw/p_reserve_upDown_group_penalty.csv";
+  for {(r, ud, ng) in reserve__upDown__group} printf ",%s", r >> "output_raw/p_reserve_upDown_group_penalty.csv";
+  printf "\nupDown" >> "output_raw/p_reserve_upDown_group_penalty.csv";
+  for {(r, ud, ng) in reserve__upDown__group} printf ",%s", ud >> "output_raw/p_reserve_upDown_group_penalty.csv";
+  printf "\ngroup" >> "output_raw/p_reserve_upDown_group_penalty.csv";
+  for {(r, ud, ng) in reserve__upDown__group} printf ",%s", ng >> "output_raw/p_reserve_upDown_group_penalty.csv";
+  printf "\nvalue" >> "output_raw/p_reserve_upDown_group_penalty.csv";
+  for {(r, ud, ng) in reserve__upDown__group} {
+    printf ",%g", p_reserve_upDown_group[r, ud, ng, 'penalty_reserve'] >> "output_raw/p_reserve_upDown_group_penalty.csv";
   }
 
-  # dt_realize_dispatch - (period, time) pairs
-  printf "period,time\n" > "output/set_dt_realize_dispatch.csv";
-  for {(d, t) in dt_realize_dispatch} {
-      printf "%s,%s\n", d, t >> "output/set_dt_realize_dispatch.csv";
-  }
 
   # Sets needed for entity_all_capacity
-
   # entity - all entities (ordered)
-  printf "entity\n" > "output/set_entity.csv";
+  printf "entity\n" > "output_raw/set_entity.csv";
   for {e in entity} {
-      printf "%s\n", e >> "output/set_entity.csv";
+      printf "%s\n", e >> "output_raw/set_entity.csv";
   }
 
   # period - all periods (ordered)
-  printf "period\n" > "output/set_period.csv";
-  for {d in period} {
-      printf "%s\n", d >> "output/set_period.csv";
+  printf "period\n" > "output_raw/set_period.csv";
+  for {s in solve_current, d in period} {
+      printf "%s\n", s, d >> "output_raw/set_period.csv";
   }
 
   # entityInvest - entities that can invest
-  printf "entity\n" > "output/set_entityInvest.csv";
+  printf "entity\n" > "output_raw/set_entityInvest.csv";
   for {e in entityInvest} {
-      printf "%s\n", e >> "output/set_entityInvest.csv";
+      printf "%s\n", e >> "output_raw/set_entityInvest.csv";
   }
 
   # entityDivest - entities that can divest
-  printf "entity\n" > "output/set_entityDivest.csv";
+  printf "entity\n" > "output_raw/set_entityDivest.csv";
   for {e in entityDivest} {
-      printf "%s\n", e >> "output/set_entityDivest.csv";
+      printf "%s\n", e >> "output_raw/set_entityDivest.csv";
   }
 
-  # period_invest - periods where investment can occur
-  printf "period\n" > "output/set_period_invest.csv";
-  for {d in period_invest} {
-      printf "%s\n", d >> "output/set_period_invest.csv";
-  }
 
-  # ed_invest - (entity, period) pairs where investment occurs
-  printf "entity,period\n" > "output/set_ed_invest.csv";
-  for {(e, d) in ed_invest} {
-      printf "%s,%s\n", e, d >> "output/set_ed_invest.csv";
-  }
-
-  # ed_divest - (entity, period) pairs where divestment occurs
-  printf "entity,period\n" > "output/set_ed_divest.csv";
-  for {(e, d) in ed_divest} {
-      printf "%s,%s\n", e, d >> "output/set_ed_divest.csv";
-  }
-
-  # edd_invest - (entity, d_invest, d) triplets showing which investments apply to which periods
-  printf "entity,d_invest,d\n" > "output/set_edd_invest.csv";
-  for {(e, d_invest, d) in edd_invest} {
-      printf "%s,%s,%s\n", e, d_invest, d >> "output/set_edd_invest.csv";
-  }
-
-  # Sets needed for r_process_Online__dt
-
-  # dt - all (period, time) pairs
-  printf "period,time\n" > "output/set_dt.csv";
-  for {(d, t) in dt} {
-      printf "%s,%s\n", d, t >> "output/set_dt.csv";
-  }
-
+  # Sets for online methods
   # process_online - processes with online variables
-  printf "process\n" > "output/set_process_online.csv";
+  printf "process\n" > "output_raw/set_process_online.csv";
   for {p in process_online} {
-      printf "%s\n", p >> "output/set_process_online.csv";
+      printf "%s\n", p >> "output_raw/set_process_online.csv";
   }
 
   # process_online_linear - processes with linear online variables
-  printf "process\n" > "output/set_process_online_linear.csv";
+  printf "process\n" > "output_raw/set_process_online_linear.csv";
   for {p in process_online_linear} {
-      printf "%s\n", p >> "output/set_process_online_linear.csv";
+      printf "%s\n", p >> "output_raw/set_process_online_linear.csv";
   }
 
   # process_online_integer - processes with integer online variables
-  printf "process\n" > "output/set_process_online_integer.csv";
+  printf "process\n" > "output_raw/set_process_online_integer.csv";
   for {p in process_online_integer} {
-      printf "%s\n", p >> "output/set_process_online_integer.csv";
+      printf "%s\n", p >> "output_raw/set_process_online_integer.csv";
   }
 
   # Sets needed for flow calculations
-
   # Process topology sets
-  printf "process,method,orig_source,orig_sink,always_source,always_sink\n" > "output/set_process_method_sources_sinks.csv";
+  printf "process,method,orig_source,orig_sink,always_source,always_sink\n" > "output_raw/set_process_method_sources_sinks.csv";
   for {(p, m, orig_source, orig_sink, always_source, always_sink) in process_method_sources_sinks} {
-      printf "%s,%s,%s,%s,%s,%s\n", p, m, orig_source, orig_sink, always_source, always_sink >> "output/set_process_method_sources_sinks.csv";
+      printf "%s,%s,%s,%s,%s,%s\n", p, m, orig_source, orig_sink, always_source, always_sink >> "output_raw/set_process_method_sources_sinks.csv";
   }
 
   # Process profile set
-  printf "process\n" > "output/set_process_profile.csv";
+  printf "process\n" > "output_raw/set_process_profile.csv";
   for {p in process_profile} {
-      printf "%s\n", p >> "output/set_process_profile.csv";
+      printf "%s\n", p >> "output_raw/set_process_profile.csv";
   }
 
   # Process method sets
-  printf "process,method\n" > "output/set_process_method.csv";
+  printf "process,method\n" > "output_raw/set_process_method.csv";
   for {(p, m) in process_method} {
-      printf "%s,%s\n", p, m >> "output/set_process_method.csv";
+      printf "%s,%s\n", p, m >> "output_raw/set_process_method.csv";
   }
 
-  printf "process,method\n" > "output/set_process__ct_method.csv";
+  printf "process,method\n" > "output_raw/set_process__ct_method.csv";
   for {(p, m) in process__ct_method} {
-      printf "%s,%s\n", p, m >> "output/set_process__ct_method.csv";
+      printf "%s,%s\n", p, m >> "output_raw/set_process__ct_method.csv";
   }
 
   # Process unit and connection sets
-  printf "process\n" > "output/set_process_unit.csv";
+  printf "process\n" > "output_raw/set_process_unit.csv";
   for {p in process_unit} {
-      printf "%s\n", p >> "output/set_process_unit.csv";
+      printf "%s\n", p >> "output_raw/set_process_unit.csv";
   }
-  printf "process\n" > "output/set_process_connection.csv";
+  printf "process\n" > "output_raw/set_process_connection.csv";
   for {p in process_connection} {
-      printf "%s\n", p >> "output/set_process_connection.csv";
+      printf "%s\n", p >> "output_raw/set_process_connection.csv";
   }
 
   # Method type sets
-  printf "method\n" > "output/set_method_1var_per_way.csv";
+  printf "method\n" > "output_raw/set_method_1var_per_way.csv";
   for {m in method_1var_per_way} {
-      printf "%s\n", m >> "output/set_method_1var_per_way.csv";
+      printf "%s\n", m >> "output_raw/set_method_1var_per_way.csv";
   }
 
-  printf "method\n" > "output/set_method_nvar.csv";
+  printf "method\n" > "output_raw/set_method_nvar.csv";
   for {m in method_nvar} {
-      printf "%s\n", m >> "output/set_method_nvar.csv";
-  }
-
-  # Time-related sets
-  printf "period,time,t_previous\n" > "output/set_dtt.csv";
-  for {(d, t, t_previous) in dtt} {
-      printf "%s,%s,%s\n", d, t, t_previous >> "output/set_dtt.csv";
-  }
-
-  printf "period,time,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve\n" > "output/set_dtttdt.csv";
-  for {(d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} {
-      printf "%s,%s,%s,%s,%s,%s\n", d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve >> "output/set_dtttdt.csv";
-  }
-
-  printf "period,time\n" > "output/set_period__time_first.csv";
-  for {(d, t) in period__time_first} {
-      printf "%s,%s\n", d, t >> "output/set_period__time_first.csv";
-  }
-
-  printf "period\n" > "output/set_period_first_of_solve.csv";
-  for {d in period_first_of_solve} {
-      printf "%s\n", d >> "output/set_period_first_of_solve.csv";
-  }
-
-  printf "period\n" > "output/set_period_in_use.csv";
-  for {d in period_in_use} {
-      printf "%s\n", d >> "output/set_period_in_use.csv";
-  }
-
-  printf "period,time\n" > "output/set_dt_fix_storage_timesteps.csv";
-  for {(d, t) in dt_fix_storage_timesteps} {
-      printf "%s,%s\n", d, t >> "output/set_dt_fix_storage_timesteps.csv";
+      printf "%s\n", m >> "output_raw/set_method_nvar.csv";
   }
 
   # Node-related sets
-  printf "node\n" > "output/set_nodeState.csv";
+  printf "node\n" > "output_raw/set_nodeState.csv";
   for {n in nodeState} {
-      printf "%s\n", n >> "output/set_nodeState.csv";
+      printf "%s\n", n >> "output_raw/set_nodeState.csv";
   }
 
-  printf "node\n" > "output/set_nodeBalance.csv";
+  printf "node\n" > "output_raw/set_nodeBalance.csv";
   for {n in nodeBalance} {
-      printf "%s\n", n >> "output/set_nodeBalance.csv";
+      printf "%s\n", n >> "output_raw/set_nodeBalance.csv";
   }
 
-  printf "node\n" > "output/set_nodeBalancePeriod.csv";
+  printf "node\n" > "output_raw/set_nodeBalancePeriod.csv";
   for {n in nodeBalancePeriod} {
-      printf "%s\n", n >> "output/set_nodeBalancePeriod.csv";
+      printf "%s\n", n >> "output_raw/set_nodeBalancePeriod.csv";
   }
 
-  printf "node\n" > "output/set_nodeSelfDischarge.csv";
+  printf "node\n" > "output_raw/set_nodeSelfDischarge.csv";
   for {n in nodeSelfDischarge} {
-      printf "%s\n", n >> "output/set_nodeSelfDischarge.csv";
+      printf "%s\n", n >> "output_raw/set_nodeSelfDischarge.csv";
   }
 
-  printf "node,method\n" > "output/set_node__storage_binding_method.csv";
+  printf "node,method\n" > "output_raw/set_node__storage_binding_method.csv";
   for {(n, m) in node__storage_binding_method} {
-      printf "%s,%s\n", n, m >> "output/set_node__storage_binding_method.csv";
+      printf "%s,%s\n", n, m >> "output_raw/set_node__storage_binding_method.csv";
   }
 
-  printf "node,method\n" > "output/set_node__storage_start_end_method.csv";
+  printf "node,method\n" > "output_raw/set_node__storage_start_end_method.csv";
   for {(n, m) in node__storage_start_end_method} {
-      printf "%s,%s\n", n, m >> "output/set_node__storage_start_end_method.csv";
+      printf "%s,%s\n", n, m >> "output_raw/set_node__storage_start_end_method.csv";
   }
 
-  printf "node,method\n" > "output/set_node__inflow_method.csv";
+  printf "node,method\n" > "output_raw/set_node__inflow_method.csv";
   for {(n, m) in node__inflow_method} {
-      printf "%s,%s\n", n, m >> "output/set_node__inflow_method.csv";
+      printf "%s,%s\n", n, m >> "output_raw/set_node__inflow_method.csv";
   }
 
-  printf "node,method\n" > "output/set_node__storage_nested_fix_method.csv";
+  printf "node,method\n" > "output_raw/set_node__storage_nested_fix_method.csv";
   for {(n, m) in node__storage_nested_fix_method} {
-      printf "%s,%s\n", n, m >> "output/set_node__storage_nested_fix_method.csv";
+      printf "%s,%s\n", n, m >> "output_raw/set_node__storage_nested_fix_method.csv";
   }
 
   # Process-related sets
-  printf "process\n" > "output/set_process.csv";
+  printf "process\n" > "output_raw/set_process.csv";
   for {p in process} {
-      printf "%s\n", p >> "output/set_process.csv";
+      printf "%s\n", p >> "output_raw/set_process.csv";
   }
 
-  printf "node\n" > "output/set_node.csv";
+  printf "node\n" > "output_raw/set_node.csv";
   for {n in node} {
-      printf "%s\n", n >> "output/set_node.csv";
+      printf "%s\n", n >> "output_raw/set_node.csv";
   }
 
-  printf "process\n" > "output/set_process_connection.csv";
+  printf "process\n" > "output_raw/set_process_connection.csv";
   for {c in process_connection} {
-      printf "%s\n", c >> "output/set_process_connection.csv";
+      printf "%s\n", c >> "output_raw/set_process_connection.csv";
   }
 
-  printf "process,source\n" > "output/set_process_source.csv";
+  printf "process,source\n" > "output_raw/set_process_source.csv";
   for {(p, source) in process_source} {
-      printf "%s,%s\n", p, source >> "output/set_process_source.csv";
+      printf "%s,%s\n", p, source >> "output_raw/set_process_source.csv";
   }
 
-  printf "process,sink\n" > "output/set_process_sink.csv";
+  printf "process,sink\n" > "output_raw/set_process_sink.csv";
   for {(p, sink) in process_sink} {
-      printf "%s,%s\n", p, sink >> "output/set_process_sink.csv";
+      printf "%s,%s\n", p, sink >> "output_raw/set_process_sink.csv";
   }
 
-  printf "process,node\n" > "output/set_process_VRE.csv";
+  printf "process,node\n" > "output_raw/set_process_VRE.csv";
   for {(p, n) in process_sink : p in process_VRE} {
-      printf "%s,%s\n", p, n >> "output/set_process_VRE.csv";
+      printf "%s,%s\n", p, n >> "output_raw/set_process_VRE.csv";
   }
 
-  printf "process,source,sink,profile,method\n" > "output/set_process__source__sink__profile__profile_method.csv";
+  printf "process,source,sink,profile,method\n" > "output_raw/set_process__source__sink__profile__profile_method.csv";
   for {(p, source, sink, f, m) in process__source__sink__profile__profile_method} {
-      printf "%s,%s,%s,%s,%s\n", p, source, sink, f, m >> "output/set_process__source__sink__profile__profile_method.csv";
+      printf "%s,%s,%s,%s,%s\n", p, source, sink, f, m >> "output_raw/set_process__source__sink__profile__profile_method.csv";
   }
 
   # Commodity-related sets
-  printf "commodity,node\n" > "output/set_commodity_node.csv";
+  printf "commodity,node\n" > "output_raw/set_commodity_node.csv";
   for {(c, n) in commodity_node} {
-      printf "%s,%s\n", c, n >> "output/set_commodity_node.csv";
+      printf "%s,%s\n", c, n >> "output_raw/set_commodity_node.csv";
   }
 
-  printf "commodity,node\n" > "output/set_commodity_node_co2.csv";
+  printf "commodity,node\n" > "output_raw/set_commodity_node_co2.csv";
   for {(c, n) in commodity_node_co2} {
-      printf "%s,%s\n", c, n >> "output/set_commodity_node_co2.csv";
+      printf "%s,%s\n", c, n >> "output_raw/set_commodity_node_co2.csv";
   }
 
-  printf "process,commodity,node\n" > "output/set_process__commodity__node.csv";
+  printf "process,commodity,node\n" > "output_raw/set_process__commodity__node.csv";
   for {(p, c, n) in process__commodity__node} {
-      printf "%s,%s,%s\n", p, c, n >> "output/set_process__commodity__node.csv";
+      printf "%s,%s,%s\n", p, c, n >> "output_raw/set_process__commodity__node.csv";
   }
 
-  printf "process,commodity,node\n" > "output/set_process__commodity__node_co2.csv";
+  printf "process,commodity,node\n" > "output_raw/set_process__commodity__node_co2.csv";
   for {(p, c, n) in process__commodity__node_co2} {
-      printf "%s,%s,%s\n", p, c, n >> "output/set_process__commodity__node_co2.csv";
+      printf "%s,%s,%s\n", p, c, n >> "output_raw/set_process__commodity__node_co2.csv";
   }
 
-  printf "group,commodity,node,period,time\n" > "output/set_gcndt_co2_price.csv";
+  printf "group,commodity,node,period,time\n" > "output_raw/set_gcndt_co2_price.csv";
   for {(g, c, n, d, t) in gcndt_co2_price} {
-      printf "%s,%s,%s,%s,%s\n", g, c, n, d, t >> "output/set_gcndt_co2_price.csv";
+      printf "%s,%s,%s,%s,%s\n", g, c, n, d, t >> "output_raw/set_gcndt_co2_price.csv";
   }
 
   # Group-related sets
-  printf "group\n" > "output/set_groupInertia.csv";
+  printf "group\n" > "output_raw/set_groupInertia.csv";
   for {g in groupInertia} {
-      printf "%s\n", g >> "output/set_groupInertia.csv";
+      printf "%s\n", g >> "output_raw/set_groupInertia.csv";
   }
 
-  printf "group\n" > "output/set_groupNonSync.csv";
+  printf "group\n" > "output_raw/set_groupNonSync.csv";
   for {g in groupNonSync} {
-      printf "%s\n", g >> "output/set_groupNonSync.csv";
+      printf "%s\n", g >> "output_raw/set_groupNonSync.csv";
   }
 
-  printf "group\n" > "output/set_groupCapacityMargin.csv";
+  printf "group\n" > "output_raw/set_groupCapacityMargin.csv";
   for {g in groupCapacityMargin} {
-      printf "%s\n", g >> "output/set_groupCapacityMargin.csv";
+      printf "%s\n", g >> "output_raw/set_groupCapacityMargin.csv";
   }
 
-  printf "group\n" > "output/set_groupOutputNodeFlows.csv";
+  printf "group\n" > "output_raw/set_groupOutputNodeFlows.csv";
   for {g in groupOutputNodeFlows} {
-      printf "%s\n", g >> "output/set_groupOutputNodeFlows.csv";
+      printf "%s\n", g >> "output_raw/set_groupOutputNodeFlows.csv";
   }
 
-  printf "group,connection\n" > "output/set_group_output__connection_Not_in_aggregate.csv";
+  printf "group,connection\n" > "output_raw/set_group_output__connection_Not_in_aggregate.csv";
   for {(g, c) in group_output__connection_Not_in_aggregate} {
-      printf "%s,%s\n", g, c >> "output/set_group_output__connection_Not_in_aggregate.csv";
+      printf "%s,%s\n", g, c >> "output_raw/set_group_output__connection_Not_in_aggregate.csv";
   }
 
-  printf "group,connection,connection,node\n" > "output/set_group_output__process__connection__to_node_Not_in_aggregate.csv";
+  printf "group,connection,connection,node\n" > "output_raw/set_group_output__process__connection__to_node_Not_in_aggregate.csv";
   for {(g, c, c2, n) in group_output__process__connection__to_node_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, c, c2, n >> "output/set_group_output__process__connection__to_node_Not_in_aggregate.csv";
+      printf "%s,%s,%s,%s\n", g, c, c2, n >> "output_raw/set_group_output__process__connection__to_node_Not_in_aggregate.csv";
   }
 
-  printf "group,connection,node,connection\n" > "output/set_group_output__process__node__to_connection_Not_in_aggregate.csv";
+  printf "group,connection,node,connection\n" > "output_raw/set_group_output__process__node__to_connection_Not_in_aggregate.csv";
   for {(g, c, n, c2) in group_output__process__node__to_connection_Not_in_aggregate} {
-      printf "%s,%s,%s,%s\n", g, c, n, c2 >> "output/set_group_output__process__node__to_connection_Not_in_aggregate.csv";
+      printf "%s,%s,%s,%s\n", g, c, n, c2 >> "output_raw/set_group_output__process__node__to_connection_Not_in_aggregate.csv";
   }
 
-  printf "group,group_aggregate\n" > "output/set_group_output__group_aggregate_Unit_to_group.csv";
+  printf "group,group_aggregate\n" > "output_raw/set_group_output__group_aggregate_Unit_to_group.csv";
   for {(g, ga) in group_output__group_aggregate_Unit_to_group} {
-      printf "%s,%s\n", g, ga >> "output/set_group_output__group_aggregate_Unit_to_group.csv";
+      printf "%s,%s\n", g, ga >> "output_raw/set_group_output__group_aggregate_Unit_to_group.csv";
   }
 
-  printf "group,group_aggregate,unit,source,sink\n" > "output/set_group_output__group_aggregate__process__unit__to_node.csv";
+  printf "group,group_aggregate,unit,source,sink\n" > "output_raw/set_group_output__group_aggregate__process__unit__to_node.csv";
   for {(g, ga, u, source, sink) in group_output__group_aggregate__process__unit__to_node} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "output/set_group_output__group_aggregate__process__unit__to_node.csv";
+      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "output_raw/set_group_output__group_aggregate__process__unit__to_node.csv";
   }
 
-  printf "group,group_aggregate\n" > "output/set_group_output__group_aggregate_Group_to_unit.csv";
+  printf "group,group_aggregate\n" > "output_raw/set_group_output__group_aggregate_Group_to_unit.csv";
   for {(g, ga) in group_output__group_aggregate_Group_to_unit} {
-      printf "%s,%s\n", g, ga >> "output/set_group_output__group_aggregate_Group_to_unit.csv";
+      printf "%s,%s\n", g, ga >> "output_raw/set_group_output__group_aggregate_Group_to_unit.csv";
   }
 
-  printf "group,group_aggregate,unit,source,sink\n" > "output/set_group_output__group_aggregate__process__node__to_unit.csv";
+  printf "group,group_aggregate,unit,source,sink\n" > "output_raw/set_group_output__group_aggregate__process__node__to_unit.csv";
   for {(g, ga, u, source, sink) in group_output__group_aggregate__process__node__to_unit} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "output/set_group_output__group_aggregate__process__node__to_unit.csv";
+      printf "%s,%s,%s,%s,%s\n", g, ga, u, source, sink >> "output_raw/set_group_output__group_aggregate__process__node__to_unit.csv";
   }
 
-  printf "group,group_aggregate\n" > "output/set_group_output__group_aggregate_Connection.csv";
+  printf "group,group_aggregate\n" > "output_raw/set_group_output__group_aggregate_Connection.csv";
   for {(g, ga) in group_output__group_aggregate_Connection} {
-      printf "%s,%s\n", g, ga >> "output/set_group_output__group_aggregate_Connection.csv";
+      printf "%s,%s\n", g, ga >> "output_raw/set_group_output__group_aggregate_Connection.csv";
   }
 
-  printf "group,group_aggregate,connection,source,sink\n" > "output/set_group_output__group_aggregate__process__connection__to_node.csv";
+  printf "group,group_aggregate,connection,source,sink\n" > "output_raw/set_group_output__group_aggregate__process__connection__to_node.csv";
   for {(g, ga, c, source, sink) in group_output__group_aggregate__process__connection__to_node} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "output/set_group_output__group_aggregate__process__connection__to_node.csv";
+      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "output_raw/set_group_output__group_aggregate__process__connection__to_node.csv";
   }
 
-  printf "group,group_aggregate,connection,source,sink\n" > "output/set_group_output__group_aggregate__process__node__to_connection.csv";
+  printf "group,group_aggregate,connection,source,sink\n" > "output_raw/set_group_output__group_aggregate__process__node__to_connection.csv";
   for {(g, ga, c, source, sink) in group_output__group_aggregate__process__node__to_connection} {
-      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "output/set_group_output__group_aggregate__process__node__to_connection.csv";
+      printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "output_raw/set_group_output__group_aggregate__process__node__to_connection.csv";
   }
 
-  printf "group,process\n" > "output/set_group_output__process_fully_inside.csv";
+  printf "group,process\n" > "output_raw/set_group_output__process_fully_inside.csv";
   for {(g, p) in group_output__process_fully_inside} {
-      printf "%s,%s\n", g, p >> "output/set_group_output__process_fully_inside.csv";
+      printf "%s,%s\n", g, p >> "output_raw/set_group_output__process_fully_inside.csv";
   }
 
-  printf "group,node\n" > "output/set_group_node.csv";
+  printf "group,node\n" > "output_raw/set_group_node.csv";
   for {(g, n) in group_node} {
-      printf "%s,%s\n", g, n >> "output/set_group_node.csv";
+      printf "%s,%s\n", g, n >> "output_raw/set_group_node.csv";
   }
 
   # upDown set
-  printf "updown\n" > "output/set_upDown.csv";
+  printf "updown\n" > "output_raw/set_upDown.csv";
   for {ud in upDown} {
-      printf "%s\n", ud >> "output/set_upDown.csv";
+      printf "%s\n", ud >> "output_raw/set_upDown.csv";
   }
 
   # Optional output flag
-  printf "flag\n" > "output/set_enable_optional_outputs.csv";
+  printf "flag\n" > "output_raw/set_enable_optional_outputs.csv";
   for {flag in enable_optional_outputs} {
-      printf "%s\n", flag >> "output/set_enable_optional_outputs.csv";
+      printf "%s\n", flag >> "output_raw/set_enable_optional_outputs.csv";
   }
 }
+
+# Sets with period and/or time dimensions
+
+# period_invest - periods where investment can occur
+if p_model["solveFirst"] == 1 then printf "solve,period\n" > "output_raw/set_period_invest.csv";
+for {s in solve_current, d in d_realize_dispatch_or_invest} {
+    printf "%s,%s\n", s, d >> "output_raw/set_d_realize_dispatch_or_invest.csv";
+}
+
+# ed_invest - (entity, period) pairs where investment occurs
+if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "output_raw/set_ed_invest.csv";
+for {s in solve_current, (e, d) in ed_invest} {
+    printf "%s,%s,%s\n", s, e, d >> "output_raw/set_ed_invest.csv";
+}
+
+# ed_divest - (entity, period) pairs where divestment occurs
+if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "output_raw/set_ed_divest.csv";
+for {s in solve_current, (e, d) in ed_divest} {
+    printf "%s,%s,%s\n", s, e, d >> "output_raw/set_ed_divest.csv";
+}
+
+# edd_invest - (entity, d_invest, d) triplets showing which investments apply to which periods
+if p_model["solveFirst"] == 1 then printf "solve,entity,d_invest,d\n" > "output_raw/set_edd_invest.csv";
+for {s in solve_current, (e, d_invest, d) in edd_invest} {
+    printf "%s,%s,%s,%s\n", s, e, d_invest, d >> "output_raw/set_edd_invest.csv";
+}
+
+# Write p_nested_model (solveFirst)
+if p_model["solveFirst"] == 1 then printf "solve,param,value" > "output_raw/p_nested_model.csv";
+for {s in solve_current, param_name in {"solveFirst"}} {
+    printf "\n%s,%s,%g", s, param_name, p_nested_model[param_name] >> "output_raw/p_nested_model.csv";
+}
+
+# d_realized_period - subset of periods
+if p_model["solveFirst"] == 1 then printf "solve,period\n" > "output_raw/set_d_realized_period.csv";
+for {s in solve_current, d in d_realized_period} {
+    printf "%s,%s\n", s, d >> "output_raw/set_d_realized_period.csv";
+}
+
+# dt_realize_dispatch - (period, time) pairs
+if p_model["solveFirst"] == 1 then printf "solve,period,time\n" > "output_raw/set_dt_realize_dispatch.csv";
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "%s,%s,%s\n", s, d, t >> "output_raw/set_dt_realize_dispatch.csv";
+}
+
+if p_model["solveFirst"] == 1 then printf "solve,period,time\n" > "output_raw/set_dt.csv";
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "%s,%s,%s\n", s, d, t >> "output_raw/set_dt.csv";
+}
+
+if p_model["solveFirst"] == 1 then printf "solve,period,time,t_previous\n" > "output_raw/set_dtt.csv";
+for {s in solve_current, (d, t, t_previous) in dtt : (d, t) in dt_realize_dispatch} {
+    printf "%s,%s,%s,%s\n", s, d, t, t_previous >> "output_raw/set_dtt.csv";
+}
+
+if p_model["solveFirst"] == 1 then printf "solve,period,time,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve\n" > "output_raw/set_dtttdt.csv";
+for {s in solve_current, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : (d, t) in dt_realize_dispatch} {
+    printf "%s,%s,%s,%s,%s,%s,%s\n", s, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve >> "output_raw/set_dtttdt.csv";
+}
+
+if p_model["solveFirst"] == 1 then printf "solve,period,time\n" > "output_raw/set_period__time_first.csv";
+for {s in solve_current, (d, t) in period__time_first} {
+    printf "%s,%s,%s\n", s, d, t >> "output_raw/set_period__time_first.csv";
+}
+
+if p_model["solveFirst"] == 1 then printf "solve,period\n" > "output_raw/set_period_first_of_solve.csv";
+for {s in solve_current, d in period_first_of_solve} {
+    printf "%s,%s\n", s, d >> "output_raw/set_period_first_of_solve.csv";
+}
+
+if p_model["solveFirst"] == 1 then printf "solve,period\n" > "output_raw/set_period_in_use.csv";
+for {s in solve_current, d in period_in_use} {
+    printf "%s,%s\n", s, d >> "output_raw/set_period_in_use.csv";
+}
+
+if p_model["solveFirst"] == 1 then printf "solve,period,time\n" > "output_raw/set_dt_fix_storage_timesteps.csv";
+for {s in solve_current, (d, t) in dt_fix_storage_timesteps} {
+    printf "%s,%s,%s\n", s, d, t >> "output_raw/set_dt_fix_storage_timesteps.csv";
+}
+
 
 param hours_in_realized_period{d in d_realized_period} := sum {(d, t) in dt_realize_dispatch} (step_duration[d, t]);
 param realized_period_share_of_year{d in d_realized_period}:= hours_in_realized_period[d] / 8760;
@@ -4462,7 +4621,7 @@ param r_nodeState_change_d{n in nodeState, d in d_realized_period} := sum {(d, t
 param r_selfDischargeLoss_dt{n in nodeSelfDischarge, (d, t) in dt_realize_dispatch} := v_state[n, d, t] * pdtNode[n, 'self_discharge_loss', d, t] * p_entity_unitsize[n];
 param r_selfDischargeLoss_d{n in nodeSelfDischarge, d in d_realized_period} := sum{(d, t) in dt_realize_dispatch} r_selfDischargeLoss_dt[n, d, t] * step_duration[d, t];
 
-param r_cost_commodity_dt{(c, n) in commodity_node, (d, t) in dt} := 
+param r_cost_commodity_dt{(c, n) in commodity_node, (d, t) in dt} :=
   + step_duration[d, t] 
       * pdtCommodity[c, 'price', d, t] 
       * ( + sum{(p, n, sink) in process_source_sink_alwaysProcess}
@@ -4479,7 +4638,7 @@ param r_process_commodity_d{(p, c, n) in process__commodity__node, d in d_realiz
       + r_process_source_sink_flow_d[p, source, n, d]
 ;
 
-param r_process_emissions_co2_dt{(p, c, n) in process__commodity__node_co2, (d, t) in dt} := 
+param r_process_emissions_co2_dt{(p, c, n) in process__commodity__node_co2, (d, t) in dt} :=
   + step_duration[d, t]
       * p_commodity[c, 'co2_content'] 
       * ( + sum{(p, n, sink) in process_source_sink_alwaysProcess}
@@ -4556,7 +4715,7 @@ param r_costPenalty_non_synchronous_dt{g in groupNonSync, (d, t) in dt} :=
 	  * pdGroup[g, 'penalty_non_synchronous', d]
 ;
 
-param r_costPenalty_capacity_margin_d{g in groupCapacityMargin, d in period_invest} :=
+param r_costPenalty_capacity_margin_d{g in groupCapacityMargin, d in d_realize_dispatch_or_invest} :=
   + vq_capacity_margin[g, d] * group_capacity_for_scaling[g, d]
       * pdGroup[g, 'penalty_capacity_margin', d]
 	  * p_discount_factor_operations_yearly[d]
@@ -4625,7 +4784,7 @@ param r_costPenalty_non_synchronous_d{g in groupNonSync, d in d_realized_period}
 param r_costPenalty_reserve_upDown_d{(r, ud, ng) in reserve__upDown__group, d in d_realized_period} := sum{(d, t) in dt_realize_dispatch} r_costPenalty_reserve_upDown_dt[r, ud, ng, d, t];
 
 param r_costOper_d{d in period_in_use} := sum{(d, t) in dt} r_costOper_dt[d, t] ;
-param r_costPenalty_d{d in period_in_use} := sum{(d, t) in dt} r_costPenalty_dt[d, t] + sum{g in groupCapacityMargin : d in period_invest} r_costPenalty_capacity_margin_d[g, d];
+param r_costPenalty_d{d in period_in_use} := sum{(d, t) in dt} r_costPenalty_dt[d, t] + sum{g in groupCapacityMargin : d in d_realize_dispatch_or_invest} r_costPenalty_capacity_margin_d[g, d];
 param r_costOper_and_penalty_d{d in period_in_use} := + r_costOper_d[d] + r_costPenalty_d[d];
 
 param r_costInvestUnit_d{d in period_in_use} := sum{(e, d) in ed_invest : e in process_unit} r_cost_entity_invest_d[e, d];
@@ -4651,7 +4810,7 @@ param potentialVREgen_dt{(p, n) in process_sink, (d, t) in dt_realize_dispatch: 
   ;
 
 param potentialVREgen{(p, n) in process_sink, d in d_realized_period : p in process_VRE} :=
-  + sum{(p, source, n, f, m) in process__source__sink__profile__profile_method, (d, t) in dt_realize_dispatch : m = 'upper_limit'} 
+  + sum{(p, source, n, f, m) in process__source__sink__profile__profile_method, (d, t) in dt_realize_dispatch : m = 'upper_limit'}
       + potentialVREgen_dt[p, n, d, t];
 
 param r_group_output__group_aggregate_Unit_to_group__dt{(g, ga) in group_output__group_aggregate_Unit_to_group, (d, t) in dt_realize_dispatch} :=
@@ -4933,7 +5092,7 @@ for {g in groupNonSync}
 
 for {g in groupCapacityMargin}
   {
-    for {d in period_invest : r_costPenalty_capacity_margin_d[g, d]}
+    for {d in d_realize_dispatch_or_invest : r_costPenalty_capacity_margin_d[g, d]}
 	  {
         printf 'CapMargin, %s, %s, %.5g\n', g, d, r_costPenalty_capacity_margin_d[g, d] / pdGroup[g, 'penalty_capacity_margin', d] >> fn_summary;
 	  }
@@ -5199,7 +5358,7 @@ for {s in solve_current, d in (d_realized_period union d_realize_invest)}
     (if d in d_realize_invest then  (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0),
     (if d in d_realize_invest then  (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0),
 	  (if d in d_realized_period then  r_costExistingFixed_d[d] / p_discount_factor_operations_yearly[d] / 1000000 else 0),
-    (if d in d_realize_invest then sum{g in groupCapacityMargin : d in period_invest} (r_costPenalty_capacity_margin_d[g, d] / p_discount_factor_operations_yearly[d]) / 1000000 else 0),
+    (if d in d_realize_invest then sum{g in groupCapacityMargin : d in d_realize_dispatch_or_invest} (r_costPenalty_capacity_margin_d[g, d] / p_discount_factor_operations_yearly[d]) / 1000000 else 0),
     (if d in d_realized_period then  r_cost_commodity_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
 	  (if d in d_realized_period then r_cost_co2_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
 	  (if d in d_realized_period then r_cost_variable_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
@@ -5228,7 +5387,7 @@ for {s in solve_current, d in d_realize_invest}
     (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_factor_operations_yearly[d] / 1000000,
     (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_factor_operations_yearly[d] / 1000000,
 	  r_costExistingFixed_d[d] / p_discount_factor_operations_yearly[d] / 1000000,
-    sum{g in groupCapacityMargin : d in period_invest} (r_costPenalty_capacity_margin_d[g, d] / p_discount_factor_operations_yearly[d]) / 1000000
+    sum{g in groupCapacityMargin : d in d_realize_dispatch_or_invest} (r_costPenalty_capacity_margin_d[g, d] / p_discount_factor_operations_yearly[d]) / 1000000
     >> fn_annual_investment_summary_cost;
   }
 
@@ -5655,7 +5814,7 @@ for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_ou
   {
 	printf '\n%s,%s', s, d >> fn_connection_cf__d;
     for {(c, input, output) in process_source_sink : c in process_connection && (c, output) in process_sink}
-	  { printf ',%.6f', sum{(d, t) in dt_realize_dispatch} ( if entity_all_capacity[c, d] 
+	  { printf ',%.6f', sum{(d, t) in dt_realize_dispatch} ( if entity_all_capacity[c, d]
 	                                        then ( abs(r_connection_dt[c, d, t]) 
 	                                               / complete_hours_in_period[d]
 											       / entity_all_capacity[c, d] )
@@ -5704,7 +5863,7 @@ for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_ou
       for {(u, sink) in process_sink : u in process_VRE}
         { printf ',%.6f',( if entity_all_capacity[u, d] then ( potentialVREgen[u, sink, d] - r_process_sink_flow_d[u, sink, d]) else 0 ) >> fn_unit__sinkNode__share__dt_curtailment; }
     }
-    for {(d,t) in dt_realize_dispatch } 
+    for {(d,t) in dt_realize_dispatch }
       {
       printf '\n%s,%s,%s,%s','potential', s, d, t >> fn_unit__sinkNode__share__dt_curtailment;
         for {(u, sink) in process_sink : u in process_VRE}
@@ -6068,7 +6227,7 @@ for {s in solve_current, d in d_realize_invest : 'yes' not in exclude_entity_out
 param w_marginal_inv := gmtime() - datetime0 - setup1 - w_calc_slope - setup2 - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node;
 display w_marginal_inv;
 
-param r_node_ramproom_units_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} := 
+param r_node_ramproom_units_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} :=
           + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
               + p_process_sink_coefficient[u, n]
                 * ( if u in process_online 
@@ -6085,7 +6244,7 @@ param r_node_ramproom_units_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);
 
-param r_node_ramproom_units_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} := 
+param r_node_ramproom_units_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} :=
           - sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} ( 
 			  + r_process__source__sink_Flow__dt[u, source, n, d, t]
 			  - sum{(u, r, ud, n) in process_reserve_upDown_node_active : ud = 'down'}
@@ -6102,7 +6261,7 @@ param r_node_ramproom_units_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);  
 
-param r_node_ramproom_VRE_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} := 
+param r_node_ramproom_VRE_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} :=
           + r_node_ramproom_units_up_dtt[n, d, t, t_previous]
 		  + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
               + p_process_sink_coefficient[u, n]
@@ -6121,7 +6280,7 @@ param r_node_ramproom_VRE_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'o
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);
 
-param r_node_ramproom_VRE_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} := 
+param r_node_ramproom_VRE_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} :=
           + r_node_ramproom_units_down_dtt[n, d, t, t_previous]
           - sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u in process_VRE} ( 
 			  + r_process__source__sink_Flow__dt[u, source, n, d, t]
@@ -6140,7 +6299,7 @@ param r_node_ramproom_VRE_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);  
 
-param r_node_ramproom_connections_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} :=  
+param r_node_ramproom_connections_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} :=
           + r_node_ramproom_VRE_up_dtt[n, d, t, t_previous]
           + sum{(u, source, n) in process_source_sink_alwaysProcess : (u, n) in process_sink && u in process_connection && u not in process_VRE} ( 
               + p_process_sink_coefficient[u, n]
@@ -6158,7 +6317,7 @@ param r_node_ramproom_connections_up_dtt{n in nodeBalance, (d, t, t_previous) in
 				     v_reserve[u, r, ud, n, d, t].val * p_entity_unitsize[u]
 			);
 
-param r_node_ramproom_connections_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} := 
+param r_node_ramproom_connections_down_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} :=
           + r_node_ramproom_VRE_down_dtt[n, d, t, t_previous]
           - sum{(u, source, n) in process_source_sink_alwaysProcess : (u, n) in process_sink && u in process_connection && u not in process_VRE && u not in process_sinkIsNode_2way1var} ( 
 			  + r_process__source__sink_Flow__dt[u, source, n, d, t]
@@ -6179,7 +6338,7 @@ param r_node_ramproom_connections_down_dtt{n in nodeBalance, (d, t, t_previous) 
               + p_process_source_coefficient[u, n]
                 * ( if u in process_online
 			  	    then (if u in process_online_integer then ( p_entity_existing_integer_count[u, d] 
-                  + (if d in period_invest then v_invest[u, d] else 0)
+                  + (if d in d_realize_dispatch_or_invest then v_invest[u, d] else 0)
                   - r_process_Online__dt[u, d, t] )
                 else r_process_Online__dt[u, d, t])
                * p_process[u, 'min_load'] * p_entity_unitsize[u]
@@ -6470,7 +6629,7 @@ display w_full;
 #display {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt : (d, t) in test_dt}: vq_state_up[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {n in (nodeBalance union nodeBalancePeriod), (d, t) in dt : (d, t) in test_dt}: vq_state_down[n, d, t].val * node_capacity_for_scaling[n, d];
 #display {g in groupInertia, (d, t) in dt : (d, t) in test_dt}: inertia_constraint[g, d, t].dual;
-#display {c in current_solve, n in nodeBalance, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective;
+#display {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : (d, t) in test_dt}: -nodeBalance_eq[n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d] / scale_the_objective;
 #display {(r, ud, g, r_m) in reserve__upDown__group__method_timeseries, (d, t) in dt : (d, t) in test_dt}: reserveBalance_timeseries_eq[r, ud, g, r_m, d, t].dual;
 #display {(p, source, sink) in process_source_sink, (d, t) in dt : (d, t) in test_dt && (p, sink) in process_sink}: maxToSink[p, source, sink, d, t].ub;
 #display {(p, sink, source) in process_sink_toSource, (d, t) in dt : (d, t) in test_dt}: maxToSource[p, sink, source, d, t].ub;

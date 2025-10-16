@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from pathlib import Path
 import pandas as pd
 
-def read_variables(output_dir='output'):
+def read_variables(output_dir='output_raw'):
     """
     Read all variable CSV files into a namespace.
     
@@ -12,125 +12,72 @@ def read_variables(output_dir='output'):
     output_path = Path(output_dir)
     v = SimpleNamespace()
     
-    # Variables with (period, time) index and multi-dimensional columns
+    # Variables with (solve, period, time) index
     
-    # v_flow: 3-level column MultiIndex (process, source, sink)
-    df = pd.read_csv(output_path / 'v_flow_pivot.csv', header=[0, 1, 2], index_col=[0, 1])
-    df.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2]) for col in df.columns],
+    v.flow = pd.read_csv(output_path / 'v_flow.csv', header=[0, 1, 2], index_col=[0, 1, 2])
+    v.ramp = pd.read_csv(output_path / 'v_ramp.csv', header=[0, 1, 2], index_col=[0, 1, 2])
+    v.reserve = pd.read_csv(output_path / 'v_reserve.csv', header=[0, 1, 2, 3], index_col=[0, 1, 2])
+    v.state = pd.read_csv(output_path / 'v_state.csv', index_col=[0, 1, 2])
+    v.online_linear = pd.read_csv(output_path / 'v_online_linear.csv', index_col=[0, 1, 2])
+    v.startup_linear = pd.read_csv(output_path / 'v_startup_linear.csv', index_col=[0, 1, 2])
+    v.shutdown_linear = pd.read_csv(output_path / 'v_shutdown_linear.csv', index_col=[0, 1, 2])
+    v.online_integer = pd.read_csv(output_path / 'v_online_integer.csv', index_col=[0, 1, 2])
+    v.startup_integer = pd.read_csv(output_path / 'v_startup_integer.csv', index_col=[0, 1, 2])
+    v.shutdown_integer = pd.read_csv(output_path / 'v_shutdown_integer.csv', index_col=[0, 1, 2])
+    v.q_state_up = pd.read_csv(output_path / 'vq_state_up.csv', index_col=[0, 1, 2])
+    v.q_state_down = pd.read_csv(output_path / 'vq_state_down.csv', index_col=[0, 1, 2])
+    v.q_reserve = pd.read_csv(output_path / 'vq_reserve.csv', header=[0, 1, 2], index_col=[0, 1, 2])
+    v.q_inertia = pd.read_csv(output_path / 'vq_inertia.csv', index_col=[0, 1, 2])
+    v.q_non_synchronous = pd.read_csv(output_path / 'vq_non_synchronous.csv', index_col=[0, 1, 2])
+    v.q_state_up_group = pd.read_csv(output_path / 'vq_state_up_group.csv', index_col=[0, 1, 2])
+    v.q_capacity_margin = pd.read_csv(output_path / 'vq_capacity_margin.csv', index_col=[0, 1])
+    v.invest = pd.read_csv(output_path / 'v_invest.csv', index_col=[0, 1], header=0)
+    v.divest = pd.read_csv(output_path / 'v_divest.csv', index_col=[0, 1])
+
+    # Create multi-index for variables with single header row
+    #v.flow.columns = pd.MultiIndex.from_product([['process', 'source', 'sink'], v.flow.columns])
+    #v.ramp.columns = pd.MultiIndex.from_product([['process', 'source', 'sink'], v.ramp.columns])
+    #v.reserve.columns = pd.MultiIndex.from_product([['process', 'reserve', 'updown', 'node'], v.reserve.columns])
+    v.state.columns = pd.MultiIndex.from_product([['node'], v.state.columns])
+    v.online_linear.columns = pd.MultiIndex.from_product([['process'], v.online_linear.columns])
+    v.startup_linear.columns = pd.MultiIndex.from_product([['process'], v.startup_linear.columns])
+    v.shutdown_linear.columns = pd.MultiIndex.from_product([['process'], v.shutdown_linear.columns])
+    v.online_integer.columns = pd.MultiIndex.from_product([['process'], v.online_integer.columns])
+    v.startup_integer.columns = pd.MultiIndex.from_product([['process'], v.startup_integer.columns])
+    v.shutdown_integer.columns = pd.MultiIndex.from_product([['process'], v.shutdown_integer.columns])
+    v.q_state_up.columns = pd.MultiIndex.from_product([['node'], v.q_state_up.columns])
+    v.q_state_down.columns = pd.MultiIndex.from_product([['node'], v.q_state_down.columns])
+    #v.q_reserve.columns = pd.MultiIndex.from_product([['reserve', 'updown', 'node_group'], v.q_reserve.columns])
+    v.q_inertia.columns = pd.MultiIndex.from_product([['group'], v.q_inertia.columns])
+    v.q_non_synchronous.columns = pd.MultiIndex.from_product([['group'], v.q_non_synchronous.columns])
+    v.q_state_up_group.columns = pd.MultiIndex.from_product([['group'], v.q_state_up_group.columns])
+    v.q_capacity_margin.columns = pd.MultiIndex.from_product([['group'], v.q_capacity_margin.columns])
+    v.invest.columns = pd.MultiIndex.from_product([['entity'], v.invest.columns])
+    v.divest.columns = pd.MultiIndex.from_product([['entity'], v.divest.columns])
+
+    # Add multi-index to variables with multiple header rows
+    v.flow.columns = pd.MultiIndex.from_tuples(
+        [(col[0], col[1], col[2]) for col in v.flow.columns],
         names=['process', 'source', 'sink']
     )
-    df.index.names = ['period', 'time']
-    v.flow = df
-    
-    # v_ramp: 3-level column MultiIndex (process, source, sink)
-    df = pd.read_csv(output_path / 'v_ramp_pivot.csv', header=[0, 1, 2], index_col=[0, 1])
-    df.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2]) for col in df.columns],
+    v.ramp.columns = pd.MultiIndex.from_tuples(
+        [(col[0], col[1], col[2]) for col in v.ramp.columns],
         names=['process', 'source', 'sink']
     )
-    df.index.names = ['period', 'time']
-    v.ramp = df
-    
-    # v_reserve: 4-level column MultiIndex (process, reserve, updown, node)
-    df = pd.read_csv(output_path / 'v_reserve_pivot.csv', header=[0, 1, 2, 3], index_col=[0, 1])
-    df.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2], col[3]) for col in df.columns],
+    v.reserve.columns = pd.MultiIndex.from_tuples(
+        [(col[0], col[1], col[2], col[3]) for col in v.reserve.columns],
         names=['process', 'reserve', 'updown', 'node']
     )
-    df.index.names = ['period', 'time']
-    v.reserve = df
-    
-    # v_state: 1-level column index (node)
-    df = pd.read_csv(output_path / 'v_state_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    v.state = df
-    
-    # v_online_linear: 1-level column index (process)
-    df = pd.read_csv(output_path / 'v_online_linear_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    v.online_linear = df
-    
-    # v_startup_linear: 1-level column index (process)
-    df = pd.read_csv(output_path / 'v_startup_linear_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    v.startup_linear = df
-    
-    # v_shutdown_linear: 1-level column index (process)
-    df = pd.read_csv(output_path / 'v_shutdown_linear_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    v.shutdown_linear = df
-    
-    # v_online_integer: 1-level column index (process)
-    df = pd.read_csv(output_path / 'v_online_integer_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    v.online_integer = df
-    
-    # v_startup_integer: 1-level column index (process)
-    df = pd.read_csv(output_path / 'v_startup_integer_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    v.startup_integer = df
-    
-    # v_shutdown_integer: 1-level column index (process)
-    df = pd.read_csv(output_path / 'v_shutdown_integer_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    v.shutdown_integer = df
-    
-    # vq_state_up: 1-level column index (node)
-    df = pd.read_csv(output_path / 'vq_state_up_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    v.q_state_up = df
-    
-    # vq_state_down: 1-level column index (node)
-    df = pd.read_csv(output_path / 'vq_state_down_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    v.q_state_down = df
-    
-    # vq_reserve: 3-level column MultiIndex (reserve, updown, node_group)
-    df = pd.read_csv(output_path / 'vq_reserve_pivot.csv', header=[0, 1, 2], index_col=[0, 1])
-    df.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2]) for col in df.columns],
+    v.q_reserve.columns = pd.MultiIndex.from_tuples(
+        [(col[0], col[1], col[2]) for col in v.q_reserve.columns],
         names=['reserve', 'updown', 'node_group']
     )
-    df.index.names = ['period', 'time']
-    v.q_reserve = df
-    
-    # vq_inertia: 1-level column index (group)
-    df = pd.read_csv(output_path / 'vq_inertia_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    v.q_inertia = df
-    
-    # vq_non_synchronous: 1-level column index (group)
-    df = pd.read_csv(output_path / 'vq_non_synchronous_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    v.q_non_synchronous = df
-    
-    # vq_state_up_group: 1-level column index (group)
-    df = pd.read_csv(output_path / 'vq_state_up_group_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    v.q_state_up_group = df
-    
-    # Variables with only period index
-    
-    # v_invest: 1-level column index (entity)
-    df = pd.read_csv(output_path / 'v_invest_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    v.invest = df
-    
-    # v_divest: 1-level column index (entity)
-    df = pd.read_csv(output_path / 'v_divest_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    v.divest = df
-    
-    # vq_capacity_margin: 1-level column index (group)
-    df = pd.read_csv(output_path / 'vq_capacity_margin_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    v.q_capacity_margin = df
-    
+
+
     return v
 
 
-def read_parameters(output_dir='output'):
+def read_parameters(output_dir='output_raw'):
     """
     Read all parameter CSV files into a namespace.
     
@@ -141,221 +88,113 @@ def read_parameters(output_dir='output'):
     p = SimpleNamespace()
     
     # Parameters with (period, time) index and multi-dimensional columns
-    
-    # step_duration: single value per (period, time)
-    df = pd.read_csv(output_path / 'p_step_duration_pivot.csv', dtype={'value': float})
-    df = df.set_index(['period', 'time'])
-    p.step_duration = df['value']
-    
-    # p_flow_min: 3-level column MultiIndex (process, source, sink)
-    df = pd.read_csv(output_path / 'p_flow_min_pivot.csv', header=[0, 1, 2], index_col=[0, 1])
-    df.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2]) for col in df.columns],
+    p.step_duration = pd.read_csv(output_path / 'p_step_duration.csv', dtype={'value': float}, index_col=[0, 1, 2])
+    p.flow_min = pd.read_csv(output_path / 'p_flow_min.csv', dtype={'value': float}, header=[0, 1, 2], index_col=[0, 1, 2])
+    p.flow_max = pd.read_csv(output_path / 'p_flow_max.csv', dtype={'value': float}, header=[0, 1, 2], index_col=[0, 1, 2])
+    p.process_slope = pd.read_csv(output_path / 'pdtProcess_slope.csv', dtype={'value': float}, index_col=[0, 1, 2])
+    p.process_section = pd.read_csv(output_path / 'pdtProcess_section.csv', dtype={'value': float}, index_col=[0, 1, 2])
+    p.process_availability = pd.read_csv(output_path / 'pdtProcess_availability.csv', dtype={'value': float}, index_col=[0, 1, 2])
+    p.process_source_sink_varCost = pd.read_csv(output_path / 'pdtProcess_source_sink_varCost.csv', dtype={'value': float}, header=[0, 1, 2], index_col=[0, 1, 2])
+    p.node_self_discharge_loss = pd.read_csv(output_path / 'pdtNode_self_discharge_loss.csv', dtype={'value': float}, index_col=[0, 1, 2])
+    p.node_penalty_up = pd.read_csv(output_path / 'pdtNode_penalty_up.csv', dtype={'value': float}, index_col=[0, 1, 2])
+    p.node_penalty_down = pd.read_csv(output_path / 'pdtNode_penalty_down.csv', dtype={'value': float}, index_col=[0, 1, 2])
+    p.node_inflow = pd.read_csv(output_path / 'pdtNodeInflow.csv', dtype={'value': float}, index_col=[0, 1, 2])
+    p.commodity_price = pd.read_csv(output_path / 'pdtCommodity_price.csv', dtype={'value': float}, index_col=[0, 1, 2])
+    p.group_co2_price = pd.read_csv(output_path / 'pdtGroup_co2_price.csv', dtype={'value': float}, index_col=[0, 1, 2])
+    p.reserve_upDown_group_reservation = pd.read_csv(output_path / 'pdtReserve_upDown_group_reservation.csv', dtype={'value': float}, header=[0, 1, 2], index_col=[0, 1, 2])
+    p.profile = pd.read_csv(output_path / 'pdtProfile.csv', dtype={'value': float}, index_col=[0, 1, 2])
+    p.years_d = pd.read_csv(output_path / 'p_years_d.csv', dtype={'value': float}, index_col=[0, 1])
+    p.entity_max_units = pd.read_csv(output_path / 'p_entity_max_units.csv', dtype={'value': float}, index_col=[0, 1])
+    p.entity_all_existing = pd.read_csv(output_path / 'p_entity_all_existing.csv', dtype={'value': float}, index_col=[0, 1])
+    p.entity_unitsize = pd.read_csv(output_path / 'p_entity_unitsize.csv', dtype={'value': float}, index_col=0)
+    p.process_startup_cost = pd.read_csv(output_path / 'pdProcess_startup_cost.csv', dtype={'value': float}, index_col=[0, 1])
+    p.process_fixed_cost = pd.read_csv(output_path / 'pdProcess_fixed_cost.csv', dtype={'value': float}, index_col=[0, 1])
+    p.node_fixed_cost = pd.read_csv(output_path / 'pdNode_fixed_cost.csv', dtype={'value': float}, index_col=[0, 1])
+    p.node_annual_flow = pd.read_csv(output_path / 'pdNode_annual_flow.csv', dtype={'value': float}, index_col=[0, 1])
+    p.group_penalty_inertia = pd.read_csv(output_path / 'pdGroup_penalty_inertia.csv', dtype={'value': float}, index_col=[0, 1])
+    p.group_penalty_non_synchronous = pd.read_csv(output_path / 'pdGroup_penalty_non_synchronous.csv', dtype={'value': float}, index_col=[0, 1])
+    p.group_penalty_capacity_margin = pd.read_csv(output_path / 'pdGroup_penalty_capacity_margin.csv', dtype={'value': float}, index_col=[0, 1])
+    p.group_inertia_limit = pd.read_csv(output_path / 'pdGroup_inertia_limit.csv', dtype={'value': float}, index_col=[0, 1])
+    p.group_capacity_margin = pd.read_csv(output_path / 'pdGroup_capacity_margin.csv', dtype={'value': float}, index_col=[0, 1])
+    p.entity_annual_discounted = pd.read_csv(output_path / 'ed_entity_annual_discounted.csv', dtype={'value': float}, index_col=[0, 1])
+    p.entity_annual_divest_discounted = pd.read_csv(output_path / 'ed_entity_annual_divest_discounted.csv', dtype={'value': float}, index_col=[0, 1])
+    p.discount_factor_operations_yearly = pd.read_csv(output_path / 'p_discount_factor_operations_yearly.csv', dtype={'value': float}, index_col=[0, 1])
+    p.discount_factor_investment_yearly = pd.read_csv(output_path / 'p_discount_factor_investment_yearly.csv', dtype={'value': float}, index_col=[0, 1])
+    p.node_capacity_for_scaling = pd.read_csv(output_path / 'node_capacity_for_scaling.csv', dtype={'value': float}, index_col=[0, 1])
+    p.group_capacity_for_scaling = pd.read_csv(output_path / 'group_capacity_for_scaling.csv', dtype={'value': float}, index_col=[0, 1])
+    p.complete_period_share_of_year = pd.read_csv(output_path / 'complete_period_share_of_year.csv', dtype={'value': float}, index_col=[0, 1])
+    p.node = pd.read_csv(output_path / 'p_node.csv', dtype={'value': float}, index_col=0)
+    p.process_sink_coefficient = pd.read_csv(output_path / 'p_process_sink_coefficient.csv', dtype={'value': float}, header=[0, 1], index_col=0)
+    p.process_source_coefficient = pd.read_csv(output_path / 'p_process_source_coefficient.csv', dtype={'value': float}, header=[0, 1], index_col=0)
+    p.commodity_co2_content = pd.read_csv(output_path / 'p_commodity_co2_content.csv', dtype={'value': float}, index_col=0)
+    p.reserve_upDown_group_penalty = pd.read_csv(output_path / 'p_reserve_upDown_group_penalty.csv', dtype={'value': float}, header=[0, 1, 2], index_col=0)
+    p.nested_model = pd.read_csv(output_path / 'p_nested_model.csv', dtype={'param': str, 'value': float}).set_index('param')
+    p.roll_continue_state = pd.read_csv('solve_data/p_roll_continue_state.csv', dtype={'node': str, 'value': float}).set_index('node')
+
+    # Create multi-index for data with more than one header row
+    p.process_source_sink_varCost.columns = pd.MultiIndex.from_tuples(
+        [(col[0], col[1], col[2]) for col in p.process_source_sink_varCost.columns],
         names=['process', 'source', 'sink']
     )
-    df.index.names = ['period', 'time']
-    p.flow_min = df
-    
-    # p_flow_max: 3-level column MultiIndex (process, source, sink)
-    df = pd.read_csv(output_path / 'p_flow_max_pivot.csv', header=[0, 1, 2], index_col=[0, 1])
-    df.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2]) for col in df.columns],
+    p.flow_min.columns = pd.MultiIndex.from_tuples(
+        [(col[0], col[1], col[2]) for col in p.flow_min.columns],
         names=['process', 'source', 'sink']
     )
-    df.index.names = ['period', 'time']
-    p.flow_max = df
-    
-    # pdtProcess_slope: 1-level column index (process)
-    df = pd.read_csv(output_path / 'pdtProcess_slope_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    p.process_slope = df
-    
-    # pdtProcess_section: 1-level column index (process)
-    df = pd.read_csv(output_path / 'pdtProcess_section_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    p.process_section = df
-    
-    # pdtProcess_availability: 1-level column index (process)
-    df = pd.read_csv(output_path / 'pdtProcess_availability_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    p.process_availability = df
-    
-    # pdtProcess_source_sink_varCost: 3-level column MultiIndex (process, source, sink)
-    df = pd.read_csv(output_path / 'pdtProcess_source_sink_varCost_pivot.csv', header=[0, 1, 2], index_col=[0, 1])
-    df.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2]) for col in df.columns],
+    p.flow_max.columns = pd.MultiIndex.from_tuples(
+        [(col[0], col[1], col[2]) for col in p.flow_max.columns],
         names=['process', 'source', 'sink']
     )
-    df.index.names = ['period', 'time']
-    p.process_source_sink_varCost = df
-    
-    # pdtNode_self_discharge_loss: 1-level column index (node)
-    df = pd.read_csv(output_path / 'pdtNode_self_discharge_loss_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    p.node_self_discharge_loss = df
-    
-    # pdtNode_penalty_up: 1-level column index (node)
-    df = pd.read_csv(output_path / 'pdtNode_penalty_up_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    p.node_penalty_up = df
-    
-    # pdtNode_penalty_down: 1-level column index (node)
-    df = pd.read_csv(output_path / 'pdtNode_penalty_down_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    p.node_penalty_down = df
-    
-    # pdtNodeInflow: 1-level column index (node)
-    df = pd.read_csv(output_path / 'pdtNodeInflow_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    p.node_inflow = df
-    
-    # pdtCommodity_price: 1-level column index (commodity)
-    df = pd.read_csv(output_path / 'pdtCommodity_price_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    p.commodity_price = df
-    
-    # pdtGroup_co2_price: 1-level column index (group)
-    df = pd.read_csv(output_path / 'pdtGroup_co2_price_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    p.group_co2_price = df
-    
-    # pdtReserve_upDown_group_reservation: 3-level column MultiIndex (reserve, updown, node_group)
-    df = pd.read_csv(output_path / 'pdtReserve_upDown_group_reservation_pivot.csv', header=[0, 1, 2], index_col=[0, 1])
-    df.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2]) for col in df.columns],
+    p.reserve_upDown_group_reservation.columns = pd.MultiIndex.from_tuples(
+        [(col[0], col[1], col[2]) for col in p.reserve_upDown_group_reservation.columns],
         names=['reserve', 'updown', 'node_group']
     )
-    df.index.names = ['period', 'time']
-    p.reserve_upDown_group_reservation = df
-    
-    # pdtProfile: 1-level column index (profile)
-    df = pd.read_csv(output_path / 'pdtProfile_pivot.csv', index_col=[0, 1])
-    df.index.names = ['period', 'time']
-    p.profile = df
-    
-    # Parameters with only period index
-    
-    # p_years_d: single value per period
-    df = pd.read_csv(output_path / 'p_years_d_pivot.csv', index_col=0, header=None, names=['period', 'value'])
-    p.years_d = df['value']
-    
-    # p_entity_max_units: 1-level column index (entity)
-    df = pd.read_csv(output_path / 'p_entity_max_units_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.entity_max_units = df
-    
-    # p_entity_all_existing: 1-level column index (entity)
-    df = pd.read_csv(output_path / 'p_entity_all_existing_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.entity_all_existing = df
-    
-    # pdProcess_startup_cost: 1-level column index (process)
-    df = pd.read_csv(output_path / 'pdProcess_startup_cost_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.process_startup_cost = df
-    
-    # pdProcess_fixed_cost: 1-level column index (process)
-    df = pd.read_csv(output_path / 'pdProcess_fixed_cost_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.process_fixed_cost = df
-    
-    # pdNode_fixed_cost: 1-level column index (node)
-    df = pd.read_csv(output_path / 'pdNode_fixed_cost_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.node_fixed_cost = df
-    
-    # pdNode_annual_flow: 1-level column index (node)
-    df = pd.read_csv(output_path / 'pdNode_annual_flow_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.node_annual_flow = df
-    
-    # pdGroup parameters
-    df = pd.read_csv(output_path / 'pdGroup_penalty_inertia_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.group_penalty_inertia = df
-    
-    df = pd.read_csv(output_path / 'pdGroup_penalty_non_synchronous_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.group_penalty_non_synchronous = df
-    
-    df = pd.read_csv(output_path / 'pdGroup_penalty_capacity_margin_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.group_penalty_capacity_margin = df
-    
-    df = pd.read_csv(output_path / 'pdGroup_inertia_limit_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.group_inertia_limit = df
-    
-    df = pd.read_csv(output_path / 'pdGroup_capacity_margin_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.group_capacity_margin = df
-    
-    # ed_entity_annual_discounted: 1-level column index (entity)
-    df = pd.read_csv(output_path / 'ed_entity_annual_discounted_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.entity_annual_discounted = df
-    
-    # ed_entity_annual_divest_discounted: 1-level column index (entity)
-    df = pd.read_csv(output_path / 'ed_entity_annual_divest_discounted_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.entity_annual_divest_discounted = df
-    
-    # p_discount_factor_operations_yearly: single value per period
-    df = pd.read_csv(output_path / 'p_discount_factor_operations_yearly_pivot.csv', index_col=0, header=None, names=['period', 'value'])
-    p.discount_factor_operations_yearly = df['value']
-    
-    # node_capacity_for_scaling: 1-level column index (node)
-    df = pd.read_csv(output_path / 'node_capacity_for_scaling_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.node_capacity_for_scaling = df
-    
-    # group_capacity_for_scaling: 1-level column index (group)
-    df = pd.read_csv(output_path / 'group_capacity_for_scaling_pivot.csv', index_col=0)
-    df.index.name = 'period'
-    p.group_capacity_for_scaling = df
-    
-    # complete_period_share_of_year: single value per period
-    df = pd.read_csv(output_path / 'complete_period_share_of_year_pivot.csv', index_col=0, header=None, names=['period', 'value'])
-    p.complete_period_share_of_year = df['value']
-    
-    # Parameters without d or (d,t) dimensions - tree format
-    
-    # p_node
-    df = pd.read_csv(output_path / 'p_node.csv')
-    p.node = df.set_index(['node', 'param'])
+    p.process_sink_coefficient.columns = pd.MultiIndex.from_tuples(
+        [(col[0], col[1]) for col in p.process_sink_coefficient.columns],
+        names=['process', 'sink']
+    )
+    p.process_source_coefficient.columns = pd.MultiIndex.from_tuples(
+        [(col[0], col[1]) for col in p.process_source_coefficient.columns],
+        names=['process', 'source']
+    )
+    p.reserve_upDown_group_penalty.columns = pd.MultiIndex.from_tuples(
+        [(col[0], col[1], col[2]) for col in p.reserve_upDown_group_penalty.columns],
+        names=['reserve', 'updown', 'node_group']
+    )
 
-    # p_entity_unitsize
-    df = pd.read_csv(output_path / 'p_entity_unitsize.csv', dtype={'entity': str, 'value': float})
-    p.entity_unitsize = df.set_index('entity')
-    
-    # p_process_sink_coefficient
-    df = pd.read_csv(output_path / 'p_process_sink_coefficient.csv', dtype={'process': str, 'sink': str, 'value': float})
-    p.process_sink_coefficient = df.set_index(['process', 'sink'])
-    
-    # p_process_source_coefficient
-    df = pd.read_csv(output_path / 'p_process_source_coefficient.csv', dtype={'process': str, 'source': str, 'value': float})
-    p.process_source_coefficient = df.set_index(['process', 'source'])
-    
-    # p_commodity_co2_content
-    df = pd.read_csv(output_path / 'p_commodity_co2_content.csv', dtype={'commodity': str, 'value': float})
-    p.commodity_co2_content = df.set_index('commodity')
-    
-    # p_reserve_upDown_group_penalty
-    df = pd.read_csv(output_path / 'p_reserve_upDown_group_penalty.csv', dtype={'reserve': str, 'updown': str, 'node_group': str, 'value': float})
-    p.reserve_upDown_group_penalty = df.set_index(['reserve', 'updown', 'node_group'])
-    
-    # p_nested_model
-    df = pd.read_csv(output_path / 'p_nested_model.csv', dtype={'param': str, 'value': float})
-    p.nested_model = df.set_index('param')
-    
-    # p_roll_continue_state
-    df = pd.read_csv('solve_data/p_roll_continue_state.csv', dtype={'node': str, 'value': float})
-    p.roll_continue_state = df.set_index('node')
-    
+    # Create a multi-index for those that have only one index in the header rows (i.e. columns)
+    p.process_slope.columns = pd.MultiIndex.from_product([['process'], p.process_slope.columns])
+    p.process_section.columns = pd.MultiIndex.from_product([['process'], p.process_section.columns])
+    p.process_availability.columns = pd.MultiIndex.from_product([['process'], p.process_availability.columns])
+    p.node_self_discharge_loss.columns = pd.MultiIndex.from_product([['node'], p.node_self_discharge_loss.columns])
+    p.node_penalty_up.columns = pd.MultiIndex.from_product([['node'], p.node_penalty_up.columns])
+    p.node_penalty_down.columns = pd.MultiIndex.from_product([['node'], p.node_penalty_down.columns])
+    p.node_inflow.columns = pd.MultiIndex.from_product([['node'], p.node_inflow.columns])
+    p.commodity_price.columns = pd.MultiIndex.from_product([['commodity'], p.commodity_price.columns])
+    p.group_co2_price.columns = pd.MultiIndex.from_product([['group'], p.group_co2_price.columns])
+    p.profile.columns = pd.MultiIndex.from_product([['profile'], p.profile.columns])
+    p.entity_max_units.columns = pd.MultiIndex.from_product([['entity'], p.entity_max_units.columns])
+    p.entity_all_existing.columns = pd.MultiIndex.from_product([['entity'], p.entity_all_existing.columns])
+    p.entity_unitsize.columns = pd.MultiIndex.from_product([['entity'], p.entity_unitsize.columns])
+    p.process_startup_cost.columns = pd.MultiIndex.from_product([['process'], p.process_startup_cost.columns])
+    p.process_fixed_cost.columns = pd.MultiIndex.from_product([['process'], p.process_fixed_cost.columns])
+    p.node_fixed_cost.columns = pd.MultiIndex.from_product([['node'], p.node_fixed_cost.columns])
+    p.node_annual_flow.columns = pd.MultiIndex.from_product([['node'], p.node_annual_flow.columns])
+    p.group_penalty_inertia.columns = pd.MultiIndex.from_product([['group'], p.group_penalty_inertia.columns])
+    p.group_penalty_non_synchronous.columns = pd.MultiIndex.from_product([['group'], p.group_penalty_non_synchronous.columns])
+    p.group_penalty_capacity_margin.columns = pd.MultiIndex.from_product([['group'], p.group_penalty_capacity_margin.columns])
+    p.group_inertia_limit.columns = pd.MultiIndex.from_product([['group'], p.group_inertia_limit.columns])
+    p.group_capacity_margin.columns = pd.MultiIndex.from_product([['group'], p.group_capacity_margin.columns])
+    p.entity_annual_discounted.columns = pd.MultiIndex.from_product([['entity'], p.entity_annual_discounted.columns])
+    p.entity_annual_divest_discounted.columns = pd.MultiIndex.from_product([['entity'], p.entity_annual_divest_discounted.columns])
+    p.node_capacity_for_scaling.columns = pd.MultiIndex.from_product([['node'], p.node_capacity_for_scaling.columns])
+    p.group_capacity_for_scaling.columns = pd.MultiIndex.from_product([['group'], p.group_capacity_for_scaling.columns])
+    p.node.columns = pd.MultiIndex.from_product([['node'], p.node.columns])
+    p.commodity_co2_content.columns = pd.MultiIndex.from_product([['commodity'], p.commodity_co2_content.columns])
+
     return p
 
 
-def read_sets(output_dir='output'):
+def read_sets(output_dir='output_raw'):
     """
     Read set definitions from CSV files into a namespace.
     Simple sets are stored as pandas Index for fast O(1) membership testing.
@@ -388,12 +227,12 @@ def read_sets(output_dir='output'):
     # Tuple sets - store as DataFrames for vectorized filtering and operations
     
     # Tuple sets that need filtering - keep as DataFrame
-    s.dt_realize_dispatch = pd.read_csv(output_path / 'set_dt_realize_dispatch.csv')
-    s.dt = pd.read_csv(output_path / 'set_dt.csv')
-    s.ed_invest = pd.read_csv(output_path / 'set_ed_invest.csv')
-    s.ed_divest = pd.read_csv(output_path / 'set_ed_divest.csv')
-    s.edd_invest = pd.read_csv(output_path / 'set_edd_invest.csv')
- 
+    s.dt_realize_dispatch = pd.MultiIndex.from_frame(pd.read_csv(output_path / 'set_dt_realize_dispatch.csv'))
+    s.dt = pd.MultiIndex.from_frame(pd.read_csv(output_path / 'set_dt.csv'))
+    s.ed_invest = pd.MultiIndex.from_frame(pd.read_csv(output_path / 'set_ed_invest.csv'))
+    s.ed_divest = pd.MultiIndex.from_frame(pd.read_csv(output_path / 'set_ed_divest.csv'))
+    s.edd_invest = pd.MultiIndex.from_frame(pd.read_csv(output_path / 'set_edd_invest.csv'))
+
     # Process topology sets
     s.process_method_sources_sinks = pd.read_csv(output_path / 'set_process_method_sources_sinks.csv')
     # s.process_source_sink_alwaysProcess = pd.read_csv(output_path / 'set_process_source_sink_alwaysProcess.csv') 

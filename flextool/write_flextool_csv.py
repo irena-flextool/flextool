@@ -2,7 +2,7 @@ import csv
 import pandas as pd
 from pathlib import Path
 
-def write_unit_capacity(v, s, param, r, solve, output_dir='output'):
+def write_unit_capacity(v, s, param, r, output_dir='output'):
     """Write unit capacity results to CSV"""
     
     output_path = Path(output_dir)
@@ -20,7 +20,7 @@ def write_unit_capacity(v, s, param, r, solve, output_dir='output'):
     
     with open(fn_unit_capacity, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['unit', 'solve', 'period', 'existing', 'invested', 'divested', 'total'])
+        writer.writerow(['unit', 'period', 'existing', 'invested', 'divested', 'total'])
         
         periods = set(s.d_realized_period) | set(s.period_invest)
         
@@ -38,4 +38,4 @@ def write_unit_capacity(v, s, param, r, solve, output_dir='output'):
                 
                 total = r.entity_all_capacity.loc[d, p] if d in r.entity_all_capacity.index and p in r.entity_all_capacity.columns else 0
                 
-                writer.writerow([p, solve, d, f'{existing:.8g}', f'{invested:.8g}', f'{divested:.8g}', f'{total:.8g}'])
+                writer.writerow([p, d, f'{existing:.8g}', f'{invested:.8g}', f'{divested:.8g}', f'{total:.8g}'])
