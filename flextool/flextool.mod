@@ -4104,7 +4104,7 @@ if p_model['solveFirst'] then {
   # Write p_commodity_co2_content
   printf "commodity" > "output_raw/p_commodity_co2_content.csv";
   for {c in commodity} printf ",%s", c >> "output_raw/p_commodity_co2_content.csv";
-  printf "\n" >> "output_raw/p_commodity_co2_content.csv";
+  printf "\nvalue," >> "output_raw/p_commodity_co2_content.csv";
   for {c in commodity} {
     printf "%g", p_commodity[c, 'co2_content'] >> "output_raw/p_commodity_co2_content.csv";
   }
@@ -4131,9 +4131,9 @@ if p_model['solveFirst'] then {
   }
 
   # period - all periods (ordered)
-  printf "period\n" > "output_raw/set_period.csv";
+  printf "solve,period\n" > "output_raw/set_period.csv";
   for {s in solve_current, d in period} {
-      printf "%s\n", s, d >> "output_raw/set_period.csv";
+      printf "%s,%s\n", s, d >> "output_raw/set_period.csv";
   }
 
   # entityInvest - entities that can invest
@@ -4411,9 +4411,9 @@ if p_model['solveFirst'] then {
 }
 
 # Sets with period and/or time dimensions
-
+display p_model;
 # period_invest - periods where investment can occur
-if p_model["solveFirst"] == 1 then printf "solve,period\n" > "output_raw/set_period_invest.csv";
+if p_model["solveFirst"] == 1 then printf "solve,period\n" > "output_raw/set_d_realize_dispatch_or_invest.csv";
 for {s in solve_current, d in d_realize_dispatch_or_invest} {
     printf "%s,%s\n", s, d >> "output_raw/set_d_realize_dispatch_or_invest.csv";
 }

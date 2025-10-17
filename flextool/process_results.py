@@ -4,11 +4,13 @@ import pandas as pd
 def post_process_results(self):
     """Calculate post-processing results from variables, parameters, and sets"""
     
+    drop_levels(self)
+
     # hours_in_realized_period
     # Filter dt_realize_dispatch by periods in d_realized_period, then group and sum
     step_duration = self.p.step_duration
     
-    hours_in_realized_period = step_duration.groupby(level='period')['value'].sum()
+    hours_in_realized_period = step_duration.groupby(level='period').sum()
     hours_in_realized_period = hours_in_realized_period.reindex(self.s.d_realized_period)
 
     self.r.hours_in_realized_period = hours_in_realized_period
@@ -16,36 +18,29 @@ def post_process_results(self):
     
     # entity_all_capacity
       # Existing capacity
-    entity_all_capacity = self.p.entity_all_existing.droplevel('solve').copy()
+    entity_all_capacity = self.p.entity_all_existing.copy()
     periods = entity_all_capacity.index.get_level_values('period').unique()
       # Add investments
-    capacity_add = (self.v.invest.droplevel('solve') * self.p.entity_unitsize.iloc[0]).fillna(0)
-    for i, period in enumerate(periods):
-        entity_all_capacity.loc[period] += capacity_add.loc[periods[:i+1]].sum()
+    if not self.v.invest.empty:
+        capacity_add = (self.v.invest * self.p.entity_unitsize.iloc[0]).fillna(0)
+        for i, period in enumerate(periods):
+            entity_all_capacity.loc[period] += capacity_add.loc[periods[:i+1]].sum()
       # Subtract divestments
-    capacity_divest = (self.v.divest.droplevel('solve') * self.p.entity_unitsize.iloc[0]).fillna(0)
-    for i, period in enumerate(periods):
-        entity_all_capacity.loc[period] -= capacity_divest.loc[periods[:i+1]].sum()
+    if not self.v.divest.empty:
+        capacity_divest = (self.v.divest * self.p.entity_unitsize.iloc[0]).fillna(0)
+        for i, period in enumerate(periods):
+            entity_all_capacity.loc[period] -= capacity_divest.loc[periods[:i+1]].sum()
     self.r.entity_all_capacity = entity_all_capacity
 
 
     # r_process_Online__dt - just sum the two DataFrames
     self.r.process_online_dt = self.v.online_linear.add(self.v.online_integer, fill_value=0)
 
-    # r_process_Online__dt
-    online_dfs = []
-    if hasattr(self.v, 'online_linear'):
-        online_dfs.append(self.v.online_linear)
-    if hasattr(self.v, 'online_integer'):
-        online_dfs.append(self.v.online_integer)
-
-    self.r.process_online_dt = pd.concat(online_dfs, axis=1).groupby(level=0, axis=1).sum()
-
     # Calculate r_process__source__sink_Flow__dt
     r_flow_dt = pd.DataFrame(index=self.v.flow.index)
-    unitsize = self.p.entity_unitsize['value']
-    slope = self.p.process_slope
-    section = self.p.process_section
+    unitsize = self.p.entity_unitsize
+    slope = self.p.process_slope.droplevel(0, axis=1)
+    section = self.p.process_section.droplevel(0, axis=1)
     
     for _, row in self.s.process_method_sources_sinks.iterrows():
         p = row['process']
@@ -60,18 +55,13 @@ def post_process_results(self):
         if (method in self.s.method_1var_per_way and 
             p not in self.s.process_profile and
             orig_source == always_source and orig_sink != always_sink):
-            
             flow_val *= slope[p]
-            
             if p in self.s.process_unit:
-                flow_val /= (self.p.process_sink_coefficient.loc[(p, orig_sink), 'value'] *
-                            self.p.process_source_coefficient.loc[(p, orig_source), 'value'])
-            
+                flow_val /= (self.p.process_sink_coefficient.loc[p, orig_sink] *
+                            self.p.process_source_coefficient.loc[p, orig_source])
             if (p, 'min_load_efficiency') in self.s.process__ct_method:
-                flow_val += self.r.process_online_dt[p] * section[p] * unitsize[p]
-        
+                flow_val += self.r.process_online_dt['process', p] * section[p] * unitsize[p]
         r_flow_dt[(p, always_source, always_sink)] = flow_val
-
     self.r.process_source_sink_flow_dt = r_flow_dt
 
     # r_process__source__sink_Flow__d - sum over dt_realize_dispatch
@@ -80,11 +70,11 @@ def post_process_results(self):
         self.r.process_source_sink_flow__d = r_flow_d
 
     # r_process_source_sink_ramp_dtt - difference between t and t_previous
-    current_idx = pd.MultiIndex.from_frame(self.s.dtt[['period', 'time']])
-    previous_idx = pd.MultiIndex.from_frame(self.s.dtt[['period', 't_previous']].rename(columns={'t_previous': 'time'}))
+    current_idx = self.s.dtt.droplevel('t_previous')
+    previous_idx = self.s.dtt.droplevel('time')
     r_ramp_dtt = pd.DataFrame(
         r_flow_dt.reindex(current_idx).values - r_flow_dt.reindex(previous_idx).values,
-        index=pd.MultiIndex.from_frame(self.s.dtt, names=['period', 'time', 't_previous']),
+        index=self.s.dtt,
         columns=r_flow_dt.columns
     )
     self.r.process_source_sink_ramp_dtt = r_ramp_dtt
@@ -248,87 +238,71 @@ def post_process_results(self):
             self.r.connection_to_right_node__d = r_conn_right_d
 
     # Calculate r_nodeState_change_dt
-    v_state = self.v.state
-    unitsize = self.p.entity_unitsize['value']
-    entity_all_capacity = self.r.entity_all_capacity  # Already calculated
+    v_state = self.v.state.droplevel(0, axis=1)
     # Filter dt_realize_dispatch
-    dt_dispatch_idx = pd.MultiIndex.from_frame(self.s.dt_realize_dispatch[['period', 'time']])
+    dt_dispatch_idx = self.s.dt_realize_dispatch
     # Initialize result
-    r_state_change = pd.DataFrame(0.0, index=dt_dispatch_idx, columns=self.s.nodeState)
+    r_state_change = pd.DataFrame(0.0, index=self.s.dt_realize_dispatch, columns=self.s.nodeState)
     # Create index mappings from dtttdt
-    current_idx = pd.MultiIndex.from_frame(self.s.dtttdt[['period', 'time']])
-    prev_solve_idx = pd.MultiIndex.from_frame(
-        self.s.dtttdt[['d_previous', 't_previous_within_solve']].rename(
-            columns={'d_previous': 'period', 't_previous_within_solve': 'time'}
-        )
-    )
-    prev_period_idx = pd.MultiIndex.from_frame(
-        self.s.dtttdt[['period', 't_previous']].rename(columns={'t_previous': 'time'})
-    )
-    prev_timeset_idx = pd.MultiIndex.from_frame(
-        self.s.dtttdt[['period', 't_previous_within_timeset']].rename(
-            columns={'t_previous_within_timeset': 'time'}
-        )
-    )
-    # Create sets for checking
-    period_time_first_set = set(zip(self.s.period__time_first['period'], 
-                                    self.s.period__time_first['time']))
+    prev_solve_idx = self.s.dtttdt.droplevel(['period', 'time', 't_previous', 't_previous_within_timeset']).set_names(['period', 'time'])
+    prev_period_idx = self.s.dtttdt.droplevel(['time', 't_previous_within_timeset', 'd_previous', 't_previous_within_solve']).set_names(['period', 'time'])
+    prev_timeset_idx = self.s.dtttdt.droplevel(['time', 't_previous', 'd_previous', 't_previous_within_solve']).set_names(['period', 'time'])
+
+    # Create exclude_idx directly from MultiIndex
+    exclude_idx = self.s.period__time_first[
+        self.s.period__time_first.get_level_values('period').isin(self.s.period_first_of_solve)
+    ]
+    entity_all_capacity = entity_all_capacity.droplevel(0, axis=1)
     
     for n in self.s.nodeState:
         if n not in v_state.columns:
             continue
-            
+        
         state_change = pd.Series(0.0, index=current_idx)
         
-        # Get values and create Series aligned to current_idx
         v_current = pd.Series(v_state[n].reindex(current_idx).values, index=current_idx)
         v_prev_solve = pd.Series(v_state[n].reindex(prev_solve_idx).values, index=current_idx)
         v_prev_period = pd.Series(v_state[n].reindex(prev_period_idx).values, index=current_idx)
-        v_prev_timeset = pd.Series(v_state[n].reindex(prev_timeset_idx).values, index=current_idx)            
-
-        exclude_set = {(d, t) for d, t in period_time_first_set 
-            if d in self.s.period_first_of_solve}
-
+        v_prev_timeset = pd.Series(v_state[n].reindex(prev_timeset_idx).values, index=current_idx)
+        
         # Case 1: bind_forward_only
         if (n, 'bind_forward_only') in self.s.node__storage_binding_method:
-            mask = ~current_idx.isin(exclude_set)
+            mask = ~current_idx.isin(exclude_idx)
             state_change += ((v_current - v_prev_solve) * unitsize[n]).where(mask, 0)
         
-        # Case 2: bind_within_solve
+        # Cases 2-4 remain the same...
         if ((n, 'bind_within_solve') in self.s.node__storage_binding_method and
             (n, 'fix_start_end') not in self.s.node__storage_start_end_method):
             state_change += (v_current - v_prev_solve) * unitsize[n]
         
-        # Case 3: bind_within_period
         if ((n, 'bind_within_period') in self.s.node__storage_binding_method and
             (n, 'fix_start_end') not in self.s.node__storage_start_end_method):
             state_change += (v_current - v_prev_period) * unitsize[n]
         
-        # Case 4: bind_within_timeset
         if ((n, 'bind_within_timeset') in self.s.node__storage_binding_method and
             (n, 'fix_start_end') not in self.s.node__storage_start_end_method):
             state_change += (v_current - v_prev_timeset) * unitsize[n]
         
-        # Case 5: period__time_first && period_first_of_solve && not solveFirst
+        # Case 5
         if not self.p.nested_model.loc['solveFirst', 'value']:
-            mask = current_idx.isin(exclude_set)
+            mask = current_idx.isin(exclude_idx)
             state_change += (v_current * unitsize[n] - self.p.roll_continue_state.loc[n, 'value']).where(mask, 0)
         
-        # Case 6: bind_forward_only && period__time_first && period_first_of_solve && solveFirst && fix_start methods
+        # Case 6
         if ((n, 'bind_forward_only') in self.s.node__storage_binding_method and
             self.p.nested_model.loc['solveFirst', 'value'] and
             ((n, 'fix_start') in self.s.node__storage_start_end_method or
             (n, 'fix_start_end') in self.s.node__storage_start_end_method)):
             
-            for d, t in exclude_set:
-                if (d, t) in current_idx:
-                    state_change.loc[(d, t)] += (
-                        v_current.loc[(d, t)] * unitsize[n] -
-                        self.p.node.loc[(n, 'storage_state_start'), 'value'] * entity_all_capacity.loc[d, n]
+            for idx_tuple in exclude_idx:
+                if idx_tuple in current_idx:
+                    state_change.loc[idx_tuple] += (
+                        v_current.loc[idx_tuple] * unitsize[n] -
+                        self.p.node.droplevel(0, axis=1).loc[('storage_state_start', n)] * entity_all_capacity.loc[idx_tuple[0], n]
                     )
 
-        # Filter to dt_realize_dispatch and assign
-        r_state_change[n] = state_change.reindex(dt_dispatch_idx)
+        # Assign
+        r_state_change[n] = state_change
     
     self.r.nodeState_change_dt = r_state_change
 
@@ -339,7 +313,6 @@ def post_process_results(self):
     self.r.nodeState_change_d = r_state_change_d
     
     # r_selfDischargeLoss_dt - element-wise multiplication
-    dt_dispatch_idx = pd.MultiIndex.from_frame(self.s.dt_realize_dispatch[['period', 'time']])
     r_self_discharge_dt = pd.DataFrame(index=dt_dispatch_idx, columns=self.s.nodeSelfDischarge)
     for n in self.s.nodeSelfDischarge:
         if n in self.v.state.columns and n in self.p.node_self_discharge_loss.columns:
@@ -359,7 +332,7 @@ def post_process_results(self):
         r_self_discharge_weighted.index.get_level_values('period').isin(self.s.d_realized_period)
     ].groupby(level='period').sum()
     self.r.selfDischargeLoss_d = r_self_discharge_d
-
+    self.p.commodity_price = self.p.commodity_price.droplevel(0, axis=1)
     # r_cost_commodity_dt
     r_commodity_cost = {}
     for (c, n) in self.s.commodity_node:
@@ -414,7 +387,7 @@ def post_process_results(self):
         for idx in emissions.index:
             if idx in self.p.step_duration.index:
                 emissions.loc[idx] *= (self.p.step_duration.loc[idx] * 
-                                    self.p.commodity_co2_content.loc[c, 'value'])
+                                    self.p.commodity_co2_content.loc[c])
         r_process_co2[(p, c, n)] = emissions
     self.r.process_emissions_co2_dt = pd.DataFrame(r_process_co2)
     
@@ -483,7 +456,7 @@ def post_process_results(self):
     r_startup_cost = pd.DataFrame(0.0, index=self.r.process_startup_dt.index, columns=self.s.process_online)
     for p in self.s.process_online:
         if p in self.r.process_startup_dt.columns and p in self.p.process_startup_cost.columns:
-            cost = self.r.process_startup_dt[p] * self.p.entity_unitsize['value'][p]
+            cost = self.r.process_startup_dt[p] * self.p.entity_unitsize[p]
             for d in self.p.process_startup_cost.index:
                 if p in self.p.process_startup_cost.columns:
                     period_mask = cost.index.get_level_values('period') == d
@@ -493,7 +466,11 @@ def post_process_results(self):
 
     # r_costPenalty_nodeState_upDown_dt
     nodes = list(self.s.nodeBalance) + list(self.s.nodeBalancePeriod)
-    r_penalty_state = {}
+    node_updown_columns = pd.MultiIndex.from_product([nodes, self.s.upDown], names=['node', 'upDown'])
+    r_penalty_state = pd.DataFrame(
+        index=self.v.q_state_up.index if hasattr(self.v, 'q_state_up') and not self.v.q_state_up.empty else self.v.q_state_down.index,
+        columns=node_updown_columns
+    )
     for n in nodes:
         for ud in self.s.upDown:
             if ud == 'up' and n in self.v.q_state_up.columns:
@@ -510,12 +487,15 @@ def post_process_results(self):
                         period_mask = penalty.index.get_level_values('period') == d
                         penalty.loc[period_mask] *= self.p.node_capacity_for_scaling.loc[d, n]
                 r_penalty_state[(n, ud)] = penalty
-    self.r.costPenalty_nodeState_upDown_dt = pd.DataFrame(r_penalty_state)
-    
+    self.r.costPenalty_nodeState_upDown_dt = r_penalty_state
+
     # r_penalty_nodeState_upDown_d
-    self.r.penalty_nodeState_upDown_d = self.r.costPenalty_nodeState_upDown_dt[
-        self.r.costPenalty_nodeState_upDown_dt.index.get_level_values('period').isin(self.s.d_realized_period)
-    ].groupby(level='period').sum()
+    if not self.r.costPenalty_nodeState_upDown_dt.empty:
+        self.r.penalty_nodeState_upDown_d = self.r.costPenalty_nodeState_upDown_dt[
+            self.r.costPenalty_nodeState_upDown_dt.index.get_level_values('period').isin(self.s.d_realized_period)
+        ].groupby(level='period').sum()
+    else:
+        self.r.penalty_nodeState_upDown_d = None
 
     # r_costPenalty_inertia_dt
     r_penalty_inertia = pd.DataFrame(index=self.v.q_inertia.index, columns=self.s.groupInertia)
@@ -589,7 +569,7 @@ def post_process_results(self):
     r_existing_fixed = pd.DataFrame(index=self.s.period_in_use, columns=self.s.entity)
     for e in self.s.entity:
         for d in self.s.period_in_use:
-            capacity = self.p.entity_all_existing.loc[d, e]
+            capacity = self.p.entity_all_existing.droplevel(0, axis=1).loc[d, e]
             if not self.s.edd_invest.empty:
                 for row in self.s.edd_invest.itertuples(index=False):
                     e_inv, d_inv, d_use = row.entity, row.d_invest, row.d
@@ -597,9 +577,9 @@ def post_process_results(self):
                         capacity += self.v.invest.loc[d_inv, e] * self.p.entity_unitsize['value'][e]
             fixed_cost = 0
             if e in self.s.process:
-                fixed_cost = self.p.process_fixed_cost.loc[d, e]
+                fixed_cost = self.p.process_fixed_cost.droplevel(0, axis=1).loc[d, e]
             elif e in self.s.node:
-                fixed_cost = self.p.node_fixed_cost.loc[d, e]
+                fixed_cost = self.p.node_fixed_cost.droplevel(0, axis=1).loc[d, e]
             r_existing_fixed.loc[d, e] = capacity * fixed_cost * 1000 * self.p.discount_factor_operations_yearly.loc[d]
     self.r.cost_entity_existing_fixed = r_existing_fixed
     
@@ -706,7 +686,6 @@ def post_process_results(self):
     self.r.node_inflow = r_node_inflow
     
     # potentialVREgen_dt
-    dt_dispatch_idx = pd.MultiIndex.from_frame(self.s.dt_realize_dispatch[['period', 'time']])
     vre_potential_dt = {}
     for _, row in self.s.process_VRE.iterrows():
         p, n = row['process'], row['node']
@@ -739,7 +718,6 @@ def post_process_results(self):
     else:
         self.r.potentialVREgen = pd.DataFrame(0.0, index=self.s.d_realized_period, columns=[])
 
-    dt_dispatch_idx = pd.MultiIndex.from_frame(self.s.dt_realize_dispatch[['period', 'time']])
     # r_group_output__group_aggregate_Unit_to_group__dt
     r_unit_to_group = {}
     for _, row in self.s.group_output__group_aggregate_Unit_to_group.iterrows():
@@ -976,7 +954,7 @@ def post_process_results(self):
         else pd.DataFrame(0.0, index=self.s.d_realized_period, columns=self.s.groupOutputNodeFlows))
     
     # r_storage_usage_dt
-    dt_fix_idx = pd.MultiIndex.from_frame(self.s.dt_fix_storage_timesteps[['period', 'time']])
+    dt_fix_idx = self.s.dt_fix_storage_timesteps
     r_storage_usage = {}
     
     for n in self.s.node:
@@ -997,3 +975,74 @@ def post_process_results(self):
     self.r.storage_usage_dt = (pd.DataFrame(r_storage_usage) 
         if r_storage_usage else pd.DataFrame(0.0, index=dt_fix_idx, columns=[]))
 
+def drop_levels(self):
+    self.v.flow = self.v.flow.droplevel('solve')
+    self.v.ramp = self.v.ramp.droplevel('solve')
+    self.v.reserve = self.v.reserve.droplevel('solve')
+    self.v.state = self.v.state.droplevel('solve')
+    self.v.online_linear = self.v.online_linear.droplevel('solve')
+    self.v.startup_linear = self.v.startup_linear.droplevel('solve')
+    self.v.shutdown_linear = self.v.shutdown_linear.droplevel('solve')
+    self.v.online_integer = self.v.online_integer.droplevel('solve')
+    self.v.startup_integer = self.v.startup_integer.droplevel('solve')
+    self.v.shutdown_integer = self.v.shutdown_integer.droplevel('solve')
+    self.v.q_state_up = self.v.q_state_up.droplevel('solve')
+    self.v.q_state_down = self.v.q_state_down.droplevel('solve')
+    self.v.q_reserve = self.v.q_reserve.droplevel('solve')
+    self.v.q_inertia = self.v.q_inertia.droplevel('solve')
+    self.v.q_non_synchronous = self.v.q_non_synchronous.droplevel('solve')
+    self.v.q_state_up_group = self.v.q_state_up_group.droplevel('solve')
+    self.v.q_capacity_margin = self.v.q_capacity_margin.droplevel('solve')
+    self.v.invest = self.v.invest.droplevel('solve')
+    self.v.divest = self.v.divest.droplevel('solve')
+
+    self.p.step_duration = self.p.step_duration.droplevel('solve')
+    self.p.flow_min = self.p.flow_min.droplevel('solve')
+    self.p.flow_max = self.p.flow_max.droplevel('solve')
+    self.p.process_availability = self.p.process_availability.droplevel('solve')
+    self.p.process_source_sink_varCost = self.p.process_source_sink_varCost.droplevel('solve')
+    self.p.process_slope = self.p.process_slope.droplevel('solve')
+    self.p.process_section = self.p.process_section.droplevel('solve')
+    self.p.node_self_discharge_loss = self.p.node_self_discharge_loss.droplevel('solve')
+    self.p.node_penalty_up = self.p.node_penalty_up.droplevel('solve')
+    self.p.node_penalty_down = self.p.node_penalty_down.droplevel('solve')
+    self.p.node_inflow = self.p.node_inflow.droplevel('solve')
+    self.p.commodity_price = self.p.commodity_price.droplevel('solve')
+    self.p.group_co2_price = self.p.group_co2_price.droplevel('solve')
+    self.p.reserve_upDown_group_reservation = self.p.reserve_upDown_group_reservation.droplevel('solve')
+    self.p.profile = self.p.profile.droplevel('solve')
+    self.p.years_d = self.p.years_d.droplevel('solve')
+    self.p.entity_max_units = self.p.entity_max_units.droplevel('solve')
+    self.p.entity_all_existing = self.p.entity_all_existing.droplevel('solve')
+    self.p.process_startup_cost = self.p.process_startup_cost.droplevel('solve')
+    self.p.process_fixed_cost = self.p.process_fixed_cost.droplevel('solve')
+    self.p.node_fixed_cost = self.p.node_fixed_cost.droplevel('solve')
+    self.p.node_annual_flow = self.p.node_annual_flow.droplevel('solve')
+    self.p.group_penalty_inertia = self.p.group_penalty_inertia.droplevel('solve')
+    self.p.group_penalty_non_synchronous = self.p.group_penalty_non_synchronous.droplevel('solve')
+    self.p.group_penalty_capacity_margin = self.p.group_penalty_capacity_margin.droplevel('solve')
+    self.p.group_inertia_limit = self.p.group_inertia_limit.droplevel('solve')
+    self.p.group_capacity_margin = self.p.group_capacity_margin.droplevel('solve')
+    self.p.entity_annual_discounted = self.p.entity_annual_discounted.droplevel('solve')
+    self.p.entity_annual_divest_discounted = self.p.entity_annual_divest_discounted.droplevel('solve')
+    self.p.discount_factor_operations_yearly = self.p.discount_factor_operations_yearly.droplevel('solve')
+    self.p.discount_factor_investment_yearly = self.p.discount_factor_investment_yearly.droplevel('solve')
+    self.p.node_capacity_for_scaling = self.p.node_capacity_for_scaling.droplevel('solve')
+    self.p.group_capacity_for_scaling = self.p.group_capacity_for_scaling.droplevel('solve')
+    self.p.complete_period_share_of_year = self.p.complete_period_share_of_year.droplevel('solve')
+
+    self.s.period = self.s.period.droplevel('solve')
+    self.s.period__time_first = self.s.period__time_first.droplevel('solve')
+    self.s.period_first_of_solve = self.s.period_first_of_solve.droplevel('solve')
+    self.s.period_in_use = self.s.period_in_use.droplevel('solve')
+    self.s.period_invest = self.s.period_invest.droplevel('solve')
+    self.s.d_realize_dispatch_or_invest = self.s.d_realize_dispatch_or_invest.droplevel('solve')
+    self.s.d_realized_period = self.s.d_realized_period.droplevel('solve')
+    self.s.dt = self.s.dt.droplevel('solve')
+    self.s.dt_fix_storage_timesteps = self.s.dt_fix_storage_timesteps.droplevel('solve')
+    self.s.dt_realize_dispatch = self.s.dt_realize_dispatch.droplevel('solve')
+    self.s.dtt = self.s.dtt.droplevel('solve')
+    self.s.dtttdt = self.s.dtttdt.droplevel('solve')
+    self.s.ed_invest = self.s.ed_invest.droplevel('solve')
+    self.s.edd_invest = self.s.edd_invest.droplevel('solve')
+    self.s.ed_divest = self.s.ed_divest.droplevel('solve')
