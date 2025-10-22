@@ -6,6 +6,7 @@ import importlib.util
 from typing import Callable
 from functools import wraps
 import time
+from flextool.write_outputs import write_outputs
 
 class FlushingStream:
     def __init__(self, stream):
@@ -73,17 +74,7 @@ def main():
         sys.exit(1)
     
     if return_code == 0:
-        # Output to spreadsheet if requested
-        if args.output_spreadsheet:
-            runner.process_outputs('spreadsheet', args.output_spreadsheet)
-        
-        # Output to database if requested
-        if args.output_database:
-            runner.process_outputs('database', args.output_database)
-        
-        # Or if neither specified, could default to spreadsheet
-        if not args.output_spreadsheet and not args.output_database:
-            runner.process_outputs('spreadsheet', 'results.xlsx')
+        write_outputs()
 
     print(__file__)
     print("--- full time %.12s seconds ---------------------------------------" % (time.time() - start_time))

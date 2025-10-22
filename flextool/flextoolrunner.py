@@ -16,9 +16,6 @@ from pathlib import Path
 from collections import OrderedDict
 from collections import defaultdict
 from types import SimpleNamespace
-from flextool.read_flextool_outputs import read_variables, read_parameters, read_sets
-from flextool.write_flextool_csv import write_unit_capacity
-from flextool.process_results import post_process_results
 
 #return_codes
 #0 : Success
@@ -124,7 +121,6 @@ class FlexToolRunner:
         self.first_of_complete_solve = []
         self.last_of_solve = []
         #self.write_full_timelines(self.timelines, 'steps.csv')
-        self.r = SimpleNamespace()  # Initialize empty namespace for results
 
 
 
@@ -2589,41 +2585,6 @@ class FlexToolRunner:
                             filter_in_value="yes", no_value=True)
             write_default_values(db, [("model", "version")], "version", "input/db_version.csv",
                             filter_in_type=["float", "str", "bool"], only_value=True)
-
-    def process_outputs(self, output_format='spreadsheet', output_path=None):
-        """
-        Read solver output files and post-process results.
-        
-        Args:
-            output_format: 'spreadsheet' or 'database'
-            output_path: Where to save output (file path or db URL)
-        """
-       
-        # Read solver output files
-        self.p = read_parameters()
-        self.s = read_sets()
-        self.v = read_variables()
-        post_process_results(self)
-
-        write_unit_capacity(self.v, self.s, self.p, self.r, 'output_py')
-        # Post-process
-        # self._post_process_results()
-        
-        # write_unit_capacity(self.v, self.s, self.p, self.r, 'output_py')
-
-        # Write based on format
-        if output_format == 'spreadsheet':
-            self._write_to_spreadsheet(self.r, output_path)
-        elif output_format == 'database':
-            self._write_to_database(self.r, output_path)
-        
-        return self.r
-
-    def _write_to_spreadsheet(self, data, path):
-        pass
-    
-    def _write_to_database(self, data, db_url):
-        pass
 
 
 def write_entity(db, cl, header, filename, entity_dimens=None):

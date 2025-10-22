@@ -1546,13 +1546,13 @@ set group_output__process_fully_inside :=
        && sum {(p, sink) in process_sink : (g, sink) in group_node} 1      # sink node is in the group
 	   && not sum {(p, source, sink) in process_source_sink : source == sink} 1  # but source and sink can't be the same (rule out e.g. battery storage)
   }; 
-set group_output__process__unit__to_node_not_in_aggregate :=
+set group_output__process__unit__to_node_Not_in_aggregate :=
     {g in groupOutputNodeFlows, (p, source, sink) in process_source_sink_alwaysProcess 
 	                             : p in process_unit 
 								 && (g, sink) in group_node 
 								 && (g, p) not in group_output__process_fully_inside
 								 && not sum{(ga, p, sink) in group_process_node : ga in groupOutputAggregateFlows} 1};
-set group_output__process__node__to_unit_not_in_aggregate :=
+set group_output__process__node__to_unit_Not_in_aggregate :=
     {g in groupOutputNodeFlows, (p, source, sink) in process_source_sink_alwaysProcess 
 	                             : p in process_unit 
 								 && (g, source) in group_node 
@@ -1582,7 +1582,7 @@ set group_output__process__connection__to_node_Not_in_aggregate :=
 								 && (g, sink) in group_node
 								 && (g, p) not in group_output__process_fully_inside
 								 && not sum{(ga, p, sink) in group_process_node : ga in groupOutputAggregateFlows} 1};
-set group_output__connection_Not_in_aggregate := 
+set group_output__connection_Not_in_aggregate :=
     setof {(g, p, source, sink) in 
 	          group_output__process__connection__to_node_Not_in_aggregate
 	          union group_output__process__node__to_connection_Not_in_aggregate} (g, p);
@@ -3796,11 +3796,11 @@ for {s in solve_current, (d, t) in dt_realize_dispatch} {
 # Write pdtGroup (co2_price)
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/pdtGroup_co2_price.csv";
-  for {g in group} {printf ",%s", g >> "output_raw/pdtGroup_co2_price.csv";}
+  for {g in group_co2_price} {printf ",%s", g >> "output_raw/pdtGroup_co2_price.csv";}
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/pdtGroup_co2_price.csv";
-    for {g in group} {
+    for {g in group_co2_price} {
         printf ",%g", pdtGroup[g, 'co2_price', d, t] >> "output_raw/pdtGroup_co2_price.csv";
     }
 }
@@ -3833,12 +3833,20 @@ for {s in solve_current, (d, t) in dt_realize_dispatch} {
     }
 }
 
-# Write p_years_d
+# Write p_years_from_start_d
 if p_model["solveFirst"] == 1 then {
-  printf "solve,period,value" > "output_raw/p_years_d.csv";
+  printf "solve,period,value" > "output_raw/p_years_from_start_d.csv";
 }
-for {s in solve_current, d in d_realized_period} {
-    printf "\n%s,%s,%g", s, d, p_years_d[d] >> "output_raw/p_years_d.csv";
+for {s in solve_current, d in d_realize_dispatch_or_invest} {
+    printf "\n%s,%s,%g", s, d, p_years_d[d] >> "output_raw/p_years_from_start_d.csv";
+}
+
+# Write p_years_represented_d
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,value" > "output_raw/p_years_represented_d.csv";
+}
+for {s in solve_current, d in d_realize_dispatch_or_invest} {
+    printf "\n%s,%s,%g", s, d, p_years_represented_d[d] >> "output_raw/p_years_represented_d.csv";
 }
 
 # Write p_entity_max_units
@@ -3846,7 +3854,7 @@ if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/p_entity_max_units.csv";
   for {e in entity} {printf ",%s", e >> "output_raw/p_entity_max_units.csv";}
 }
-for {s in solve_current, d in d_realized_period} {
+for {s in solve_current, d in d_realize_dispatch_or_invest} {
     printf "\n%s,%s", s, d >> "output_raw/p_entity_max_units.csv";
     for {e in entity} {
         printf ",%g", p_entity_max_units[e, d] >> "output_raw/p_entity_max_units.csv";
@@ -3858,7 +3866,7 @@ if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/p_entity_all_existing.csv";
   for {e in entity} {printf ",%s", e >> "output_raw/p_entity_all_existing.csv";}
 }
-for {s in solve_current, d in d_realized_period} {
+for {s in solve_current, d in d_realize_dispatch_or_invest} {
     printf "\n%s,%s", s, d >> "output_raw/p_entity_all_existing.csv";
     for {e in entity} {
         printf ",%g", p_entity_all_existing[e, d] >> "output_raw/p_entity_all_existing.csv";
@@ -4170,6 +4178,11 @@ if p_model['solveFirst'] then {
 
   # Sets needed for flow calculations
   # Process topology sets
+  printf "process,source,sink\n" > "output_raw/set_process_source_sink.csv";
+  for {(p, source, sink) in process_source_sink} {
+      printf "%s,%s,%s\n", p, source, sink >> "output_raw/set_process_source_sink.csv";
+  }
+
   printf "process,method,orig_source,orig_sink,always_source,always_sink\n" > "output_raw/set_process_method_sources_sinks.csv";
   for {(p, m, orig_source, orig_sink, always_source, always_sink) in process_method_sources_sinks} {
       printf "%s,%s,%s,%s,%s,%s\n", p, m, orig_source, orig_sink, always_source, always_sink >> "output_raw/set_process_method_sources_sinks.csv";
@@ -4311,12 +4324,12 @@ if p_model['solveFirst'] then {
       printf "%s,%s,%s\n", p, c, n >> "output_raw/set_process__commodity__node_co2.csv";
   }
 
-  printf "group,commodity,node,period,time\n" > "output_raw/set_gcndt_co2_price.csv";
-  for {(g, c, n, d, t) in gcndt_co2_price} {
-      printf "%s,%s,%s,%s,%s\n", g, c, n, d, t >> "output_raw/set_gcndt_co2_price.csv";
+  # Group-related sets
+  printf "group\n" > "output_raw/set_group_co2_price.csv";
+  for {g in group_co2_price} {
+      printf "%s\n", g >> "output_raw/set_group_co2_price.csv";
   }
 
-  # Group-related sets
   printf "group\n" > "output_raw/set_groupInertia.csv";
   for {g in groupInertia} {
       printf "%s\n", g >> "output_raw/set_groupInertia.csv";
@@ -4337,19 +4350,44 @@ if p_model['solveFirst'] then {
       printf "%s\n", g >> "output_raw/set_groupOutputNodeFlows.csv";
   }
 
+  printf "group\n" > "output_raw/set_groupOutput_node.csv";
+  for {g in groupOutput_node} {
+      printf "%s\n", g >> "output_raw/set_groupOutput_node.csv";
+  }
+
+  printf "group\n" > "output_raw/set_groupOutput_process.csv";
+  for {g in groupOutput_process} {
+      printf "%s\n", g >> "output_raw/set_groupOutput_process.csv";
+  }
+
+  printf "group\n" > "output_raw/set_groupOutput.csv";
+  for {g in groupOutput} {
+      printf "%s\n", g >> "output_raw/set_groupOutput.csv";
+  }
+
   printf "group,connection\n" > "output_raw/set_group_output__connection_Not_in_aggregate.csv";
   for {(g, c) in group_output__connection_Not_in_aggregate} {
       printf "%s,%s\n", g, c >> "output_raw/set_group_output__connection_Not_in_aggregate.csv";
   }
 
-  printf "group,connection,connection,node\n" > "output_raw/set_group_output__process__connection__to_node_Not_in_aggregate.csv";
+  printf "group,process,connection,node\n" > "output_raw/set_group_output__process__connection__to_node_Not_in_aggregate.csv";
   for {(g, c, c2, n) in group_output__process__connection__to_node_Not_in_aggregate} {
       printf "%s,%s,%s,%s\n", g, c, c2, n >> "output_raw/set_group_output__process__connection__to_node_Not_in_aggregate.csv";
   }
 
-  printf "group,connection,node,connection\n" > "output_raw/set_group_output__process__node__to_connection_Not_in_aggregate.csv";
+  printf "group,process,node,connection\n" > "output_raw/set_group_output__process__node__to_connection_Not_in_aggregate.csv";
   for {(g, c, n, c2) in group_output__process__node__to_connection_Not_in_aggregate} {
       printf "%s,%s,%s,%s\n", g, c, n, c2 >> "output_raw/set_group_output__process__node__to_connection_Not_in_aggregate.csv";
+  }
+
+  printf "group,process,unit,node\n" > "output_raw/set_group_output__process__unit__to_node_Not_in_aggregate.csv";
+  for {(g, p, p2, n) in group_output__process__unit__to_node_Not_in_aggregate} {
+      printf "%s,%s,%s,%s\n", g, p, p2, n >> "output_raw/set_group_output__process__unit__to_node_Not_in_aggregate.csv";
+  }
+
+  printf "group,process,node,unit\n" > "output_raw/set_group_output__process__node__to_unit_Not_in_aggregate.csv";
+  for {(g, p, n, p2) in group_output__process__node__to_unit_Not_in_aggregate} {
+      printf "%s,%s,%s,%s\n", g, p, n, p2 >> "output_raw/set_group_output__process__node__to_unit_Not_in_aggregate.csv";
   }
 
   printf "group,group_aggregate\n" > "output_raw/set_group_output__group_aggregate_Unit_to_group.csv";
@@ -4387,6 +4425,11 @@ if p_model['solveFirst'] then {
       printf "%s,%s,%s,%s,%s\n", g, ga, c, source, sink >> "output_raw/set_group_output__group_aggregate__process__node__to_connection.csv";
   }
 
+  printf "group,process\n" > "output_raw/set_group_process.csv";
+  for {(g, p) in group_process} {
+      printf "%s,%s\n", g, p >> "output_raw/set_group_process.csv";
+  }
+
   printf "group,process\n" > "output_raw/set_group_output__process_fully_inside.csv";
   for {(g, p) in group_output__process_fully_inside} {
       printf "%s,%s\n", g, p >> "output_raw/set_group_output__process_fully_inside.csv";
@@ -4395,6 +4438,11 @@ if p_model['solveFirst'] then {
   printf "group,node\n" > "output_raw/set_group_node.csv";
   for {(g, n) in group_node} {
       printf "%s,%s\n", g, n >> "output_raw/set_group_node.csv";
+  }
+
+  printf "group,process,node\n" > "output_raw/set_group_process_node.csv";
+  for {(g, p, n) in group_process_node} {
+      printf "%s,%s,%s\n", g, p, n >> "output_raw/set_group_process_node.csv";
   }
 
   # upDown set
@@ -4411,11 +4459,15 @@ if p_model['solveFirst'] then {
 }
 
 # Sets with period and/or time dimensions
-display p_model;
 # period_invest - periods where investment can occur
 if p_model["solveFirst"] == 1 then printf "solve,period\n" > "output_raw/set_d_realize_dispatch_or_invest.csv";
 for {s in solve_current, d in d_realize_dispatch_or_invest} {
     printf "%s,%s\n", s, d >> "output_raw/set_d_realize_dispatch_or_invest.csv";
+}
+
+if p_model["solveFirst"] == 1 then printf "solve,period\n" > "output_raw/set_d_realize_invest.csv";
+for {s in solve_current, d in d_realize_invest} {
+    printf "%s,%s\n", s, d >> "output_raw/set_d_realize_invest.csv";
 }
 
 # ed_invest - (entity, period) pairs where investment occurs
@@ -4961,6 +5013,11 @@ for {n in nodeState, (d, t) in realized_period__time_last}
     printf '%s,%.12g\n', n, v_state[n, d, t].val* p_entity_unitsize[n]  >> fn_p_roll_continue_state;
   }
 
+param fn_period_capacity symbolic := "solve_data/period_capacity.csv";
+printf 'period\n' > fn_period_capacity;
+for {d in period_capacity union d_realize_dispatch_or_invest}
+  { printf '%s\n', d >> fn_period_capacity; }
+
 
 
 #### Write out results
@@ -4975,8 +5032,6 @@ for {s in solve_current, p in process_unit, d in d_realize_dispatch_or_invest: '
 			(if (p, d) in pd_invest then v_invest[p, d].val * p_entity_unitsize[p] else 0), 
 			(if (p, d) in pd_divest then v_divest[p, d].val * p_entity_unitsize[p] else 0), 
 			entity_all_capacity[p, d]
-#			+ (if entity_all_capacity[p, d] then sum{(p, sink) in process_sink} (r_process_sink_flow_d[p, sink, d]) / entity_all_capacity[p,d] else 0),
-#			+ r_cost_process_other_operational_cost_d[p, d]
 	>> fn_unit_capacity;
   }
 
@@ -5107,18 +5162,13 @@ printf '"CO2 [Mt]",%.6g\n', model_co2["CO2 [Mt]"] + sum{(c, n) in commodity_node
                                                          (r_emissions_co2_d[c, n, d]
                                                             * p_years_represented_d[d]) / 1000000 >> fn_model_co2;
 
-param fn_period_capacity symbolic := "solve_data/period_capacity.csv";
-printf 'period\n' > fn_period_capacity;
-for {d in period_capacity union d_realize_dispatch_or_invest}
-  { printf '%s\n', d >> fn_period_capacity; }
-
 printf 'Write group results for nodes for realized periods...\n';
 param fn_groupNode__d symbolic := "output/group_node__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
-    printf 'group,solve,period,"sum of annualized inflows [MWh]","VRE share [of annual inflow]",' > fn_groupNode__d;
-	printf '"curtailed VRE share, [of annual inflow]","upward slack [of annual inflow]",' >> fn_groupNode__d;
-	printf '"downward slack [of annual inflow]"\n' >> fn_groupNode__d;
+    printf 'group,solve,period,"sum of annualized inflows [MWh]","VRE share [of inflow]",' > fn_groupNode__d;
+	printf '"curtailed VRE share [of inflow]","upward slack [of inflow]",' >> fn_groupNode__d;
+	printf '"downward slack [of inflow]"\n' >> fn_groupNode__d;
   }
 for {g in groupOutput_node, s in solve_current, d in d_realized_period: sum{(g, n) in group_node} pdNodeInflow[n, d]}
   {
@@ -5126,15 +5176,15 @@ for {g in groupOutput_node, s in solve_current, d in d_realized_period: sum{(g, 
        , sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d]
        , ( sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 	             r_process_source_sink_flow_d[p, source, n, d]  
-		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] )	   
+		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] )
 	   , ( + sum{(p, n) in process_sink : (g, n) in group_node && p in process_VRE} potentialVREgen[p, n, d]
 	       - sum{(p, source, n) in process_source_sink_alwaysProcess : (g, n) in group_node && p in process_VRE && (p, n) in process_sink} 
 		         r_process_source_sink_flow_d[p, source, n, d] 
-		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] )
+		 ) / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] )
 	  , ( sum{(g, n) in group_node : n in nodeBalance union nodeBalancePeriod} r_penalty_nodeState_upDown_d[n, 'up', d] ) 
-	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] )
+	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] )
 	  , ( sum{(g, n) in group_node : n in nodeBalance union nodeBalancePeriod} r_penalty_nodeState_upDown_d[n, 'down', d] ) 
-	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] / complete_period_share_of_year[d] )
+	    / ( - sum{(g, n) in group_node} pdNodeInflow[n, d] )
 	>> fn_groupNode__d;
   }
 
@@ -5143,9 +5193,9 @@ param fn_groupNode__dt symbolic := "output/group_node__period__t.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { 
     printf 'group,solve,period,time,' > fn_groupNode__dt;
-	printf '"pdtNodeInflow" ,"sum of annualized inflows [MWh]","VRE share [of annual inflow]",' >> fn_groupNode__dt;
-  printf '"curtailed VRE share, [of annual inflow]","upward slack [of annual inflow]",' >> fn_groupNode__dt;
-	printf '"downward slack [of annual inflow]"\n' >> fn_groupNode__dt;
+	printf '"pdtNodeInflow" ,"sum of annualized inflows [MWh]","VRE share [of inflow]",' >> fn_groupNode__dt;
+  printf '"curtailed VRE share [of inflow]","upward slack [of inflow]",' >> fn_groupNode__dt;
+	printf '"downward slack [of inflow]"\n' >> fn_groupNode__dt;
   }
 for {g in groupOutput_node, s in solve_current, (d, t) in dt_realize_dispatch}
   {
@@ -5624,12 +5674,12 @@ for {i in 1..1 : p_model['solveFirst']}
 	  {
         printf ',%s', g >> fn_group_flows__dt;
         for{(g, ga) in group_output__group_aggregate_Unit_to_group} { printf ',%s', g >> fn_group_flows__dt;}
-	    for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate} { printf ',%s', g >> fn_group_flows__dt;}
+	    for{(g, u, source, sink) in group_output__process__unit__to_node_Not_in_aggregate} { printf ',%s', g >> fn_group_flows__dt;}
         for{(g, ga) in group_output__group_aggregate_Connection} {printf ',%s', g >> fn_group_flows__dt;}
         for{(g, c) in group_output__connection_Not_in_aggregate} {printf ',%s', g >> fn_group_flows__dt;}
         for{(g, n) in group_node: n in nodeState} {printf ',%s', g >> fn_group_flows__dt;}
         for{(g, ga) in group_output__group_aggregate_Group_to_unit} {printf ',%s', g >> fn_group_flows__dt;}
-        for{(g, u, source, sink) in group_output__process__node__to_unit_not_in_aggregate} {printf ',%s', g >> fn_group_flows__dt;}
+        for{(g, u, source, sink) in group_output__process__node__to_unit_Not_in_aggregate} {printf ',%s', g >> fn_group_flows__dt;}
         printf ',%s,%s,%s,%s,%s', g, g, g, g, g >> fn_group_flows__dt;
 	  }
 	printf '\n,,' >> fn_group_flows__dt;
@@ -5637,12 +5687,12 @@ for {i in 1..1 : p_model['solveFirst']}
 	  {
         printf ',slack' >> fn_group_flows__dt;
         for{(g, ga) in group_output__group_aggregate_Unit_to_group} { printf ',unit_aggregate' >> fn_group_flows__dt;}
-	    for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate} { printf ',unit' >> fn_group_flows__dt;}
+	    for{(g, u, source, sink) in group_output__process__unit__to_node_Not_in_aggregate} { printf ',unit' >> fn_group_flows__dt;}
         for{(g, ga) in group_output__group_aggregate_Connection} {printf ',connection' >> fn_group_flows__dt;}
         for{(g, c) in group_output__connection_Not_in_aggregate} {printf ',connection' >> fn_group_flows__dt;}
         for{(g, n) in group_node: n in nodeState} {printf ',storage_flow' >> fn_group_flows__dt;}
         for{(g, ga) in group_output__group_aggregate_Group_to_unit} {printf ',unit_aggregate' >> fn_group_flows__dt;}
-        for{(g, u, source, sink) in group_output__process__node__to_unit_not_in_aggregate} {printf ',unit' >> fn_group_flows__dt;}
+        for{(g, u, source, sink) in group_output__process__node__to_unit_Not_in_aggregate} {printf ',unit' >> fn_group_flows__dt;}
         printf ',internal_losses,internal_losses,internal_losses,slack,inflow' >> fn_group_flows__dt;
 	  }
 	printf '\n,,' >> fn_group_flows__dt;
@@ -5650,12 +5700,12 @@ for {i in 1..1 : p_model['solveFirst']}
 	  {
         printf ',upward' >> fn_group_flows__dt;
         for{(g, ga) in group_output__group_aggregate_Unit_to_group} { printf ',%s', ga >> fn_group_flows__dt;}
-	    for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate} { printf ',%s', u >> fn_group_flows__dt;}
+	    for{(g, u, source, sink) in group_output__process__unit__to_node_Not_in_aggregate} { printf ',%s', u >> fn_group_flows__dt;}
         for{(g, ga) in group_output__group_aggregate_Connection} {printf ',%s', ga >> fn_group_flows__dt;}
         for{(g, c) in group_output__connection_Not_in_aggregate} {printf ',%s', c >> fn_group_flows__dt;}
         for{(g, n) in group_node: n in nodeState} {printf ',%s', g >> fn_group_flows__dt;}
         for{(g, ga) in group_output__group_aggregate_Group_to_unit} {printf ',%s', ga >> fn_group_flows__dt;}
-        for{(g, u, source, sink) in group_output__process__node__to_unit_not_in_aggregate} {printf ',%s', u >> fn_group_flows__dt;}
+        for{(g, u, source, sink) in group_output__process__node__to_unit_Not_in_aggregate} {printf ',%s', u >> fn_group_flows__dt;}
         printf ',connections,units,storages,downward,%s', g >> fn_group_flows__dt;
 	  }
   }
@@ -5667,7 +5717,7 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
         printf ',%.8g', + r_group_node_up_penalties__dt[g, d, t] >> fn_group_flows__dt;
 		for{(g, ga) in group_output__group_aggregate_Unit_to_group}
 			printf ',%.8g', + r_group_output__group_aggregate_Unit_to_group__dt[g, ga, d, t] >> fn_group_flows__dt;
-		for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate}
+		for{(g, u, source, sink) in group_output__process__unit__to_node_Not_in_aggregate}
 		    printf ',%.8g', + r_process__source__sink_Flow__dt[u, source, sink, d, t] >> fn_group_flows__dt;
 	    for{(g, ga) in group_output__group_aggregate_Connection}
             printf ',%.8g', + r_group_output__group_aggregate_Connection__dt[g, ga, d, t] >> fn_group_flows__dt;
@@ -5677,7 +5727,7 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
             printf ',%.8g', - r_nodeState_change_dt[n, d, t] >> fn_group_flows__dt;
         for{(g, ga) in group_output__group_aggregate_Group_to_unit}
             printf ',%.8g', + r_group_output__group_aggregate_Group_to_unit__dt[g, ga, d, t] >> fn_group_flows__dt;
-        for{(g, u, source, sink) in group_output__process__node__to_unit_not_in_aggregate} 
+        for{(g, u, source, sink) in group_output__process__node__to_unit_Not_in_aggregate}
             printf ',%.8g', - r_process__source__sink_Flow__dt[u, source, sink, d, t] >> fn_group_flows__dt;
         printf ',%.8g,%.8g,%.8g,%.8g,%.8g', 
 		  - r_group_output_Internal_connection_losses__dt[g, d, t],
@@ -5697,12 +5747,12 @@ for {i in 1..1 : p_model['solveFirst']}
 	  {
         printf ',%s', g >> fn_group_flows__d;
         for{(g, ga) in group_output__group_aggregate_Unit_to_group} { printf ',%s', g >> fn_group_flows__d;}
-	    for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate} { printf ',%s', g >> fn_group_flows__d;}
+	    for{(g, u, source, sink) in group_output__process__unit__to_node_Not_in_aggregate} { printf ',%s', g >> fn_group_flows__d;}
         for{(g, ga) in group_output__group_aggregate_Connection} {printf ',%s', g >> fn_group_flows__d;}
         for{(g, c) in group_output__connection_Not_in_aggregate} {printf ',%s', g >> fn_group_flows__d;}
         for{(g, n) in group_node: n in nodeState} {printf ',%s', g >> fn_group_flows__d;}
         for{(g, ga) in group_output__group_aggregate_Group_to_unit} {printf ',%s', g >> fn_group_flows__d;}
-        for{(g, u, source, sink) in group_output__process__node__to_unit_not_in_aggregate} {printf ',%s', g >> fn_group_flows__d;}
+        for{(g, u, source, sink) in group_output__process__node__to_unit_Not_in_aggregate} {printf ',%s', g >> fn_group_flows__d;}
         printf ',%s,%s,%s,%s,%s', g, g, g, g, g >> fn_group_flows__d;
 	  }
 	printf '\n,' >> fn_group_flows__d;
@@ -5710,12 +5760,12 @@ for {i in 1..1 : p_model['solveFirst']}
 	  {
         printf ',slack' >> fn_group_flows__d;
         for{(g, ga) in group_output__group_aggregate_Unit_to_group} { printf ',unit_aggregate' >> fn_group_flows__d;}
-	    for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate} { printf ',unit' >> fn_group_flows__d;}
+	    for{(g, u, source, sink) in group_output__process__unit__to_node_Not_in_aggregate} { printf ',unit' >> fn_group_flows__d;}
         for{(g, ga) in group_output__group_aggregate_Connection} {printf ',connection' >> fn_group_flows__d;}
         for{(g, c) in group_output__connection_Not_in_aggregate} {printf ',connection' >> fn_group_flows__d;}
         for{(g, n) in group_node: n in nodeState} {printf ',storage_flow' >> fn_group_flows__d;}
         for{(g, ga) in group_output__group_aggregate_Group_to_unit} {printf ',unit_aggregate' >> fn_group_flows__d;}
-        for{(g, u, source, sink) in group_output__process__node__to_unit_not_in_aggregate} {printf ',unit' >> fn_group_flows__d;}
+        for{(g, u, source, sink) in group_output__process__node__to_unit_Not_in_aggregate} {printf ',unit' >> fn_group_flows__d;}
         printf ',internal_losses,internal_losses,internal_losses,slack,inflow' >> fn_group_flows__d;
 	  }
 	printf '\n,' >> fn_group_flows__d;
@@ -5723,12 +5773,12 @@ for {i in 1..1 : p_model['solveFirst']}
 	  {
         printf ',upward' >> fn_group_flows__d;
         for{(g, ga) in group_output__group_aggregate_Unit_to_group} { printf ',%s', ga >> fn_group_flows__d;}
-	    for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate} { printf ',%s', u >> fn_group_flows__d;}
+	    for{(g, u, source, sink) in group_output__process__unit__to_node_Not_in_aggregate} { printf ',%s', u >> fn_group_flows__d;}
         for{(g, ga) in group_output__group_aggregate_Connection} {printf ',%s', ga >> fn_group_flows__d;}
         for{(g, c) in group_output__connection_Not_in_aggregate} {printf ',%s', c >> fn_group_flows__d;}
         for{(g, n) in group_node: n in nodeState} {printf ',%s', g >> fn_group_flows__d;}
         for{(g, ga) in group_output__group_aggregate_Group_to_unit} {printf ',%s', ga >> fn_group_flows__d;}
-        for{(g, u, source, sink) in group_output__process__node__to_unit_not_in_aggregate} {printf ',%s', u >> fn_group_flows__d;}
+        for{(g, u, source, sink) in group_output__process__node__to_unit_Not_in_aggregate} {printf ',%s', u >> fn_group_flows__d;}
         printf ',connections,units,storages,downward,%s', g >> fn_group_flows__d;
 	  }
   }
@@ -5740,7 +5790,7 @@ for {s in solve_current, d in d_realized_period}
         printf ',%.8g', + r_group_node_up_penalties__d[g, d] >> fn_group_flows__d;
 		for{(g, ga) in group_output__group_aggregate_Unit_to_group}
 			printf ',%.8g', + r_group_output__group_aggregate_Unit_to_group__d[g, ga, d] >> fn_group_flows__d;
-		for{(g, u, source, sink) in group_output__process__unit__to_node_not_in_aggregate}
+		for{(g, u, source, sink) in group_output__process__unit__to_node_Not_in_aggregate}
 		    printf ',%.8g', + r_process__source__sink_Flow__d[u, source, sink, d] >> fn_group_flows__d;
 	    for{(g, ga) in group_output__group_aggregate_Connection}
             printf ',%.8g', + r_group_output__group_aggregate_Connection__d[g, ga, d] >> fn_group_flows__d;
@@ -5750,7 +5800,7 @@ for {s in solve_current, d in d_realized_period}
             printf ',%.8g', - r_nodeState_change_d[n, d] >> fn_group_flows__d;
         for{(g, ga) in group_output__group_aggregate_Group_to_unit}
             printf ',%.8g', + r_group_output__group_aggregate_Group_to_unit__d[g, ga, d] >> fn_group_flows__d;
-        for{(g, u, source, sink) in group_output__process__node__to_unit_not_in_aggregate} 
+        for{(g, u, source, sink) in group_output__process__node__to_unit_Not_in_aggregate}
             printf ',%.8g', - r_process__source__sink_Flow__d[u, source, sink, d] >> fn_group_flows__d;
         printf ',%.8g,%.8g,%.8g,%.8g,%.8g', 
 		  - r_group_output_Internal_connection_losses__d[g, d],
