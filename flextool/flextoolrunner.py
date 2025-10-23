@@ -1905,6 +1905,8 @@ class FlexToolRunner:
         branch_start_time_lists = defaultdict()
         all_solves=[]
 
+        timer = time.perf_counter()
+
         try:
             os.mkdir('solve_data')
         except FileExistsError:
@@ -1966,6 +1968,9 @@ class FlexToolRunner:
                 if (period,period) in period__branch_lists[solve] and not any(period== sublist[0] for sublist in solve_period_history[complete_solve[solve]]):
                     self.logger.error("The years_represented is defined, but not to all of the periods in the solve")
                     sys.exit(-1)
+
+        print(f"Pre-processing of data: {time.perf_counter() - timer:.4f} seconds")
+        timer = time.perf_counter()
 
         first = True
         previous_complete_solve = None
@@ -2044,6 +2049,7 @@ class FlexToolRunner:
                 self.write_headers_for_empty_output_files('output/co2.csv', 'param_co2,model_wide')
                 self.write_headers_for_empty_output_files('solve_data/period_capacity.csv', 'period')
             self.logger.info("Starting model creation")
+
             exit_status = self.model_run(complete_solve[solve])
             if exit_status == 0:
                 self.logger.info('Success!')
@@ -2056,6 +2062,9 @@ class FlexToolRunner:
                 shutil.copy("solve_data/fix_storage_quantity.csv","solve_data/fix_storage_quantity_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_price.csv", "solve_data/fix_storage_price_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_usage.csv","solve_data/fix_storage_usage_"+ complete_solve[solve]+".csv")
+
+        print(f"Solve loop: {time.perf_counter() - timer:.4f} seconds")
+        timer = time.perf_counter()
 
         #produce periodic data as post-process for rolling window solves
         results_post_processed = False
@@ -2103,6 +2112,10 @@ class FlexToolRunner:
         os.remove("output/annualized_investment_costs__period.csv")
         os.remove("output/group_node__period__t.csv")
         os.remove("output/unit_curtailment_share__outputNode__period__t.csv")
+
+        print(f"flextoolrunner post process: {time.perf_counter() - timer:.4f} seconds")
+        timer = time.perf_counter()
+
         if len(self.model_solve) > 1:
             self.logger.error(
                 f'Trying to run more than one model - not supported. The results of the first model are retained.')

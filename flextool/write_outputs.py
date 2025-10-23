@@ -1,5 +1,9 @@
 import csv
 import pandas as pd
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
 import time
 from pathlib import Path
 from flextool.read_flextool_outputs import read_variables, read_parameters, read_sets
@@ -31,7 +35,7 @@ def unit_capacity(par, s, v, r):
     
     # Create base dataframe with all combinations (period, unit order)
     if processes:
-        index = pd.MultiIndex.from_product([periods, processes], names=['unit', 'period'])
+        index = pd.MultiIndex.from_product([processes, periods], names=['unit', 'period'])
     else:
         index = pd.Index(periods, name='period')
     result_multi = pd.DataFrame(index=index)
@@ -73,7 +77,7 @@ def connection_capacity(par, s, v, r):
     
     # Create base dataframe with all combinations (period, connection order)
     if connections:
-        index = pd.MultiIndex.from_product([periods, connections], names=['connection', 'period'])
+        index = pd.MultiIndex.from_product([connections, periods], names=['connection', 'period'])
     else:
         index = pd.Index(periods, name='period')
     result_multi = pd.DataFrame(index=index)
@@ -116,7 +120,7 @@ def node_capacity(par, s, v, r):
     
     # Create base dataframe with all combinations (period, node order)
     if nodes:
-        index = pd.MultiIndex.from_product([periods, nodes], names=['period', 'node'])
+        index = pd.MultiIndex.from_product([nodes, periods], names=['node', 'period'])
     else:
         index = pd.Index(periods, name='period')
     result_multi = pd.DataFrame(index=index)
@@ -177,7 +181,7 @@ def group_node_period(par, s, v, r):
     groups = list(s.groupOutput_node)
     
     if not groups:
-        return pd.DataFrame(), pd.DataFrame(), 'group_node_period', 'tbl_group_node_period'
+        return pd.DataFrame(), pd.DataFrame(), 'group_node_d', 'tbl_group_node_period'
     
     # Create group-node mapping as DataFrame for easier merging
     group_node_df = pd.DataFrame(s.group_node.to_list(), columns=['group', 'node'])
@@ -260,7 +264,7 @@ def group_node_period(par, s, v, r):
          'upward_slack', 'downward_slack']
     ]
     
-    return result_flat, result_multi, 'group_node_period', 'tbl_group_node_period'
+    return result_flat, result_multi, 'group_node_d', 'tbl_group_node_period'
 
 def group_node_period_time(par, s, v, r):
     """Group node results by period and time"""
@@ -268,7 +272,7 @@ def group_node_period_time(par, s, v, r):
     groups = list(s.groupOutput_node)
     
     if not groups:
-        return pd.DataFrame(), pd.DataFrame(), 'group_node_period_time', 'tbl_group_node_period_time'
+        return pd.DataFrame(), pd.DataFrame(), 'group_node_dt', 'tbl_group_node_dt'
     
     # Create group-node mapping
     group_node_df = pd.DataFrame(s.group_node.to_list(), columns=['group', 'node'])
@@ -370,7 +374,7 @@ def group_node_period_time(par, s, v, r):
          'upward_slack', 'downward_slack']
     ]
     
-    return result_flat, result_multi, 'group_node_period_time', 'tbl_group_node_period_time'
+    return result_flat, result_multi, 'group_node_dt', 'tbl_group_node_dt'
 
 
 def print_namespace_structure(namespace, name='r', max_items=3, output_file='namespace_structure.txt'):
@@ -464,7 +468,7 @@ def group_node_VRE_share(par, s, v, r):
         # Calculate share (avoid division by zero)
         result_multi[g] = (vre_flow / (-total_inflow)).fillna(0.0)
     
-    return result_multi.reset_index(), result_multi, 'group_node_VRE_share', 'tbl_group_node_VRE_share'
+    return result_multi.reset_index(), result_multi, 'group_node_VRE_share_dt', 'tbl_group_node_VRE_share_period_t'
 
 def group_process_CO2(par, s, v, r):
     """Annualized CO2 Mt for groups by period"""
@@ -503,7 +507,7 @@ def group_process_CO2(par, s, v, r):
         else:
             result_multi[g] = 0.0
     
-    return result_multi.reset_index(), result_multi, 'group_process_CO2', 'tbl_group_process_CO2'
+    return result_multi.reset_index(), result_multi, 'group_process_CO2_d', 'tbl_group_process_CO2'
 
 def group_process_node_flow_period(par, s, v, r):
     """Flow results for groups by period"""
@@ -514,7 +518,7 @@ def group_process_node_flow_period(par, s, v, r):
     
     if not groups or not periods:
         result_multi = pd.DataFrame(index=pd.Index([], name='period'), columns=groups)
-        return result_multi.reset_index(), result_multi, 'group_process_node_flow_period', 'tbl_group_process_node_flow_period'
+        return result_multi.reset_index(), result_multi, 'group_process_node_flow_d', 'tbl_group_process_node_flow_period'
     
     # Create index
     result_multi = pd.DataFrame(index=pd.Index(periods, name='period'), columns=groups, dtype=float)
@@ -537,7 +541,7 @@ def group_process_node_flow_period(par, s, v, r):
         
         result_multi[g] = (inflow - outflow) / period_shares
     
-    return result_multi.reset_index(), result_multi, 'group_process_node_flow_period', 'tbl_group_process_node_flow_period'
+    return result_multi.reset_index(), result_multi, 'group_process_node_flow_d', 'tbl_group_process_node_flow_period'
 
 def group_process_node_flow_dt(par, s, v, r):
     """Flow results for groups by period and time"""
@@ -576,12 +580,12 @@ def unit_outputNode_period(par, s, v, r):
     """Unit output node flow for periods"""
     if r.process_sink_flow_d.empty:
         result_multi = pd.DataFrame(index=pd.Index([], name='period'))
-        return result_multi.reset_index(), result_multi, 'unit_outputNode_period', 'tbl_unit_outputNode_period'
+        return result_multi.reset_index(), result_multi, 'unit_outputNode_d', 'tbl_unit_outputNode_period'
     result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['unit', 'node']))
     for col in r.process_sink_flow_d.columns:
         if col[0] in s.process_unit:
             result_multi[col] = r.process_sink_flow_d[col] / par.complete_period_share_of_year
-    return result_multi.reset_index(), result_multi, 'unit_outputNode_period', 'tbl_unit_outputNode_period'
+    return result_multi.reset_index(), result_multi, 'unit_outputNode_d', 'tbl_unit_outputNode_period'
 
 def unit_outputNode_dt(par, s, v, r):
     """Unit output node flow for time"""
@@ -599,12 +603,12 @@ def unit_inputNode_period(par, s, v, r):
     """Unit input node flow for periods"""
     if r.process_source_flow_d.empty:
         result_multi = pd.DataFrame(index=pd.Index([], name='period'))
-        return result_multi.reset_index(), result_multi, 'unit_inputNode_period', 'tbl_unit_inputNode_period'
+        return result_multi.reset_index(), result_multi, 'unit_inputNode_d', 'tbl_unit_inputNode_period'
     result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['unit', 'node']))
     for col in r.process_source_flow_d.columns:
         if col[0] in s.process_unit:
             result_multi[col] = -r.process_source_flow_d[col] / par.complete_period_share_of_year
-    return result_multi.reset_index(), result_multi, 'unit_inputNode_period', 'tbl_unit_inputNode_period'
+    return result_multi.reset_index(), result_multi, 'unit_inputNode_d', 'tbl_unit_inputNode_period'
 
 def unit_inputNode_dt(par, s, v, r):
     """Unit input node flow for time"""
@@ -623,7 +627,7 @@ def connection_period(par, s, v, r):
     """Connection flow for periods"""
     if r.connection_d.empty:
         result_multi = pd.DataFrame(index=pd.Index([], name='period'))
-        return result_multi.reset_index(), result_multi, 'connection_period', 'tbl_connection_period'
+        return result_multi.reset_index(), result_multi, 'connection_d', 'tbl_connection_period'
     result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['connection', 'node_left', 'node_right']))
     conn_map = s.process_source_sink[
         s.process_source_sink['process'].isin(s.process_connection) &
@@ -633,7 +637,7 @@ def connection_period(par, s, v, r):
         if c in conn_map.index:
             row = conn_map.loc[c]
             result_multi[c, row['source'], row['sink']] = r.connection_d[c] / par.complete_period_share_of_year
-    return result_multi.reset_index(), result_multi, 'connection_period', 'tbl_connection_period'
+    return result_multi.reset_index(), result_multi, 'connection_d', 'tbl_connection_period'
 
 
 def connection_dt(par, s, v, r):
@@ -657,7 +661,7 @@ def connection_to_right_node_period(par, s, v, r):
     """Connection flow to right node for periods"""
     if r.connection_to_right_node__d.empty:
         result_multi = pd.DataFrame(index=pd.Index([], name='period'))
-        return result_multi.reset_index(), result_multi, 'connection_to_right_node_period', 'tbl_connection_to_right_node_period'
+        return result_multi.reset_index(), result_multi, 'connection_to_right_node_d', 'tbl_connection_to_right_node_period'
     result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['process', 'connection', 'node']))
     conn_map = s.process_source_sink[
         s.process_source_sink['process'].isin(s.process_connection) &
@@ -667,7 +671,7 @@ def connection_to_right_node_period(par, s, v, r):
         if c in conn_map.index:
             row = conn_map.loc[c]
             result_multi[(c, row['source'], row['sink'])] = r.connection_to_right_node__d[c] / par.complete_period_share_of_year
-    return result_multi.reset_index(), result_multi, 'connection_to_right_node_period', 'tbl_connection_to_right_node_period'
+    return result_multi.reset_index(), result_multi, 'connection_to_right_node_d', 'tbl_connection_to_right_node_period'
 
 
 def connection_to_right_node_dt(par, s, v, r):
@@ -691,7 +695,7 @@ def connection_to_left_node_period(par, s, v, r):
     """Connection flow to left node for periods"""
     if r.connection_to_left_node__d.empty:
         result_multi = pd.DataFrame(index=pd.Index([], name='period'))
-        return result_multi.reset_index(), result_multi, 'connection_to_left_node_period', 'tbl_connection_to_left_node_period'
+        return result_multi.reset_index(), result_multi, 'connection_to_left_node_d', 'tbl_connection_to_left_node_period'
     result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['process', 'connection', 'node']))
     conn_map = s.process_source_sink[
         s.process_source_sink['process'].isin(s.process_connection) &
@@ -701,7 +705,7 @@ def connection_to_left_node_period(par, s, v, r):
         if c in conn_map.index:
             row = conn_map.loc[c]
             result_multi[(c, row['sink'], row['source'])] = r.connection_to_left_node__d[c] / par.complete_period_share_of_year
-    return result_multi.reset_index(), result_multi, 'connection_to_left_node_period', 'tbl_connection_to_left_node_period'
+    return result_multi.reset_index(), result_multi, 'connection_to_left_node_d', 'tbl_connection_to_left_node_period'
 
 
 def connection_to_left_node_dt(par, s, v, r):
@@ -800,7 +804,7 @@ def group_flows_period(par, s, v, r):
     
     if s.groupOutputNodeFlows.empty or s.d_realized_period.empty:
         result_multi = pd.DataFrame(index=s.d_realized_period)
-        return result_multi.reset_index(), result_multi, 'group_flows_period', 'tbl_group_flows_period'
+        return result_multi.reset_index(), result_multi, 'group_flows_d', 'tbl_group_flows_period'
     
     result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['group', 'type', 'item']))
     
@@ -865,34 +869,34 @@ def group_flows_period(par, s, v, r):
         if g in r.group_node_inflow_d.columns:
             result_multi[g, 'inflow', g] = r.group_node_inflow_d[g]
     
-    return result_multi.reset_index(), result_multi, 'group_flows_period', 'tbl_group_flows_period'
+    return result_multi.reset_index(), result_multi, 'group_flows_d', 'tbl_group_flows_period'
 
 def unit_cf_outputNode_period(par, s, v, r):
     """Unit capacity factors by output node for periods"""
     if r.process_sink_flow_d.empty:
         result_multi = pd.DataFrame(index=pd.Index([], name='period'))
-        return result_multi.reset_index(), result_multi, 'unit_cf_outputNode_period', 'tbl_unit_cf_outputNode_period'
+        return result_multi.reset_index(), result_multi, 'unit_cf_outputNode_d', 'tbl_unit_cf_outputNode_period'
     result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['unit', 'sink']))
     complete_hours = par.complete_period_share_of_year * 8760
     for col in r.process_sink_flow_d.columns:
         if col[0] in s.process_unit:
             capacity = r.entity_all_capacity[col[0]]
             result_multi[col] = (r.process_sink_flow_d[col] / complete_hours / capacity.squeeze())
-    return result_multi.reset_index(), result_multi, 'unit_cf_outputNode_period', 'tbl_unit_cf_outputNode_period'
+    return result_multi.reset_index(), result_multi, 'unit_cf_outputNode_d', 'tbl_unit_cf_outputNode_period'
 
 
 def unit_cf_inputNode_period(par, s, v, r):
     """Unit capacity factors by input node for periods"""
     if r.process_source_flow_d.empty:
         result_multi = pd.DataFrame(index=pd.Index([], name='period'))
-        return result_multi.reset_index(), result_multi, 'unit_cf_inputNode_period', 'tbl_unit_cf_inputNode_period'
+        return result_multi.reset_index(), result_multi, 'unit_cf_inputNode_d', 'tbl_unit_cf_inputNode_period'
     result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['unit', 'source']))
     complete_hours = par.complete_period_share_of_year * 8760
     for col in r.process_source_flow_d.columns:
         if col[0] in s.process_unit:
             capacity = r.entity_all_capacity[col[0]]
             result_multi[col] = (r.process_source_flow_d[col] / complete_hours / capacity.squeeze())
-    return result_multi.reset_index(), result_multi, 'unit_cf_inputNode_period', 'tbl_unit_cf_inputNode_period'
+    return result_multi.reset_index(), result_multi, 'unit_cf_inputNode_d', 'tbl_unit_cf_inputNode_period'
 
 
 def unit_VRE_curtailment_and_potential(par, s, v, r):
@@ -926,8 +930,8 @@ def unit_VRE_curtailment_and_potential(par, s, v, r):
         # Calculate curtailment share at period level
         curtail_share_period = (curtail_period / potential_period).where(potential_period != 0, 0)
 
-        results.append((curtail_share_period.reset_index(), curtail_share_period, 'unit_curtailment_share_outputNode_period', 'tbl_unit_curtailment_share_outputNode_period'))
-        results.append((potential_period.reset_index(), potential_period, 'unit_VRE_potential_outputNode_period', 'tbl_unit_VRE_potential_outputNode_period'))
+        results.append((curtail_share_period.reset_index(), curtail_share_period, 'unit_curtailment_share_outputNode_d', 'tbl_unit_curtailment_share_outputNode_period'))
+        results.append((potential_period.reset_index(), potential_period, 'unit_VRE_potential_outputNode_d', 'tbl_unit_VRE_potential_outputNode_period'))
     
     return results
 
@@ -984,14 +988,14 @@ def cost_summaries(par, s, v, r):
     except KeyError:
         costs_dt['downward_reserve_slack_penalty'] = 0
     
-    results.append((costs_dt.reset_index(), costs_dt, 'costs_period_t', 'tbl_costs_period_t'))
+    results.append((costs_dt.reset_index(), costs_dt, 'costs_dt', 'tbl_costs_period_t'))
     
     # 2. Annualized dispatch costs (derived from costs_dt)
     dispatch_dt = costs_dt.copy()
     for col in dispatch_dt.columns:
         dispatch_dt[col] = dispatch_dt[col] / period_share / to_millions
     
-    results.append((dispatch_dt.reset_index(), dispatch_dt, 'annualized_dispatch_costs_period_t', 'tbl_annualized_dispatch_costs_period_t'))
+    results.append((dispatch_dt.reset_index(), dispatch_dt, 'annualized_dispatch_costs_dt', 'tbl_annualized_dispatch_costs_period_t'))
     
     # 3. Annualized investment costs (d_realize_invest only)
     investment_costs = pd.DataFrame(index=s.d_realize_invest, dtype=float)
@@ -1001,7 +1005,7 @@ def cost_summaries(par, s, v, r):
     investment_costs['fixed_cost_existing'] = r.costExistingFixed_d / discount_ops / to_millions
     investment_costs['capacity_margin_penalty'] = r.costPenalty_capacity_margin_d.sum(axis=1) / discount_ops / to_millions
     
-    results.append((investment_costs.reset_index(), investment_costs, 'annualized_investment_costs_period', 'tbl_annualized_investment_costs_period'))
+    results.append((investment_costs.reset_index(), investment_costs, 'annualized_investment_costs_d', 'tbl_annualized_investment_costs_period'))
     
     # 4. Combined summary (investment + dispatch aggregated to period)
     dispatch_period = dispatch_dt.groupby(level='period').sum()
@@ -1016,7 +1020,7 @@ def cost_summaries(par, s, v, r):
     for col in dispatch_period.columns:
         summary[col] = dispatch_period[col].reindex(all_periods, fill_value=0)
     
-    results.append((summary.reset_index(), summary, 'annualized_costs_period', 'tbl_annualized_costs_period'))
+    results.append((summary.reset_index(), summary, 'annualized_costs_d', 'tbl_annualized_costs_period'))
     
     return results
 
@@ -1035,7 +1039,7 @@ def reserves(par, s, v, r):
         type_label = 'unit__reserve__upDown__node' if p in s.process_unit else 'connection__reserve__upDown__node'
         unitsize = par.entity_unitsize[p]
         reserves_dt[type_label, entity_type, p, r_type, ud, n] = v.reserve[col] * unitsize
-    results.append((reserves_dt.reset_index(), reserves_dt, 'process_reserve_upDown_node_period_t', 'tbl_process_reserve_upDown_node_period_t'))
+    results.append((reserves_dt.reset_index(), reserves_dt, 'process_reserve_upDown_node_dt', 'tbl_process_reserve_upDown_node_period_t'))
     
     # Period-level reserves (average)
     step_duration = par.step_duration
@@ -1046,11 +1050,11 @@ def reserves(par, s, v, r):
         # Weighted average by step_duration
         weighted = reserves_dt[col] * step_duration
         reserves_d[col] = weighted.groupby(level='period').sum() / complete_hours
-    results.append((reserves_d.reset_index(), reserves_d, 'process_reserve_upDown_node_period_average', 'tbl_process_reserve_upDown_node_period_average'))
+    results.append((reserves_d.reset_index(), reserves_d, 'process_reserve_average_d', 'tbl_process_reserve_upDown_node_period_average'))
 
     # Reserve price results
     if not v.dual_reserve_balance.empty:
-        results.append((v.dual_reserve_balance.reset_index(), v.dual_reserve_balance, 'reserve_prices_period_t', 'tbl_node_prices_period_t'))
+        results.append((v.dual_reserve_balance.reset_index(), v.dual_reserve_balance, 'reserve_prices_dt', 'tbl_node_prices_period_t'))
 
     return results
 
@@ -1063,16 +1067,16 @@ def unit_online_and_startup(par, s, v, r):
     
     # 1. Online units dt
     online_units_dt = r.process_online_dt[s.process_unit.intersection(s.process_online)]
-    results.append((online_units_dt.reset_index(), online_units_dt, 'unit_online_period_t', 'tbl_unit_online_period_t'))
+    results.append((online_units_dt.reset_index(), online_units_dt, 'unit_online_dt', 'tbl_unit_online_period_t'))
     
     # 2. Average online status at period level (weighted by step_duration)
     complete_hours = par.complete_period_share_of_year * 8760
     online_units_d = online_units_dt.mul(par.step_duration, axis=0).groupby('period').sum().div(complete_hours, axis=0)
-    results.append((online_units_d.reset_index(), online_units_d, 'unit_online_period_average', 'tbl_unit_online_period_average'))
+    results.append((online_units_d.reset_index(), online_units_d, 'unit_online_average_d', 'tbl_unit_online_period_average'))
     
     # 3. Startups aggregated to period level
     startup_units_d = r.process_startup_dt[s.process_unit.intersection(s.process_online)].groupby('period').sum()
-    results.append((startup_units_d.reset_index(), startup_units_d, 'unit_startup_period', 'tbl_unit_startup_period'))
+    results.append((startup_units_d.reset_index(), startup_units_d, 'unit_startup_d', 'tbl_unit_startup_period'))
     
     return results
 
@@ -1134,7 +1138,7 @@ def node_summary(par, s, v, r):
         else:
             node_dt['downward_slack', n] = 0
     
-    results.append((node_dt.reset_index(), node_dt, 'node_period_t', 'tbl_node_period_t'))
+    results.append((node_dt.reset_index(), node_dt, 'node_dt', 'tbl_node_period_t'))
     
     # 2. Period-level node summary
     node_d = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['category', 'node']), dtype=float)
@@ -1186,7 +1190,7 @@ def node_summary(par, s, v, r):
         else:
             node_d['downward_slack', n] = 0
     
-    results.append((node_d.reset_index(), node_d, 'node_period', 'tbl_node_period'))
+    results.append((node_d.reset_index(), node_d, 'node_d', 'tbl_node_period'))
     
     return results
 
@@ -1196,7 +1200,7 @@ def node_additional_results(par, s, v, r):
     
     # 1. Nodal prices
     if not v.dual_node_balance.empty:
-        results.append((v.dual_node_balance.reset_index(), v.dual_node_balance, 'node_prices_period_t', 'tbl_node_prices_period_t'))
+        results.append((v.dual_node_balance.reset_index(), v.dual_node_balance, 'node_prices_dt', 'tbl_node_prices_period_t'))
     
     # 2. Node state
     if not v.state.empty:
@@ -1205,7 +1209,7 @@ def node_additional_results(par, s, v, r):
             if ('node', n) in v.state.columns:
                 unitsize = par.entity_unitsize[n]
                 node_state[n] = v.state[('node', n)] * unitsize
-        results.append((node_state.reset_index(), node_state, 'node_state_period_t', 'tbl_node_state_period_t'))
+        results.append((node_state.reset_index(), node_state, 'node_state_dt', 'tbl_node_state_period_t'))
     
     # 3. Node upward slack
     if not v.q_state_up.empty:
@@ -1214,7 +1218,7 @@ def node_additional_results(par, s, v, r):
             if ('node', n) in v.q_state_up.columns:
                 capacity_scaling = par.node_capacity_for_scaling[('node', n)]
                 upward_slack[n] = v.q_state_up[('node', n)] * capacity_scaling
-        results.append((upward_slack.reset_index(), upward_slack, 'slack_upward_node_state_period_t', 'tbl_slack_upward_node_state_period_t'))
+        results.append((upward_slack.reset_index(), upward_slack, 'slack_upward_node_state_dt', 'tbl_slack_upward_node_state_period_t'))
     
     # 4. Node downward slack
     if not v.q_state_down.empty:
@@ -1223,7 +1227,7 @@ def node_additional_results(par, s, v, r):
             if ('node', n) in v.q_state_down.columns:
                 capacity_scaling = par.node_capacity_for_scaling[('node', n)]
                 downward_slack[n] = v.q_state_down[('node', n)] * capacity_scaling
-        results.append((downward_slack.reset_index(), downward_slack, 'slack_downward_node_state_period_t', 'tbl_slack_downward_node_state_period_t'))
+        results.append((downward_slack.reset_index(), downward_slack, 'slack_downward_node_state_dt', 'tbl_slack_downward_node_state_period_t'))
     
     return results
 
@@ -1233,15 +1237,15 @@ def investment_duals(par, s, v, r):
     
     # 1. v.dual_invest_unit
     if not v.dual_invest_unit.empty:
-        results.append((v.dual_invest_unit.reset_index(), v.dual_invest_unit, 'dual_invest_unit', 'tbl_dual_invest_unit_period'))
+        results.append((v.dual_invest_unit.reset_index(), v.dual_invest_unit, 'dual_invest_unit_d', 'tbl_dual_invest_unit_period'))
 
     # 2. v.dual_invest_connection
     if not v.dual_invest_connection.empty:
-        results.append((v.dual_invest_connection.reset_index(), v.dual_invest_connection, 'dual_invest_connection', 'tbl_dual_invest_connection_period'))
+        results.append((v.dual_invest_connection.reset_index(), v.dual_invest_connection, 'dual_invest_connection_d', 'tbl_dual_invest_connection_period'))
 
     # 3. v.dual_invest_node
     if not v.dual_invest_node.empty:
-        results.append((v.dual_invest_node.reset_index(), v.dual_invest_node, 'dual_invest_node', 'tbl_dual_invest_node_period'))
+        results.append((v.dual_invest_node.reset_index(), v.dual_invest_node, 'dual_invest_node_d', 'tbl_dual_invest_node_period'))
 
     return results
 
@@ -1291,7 +1295,7 @@ def inertia_results(par, s, v, r):
         
         group_inertia[g] = total_inertia
     
-    results.append((group_inertia.reset_index(), group_inertia, 'group_inertia_period_t', 'tbl_group_inertia_period_t'))
+    results.append((group_inertia.reset_index(), group_inertia, 'group_inertia_dt', 'tbl_group_inertia_period_t'))
     
     # 2. Individual entity inertia
     unit_inertia = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['group', 'process', 'node']), dtype=float)
@@ -1313,7 +1317,7 @@ def inertia_results(par, s, v, r):
                     flow_online = get_flow_or_online(p, source, sink, s.dt_realize_dispatch)
                     unit_inertia[g, p, sink] = flow_online * inertia_const
     
-    results.append((unit_inertia.reset_index(), unit_inertia, 'group_unit_node_inertia_period_t', 'tbl_group_unit_node_inertia_period_t'))
+    results.append((unit_inertia.reset_index(), unit_inertia, 'group_unit_node_inertia_dt', 'tbl_group_unit_node_inertia_period_t'))
     
     # 3. Largest flow per group (for inertia constraint)
     largest_flow = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
@@ -1333,7 +1337,7 @@ def inertia_results(par, s, v, r):
         else:
             largest_flow[g] = 0
     
-    results.append((largest_flow.reset_index(), largest_flow, 'group_inertia_largest_flow_period_t', 'tbl_group_inertia_largest_flow_period_t'))
+    results.append((largest_flow.reset_index(), largest_flow, 'group_inertia_largest_flow_dt', 'tbl_group_inertia_largest_flow_period_t'))
     
     return results
 
@@ -1351,7 +1355,7 @@ def slack_variables(par, s, v, r):
             if col in par.reserve_upDown_group_reservation.columns:
                 reserve_slack[col] = v.q_reserve[col] * par.reserve_upDown_group_reservation[col]
         
-        results.append((reserve_slack.reset_index(), reserve_slack, 'slack_reserve_upDown_group_period_t', 'tbl_slack_reserve_upDown_group_period_t'))
+        results.append((reserve_slack.reset_index(), reserve_slack, 'slack_reserve_upDown_group_dt', 'tbl_slack_reserve_upDown_group_period_t'))
     
     # 2. Non-synchronous slack variables
     if not v.q_non_synchronous.empty:
@@ -1362,7 +1366,7 @@ def slack_variables(par, s, v, r):
                 capacity_scaling = par.group_capacity_for_scaling[('group', g)]
                 nonsync_slack[g] = v.q_non_synchronous[('group', g)] * capacity_scaling
         
-        results.append((nonsync_slack.reset_index(), nonsync_slack, 'slack_nonsync_group_period_t', 'tbl_slack_nonsync_group_period_t'))
+        results.append((nonsync_slack.reset_index(), nonsync_slack, 'slack_nonsync_group_dt', 'tbl_slack_nonsync_group_period_t'))
     
     # 3. Inertia slack variables
     if not v.q_inertia.empty:
@@ -1373,7 +1377,7 @@ def slack_variables(par, s, v, r):
                 inertia_limit = par.group_inertia_limit[('group', g)]
                 inertia_slack[g] = v.q_inertia[('group', g)] * inertia_limit
         
-        results.append((inertia_slack.reset_index(), inertia_slack, 'slack_inertia_group_period_t', 'tbl_slack_inertia_group_period_t'))
+        results.append((inertia_slack.reset_index(), inertia_slack, 'slack_inertia_group_dt', 'tbl_slack_inertia_group_period_t'))
     
     # 4. Capacity margin slack variables (for investment periods only)
     if not v.q_capacity_margin.empty:
@@ -1384,9 +1388,183 @@ def slack_variables(par, s, v, r):
                 capacity_scaling = par.group_capacity_for_scaling[('group', g)]
                 capmargin_slack[g] = v.q_capacity_margin[('group', g)] * capacity_scaling
         
-        results.append((capmargin_slack.reset_index(), capmargin_slack, 'slack_capacity_margin_period', 'tbl_slack_capacity_margin_period'))
+        results.append((capmargin_slack.reset_index(), capmargin_slack, 'slack_capacity_margin_d', 'tbl_slack_capacity_margin_period'))
     
     return results
+
+
+def plot_dict_of_dataframes(results_dict, output_dir='.'):
+    """
+    Plot dataframes from a dictionary according to key suffixes.
+    
+    Args:
+        results_dict: Dictionary of pandas DataFrames
+        output_dir: Directory to save PNG files
+    """
+    
+    for key, df in results_dict.items():
+        # print(f"Processing {key}...")
+        
+        if key.endswith('_dt'):
+            plot_dt_type(df, key, output_dir)
+        elif key.endswith('_d'):
+            plot_d_type(df, key, output_dir)
+        else:
+            plot_other_type(df, key, output_dir)
+        
+        plt.close('all')  # Clean up
+
+
+def plot_dt_type(df, key, output_dir):
+    """Line plot for _dt type: 168 rows, all columns as lines"""
+    fig, ax = plt.subplots(figsize=(16, 10))
+    
+    # Take first 168 rows
+    df_plot = df.iloc[:168]
+    
+    # Plot each column as a line
+    for col in df_plot.columns:
+        if isinstance(col, tuple):
+            label = ' - '.join(str(c) for c in col)
+        else:
+            label = str(col)
+        ax.plot(range(len(df_plot)), df_plot[col], label=label, alpha=0.7)
+    
+    # Set x-axis labels to show multi-index
+    if isinstance(df_plot.index, pd.MultiIndex):
+        # Create labels from multi-index
+        x_labels = [' '.join(str(idx) for idx in row) for row in df_plot.index]
+        # Show every nth label to avoid overcrowding
+        step = max(1, len(x_labels) // 20)
+        ax.set_xticks(range(0, len(x_labels), step))
+        ax.set_xticklabels([x_labels[i] for i in range(0, len(x_labels), step)], 
+                          rotation=45, ha='right')
+        
+        # Set x-axis label from index names
+        xlabel = ' - '.join(str(name) for name in df_plot.index.names if name)
+        ax.set_xlabel(xlabel)
+    else:
+        ax.set_xlabel(df_plot.index.name or 'Index')
+    
+    # Set y-axis label from column names
+    if isinstance(df.columns, pd.MultiIndex):
+        ylabel = ' - '.join(str(name) for name in df.columns.names if name)
+    else:
+        ylabel = df.columns.name or 'Value'
+    ax.set_ylabel(ylabel)
+    
+    ax.set_title(key)
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/{key}.svg', bbox_inches='tight')
+
+
+def plot_d_type(df, key, output_dir):
+    """Grouped bar plot for _d type: separate bars for columns, grouped by index"""
+    fig, ax = plt.subplots(figsize=(16, 10))
+    
+    # Transpose so columns become x-axis groups
+    df_plot = df.T
+    
+    # Create x positions for bar groups
+    n_groups = len(df_plot.index)  # number of columns
+    n_bars = len(df.index)  # number of periods
+    
+    # Width of each bar and spacing
+    bar_width = 0.8 / n_bars
+    x = np.arange(n_groups)
+    
+    # Plot grouped bars
+    for i, idx_val in enumerate(df.index):
+        values = df_plot[idx_val].values
+        label = str(idx_val)
+        offset = (i - n_bars/2 + 0.5) * bar_width
+        ax.bar(x + offset, values, bar_width, label=label)
+    
+    # Set x-axis labels
+    if isinstance(df.columns, pd.MultiIndex):
+        x_labels = ['\n'.join(str(c) for c in col) for col in df.columns]
+    else:
+        x_labels = [str(col) for col in df.columns]
+    
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, rotation=45, ha='right')
+    
+    # Set labels
+    if isinstance(df.columns, pd.MultiIndex):
+        xlabel = ' - '.join(str(name) for name in df.columns.names if name)
+    else:
+        xlabel = df.columns.name or 'Columns'
+    ax.set_xlabel(xlabel)
+    
+    ylabel = df.index.name or 'Value'
+    ax.set_ylabel(ylabel)
+    
+    ax.set_title(key)
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/{key}.svg', bbox_inches='tight')
+
+
+def plot_other_type(df, key, output_dir):
+    """Subplots (2xN) for other types: one subplot per column, bars for index rows"""
+    n_cols = len(df.columns)
+    n_rows = int(np.ceil(n_cols / 2))
+    
+    fig, axes = plt.subplots(n_rows, 2, figsize=(16, 10))
+    fig.suptitle(key, fontsize=16)
+    
+    # Flatten axes array for easier iteration
+    if n_rows == 1:
+        axes = axes.reshape(1, -1)
+    axes_flat = axes.flatten()
+    
+    for idx, col in enumerate(df.columns):
+        ax = axes_flat[idx]
+        
+        # Get data for this column
+        data = df[col]
+        
+        # Create bar plot
+        x = np.arange(len(data))
+        ax.bar(x, data, width=0.8)
+        
+        # Set x-axis labels
+        if isinstance(df.index, pd.MultiIndex):
+            x_labels = ['\n'.join(str(i) for i in row) for row in df.index]
+        else:
+            x_labels = [str(i) for i in df.index]
+        
+        ax.set_xticks(x)
+        ax.set_xticklabels(x_labels, rotation=45, ha='right', fontsize=8)
+        
+        # Set subplot title (column name)
+        if isinstance(col, tuple):
+            col_title = '\n'.join(str(c) for c in col)
+        else:
+            col_title = str(col)
+        ax.set_title(col_title, fontsize=10)
+        
+        # Set x-axis label from index names
+        if isinstance(df.index, pd.MultiIndex):
+            xlabel = ' - '.join(str(name) for name in df.index.names if name)
+        else:
+            xlabel = df.index.name or 'Index'
+        ax.set_xlabel(xlabel, fontsize=9)
+        
+        ax.grid(True, alpha=0.3, axis='y')
+    
+    # Hide unused subplots
+    for idx in range(n_cols, len(axes_flat)):
+        axes_flat[idx].set_visible(False)
+    
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/{key}.svg', bbox_inches='tight')
+
 
 # List of all output functions
 ALL_OUTPUTS = [
@@ -1437,12 +1615,12 @@ def write_outputs(output_funcs=None, output_dir='output_raw', methods=['excel', 
 
     par, s, v = read_outputs(output_dir)
 
-    print(f"Read flextool outputs: {time.perf_counter() - start:.4f} seconds")
+    print(f"--- Read flextool outputs: {time.perf_counter() - start:.4f} seconds")
     start = time.perf_counter()
 
     r = post_process_results(par, s, v)
 
-    print(f"Post processed outputs: {time.perf_counter() - start:.4f} seconds")
+    print(f"--- Post processed outputs: {time.perf_counter() - start:.4f} seconds")
     start = time.perf_counter()
 
     # Usage
@@ -1466,17 +1644,22 @@ def write_outputs(output_funcs=None, output_dir='output_raw', methods=['excel', 
         
         for result_flat, result_multi, excel_sheet, db_table in func_results:
             # Use excel_sheet as the key to allow multiple outputs per function
-            results_multi[excel_sheet] = (result_multi, excel_sheet, db_table)
-            results_flat[excel_sheet] = (result_flat, excel_sheet, db_table)
+            results_multi[excel_sheet] = result_multi
+            results_flat[excel_sheet] = result_flat
 
-    print(f"Formatted for output: {time.perf_counter() - start:.4f} seconds")
+    print(f"--- Formatted for output: {time.perf_counter() - start:.4f} seconds")
+    start = time.perf_counter()
+
+    plot_dict_of_dataframes(results_multi, output_dir='./output_plots')
+
+    print(f"--- Plotted figures: {time.perf_counter() - start:.4f} seconds")
     start = time.perf_counter()
 
     # Write to excel
     if 'excel' in methods:
         with pd.ExcelWriter('output.xlsx') as writer:
-            for name, (df, sheet, _) in results_flat.items():
-                df.to_excel(writer, sheet_name=sheet)
+            for name, df in results_flat.items():
+                df.to_excel(writer, sheet_name=name)
 
     print(f"Wrote to Excel: {time.perf_counter() - start:.4f} seconds")
     start = time.perf_counter()
