@@ -1,5 +1,6 @@
 import csv
 import pandas as pd
+import time
 from pathlib import Path
 from flextool.read_flextool_outputs import read_variables, read_parameters, read_sets
 from flextool.process_results import post_process_results
@@ -30,35 +31,33 @@ def unit_capacity(par, s, v, r):
     
     # Create base dataframe with all combinations (period, unit order)
     if processes:
-        index = pd.MultiIndex.from_product([periods, processes], names=['period', 'unit'])
+        index = pd.MultiIndex.from_product([periods, processes], names=['unit', 'period'])
     else:
         index = pd.Index(periods, name='period')
     result_multi = pd.DataFrame(index=index)
     
     # Existing capacity - filter to process_unit only
-    existing = par.entity_all_existing.droplevel(0, axis=1)[processes].stack()
-    existing.index.names = ['period', 'unit']
+    existing = par.entity_all_existing[processes].unstack()
+    existing.index.names = ['unit', 'period']
     result_multi['existing'] = existing
     
     # Invested capacity - default to None, overwrite if data exists
     result_multi['invested'] = pd.Series(dtype=float)
     if not v.invest.empty and len(v.invest.columns) > 0:
-        invested = v.invest.loc[:, v.invest.columns.get_level_values(1).isin(s.process_unit)]
-        invested = invested.droplevel(0, axis=1).stack()
-        invested.index.names = ['period', 'unit']
+        invested = v.invest.loc[v.invest.columns.get_level_values(0).isin(s.process_unit)].unstack()
+        invested.index.names = ['unit', 'period']
         result_multi['invested'] = invested
     
     # Divested capacity - default to None, overwrite if data exists
     result_multi['divested'] = pd.Series(dtype=float)
     if not v.divest.empty and len(v.divest.columns) > 0:
-        divested = v.divest.loc[:, v.divest.columns.get_level_values(1).isin(s.process_unit)]
-        divested = divested.droplevel(0, axis=1).stack()
-        divested.index.names = ['period', 'unit']
+        divested = v.divest.loc[v.divest.columns.get_level_values(0).isin(s.process_unit)].unstack()
+        divested.index.names = ['unit', 'period']
         result_multi['divested'] = divested
     
     # Total capacity - filter to process_unit only
-    total = r.entity_all_capacity.droplevel(0, axis=1)[processes].stack()
-    total.index.names = ['period', 'unit']
+    total = r.entity_all_capacity[processes].unstack()
+    total.index.names = ['unit', 'period']
     result_multi['total'] = total
     result_multi = result_multi[['existing', 'invested', 'divested', 'total']]
     result_flat = result_multi.reset_index()
@@ -74,35 +73,29 @@ def connection_capacity(par, s, v, r):
     
     # Create base dataframe with all combinations (period, connection order)
     if connections:
-        index = pd.MultiIndex.from_product([periods, connections], names=['period', 'connection'])
+        index = pd.MultiIndex.from_product([periods, connections], names=['connection', 'period'])
     else:
         index = pd.Index(periods, name='period')
     result_multi = pd.DataFrame(index=index)
     
     # Existing capacity - filter to process_connection only
-    existing = par.entity_all_existing.droplevel(0, axis=1)[connections].stack()
-    existing.index.names = ['period', 'connection']
+    existing = par.entity_all_existing[connections].unstack()
     result_multi['existing'] = existing
     
     # Invested capacity - default to empty, overwrite if data exists
     result_multi['invested'] = pd.Series(dtype=float)
     if not v.invest.empty and len(v.invest.columns) > 0:
-        invested = v.invest.loc[:, v.invest.columns.get_level_values(1).isin(s.process_connection)]
-        invested = invested.droplevel(0, axis=1).stack()
-        invested.index.names = ['period', 'connection']
+        invested = v.invest.loc[v.invest.columns.get_level_values(0).isin(s.process_connection)].unstack()
         result_multi['invested'] = invested
     
     # Divested capacity - default to empty, overwrite if data exists
     result_multi['divested'] = pd.Series(dtype=float)
     if not v.divest.empty and len(v.divest.columns) > 0:
-        divested = v.divest.loc[:, v.divest.columns.get_level_values(1).isin(s.process_connection)]
-        divested = divested.droplevel(0, axis=1).stack()
-        divested.index.names = ['period', 'connection']
+        divested = v.divest.loc[v.divest.columns.get_level_values(0).isin(s.process_connection)].unstack()
         result_multi['divested'] = divested
     
     # Total capacity - filter to process_connection only
-    total = r.entity_all_capacity.droplevel(0, axis=1)[connections].stack()
-    total.index.names = ['period', 'connection']
+    total = r.entity_all_capacity[connections].unstack()
     result_multi['total'] = total
     
     # Reorder columns
@@ -130,8 +123,7 @@ def node_capacity(par, s, v, r):
     
     # Existing capacity - filter to nodeState only
     if nodes:
-        existing = par.entity_all_existing.droplevel(0, axis=1)[nodes].stack()
-        existing.index.names = ['period', 'node']
+        existing = par.entity_all_existing[nodes].unstack()
         result_multi['existing'] = existing
     else:
         result_multi['existing'] = pd.Series(dtype=float)
@@ -139,26 +131,16 @@ def node_capacity(par, s, v, r):
     # Invested capacity - default to empty, overwrite if data exists
     result_multi['invested'] = pd.Series(dtype=float)
     if not v.invest.empty and len(v.invest.columns) > 0:
-        invested = v.invest.loc[:, v.invest.columns.get_level_values(1).isin(s.nodeState)]
-        if not invested.empty:
-            invested = invested.droplevel(0, axis=1).stack()
-            invested.index.names = ['period', 'node']
-            result_multi['invested'] = invested
+        result_multi['invested'] = v.invest.loc[v.invest.columns.get_level_values(0).isin(s.nodeState)].unstack()
     
     # Divested capacity - default to empty, overwrite if data exists
     result_multi['divested'] = pd.Series(dtype=float)
     if not v.divest.empty and len(v.divest.columns) > 0:
-        divested = v.divest.loc[:, v.divest.columns.get_level_values(1).isin(s.nodeState)]
-        if not divested.empty:
-            divested = divested.droplevel(0, axis=1).stack()
-            divested.index.names = ['period', 'node']
-            result_multi['divested'] = divested
+        result_multi['divested'] = v.divest.loc[v.divest.columns.get_level_values(0).isin(s.nodeState)].unstack()
     
     # Total capacity - filter to nodeState only
     if nodes:
-        total = r.entity_all_capacity.droplevel(0, axis=1)[nodes].stack()
-        total.index.names = ['period', 'node']
-        result_multi['total'] = total
+        result_multi['total'] = r.entity_all_capacity[nodes].unstack()
     else:
         result_multi['total'] = pd.Series(dtype=float)
     
@@ -894,8 +876,8 @@ def unit_cf_outputNode_period(par, s, v, r):
     complete_hours = par.complete_period_share_of_year * 8760
     for col in r.process_sink_flow_d.columns:
         if col[0] in s.process_unit:
-            capacity = r.entity_all_capacity[('entity', col[0])]
-            result_multi[col] = (r.process_sink_flow_d[col] / complete_hours / capacity).fillna(0)
+            capacity = r.entity_all_capacity[col[0]]
+            result_multi[col] = (r.process_sink_flow_d[col] / complete_hours / capacity.squeeze())
     return result_multi.reset_index(), result_multi, 'unit_cf_outputNode_period', 'tbl_unit_cf_outputNode_period'
 
 
@@ -908,8 +890,8 @@ def unit_cf_inputNode_period(par, s, v, r):
     complete_hours = par.complete_period_share_of_year * 8760
     for col in r.process_source_flow_d.columns:
         if col[0] in s.process_unit:
-            capacity = r.entity_all_capacity[('entity', col[0])]
-            result_multi[col] = (r.process_source_flow_d[col] / complete_hours / capacity).fillna(0)
+            capacity = r.entity_all_capacity[col[0]]
+            result_multi[col] = (r.process_source_flow_d[col] / complete_hours / capacity.squeeze())
     return result_multi.reset_index(), result_multi, 'unit_cf_inputNode_period', 'tbl_unit_cf_inputNode_period'
 
 
@@ -973,8 +955,449 @@ def unit_ramps(par, s, v, r):
     
     return results
 
+def cost_summaries(par, s, v, r):
+    """Cost summaries for periods and timesteps"""
+    
+    results = []
+    
+    # Common calculations
+    discount_ops = par.discount_factor_operations_yearly
+    period_share = par.complete_period_share_of_year
+    to_millions = 1000000
+    
+    # 1. Costs at timestep level (non-annualized)
+    costs_dt = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
+    costs_dt['commodity'] = r.cost_commodity_dt.sum(axis=1)
+    costs_dt['co2'] = r.cost_co2_dt
+    costs_dt['other_operational'] = r.cost_process_other_operational_cost_dt.sum(axis=1)
+    costs_dt['starts'] = r.cost_startup_dt.sum(axis=1)
+    costs_dt['upward_slack_penalty'] = r.costPenalty_nodeState_upDown_dt.xs('up', level='upDown', axis=1).sum(axis=1)
+    costs_dt['downward_slack_penalty'] = r.costPenalty_nodeState_upDown_dt.xs('down', level='upDown', axis=1).sum(axis=1)
+    costs_dt['inertia_slack_penalty'] = r.costPenalty_inertia_dt.sum(axis=1)
+    costs_dt['non_synchronous_slack_penalty'] = r.costPenalty_non_synchronous_dt.sum(axis=1)
+    try:
+        costs_dt['upward_reserve_slack_penalty'] = r.costPenalty_reserve_upDown_dt.xs('up', level='updown', axis=1).sum(axis=1)
+    except KeyError:
+        costs_dt['upward_reserve_slack_penalty'] = 0
+    try:
+        costs_dt['downward_reserve_slack_penalty'] = r.costPenalty_reserve_upDown_dt.xs('down', level='updown', axis=1).sum(axis=1)
+    except KeyError:
+        costs_dt['downward_reserve_slack_penalty'] = 0
+    
+    results.append((costs_dt.reset_index(), costs_dt, 'costs_period_t', 'tbl_costs_period_t'))
+    
+    # 2. Annualized dispatch costs (derived from costs_dt)
+    dispatch_dt = costs_dt.copy()
+    for col in dispatch_dt.columns:
+        dispatch_dt[col] = dispatch_dt[col] / period_share / to_millions
+    
+    results.append((dispatch_dt.reset_index(), dispatch_dt, 'annualized_dispatch_costs_period_t', 'tbl_annualized_dispatch_costs_period_t'))
+    
+    # 3. Annualized investment costs (d_realize_invest only)
+    investment_costs = pd.DataFrame(index=s.d_realize_invest, dtype=float)
+    investment_costs['unit_investment_retirement'] = (r.costInvestUnit_d + r.costDivestUnit_d) / discount_ops / to_millions
+    investment_costs['connection_investment_retirement'] = (r.costInvestConnection_d + r.costDivestConnection_d) / discount_ops / to_millions
+    investment_costs['storage_investment_retirement'] = (r.costInvestState_d + r.costDivestState_d) / discount_ops / to_millions
+    investment_costs['fixed_cost_existing'] = r.costExistingFixed_d / discount_ops / to_millions
+    investment_costs['capacity_margin_penalty'] = r.costPenalty_capacity_margin_d.sum(axis=1) / discount_ops / to_millions
+    
+    results.append((investment_costs.reset_index(), investment_costs, 'annualized_investment_costs_period', 'tbl_annualized_investment_costs_period'))
+    
+    # 4. Combined summary (investment + dispatch aggregated to period)
+    dispatch_period = dispatch_dt.groupby(level='period').sum()
+    all_periods = s.d_realized_period.union(s.d_realize_invest)
+    summary = pd.DataFrame(index=all_periods, dtype=float)
+    
+    # Investment costs (only for d_realize_invest)
+    for col in investment_costs.columns:
+        summary[col] = investment_costs[col].reindex(all_periods, fill_value=0)
+    
+    # Dispatch costs (only for d_realized_period)
+    for col in dispatch_period.columns:
+        summary[col] = dispatch_period[col].reindex(all_periods, fill_value=0)
+    
+    results.append((summary.reset_index(), summary, 'annualized_costs_period', 'tbl_annualized_costs_period'))
+    
+    return results
+
+def reserves(par, s, v, r):
+    """Process reserves for timesteps and periods"""
+    
+    results = []
+    if v.reserve.empty:
+        return results
+    
+    # Timestep-level reserves
+    reserves_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['type', 'entity_type', 'process', 'reserve', 'updown', 'node']), dtype=float)
+    for col in v.reserve.columns:
+        p, r_type, ud, n = col
+        entity_type = 'unit' if p in s.process_unit else 'connection'
+        type_label = 'unit__reserve__upDown__node' if p in s.process_unit else 'connection__reserve__upDown__node'
+        unitsize = par.entity_unitsize[p]
+        reserves_dt[type_label, entity_type, p, r_type, ud, n] = v.reserve[col] * unitsize
+    results.append((reserves_dt.reset_index(), reserves_dt, 'process_reserve_upDown_node_period_t', 'tbl_process_reserve_upDown_node_period_t'))
+    
+    # Period-level reserves (average)
+    step_duration = par.step_duration
+    complete_hours = par.complete_period_share_of_year * 8760
+    reserves_d = pd.DataFrame(index=s.d_realized_period, columns=reserves_dt.columns, dtype=float)
+    
+    for col in reserves_dt.columns:
+        # Weighted average by step_duration
+        weighted = reserves_dt[col] * step_duration
+        reserves_d[col] = weighted.groupby(level='period').sum() / complete_hours
+    results.append((reserves_d.reset_index(), reserves_d, 'process_reserve_upDown_node_period_average', 'tbl_process_reserve_upDown_node_period_average'))
+
+    # Reserve price results
+    if not v.dual_reserve_balance.empty:
+        results.append((v.dual_reserve_balance.reset_index(), v.dual_reserve_balance, 'reserve_prices_period_t', 'tbl_node_prices_period_t'))
+
+    return results
+
+def unit_online_and_startup(par, s, v, r):
+    """Unit online status and startups for timesteps and periods"""
+    
+    results = []
+    if r.process_online_dt.empty:
+        return results
+    
+    # 1. Online units dt
+    online_units_dt = r.process_online_dt[s.process_unit.intersection(s.process_online)]
+    results.append((online_units_dt.reset_index(), online_units_dt, 'unit_online_period_t', 'tbl_unit_online_period_t'))
+    
+    # 2. Average online status at period level (weighted by step_duration)
+    complete_hours = par.complete_period_share_of_year * 8760
+    online_units_d = online_units_dt.mul(par.step_duration, axis=0).groupby('period').sum().div(complete_hours, axis=0)
+    results.append((online_units_d.reset_index(), online_units_d, 'unit_online_period_average', 'tbl_unit_online_period_average'))
+    
+    # 3. Startups aggregated to period level
+    startup_units_d = r.process_startup_dt[s.process_unit.intersection(s.process_online)].groupby('period').sum()
+    results.append((startup_units_d.reset_index(), startup_units_d, 'unit_startup_period', 'tbl_unit_startup_period'))
+    
+    return results
+
+def node_summary(par, s, v, r):
+    """Node balance summaries for periods and timesteps"""
+    
+    results = []
+    nodes = list(s.node)
+    
+    # 1. Timestep-level node summary
+    node_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['category', 'node']), dtype=float)
+    
+    for n in nodes:
+        # Inflow
+        if (n, 'no_inflow') not in s.node__inflow_method and n in s.nodeBalance.union(s.nodeBalancePeriod):
+            node_dt['inflow', n] = par.node_inflow[(n,)].values
+        else:
+            node_dt['inflow', n] = 0
+        
+        # From units
+        from_units_cols = [(p, src, snk) for (p, src, snk) in r.flow_dt.columns if snk == n and p in s.process_unit]
+        node_dt['from_units', n] = r.flow_dt[from_units_cols].sum(axis=1) if from_units_cols else 0
+        
+        # From connections
+        from_conn_cols = [(p, src, snk) for (p, src, snk) in r.flow_dt.columns if snk == n and p in s.process_connection]
+        node_dt['from_connections', n] = r.flow_dt[from_conn_cols].sum(axis=1) if from_conn_cols else 0
+        
+        # To units (negative)
+        to_units_cols = [(p, src, snk) for (p, src, snk) in r.flow_dt.columns if src == n and p in s.process_unit]
+        node_dt['to_units', n] = -r.flow_dt[to_units_cols].sum(axis=1) if to_units_cols else 0
+        
+        # To connections (negative)
+        to_conn_cols = [(p, src, snk) for (p, src, snk) in r.flow_dt.columns if src == n and p in s.process_connection]
+        node_dt['to_connections', n] = -r.flow_dt[to_conn_cols].sum(axis=1) if to_conn_cols else 0
+        
+        # State change
+        if n in s.nodeState and n in r.nodeState_change_dt.columns:
+            node_dt['state_change', n] = r.nodeState_change_dt[n]
+        else:
+            node_dt['state_change', n] = 0
+        
+        # Self discharge
+        if n in s.nodeSelfDischarge and n in r.self_discharge_loss_dt.columns:
+            node_dt['self_discharge', n] = r.self_discharge_loss_dt[n]
+        else:
+            node_dt['self_discharge', n] = 0
+        
+        # Upward slack
+        if n in s.nodeBalance.union(s.nodeBalancePeriod) and ('node', n) in v.q_state_up.columns:
+            capacity_scaling = par.node_capacity_for_scaling[('node', n)]
+            node_dt['upward_slack', n] = v.q_state_up[('node', n)] * capacity_scaling
+        else:
+            node_dt['upward_slack', n] = 0
+        
+        # Downward slack (negative)
+        if n in s.nodeBalance.union(s.nodeBalancePeriod) and ('node', n) in v.q_state_down.columns:
+            capacity_scaling = par.node_capacity_for_scaling[('node', n)]
+            node_dt['downward_slack', n] = -v.q_state_down[('node', n)] * capacity_scaling
+        else:
+            node_dt['downward_slack', n] = 0
+    
+    results.append((node_dt.reset_index(), node_dt, 'node_period_t', 'tbl_node_period_t'))
+    
+    # 2. Period-level node summary
+    node_d = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['category', 'node']), dtype=float)
+    
+    for n in nodes:
+        # Inflow
+        if (n, 'no_inflow') not in s.node__inflow_method and n in s.nodeBalance.union(s.nodeBalancePeriod):
+            node_d['inflow', n] = r.node_inflow_d[(n,)]
+        else:
+            node_d['inflow', n] = 0
+        
+        # From units
+        from_units_cols = [(p, src, snk) for (p, src, snk) in r.flow_d.columns if snk == n and p in s.process_unit]
+        node_d['from_units', n] = r.flow_d[from_units_cols].sum(axis=1) if from_units_cols else 0
+        
+        # From connections
+        from_conn_cols = [(p, src, snk) for (p, src, snk) in r.flow_d.columns if snk == n and p in s.process_connection]
+        node_d['from_connections', n] = r.flow_d[from_conn_cols].sum(axis=1) if from_conn_cols else 0
+        
+        # To units (negative)
+        to_units_cols = [(p, src, snk) for (p, src, snk) in r.flow_d.columns if src == n and p in s.process_unit]
+        node_d['to_units', n] = -r.flow_d[to_units_cols].sum(axis=1) if to_units_cols else 0
+        
+        # To connections (negative)
+        to_conn_cols = [(p, src, snk) for (p, src, snk) in r.flow_d.columns if src == n and p in s.process_connection]
+        node_d['to_connections', n] = -r.flow_d[to_conn_cols].sum(axis=1) if to_conn_cols else 0
+        
+        # State change
+        if n in s.nodeState and n in r.nodeState_change_d.columns:
+            node_d['state_change', n] = r.nodeState_change_d[n]
+        else:
+            node_d['state_change', n] = 0
+        
+        # Self discharge
+        if n in s.nodeSelfDischarge and n in r.self_discharge_loss_d.columns:
+            node_d['self_discharge', n] = r.self_discharge_loss_d[n]
+        else:
+            node_d['self_discharge', n] = 0
+        
+        # Upward slack
+        if n in s.nodeBalance.union(s.nodeBalancePeriod) and (n, 'up') in r.penalty_nodeState_upDown_d.columns:
+            node_d['upward_slack', n] = r.penalty_nodeState_upDown_d[(n, 'up')]
+        else:
+            node_d['upward_slack', n] = 0
+        
+        # Downward slack (negative)
+        if n in s.nodeBalance.union(s.nodeBalancePeriod) and (n, 'down') in r.penalty_nodeState_upDown_d.columns:
+            node_d['downward_slack', n] = -r.penalty_nodeState_upDown_d[(n, 'down')]
+        else:
+            node_d['downward_slack', n] = 0
+    
+    results.append((node_d.reset_index(), node_d, 'node_period', 'tbl_node_period'))
+    
+    return results
+
+def node_additional_results(par, s, v, r):
+    """Additional node results: prices, state, and slacks"""
+    results = []
+    
+    # 1. Nodal prices
+    if not v.dual_node_balance.empty:
+        results.append((v.dual_node_balance.reset_index(), v.dual_node_balance, 'node_prices_period_t', 'tbl_node_prices_period_t'))
+    
+    # 2. Node state
+    if not v.state.empty:
+        node_state = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
+        for n in s.nodeState:
+            if ('node', n) in v.state.columns:
+                unitsize = par.entity_unitsize[n]
+                node_state[n] = v.state[('node', n)] * unitsize
+        results.append((node_state.reset_index(), node_state, 'node_state_period_t', 'tbl_node_state_period_t'))
+    
+    # 3. Node upward slack
+    if not v.q_state_up.empty:
+        upward_slack = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
+        for n in s.nodeBalance.union(s.nodeBalancePeriod):
+            if ('node', n) in v.q_state_up.columns:
+                capacity_scaling = par.node_capacity_for_scaling[('node', n)]
+                upward_slack[n] = v.q_state_up[('node', n)] * capacity_scaling
+        results.append((upward_slack.reset_index(), upward_slack, 'slack_upward_node_state_period_t', 'tbl_slack_upward_node_state_period_t'))
+    
+    # 4. Node downward slack
+    if not v.q_state_down.empty:
+        downward_slack = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
+        for n in s.nodeBalance.union(s.nodeBalancePeriod):
+            if ('node', n) in v.q_state_down.columns:
+                capacity_scaling = par.node_capacity_for_scaling[('node', n)]
+                downward_slack[n] = v.q_state_down[('node', n)] * capacity_scaling
+        results.append((downward_slack.reset_index(), downward_slack, 'slack_downward_node_state_period_t', 'tbl_slack_downward_node_state_period_t'))
+    
+    return results
+
+def investment_duals(par, s, v, r):
+    """Additional node results: prices, state, and slacks"""
+    results = []
+    
+    # 1. v.dual_invest_unit
+    if not v.dual_invest_unit.empty:
+        results.append((v.dual_invest_unit.reset_index(), v.dual_invest_unit, 'dual_invest_unit', 'tbl_dual_invest_unit_period'))
+
+    # 2. v.dual_invest_connection
+    if not v.dual_invest_connection.empty:
+        results.append((v.dual_invest_connection.reset_index(), v.dual_invest_connection, 'dual_invest_connection', 'tbl_dual_invest_connection_period'))
+
+    # 3. v.dual_invest_node
+    if not v.dual_invest_node.empty:
+        results.append((v.dual_invest_node.reset_index(), v.dual_invest_node, 'dual_invest_node', 'tbl_dual_invest_node_period'))
+
+    return results
+
+def inertia_results(par, s, v, r):
+    """Inertia results for groups and individual entities"""
+    
+    results = []
+    
+    # Helper to get inertia constant
+    def get_inertia_constant(p, node, direction):
+        if direction == 'source':
+            return par.process_source[p, node]['inertia_constant'] if 'inertia_constant' in par.process_source.index else 0.0
+        else:  # sink
+            return par.process_sink[p, node]['inertia_constant'] if 'inertia_constant' in par.process_sink.index else 0.0
+    
+    # Helper to get flow/online value
+    def get_flow_or_online(p, source, sink, df_index):
+        unitsize = par.entity_unitsize[p]
+        if p in s.process_online and p in r.process_online_dt.columns:
+            return r.process_online_dt[p] * unitsize
+        elif (p, source, sink) in v.flow.columns:
+            return v.flow[(p, source, sink)] * unitsize
+        else:
+            return pd.Series(0, index=df_index)
+    
+    # 1. Group inertia totals
+    group_inertia = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
+    
+    for g in s.groupInertia:
+        total_inertia = pd.Series(0, index=s.dt_realize_dispatch, dtype=float)
+        
+        # Inertia from sources
+        for (p, source, sink) in s.process_source_sink_alwaysProcess:
+            if (p, source) in s.process_source and (g, source) in s.group_node:
+                inertia_const = get_inertia_constant(p, source, 'source')
+                if inertia_const:
+                    flow_online = get_flow_or_online(p, source, sink, s.dt_realize_dispatch)
+                    total_inertia += (flow_online * inertia_const).squeeze()
+        
+        # Inertia from sinks
+        for (p, source, sink) in s.process_source_sink_alwaysProcess:
+            if (p, sink) in s.process_sink and (g, sink) in s.group_node:
+                inertia_const = get_inertia_constant(p, sink, 'sink')
+                if inertia_const:
+                    flow_online = get_flow_or_online(p, source, sink, s.dt_realize_dispatch)
+                    total_inertia += (flow_online * inertia_const).squeeze()
+        
+        group_inertia[g] = total_inertia
+    
+    results.append((group_inertia.reset_index(), group_inertia, 'group_inertia_period_t', 'tbl_group_inertia_period_t'))
+    
+    # 2. Individual entity inertia
+    unit_inertia = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['group', 'process', 'node']), dtype=float)
+    
+    for g in s.groupInertia:
+        # From sources
+        for (p, source, sink) in s.process_source_sink_alwaysProcess:
+            if (p, source) in s.process_source and (g, source) in s.group_node:
+                inertia_const = get_inertia_constant(p, source, 'source')
+                if inertia_const:
+                    flow_online = get_flow_or_online(p, source, sink, s.dt_realize_dispatch)
+                    unit_inertia[g, p, source] = flow_online * inertia_const
+        
+        # From sinks
+        for (p, source, sink) in s.process_source_sink_alwaysProcess:
+            if (p, sink) in s.process_sink and (g, sink) in s.group_node:
+                inertia_const = get_inertia_constant(p, sink, 'sink')
+                if inertia_const:
+                    flow_online = get_flow_or_online(p, source, sink, s.dt_realize_dispatch)
+                    unit_inertia[g, p, sink] = flow_online * inertia_const
+    
+    results.append((unit_inertia.reset_index(), unit_inertia, 'group_unit_node_inertia_period_t', 'tbl_group_unit_node_inertia_period_t'))
+    
+    # 3. Largest flow per group (for inertia constraint)
+    largest_flow = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
+    
+    for g in s.groupInertia:
+        max_flows = []
+        
+        for (p, source, sink) in s.process_source_sink_alwaysProcess:
+            if (p, sink) in s.process_sink and (g, sink) in s.group_node:
+                unitsize = par.entity_unitsize[p]
+                if (p, source, sink) in v.flow.columns:
+                    max_flows.append(v.flow[(p, source, sink)] * unitsize)
+        
+        if max_flows:
+            # Take maximum across all processes
+            largest_flow[g] = pd.concat(max_flows, axis=1).max(axis=1)
+        else:
+            largest_flow[g] = 0
+    
+    results.append((largest_flow.reset_index(), largest_flow, 'group_inertia_largest_flow_period_t', 'tbl_group_inertia_largest_flow_period_t'))
+    
+    return results
+
+def slack_variables(par, s, v, r):
+    """Slack variables for reserves, non-synchronous, inertia, and capacity margin"""
+    
+    results = []
+    
+    # 1. Reserve slack variables
+    if not v.q_reserve.empty:
+        reserve_slack = v.q_reserve * par.reserve_upDown_group_reservation
+        # pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['reserve', 'updown', 'node_group']), dtype=float)
+        
+        for col in v.q_reserve.columns:
+            if col in par.reserve_upDown_group_reservation.columns:
+                reserve_slack[col] = v.q_reserve[col] * par.reserve_upDown_group_reservation[col]
+        
+        results.append((reserve_slack.reset_index(), reserve_slack, 'slack_reserve_upDown_group_period_t', 'tbl_slack_reserve_upDown_group_period_t'))
+    
+    # 2. Non-synchronous slack variables
+    if not v.q_non_synchronous.empty:
+        nonsync_slack = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
+        
+        for g in s.groupNonSync:
+            if ('group', g) in v.q_non_synchronous.columns:
+                capacity_scaling = par.group_capacity_for_scaling[('group', g)]
+                nonsync_slack[g] = v.q_non_synchronous[('group', g)] * capacity_scaling
+        
+        results.append((nonsync_slack.reset_index(), nonsync_slack, 'slack_nonsync_group_period_t', 'tbl_slack_nonsync_group_period_t'))
+    
+    # 3. Inertia slack variables
+    if not v.q_inertia.empty:
+        inertia_slack = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
+        
+        for g in s.groupInertia:
+            if ('group', g) in v.q_inertia.columns:
+                inertia_limit = par.group_inertia_limit[('group', g)]
+                inertia_slack[g] = v.q_inertia[('group', g)] * inertia_limit
+        
+        results.append((inertia_slack.reset_index(), inertia_slack, 'slack_inertia_group_period_t', 'tbl_slack_inertia_group_period_t'))
+    
+    # 4. Capacity margin slack variables (for investment periods only)
+    if not v.q_capacity_margin.empty:
+        capmargin_slack = pd.DataFrame(index=s.d_realize_invest, dtype=float)
+        
+        for g in s.groupCapacityMargin:
+            if ('group', g) in v.q_capacity_margin.columns:
+                capacity_scaling = par.group_capacity_for_scaling[('group', g)]
+                capmargin_slack[g] = v.q_capacity_margin[('group', g)] * capacity_scaling
+        
+        results.append((capmargin_slack.reset_index(), capmargin_slack, 'slack_capacity_margin_period', 'tbl_slack_capacity_margin_period'))
+    
+    return results
+
 # List of all output functions
 ALL_OUTPUTS = [
+    cost_summaries,
+    reserves,
+    unit_online_and_startup,
+    node_summary,
+    node_additional_results,
+    investment_duals,
+    inertia_results,
+    slack_variables,
     unit_capacity,
     connection_capacity,
     node_capacity,
@@ -1009,15 +1432,25 @@ def write_outputs(output_funcs=None, output_dir='output_raw', methods=['excel', 
     """
     output_funcs: list of functions to run, or None for ALL_OUTPUTS
     """
+
+    start = time.perf_counter()
+
     par, s, v = read_outputs(output_dir)
+
+    print(f"Read flextool outputs: {time.perf_counter() - start:.4f} seconds")
+    start = time.perf_counter()
+
     r = post_process_results(par, s, v)
 
+    print(f"Post processed outputs: {time.perf_counter() - start:.4f} seconds")
+    start = time.perf_counter()
+
     # Usage
-    open('namespace_structure.txt', 'w').close()
-    print_namespace_structure(r, 'r')
-    print_namespace_structure(s, 's')
-    print_namespace_structure(v, 'v')
-    print_namespace_structure(par, 'par')
+    # open('namespace_structure.txt', 'w').close()
+    # print_namespace_structure(r, 'r')
+    # print_namespace_structure(s, 's')
+    # print_namespace_structure(v, 'v')
+    # print_namespace_structure(par, 'par')
 
     output_funcs = output_funcs or ALL_OUTPUTS
 
@@ -1036,12 +1469,18 @@ def write_outputs(output_funcs=None, output_dir='output_raw', methods=['excel', 
             results_multi[excel_sheet] = (result_multi, excel_sheet, db_table)
             results_flat[excel_sheet] = (result_flat, excel_sheet, db_table)
 
+    print(f"Formatted for output: {time.perf_counter() - start:.4f} seconds")
+    start = time.perf_counter()
+
     # Write to excel
     if 'excel' in methods:
         with pd.ExcelWriter('output.xlsx') as writer:
             for name, (df, sheet, _) in results_flat.items():
                 df.to_excel(writer, sheet_name=sheet)
-    
+
+    print(f"Wrote to Excel: {time.perf_counter() - start:.4f} seconds")
+    start = time.perf_counter()
+
     # Write to database
     #if 'db' in methods:
     #    for name, (df, _, table) in results.items():
