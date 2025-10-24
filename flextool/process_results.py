@@ -89,8 +89,8 @@ def post_process_results(par, s, v):
     )
 
     # r_node_ramp_dtt - sum ramps for flows into/out of each node
-    r_node_ramp_dt = pd.DataFrame(index=r.ramp_dtt.index.droplevel('t_previous'), columns=s.nodeBalance, dtype=float)
-    for n in s.nodeBalance:
+    r_node_ramp_dt = pd.DataFrame(index=r.ramp_dtt.index.droplevel('t_previous'), columns=s.node_balance, dtype=float)
+    for n in s.node_balance:
         node_ramp = pd.Series(0.0, index=r_node_ramp_dt.index)
         # Flows into node (process, n, sink)
         for col in r.ramp_dtt.columns:
@@ -225,11 +225,11 @@ def post_process_results(par, s, v):
             ].groupby(level='period').sum()
             r.connection_to_right_node__d = r_conn_right_d
 
-    # Calculate r_nodeState_change_dt
+    # Calculate r_node_state_change_dt
     # Filter dt_realize_dispatch
     dt_dispatch_idx = s.dt_realize_dispatch
     # Initialize result
-    r_state_change = pd.DataFrame(0.0, index=s.dt_realize_dispatch, columns=s.nodeState, dtype=float)
+    r_state_change = pd.DataFrame(0.0, index=s.dt_realize_dispatch, columns=s.node_state, dtype=float)
     # Create index mappings from dtttdt
     prev_solve_idx = s.dtttdt.droplevel(['period', 'time', 't_previous', 't_previous_within_timeset']).set_names(['period', 'time'])
     prev_period_idx = s.dtttdt.droplevel(['time', 't_previous_within_timeset', 'd_previous', 't_previous_within_solve']).set_names(['period', 'time'])
@@ -240,7 +240,7 @@ def post_process_results(par, s, v):
         s.period__time_first.get_level_values('period').isin(s.period_first_of_solve)
     ]
     
-    for n in s.nodeState:
+    for n in s.node_state:
         if n not in v.state.columns:
             continue
         
@@ -290,17 +290,17 @@ def post_process_results(par, s, v):
         # Assign
         r_state_change[n] = state_change
     
-    r.nodeState_change_dt = r_state_change
+    r.node_state_change_dt = r_state_change
 
-    # r_nodeState_change_d - sum over dt_realize_dispatch
-    r_state_change_d = r.nodeState_change_dt[
-        r.nodeState_change_dt.index.get_level_values('period').isin(s.d_realized_period)
+    # r_node_state_change_d - sum over dt_realize_dispatch
+    r_state_change_d = r.node_state_change_dt[
+        r.node_state_change_dt.index.get_level_values('period').isin(s.d_realized_period)
     ].groupby(level='period').sum()
-    r.nodeState_change_d = r_state_change_d
+    r.node_state_change_d = r_state_change_d
     
     # r_self_discharge_loss_dt - element-wise multiplication
-    r.self_discharge_loss_dt = pd.DataFrame(index=dt_dispatch_idx, columns=s.nodeSelfDischarge, dtype=float)
-    for n in s.nodeSelfDischarge:
+    r.self_discharge_loss_dt = pd.DataFrame(index=dt_dispatch_idx, columns=s.node_self_discharge, dtype=float)
+    for n in s.node_self_discharge:
         if n in v.state.columns and n in par.node_self_discharge_loss.columns:
             r.self_discharge_loss_dt[n] = (
                 v.state[n].reindex(dt_dispatch_idx) * 
@@ -396,9 +396,9 @@ def post_process_results(par, s, v):
             node = col[2]  # node is third level in (process, commodity, node)
             if node in nodes_in_group:
                 total += r.process_emissions_co2_dt[col]
-        r.group_emissions_co2_dt[group] = total
+        r.group_emissions_co2_dt[group] = total * prices
 
-    r.cost_co2_dt = (r.group_emissions_co2_dt * prices).sum(axis=1)
+    r.cost_co2_dt = r.group_emissions_co2_dt.sum(axis=1)
     
     # r_cost_process_other_operational_cost_dt
     r.cost_process_other_operational_cost_dt = pd.DataFrame(0.0, index=r.flow_dt.index, columns=s.process, dtype=float)
@@ -423,8 +423,8 @@ def post_process_results(par, s, v):
                     cost.loc[period_mask] *= par.process_startup_cost.loc[d, p]
             r.cost_startup_dt[p] = cost
 
-    # r_costPenalty_nodeState_upDown_dt
-    nodes = list(s.nodeBalance) + list(s.nodeBalancePeriod)
+    # r_costPenalty_node_state_upDown_dt
+    nodes = list(s.node_balance) + list(s.node_balance_period)
     node_updown_columns = pd.MultiIndex.from_product([nodes, s.upDown], names=['node', 'upDown'])
     r_penalty_state = pd.DataFrame(
         index=v.q_state_up.index if hasattr(v, 'q_state_up') and not v.q_state_up.empty else v.q_state_down.index,
@@ -447,15 +447,15 @@ def post_process_results(par, s, v):
                         period_mask = penalty.index.get_level_values('period') == d
                         penalty.loc[period_mask] *= par.node_capacity_for_scaling.loc[d, n]
                 r_penalty_state[(n, ud)] = penalty
-    r.costPenalty_nodeState_upDown_dt = r_penalty_state
+    r.costPenalty_node_state_upDown_dt = r_penalty_state
 
-    # r_penalty_nodeState_upDown_d
-    if not r.costPenalty_nodeState_upDown_dt.empty:
-        r.penalty_nodeState_upDown_d = r.costPenalty_nodeState_upDown_dt[
-            r.costPenalty_nodeState_upDown_dt.index.get_level_values('period').isin(s.d_realized_period)
+    # r_penalty_node_state_upDown_d
+    if not r.costPenalty_node_state_upDown_dt.empty:
+        r.penalty_node_state_upDown_d = r.costPenalty_node_state_upDown_dt[
+            r.costPenalty_node_state_upDown_dt.index.get_level_values('period').isin(s.d_realized_period)
         ].groupby(level='period').sum()
     else:
-        r.penalty_nodeState_upDown_d = None
+        r.penalty_node_state_upDown_d = None
 
     # r_costPenalty_inertia_dt
     r.costPenalty_inertia_dt = pd.DataFrame(index=v.q_inertia.index, columns=s.groupInertia, dtype=float)
@@ -524,7 +524,7 @@ def post_process_results(par, s, v):
                         r.cost_startup_dt.sum(axis=1) +
                         r.cost_co2_dt
                     )
-    r.costPenalty_dt = (r.costPenalty_nodeState_upDown_dt.sum(axis=1) + 
+    r.costPenalty_dt = (r.costPenalty_node_state_upDown_dt.sum(axis=1) + 
                             r.costPenalty_inertia_dt.sum(axis=1) + 
                             r.costPenalty_non_synchronous_dt.sum(axis=1) + 
                             r.costPenalty_reserve_upDown_dt.sum(axis=1))
@@ -532,28 +532,23 @@ def post_process_results(par, s, v):
     r.costOper_and_penalty_dt = r.costOper_dt + r.costPenalty_dt
     
     # Period aggregations
-    r.cost_process_other_operational_cost_d = (r.cost_process_other_operational_cost_dt[
-        r.cost_process_other_operational_cost_dt.index.get_level_values('period').isin(s.d_realized_period)
-    ].groupby(level='period').sum() if not r.cost_process_other_operational_cost_dt.empty
-    else pd.Series(0.0, index=s.d_realized_period))
+    r.cost_process_other_operational_cost_d = r.cost_process_other_operational_cost_dt.groupby('period').sum()
     
     r.cost_co2_d = (r.cost_co2_dt.groupby('period').sum() 
     if not r.cost_co2_dt.empty 
     else pd.Series(0.0, index=s.d_realized_period))
 
-    r.cost_variable_d = (r.cost_process_other_operational_cost_d.sum(axis=1) 
-    if not r.cost_process_other_operational_cost_d.empty 
-    else pd.Series(0.0, index=s.d_realized_period))
+    r.cost_variable_d = r.cost_process_other_operational_cost_d.sum(axis=1)
 
     r.cost_startup_d = (r.cost_startup_dt[
         r.cost_startup_dt.index.get_level_values('period').isin(s.d_realized_period)
     ].groupby(level='period').sum() if not r.cost_startup_dt.empty 
     else pd.DataFrame(0.0, index=s.d_realized_period, columns=r.cost_startup_dt.columns if hasattr(r.cost_startup_dt, 'columns') else []))
 
-    r.costPenalty_nodeState_upDown_d = (r.costPenalty_nodeState_upDown_dt[
-        r.costPenalty_nodeState_upDown_dt.index.get_level_values('period').isin(s.d_realized_period)
-    ].groupby(level='period').sum() if not r.costPenalty_nodeState_upDown_dt.empty 
-    else pd.DataFrame(0.0, index=s.d_realized_period, columns=r.costPenalty_nodeState_upDown_dt.columns if hasattr(r.costPenalty_nodeState_upDown_dt, 'columns') else []))
+    r.costPenalty_node_state_upDown_d = (r.costPenalty_node_state_upDown_dt[
+        r.costPenalty_node_state_upDown_dt.index.get_level_values('period').isin(s.d_realized_period)
+    ].groupby(level='period').sum() if not r.costPenalty_node_state_upDown_dt.empty 
+    else pd.DataFrame(0.0, index=s.d_realized_period, columns=r.costPenalty_node_state_upDown_dt.columns if hasattr(r.costPenalty_node_state_upDown_dt, 'columns') else []))
 
     r.costPenalty_inertia_d = (r.costPenalty_inertia_dt[
         r.costPenalty_inertia_dt.index.get_level_values('period').isin(s.d_realized_period)
@@ -589,8 +584,8 @@ def post_process_results(par, s, v):
     r.costDivestUnit_d = r.cost_entity_divest_d[[e for e in s.process_unit if e in r.cost_entity_divest_d.columns]].sum(axis=1)
     r.costInvestConnection_d = r.cost_entity_invest_d[[e for e in s.process_connection if e in r.cost_entity_invest_d.columns]].sum(axis=1)
     r.costDivestConnection_d = r.cost_entity_divest_d[[e for e in s.process_connection if e in r.cost_entity_divest_d.columns]].sum(axis=1)
-    r.costInvestState_d = r.cost_entity_invest_d[[e for e in s.nodeState if e in r.cost_entity_invest_d.columns]].sum(axis=1)
-    r.costDivestState_d = r.cost_entity_divest_d[[e for e in s.nodeState if e in r.cost_entity_divest_d.columns]].sum(axis=1)
+    r.costInvestState_d = r.cost_entity_invest_d[[e for e in s.node_state if e in r.cost_entity_invest_d.columns]].sum(axis=1)
+    r.costDivestState_d = r.cost_entity_divest_d[[e for e in s.node_state if e in r.cost_entity_divest_d.columns]].sum(axis=1)
     
     r.costInvest_d = r.costInvestUnit_d + r.costInvestConnection_d + r.costInvestState_d
     r.costDivest_d = r.costDivestUnit_d + r.costDivestConnection_d + r.costDivestState_d
@@ -795,7 +790,7 @@ def post_process_results(par, s, v):
     for g in s.groupOutputNodeFlows:
         losses = pd.Series(0.0, index=dt_dispatch_idx)
         
-        for n in s.nodeSelfDischarge:
+        for n in s.node_self_discharge:
             if (g, n) in s.group_node and n in r.self_discharge_loss_dt.columns:
                 losses += r.self_discharge_loss_dt[n].reindex(dt_dispatch_idx, fill_value=0)
         

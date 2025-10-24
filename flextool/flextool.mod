@@ -4227,9 +4227,9 @@ if p_model['solveFirst'] then {
   # Write p_commodity_co2_content
   printf "commodity" > "output_raw/p_commodity_co2_content.csv";
   for {c in commodity} printf ",%s", c >> "output_raw/p_commodity_co2_content.csv";
-  printf "\nvalue," >> "output_raw/p_commodity_co2_content.csv";
+  printf "\nvalue" >> "output_raw/p_commodity_co2_content.csv";
   for {c in commodity} {
-    printf "%g", p_commodity[c, 'co2_content'] >> "output_raw/p_commodity_co2_content.csv";
+    printf ",%g", p_commodity[c, 'co2_content'] >> "output_raw/p_commodity_co2_content.csv";
   }
   printf "\n" >> "output_raw/p_commodity_co2_content.csv";
 

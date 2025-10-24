@@ -302,13 +302,13 @@ def read_sets(output_dir):
 
     # Node-related sets
     df = pd.read_csv(output_path / 'set_nodeState.csv')
-    s.nodeState = pd.Index(df.iloc[:, 0])
+    s.node_state = pd.Index(df.iloc[:, 0])
     df = pd.read_csv(output_path / 'set_nodeBalance.csv')
-    s.nodeBalance = pd.Index(df.iloc[:, 0])
+    s.node_balance = pd.Index(df.iloc[:, 0])
     df = pd.read_csv(output_path / 'set_nodeBalancePeriod.csv')
-    s.nodeBalancePeriod = pd.Index(df.iloc[:, 0])
+    s.node_balance_period = pd.Index(df.iloc[:, 0])
     df = pd.read_csv(output_path / 'set_nodeSelfDischarge.csv')
-    s.nodeSelfDischarge = pd.Index(df.iloc[:, 0])
+    s.node_self_discharge = pd.Index(df.iloc[:, 0])
     s.node__storage_binding_method = pd.read_csv(output_path / 'set_node__storage_binding_method.csv').set_index(['node', 'method']).index
     s.node__storage_start_end_method = pd.read_csv(output_path / 'set_node__storage_start_end_method.csv').set_index(['node', 'method']).index
     s.node__inflow_method = pd.read_csv(output_path / 'set_node__inflow_method.csv').set_index(['node', 'method']).index
