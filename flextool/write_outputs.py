@@ -1,3 +1,4 @@
+import os
 import csv
 import pandas as pd
 import numpy as np
@@ -9,8 +10,6 @@ from pathlib import Path
 from flextool.read_flextool_outputs import read_variables, read_parameters, read_sets
 from flextool.process_results import post_process_results
 import warnings
-
-warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
 
 def read_outputs(output_dir):
     """
@@ -1619,6 +1618,8 @@ def write_outputs(output_funcs=None, output_dir='output_raw', methods=['excel', 
     """
     output_funcs: list of functions to run, or None for ALL_OUTPUTS
     """
+    warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
+
     start = time.perf_counter()
 
     par, s, v = read_outputs(output_dir)
@@ -1658,7 +1659,10 @@ def write_outputs(output_funcs=None, output_dir='output_raw', methods=['excel', 
     print(f"--- Formatted for output: {time.perf_counter() - start:.4f} seconds")
     start = time.perf_counter()
 
-    plot_dict_of_dataframes(results_multi, output_dir='./output_plots')
+    plot_dir = './output_plots'
+    if not os.path.exists(plot_dir):
+        os.makedirs(plot_dir)
+    plot_dict_of_dataframes(results_multi, output_dir=plot_dir)
 
     print(f"--- Plotted figures: {time.perf_counter() - start:.4f} seconds")
     start = time.perf_counter()

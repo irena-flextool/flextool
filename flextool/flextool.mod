@@ -1356,7 +1356,7 @@ set edd_history_choice := {e in entity, d_history in period_with_history, d in p
 set edd_history_automatic := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'reinvest_automatic') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history]};
 set edd_history := edd_history_choice union edd_history_automatic;
 set edd_history_invest := {(e, d_invest, d) in edd_history : e in entityInvest};
-set edd_invest := {(e, d_invest, d) in edd_history_invest : d_invest in period_invest};
+set edd_invest := {(e, d_invest, d) in edd_history_invest : (e, d) in ed_invest};
 set pd_invest := {(p, d) in ed_invest : p in process};
 set nd_invest := {(n, d) in ed_invest : n in node};
 set ed_divest := {e in entityDivest, d in period_invest : ed_entity_annual_divest[e, d] || exists{(e, c) in process_capacity_constraint} 1 || exists{(e, c) in node_capacity_constraint} 1 };
@@ -5451,7 +5451,7 @@ for {s in solve_current, d in d_realize_invest}
 	  p_discount_factor_operations_yearly[d]
 	>> fn_discount;
   }
-
+display entityInvest, ed_entity_annual, d_realize_invest, period_invest;
 printf 'Write investment annuities for each entity...\n';
 param fn_annuity symbolic := "output/entity_annuity.csv";
 for {i in 1..1 : p_model['solveFirst']}
