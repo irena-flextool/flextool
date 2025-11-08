@@ -1513,7 +1513,6 @@ set group_commodity_node_period_co2_total :=
 			&& g in group_co2_max_total
 		};
 
-
 set process__commodity__node := {p in process, (c, n) in commodity_node : (p, n) in process_source || (p, n) in process_sink};
 
 set commodity_node_co2 :=
@@ -2660,7 +2659,7 @@ s.t. maxToSource {(p, sink, source) in process_sink_toSource, (d, t) in dt : p_p
       + p_process_source_coefficient[p, source]
         * ( 
 		    + p_entity_existing_integer_count[p, d]
-          + (if d in period_invest then v_invest[p, d] else 0)			
+            + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest]
 			- v_online_integer[p, d, t]   # Using binary online variable as a switch between directions
 		  )   
 		* p_entity_unitsize[p]
