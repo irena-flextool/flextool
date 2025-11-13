@@ -48,14 +48,16 @@ def unit_capacity(par, s, v, r):
     # Invested capacity - default to None, overwrite if data exists
     result_multi['invested'] = pd.Series(dtype=float)
     if not v.invest.empty and len(v.invest.columns) > 0:
-        d_unit_invest = s.ed_invest[s.ed_invest.get_level_values(0).isin(s.process_unit)]
-        result_multi['invested'] = v.invest[d_unit_invest].unstack()
+        d_unit_invest = s.ed_invest[s.ed_invest.get_level_values('entity').isin(s.process_unit)]
+        d_unit_invest = d_unit_invest[d_unit_invest.get_level_values('period').isin(periods)]
+        result_multi['invested'] = v.invest[d_unit_invest].unstack().mul(par.entity_unitsize, level='entity')
     
     # Divested capacity - default to None, overwrite if data exists
     result_multi['divested'] = pd.Series(dtype=float)
     if not v.divest.empty and len(v.divest.columns) > 0:
         d_unit_divest = s.ed_divest[s.ed_divest.get_level_values(0).isin(s.unit)]
-        result_multi['divested'] = v.divest[d_unit_divest].unstack()
+        d_unit_divest = d_unit_divest[d_unit_divest.get_level_values('period').isin(periods)]
+        result_multi['divested'] = v.divest[d_unit_divest].unstack().mul(par.entity_unitsize, level='entity')
     
     # Total capacity - filter to process_unit only
     total = r.entity_all_capacity[processes].unstack()
@@ -86,14 +88,17 @@ def connection_capacity(par, s, v, r):
     # Invested capacity - default to empty, overwrite if data exists
     result_multi['invested'] = pd.Series(dtype=float)
     if not v.invest.empty and len(v.invest.columns) > 0:
-        d_connection_invest = s.ed_invest[s.ed_invest.get_level_values(0).isin(s.process_connection)]
-        result_multi['invested'] = v.invest[d_connection_invest].unstack()
+        d_connection_invest = s.ed_invest[s.ed_invest.get_level_values('entity').isin(s.process_connection)]
+        d_connection_invest = d_connection_invest[d_connection_invest.get_level_values('period').isin(periods)]
+
+        result_multi['invested'] = v.invest[d_connection_invest].unstack().mul(par.entity_unitsize, level='entity')
     
     # Divested capacity - default to empty, overwrite if data exists
     result_multi['divested'] = pd.Series(dtype=float)
     if not v.divest.empty and len(v.divest.columns) > 0:
-        d_connection_divest = s.ed_divest[s.ed_divest.get_level_values(0).isin(s.process_connection)]
-        result_multi['divested'] = v.divest[d_connection_divest].unstack()
+        d_connection_divest = s.ed_divest[s.ed_divest.get_level_values('entity').isin(s.process_connection)]
+        d_connection_divest = d_connection_divest[d_connection_divest.get_level_values('period').isin(periods)]
+        result_multi['divested'] = v.divest[d_connection_divest].unstack().mul(par.entity_unitsize, level='entity')
     
     # Total capacity - filter to process_connection only
     total = r.entity_all_capacity[connections].unstack()
@@ -132,14 +137,16 @@ def node_capacity(par, s, v, r):
     # Invested capacity - default to empty, overwrite if data exists
     result_multi['invested'] = pd.Series(dtype=float)
     if not v.invest.empty and len(v.invest.columns) > 0:
-        d_node_invest = s.ed_invest[s.ed_invest.get_level_values(0).isin(s.node)]
-        result_multi['invested'] = v.invest[d_node_invest].unstack()
+        d_node_invest = s.ed_invest[s.ed_invest.get_level_values('entity').isin(s.node)]
+        d_node_invest = d_node_invest[d_node_invest.get_level_values('period').isin(periods)]
+        result_multi['invested'] = v.invest[d_node_invest].unstack().mul(par.entity_unitsize, level='entity')
     
     # Divested capacity - default to empty, overwrite if data exists
     result_multi['divested'] = pd.Series(dtype=float)
     if not v.divest.empty and len(v.divest.columns) > 0:
-        d_node_divest = s.ed_divest[s.ed_divest.get_level_values(0).isin(s.node)]
-        result_multi['divested'] = v.divest[d_node_divest].unstack()
+        d_node_divest = s.ed_divest[s.ed_divest.get_level_values('entity').isin(s.node)]
+        d_node_divest = d_node_divest[d_node_divest.get_level_values('period').isin(periods)]
+        result_multi['divested'] = v.divest[d_node_divest].unstack().mul(par.entity_unitsize, level='entity')
     
     # Total capacity - filter to node_state only
     if nodes:
