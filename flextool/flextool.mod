@@ -607,7 +607,7 @@ table data IN 'CSV' 'solve_data/period_capacity.csv' : period_capacity <- [perio
 
 #check
 set nodeBalancePeriod := {n in node : (n, 'balance_within_period') in node__node_type};
-
+display d_fix_storage_period, d_realized_period;
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
@@ -2385,33 +2385,6 @@ s.t. storage_usage_fix{n in n_fix_storage_usage, (d,t) in period__time_last, (d2
     ) * step_duration[d, t3]
   <= 
   + sum{(n,d2,t2) in ndt_fix_storage_usage: exists{(d, t3, t2) in dtt_timeline_matching} 1} p_fix_storage_usage[n,d2,t2]
-  ;
-
-
-s.t. storage_usage_fix_realized{n in n_fix_storage_usage, (d,t) in period__time_last, (d2,d) in period__branch: 
-      d in period_last && sum{(n,d2,t2) in ndt_fix_storage_usage: (d, t, t2) in dtt_timeline_matching} 1}:
-  # n is sink
-  - sum {(p, source, n) in process_source_sink, (d2,t3) in dt_realize_dispatch} (
-      + v_flow[p, source, n, d, t3] * p_entity_unitsize[p] * step_duration[d, t3]
-  )  
-  # n is source
-  + sum {(p, n, sink) in process_source_sink_eff, (d2,t3) in dt_realize_dispatch} (
-      + v_flow[p, n, sink, d, t3] * p_entity_unitsize[p]
-        * pdtProcess_slope[p, d, t3]
-      * (if p in process_unit then 1 / (p_process_sink_coefficient[p, sink] * p_process_source_coefficient[p, n]) else 1)
-      + (if (p, 'min_load_efficiency') in process__ct_method then 
-        + ( + (if p in process_online_linear then v_online_linear[p, d, t3]) 
-            + (if p in process_online_integer then v_online_integer[p, d, t3])
-        )
-          * pdtProcess_section[p, d, t3]
-        * p_entity_unitsize[p]
-    )
-    ) * step_duration[d, t3]		
-  + sum {(p, n, sink) in process_source_sink_noEff, (d2,t3) in dt_realize_dispatch}
-    ( + v_flow[p, n, sink, d, t3] * p_entity_unitsize[p]
-    ) * step_duration[d, t3]
-  <= 
-  + sum{(n,d2,t2) in ndt_fix_storage_usage: exists{(d, t3, t2) in dtt_timeline_matching: (d2,t3) in dt_realize_dispatch} 1} p_fix_storage_usage[n,d2,t2]
   ;
 
 s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in period__time_last
