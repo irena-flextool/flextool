@@ -13,7 +13,7 @@ import spinedb_api as api
 from spinedb_api import DatabaseMapping
 # from spinedb_api.filters.scenario_filter import scenario_filter_config, scenario_filter_from_dict
 from pathlib import Path
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from collections import defaultdict
 from types import SimpleNamespace
 
@@ -479,11 +479,12 @@ class FlexToolRunner:
                                       and which timesets are part of the solve(s) in the model instance""")
                     sys.exit(-1)
         
-        """If realized_periods or invest_periods do not exist, but period__timeset exist, assume all periods to be realized"""
+        """If realized_periods or invest_periods or nested solves do not exist, but period__timeset exist, assume all periods to be realized"""
         for solve in list(self.model_solve.values())[0]:
-            if not any(solve == solve_period[0] for solve_period in self.realized_periods) and \
-            not any(solve == solve_period[0] for solve_period in self.invest_periods) \
-            and solve in self.timesets_used_by_solves.keys():
+            if not any(solve == solve_period[0] for solve_period in self.realized_periods) \
+            and not any(solve == solve_period[0] for solve_period in self.invest_periods) \
+            and not self.contains_solves[solve] \
+            and solve in self.timesets_used_by_solves.keys() :
                 for period_timeset in self.timesets_used_by_solves[solve]:
                     self.realized_periods.append((solve,period_timeset[0]))
 
@@ -893,7 +894,7 @@ class FlexToolRunner:
 
         # Skip if not current solve
         if current_solve not in timesets_used_by_solves:
-            raise ValueError(f"{current_solve}: Current solve does not have period_timeset defined.")
+            raise ValueError(f"{current_solve}: this solve does not have period_timeset defined. Check values and that the alternative is in the scenario.")
 
         for period, timeset_id in timesets_used_by_solves[current_solve]:
             # Get timeline ID for this timeset
@@ -1573,137 +1574,317 @@ class FlexToolRunner:
             realized_time_lists[solve_name] = realized
         return solves, active_time_lists, realized_time_lists
 
-    def define_solve(self, solve, parent_solve__roll = None, realized = [], start = None, duration = -1):
-        complete_solves= OrderedDict() #complete_solve is for rolling, so that the rolls inherit the parameters of the whole solve
-        active_time_lists= OrderedDict()    
+    # Named tuple for tracking parent solve relationships
+    ParentSolveInfo = namedtuple('ParentSolveInfo', ['solve', 'roll'])
+
+    def _filter_time_list_by_periods(self, full_time_list, period_list, solve_name):
+        """
+        Filter a time list to include only periods that are in the given period list.
+
+        Args:
+            full_time_list: OrderedDict of {period: [(timestep, idx, value), ...]}
+            period_list: List of (solve, period) tuples
+            solve_name: Name of the solve to filter for
+
+        Returns:
+            OrderedDict with only the matching periods
+        """
+        filtered = OrderedDict()
+        for solve_period_tuple in period_list:
+            if solve_period_tuple[0] == solve_name:
+                period = solve_period_tuple[1]
+                if period in full_time_list:
+                    filtered[period] = full_time_list[period]
+        return filtered
+
+    def _get_periods_from_parent_time_list(self, parent_time_list):
+        """
+        Extract the set of periods that exist in the parent's time list.
+        Used to constrain child solves to only timesteps within parent's scope.
+
+        Args:
+            parent_time_list: OrderedDict of {period: [(timestep, idx, value), ...]}
+
+        Returns:
+            Set of period names
+        """
+        return set(parent_time_list.keys())
+
+    def _filter_time_list_by_parent_scope(self, child_time_list, parent_periods):
+        """
+        Filter child solve's time list to only include periods that exist in parent.
+
+        Args:
+            child_time_list: OrderedDict of {period: [(timestep, idx, value), ...]}
+            parent_periods: Set of period names from parent
+
+        Returns:
+            OrderedDict with only periods that exist in parent
+        """
+        filtered = OrderedDict()
+        for period, timesteps in child_time_list.items():
+            if period in parent_periods:
+                filtered[period] = timesteps
+        return filtered
+
+    def _process_rolling_solve(self, solve, complete_solve_name, full_active_time_list,
+                               parent_info, start, duration):
+        """
+        Handle rolling window solve logic, creating multiple roll solves.
+
+        Args:
+            solve: Name of the solve
+            complete_solve_name: Name of the complete (non-rolled) solve
+            full_active_time_list: Full time list for this solve
+            parent_info: ParentSolveInfo namedtuple
+            start: Starting [period, timestep] if constrained by parent
+            duration: Duration constraint from parent
+
+        Returns:
+            Tuple of (solves, complete_solves, active_time_lists, fix_storage_time_lists,
+                     realized_time_lists, parent_roll_lists)
+        """
+        solves = []
+        complete_solves = OrderedDict()
+        active_time_lists = OrderedDict()
+        fix_storage_time_lists = OrderedDict()
         realized_time_lists = OrderedDict()
-        full_active_time_list = OrderedDict()
         parent_roll_lists = OrderedDict()
-        solves=[]
 
-        #check that the lower level solves have periods only from of upper_level realizations
-        full_active_time_list_own = self.get_active_time(solve, self.timesets_used_by_solves, self.timeset_durations,self.timelines, self.timesets__timeline)
-        if len(realized) != 0:
-            # Make full_active_time_list to include only timesteps that are found in 'realized' periods.
-            # After that, remove any periods from 'realised' are not in fix_storage, realized or realized_invest periods
-            for key, item in list(full_active_time_list_own.items()):
-                if key in realized :
-                    full_active_time_list[key] = item
-            periods_to_be_removed = []  # Cannot remove directly from the list that is being iterated
-            for period in realized:
-                if (solve,period) not in (self.fix_storage_periods + self.realized_periods + self.realized_invest_periods):
-                    periods_to_be_removed.append(period)
-            for period in periods_to_be_removed:
-                realized.remove(period)
-        else:
-            # Create realized based on periods in realized_periods, realized_invest_periods and fix_storage_periods
-            # and then use the timesteps that were fetched earlier with get_active_time directly
-            ordered_periods = OrderedDict.fromkeys(
-                self.realized_periods + self.realized_invest_periods + self.fix_storage_periods)
-            for solve_period in ordered_periods:
-                if solve_period[0] == solve:
-                    realized.append(solve_period[1])
-            full_active_time_list = full_active_time_list_own
+        rolling_times = self.rolling_times[solve]  # [jump, horizon, duration]
+        if duration == -1:
+            duration = float(rolling_times[2])
 
-        if solve in self.contains_solves.keys():
-            contain_solves = self.contains_solves[solve]
-        else:
-            contain_solves = []
-        if solve not in self.solve_modes.keys():
-            self.solve_modes[solve] = "single_solve"
+        # Find start timestep if constrained by parent
+        period_start_timestep = start
+        if start is not None:
+            start_timestep = self.find_next_timestep(
+                full_active_time_list, start, parent_info.solve, solve)
+            period_start_timestep = [start[0], start_timestep]
 
-        if self.solve_modes[solve] == "rolling_window":
-            #rolling_times: 0:jump, 1:horizon, 2:duration
-            rolling_times = self.rolling_times[solve]
-            if duration == -1:
-                duration = float(rolling_times[2])
-            period_start_timestep = start
-            if start != None:
-                start_timestep = self.find_next_timestep(full_active_time_list_own, start, parent_solve__roll[0], solve) # if the timestep is not in the lower timeline
-                period_start_timestep = [start[0],start_timestep]
-            
-            roll_solves, roll_active_time_lists, roll_realized_time_lists = (
-                self.create_rolling_solves(solve, full_active_time_list, float(rolling_times[0]), float(rolling_times[1]), period_start_timestep, duration))
-            for i in roll_solves:
-                complete_solves[i] = solve
-                parent_roll_lists[i] = parent_solve__roll[1]
+        # Create rolling solves
+        roll_solves, roll_active_time_lists, roll_realized_time_lists = (
+            self.create_rolling_solves(solve, full_active_time_list,
+                                      float(rolling_times[0]), float(rolling_times[1]),
+                                      period_start_timestep, duration))
 
-            active_time_lists.update(roll_active_time_lists)
-            realized_time_lists.update(roll_realized_time_lists)
-            
-            # used for state start constraints so it should only be in the first solve of the whole nested level
-            if parent_solve__roll[1] != None:
-                if parent_solve__roll[1] in self.first_of_complete_solve:
-                    self.first_of_complete_solve.append(roll_solves[0])
-            else:
+        # Track metadata for each roll
+        for roll_name in roll_solves:
+            complete_solves[roll_name] = complete_solve_name
+            parent_roll_lists[roll_name] = parent_info.roll
+
+        active_time_lists.update(roll_active_time_lists)
+
+        # For rolling solves, fix_storage and realized are the same (the "jump" portion)
+        fix_storage_time_lists.update(roll_realized_time_lists)
+        realized_time_lists.update(roll_realized_time_lists)
+
+        # Mark first solve of this complete solve (for state start constraints)
+        if parent_info.roll is not None:
+            if parent_info.roll in self.first_of_complete_solve:
                 self.first_of_complete_solve.append(roll_solves[0])
-            self.last_of_solve.append(roll_solves[-1])
-
-            if contain_solves:
-                if len(contain_solves) > 1:
-                    logging.error("More than one solve in a rolling solve, not managed")
-                    sys.exit(-1)
-                else:
-                    contains_solve = contain_solves[0]
-                for index, roll in enumerate(roll_solves):
-                    solves.append(roll)
-                    #creating the start time for the rolling. This is next timestep of the roll timeline from the first [period, timestamp] of the active time of the parent roll
-                    if index != 0:
-                        start = [list(roll_active_time_lists[roll].items())[0][0],list(roll_active_time_lists[roll].items())[0][1][0][0]]
-                    else:
-                        start = None
-                    #upper_jump = lower_duration 
-                    duration = float(rolling_times[0])
-                    inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_parent_roll_lists = (
-                        self.define_solve(contains_solve, [solve, roll], realized, start, duration))
-                    solves += inner_solves
-                    complete_solves.update(inner_complete_solve)
-                    parent_roll_lists.update(inner_parent_roll_lists)
-                    active_time_lists.update(inner_active_time_lists)
-                    realized_time_lists.update(inner_realized_time_lists)
-            else:
-                solves += roll_solves
         else:
-            solves.append(solve)
-            parent_roll_lists[solve] = parent_solve__roll[1]
-            complete_solves[solve]= solve #complete_solve is for rolling, so that the rolls inherit the parameters of the solve. If not rolling, the solve is its own complete solve
-            active_time_lists[solve] = full_active_time_list
-            realized_time_lists[solve]= full_active_time_list
-            self.first_of_complete_solve.append(solve)
-            self.last_of_solve.append(solve)
+            self.first_of_complete_solve.append(roll_solves[0])
+
+        self.last_of_solve.append(roll_solves[-1])
+
+        # Process contained solves
+        if solve in self.contains_solves:
+            contain_solves = self.contains_solves[solve]
+            if len(contain_solves) > 1:
+                logging.error("More than one solve in a rolling solve, not managed")
+                sys.exit(-1)
+
+            contains_solve = contain_solves[0]
+
+            for index, roll_name in enumerate(roll_solves):
+                solves.append(roll_name)
+
+                # Determine start time for child solve
+                # Child should start at first timestep of this roll
+                if index != 0:
+                    first_period = list(roll_active_time_lists[roll_name].keys())[0]
+                    first_timestep = roll_active_time_lists[roll_name][first_period][0][0]
+                    child_start = [first_period, first_timestep]
+                else:
+                    child_start = None
+
+                # Child duration equals parent's jump (the realized portion)
+                child_duration = float(rolling_times[0])
+
+                # Get parent's realized periods for child to use as scope
+                parent_realized_periods = set(roll_realized_time_lists[roll_name].keys())
+
+                # Recursively process child solve
+                child_parent_info = self.ParentSolveInfo(solve=solve, roll=roll_name)
+                (child_solves, child_complete_solves, child_active_time_lists,
+                 child_fix_storage_time_lists, child_realized_time_lists,
+                 child_parent_roll_lists) = self._define_solve_recursive(
+                    contains_solve, child_parent_info, parent_realized_periods,
+                    child_start, child_duration)
+
+                solves += child_solves
+                complete_solves.update(child_complete_solves)
+                parent_roll_lists.update(child_parent_roll_lists)
+                active_time_lists.update(child_active_time_lists)
+                fix_storage_time_lists.update(child_fix_storage_time_lists)
+                realized_time_lists.update(child_realized_time_lists)
+        else:
+            solves += roll_solves
+
+        return (solves, complete_solves, active_time_lists, fix_storage_time_lists,
+                realized_time_lists, parent_roll_lists)
+
+    def _process_single_solve(self, solve, full_active_time_list, parent_info):
+        """
+        Handle single (non-rolling) solve logic.
+
+        Args:
+            solve: Name of the solve
+            full_active_time_list: Full time list for this solve
+            parent_info: ParentSolveInfo namedtuple
+
+        Returns:
+            Tuple of (solves, complete_solves, active_time_lists, fix_storage_time_lists,
+                     realized_time_lists, parent_roll_lists)
+        """
+        solves = [solve]
+        complete_solves = OrderedDict()
+        active_time_lists = OrderedDict()
+        fix_storage_time_lists = OrderedDict()
+        realized_time_lists = OrderedDict()
+        parent_roll_lists = OrderedDict()
+
+        complete_solves[solve] = solve
+        parent_roll_lists[solve] = parent_info.roll
+        active_time_lists[solve] = full_active_time_list
+
+        # Get fix_storage and realized time lists from class attributes
+        fix_storage_time_lists[solve] = self._filter_time_list_by_periods(
+            full_active_time_list, self.fix_storage_periods, solve)
+        realized_time_lists[solve] = self._filter_time_list_by_periods(
+            full_active_time_list, self.realized_periods, solve)
+
+        self.first_of_complete_solve.append(solve)
+        self.last_of_solve.append(solve)
+
+        # Process contained solves
+        if solve in self.contains_solves:
+            contain_solves = self.contains_solves[solve]
+
+            # Get parent's scope: union of fix_storage and realized periods
+            parent_scope_periods = (set(fix_storage_time_lists[solve].keys()) |
+                                   set(realized_time_lists[solve].keys()))
 
             for contain_solve in contain_solves:
-                inner_solves, inner_complete_solve, inner_active_time_lists, inner_realized_time_lists, inner_parent_roll_lists = (
-                    self.define_solve(contain_solve, [solve, solve], realized))
-                solves += inner_solves
-                complete_solves.update(inner_complete_solve)
-                parent_roll_lists.update(inner_parent_roll_lists)
-                active_time_lists.update(inner_active_time_lists)
-                realized_time_lists.update(inner_realized_time_lists)
+                child_parent_info = self.ParentSolveInfo(solve=solve, roll=solve)
+                (child_solves, child_complete_solves, child_active_time_lists,
+                 child_fix_storage_time_lists, child_realized_time_lists,
+                 child_parent_roll_lists) = self._define_solve_recursive(
+                    contain_solve, child_parent_info, parent_scope_periods, None, -1)
 
-        return solves, complete_solves, active_time_lists, realized_time_lists, parent_roll_lists
-    
-    def create_stochastic_periods(self, stochastic_branches, solves, complete_solves, active_time_lists, realized_time_lists):
-        
+                solves += child_solves
+                complete_solves.update(child_complete_solves)
+                parent_roll_lists.update(child_parent_roll_lists)
+                active_time_lists.update(child_active_time_lists)
+                fix_storage_time_lists.update(child_fix_storage_time_lists)
+                realized_time_lists.update(child_realized_time_lists)
+
+        return (solves, complete_solves, active_time_lists, fix_storage_time_lists,
+                realized_time_lists, parent_roll_lists)
+
+    def _define_solve_recursive(self, solve, parent_info, parent_scope_periods=None,
+                                start=None, duration=-1):
+        """
+        Recursively define solve structure and determine time period mappings.
+
+        This is the core recursive function that processes nested and rolling solves.
+
+        Args:
+            solve: Name of the solve to process
+            parent_info: ParentSolveInfo namedtuple with parent solve and roll info
+            parent_scope_periods: Set of period names from parent's realized/fix_storage
+            start: Optional [period, timestep] to start from (for child solves)
+            duration: Duration constraint from parent (for child solves)
+
+        Returns:
+            Tuple of (solves, complete_solves, active_time_lists, fix_storage_time_lists,
+                     realized_time_lists, parent_roll_lists)
+        """
+        # Get full active time list for this solve (all timesteps it could use)
+        full_active_time_list_own = self.get_active_time(
+            solve, self.timesets_used_by_solves, self.timeset_durations,
+            self.timelines, self.timesets__timeline)
+
+        # If this is a child solve, constrain it to parent's scope
+        if parent_scope_periods is not None:
+            full_active_time_list = self._filter_time_list_by_parent_scope(
+                full_active_time_list_own, parent_scope_periods)
+        else:
+            # Top-level solve: include realized_invest_periods in scope
+            # (they contribute to active time but not to fix_storage/realized directly)
+            full_active_time_list = full_active_time_list_own
+
+        # Determine solve mode
+        solve_mode = self.solve_modes.get(solve, "single_solve")
+
+        if solve_mode == "rolling_window":
+            # Process as rolling window solve
+            complete_solve_name = solve
+            return self._process_rolling_solve(
+                solve, complete_solve_name, full_active_time_list,
+                parent_info, start, duration)
+        else:
+            # Process as single solve
+            return self._process_single_solve(solve, full_active_time_list, parent_info)
+
+    def create_stochastic_periods(self, stochastic_branches, solves, complete_solves, active_time_lists, fix_storage_time_lists, realized_time_lists):
+        """
+        Apply stochastic branching to time periods.
+
+        This function processes stochastic branches and creates branched versions of periods
+        where multiple future scenarios diverge. Branches are added to active_time_lists but
+        NOT to realized_time_lists or fix_storage_time_lists, since branches represent
+        future scenarios that are optimized over but not committed/realized.
+
+        Args:
+            stochastic_branches: Branch configuration data
+            solves: List of solve names
+            complete_solves: Mapping of rolls to their complete solve
+            active_time_lists: Dict of {solve: {period: timesteps}}
+            fix_storage_time_lists: Dict of {solve: {period: timesteps}} for fixed storage
+            realized_time_lists: Dict of {solve: {period: timesteps}} for realized results
+
+        Returns:
+            Tuple of (period__branch_lists, solve_branch__time_branch_lists, active_time_lists,
+                     jump_lists, fix_storage_time_lists, realized_time_lists, branch_start_time_lists)
+        """
         period__branch_lists = defaultdict(list)
         solve_branch__time_branch_lists = defaultdict(list)
         jump_lists = OrderedDict()
-        branch_start_time_lists = defaultdict() 
+        branch_start_time_lists = defaultdict()
+
         for solve in solves:
             new_realized_time_list = OrderedDict()
+            new_fix_storage_time_list = OrderedDict()
             new_active_time_list = OrderedDict()
+
             info = stochastic_branches[complete_solves[solve]]
             active_time_list = active_time_lists[solve]
             realized_time_list = realized_time_lists[solve]
+            fix_storage_time_list = fix_storage_time_lists[solve]
+
             branched = False
             next_analysis_found = False
             branches = []
             branch_start_time_lists[solve] = None
+
+            # Get first step for validation
             for period, active_time in active_time_list.items():
                 first_step = (period, active_time[0][0])
                 break
 
-            #check that the start times of the solves can be found from the stochastic_branches parameter
+            # Check that the start times of the solves can be found from stochastic_branches
             found_start = False
             for row in info:
                 if first_step[1] == row[2] and "yes" == row[3]:
@@ -1713,70 +1894,95 @@ class FlexToolRunner:
                               "Check that stochastic_branches has a realized : yes, branch for the start of the solve" +
                                "and that the possible rolling_jump matches with the branch starts")
                 sys.exit(-1)
+
+            # Process each period to create branches
             for period, active_time in active_time_list.items():
                 realized_end = None
                 if not branched:
                     period__branch_lists[solve].append((period, period))
-                    #get all start times
+                    # Get all start times
                     start_times = defaultdict(list)
                     for row in info:
-                        if row[0]==period:
+                        if row[0] == period:
                             start_times[row[2]].append((row[1], row[4], row[3]))
+
+                    # Check if any timestep triggers branching
                     for step in active_time:
                         if step[0] in start_times.keys():
                             branched = True
-                            branch_start_time_lists[solve] = (period,step[0])
+                            branch_start_time_lists[solve] = (period, step[0])
+
+                            # Add active time for base period
                             new_active_time_list[period] = active_time
-                            new_realized_time_list[period] = realized_time_list[period]
+
+                            # Copy realized and fix_storage ONLY for base period (not branches)
+                            if period in realized_time_list:
+                                new_realized_time_list[period] = realized_time_list[period]
+                            if period in fix_storage_time_list:
+                                new_fix_storage_time_list[period] = fix_storage_time_list[period]
+
+                            # Create branches (branches get active time but NOT realized/fix_storage)
                             for branch__weight__real in start_times[step[0]]:
                                 branch = branch__weight__real[0]
                                 branches.append(branch)
                                 solve_branch = period + "_" + branch
-                                # if the weight is zero, do not add to the timeline
+
+                                # If the weight is zero, do not add to the timeline
                                 if float(branch__weight__real[1]) != 0.0 and branch != period and branch__weight__real[2] != "yes":
+                                    # Branches get active time for optimization
                                     new_active_time_list[solve_branch] = active_time[0:]
+                                    # But NOT realized or fix_storage (they're future scenarios)
                                     solve_branch__time_branch_lists[solve].append((solve_branch, branch))
+
                                 period__branch_lists[solve].append((period, solve_branch))
-                                #get timesteps
+
+                                # Get timesteps for stochastic tracking
                                 for i in active_time[0:]:
                                     self.stochastic_timesteps[solve].append((solve_branch, i[0]))
-                            break   
+                            break
                 else:
-                    # if the jump is longer than the period
+                    # If the jump is longer than the period (continuation after branching)
                     for branch in branches:
                         solve_branch = period + "_" + branch
-                        #new_realized_time_list[solve_branch] = realized_time_list[period]
-                        period__branch_lists[solve].append((period,solve_branch))
+                        # Branches continue to get active time but not realized/fix_storage
+                        period__branch_lists[solve].append((period, solve_branch))
                         solve_branch__time_branch_lists[solve].append((solve_branch, branch))
                         for i in active_time_list[period]:
                              self.stochastic_timesteps[solve].append((solve_branch, i[0]))
+
+                # Before branching occurs, copy periods as-is
                 if not branched:
                     new_active_time_list[period] = active_time_list[period]
-                    if period in realized_time_list.keys():
+                    if period in realized_time_list:
                         new_realized_time_list[period] = realized_time_list[period]
-            
-            #find the realized branch for this start time
+                    if period in fix_storage_time_list:
+                        new_fix_storage_time_list[period] = fix_storage_time_list[period]
+
+            # Find the realized branch for this start time
             for period, active_time in active_time_list.items():
                 found = 0
-                #before branching
+                # Before branching
                 for row in info:
-                    if row[0]==period and row[2] == active_time[0][0] and row[3] == 'yes':
-                        found +=1
+                    if row[0] == period and row[2] == active_time[0][0] and row[3] == 'yes':
+                        found += 1
                         solve_branch__time_branch_lists[solve].append((period, row[1]))
-                #after branching
+                # After branching
                 if found == 0 and branch_start_time_lists[solve] != None:
                     for row in info:
-                        if row[0]==branch_start_time_lists[solve][0] and row[2] == branch_start_time_lists[solve][1] and row[3] == 'yes':
-                            found +=1
+                        if row[0] == branch_start_time_lists[solve][0] and row[2] == branch_start_time_lists[solve][1] and row[3] == 'yes':
+                            found += 1
                             solve_branch__time_branch_lists[solve].append((period, row[1]))
                 if (branch_start_time_lists[solve] != None and found == 0) or found > 1:
                     self.logger.error("Each period should have one and only one realized branch. Found: " + str(found) + "\n")
                     sys.exit(-1)
+
+            # Update the time lists for this solve
             realized_time_lists[solve] = new_realized_time_list
+            fix_storage_time_lists[solve] = new_fix_storage_time_list
             active_time_lists[solve] = new_active_time_list
             jump_lists[solve] = self.make_step_jump(new_active_time_list, period__branch_lists[solve], solve_branch__time_branch_lists[solve])
 
-        return period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, realized_time_lists, branch_start_time_lists 
+        return period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, fix_storage_time_lists, realized_time_lists, branch_start_time_lists 
    
     def periodic_postprocess(self,groupby_map, method = None, arithmetic = "sum"):
         for key, group in list(groupby_map.items()):
@@ -1898,6 +2104,7 @@ class FlexToolRunner:
         active_time_lists = OrderedDict()
         jump_lists = OrderedDict()
         solve_period_history = defaultdict(list)
+        fix_storage_time_lists = OrderedDict()
         realized_time_lists = OrderedDict()
         complete_solve= OrderedDict()
         parent_roll = OrderedDict()
@@ -1921,14 +2128,17 @@ class FlexToolRunner:
             sys.exit(-1)
         
         for solve in solves:
-            solve_solves, solve_complete_solve, solve_active_time_lists, solve_realized_time_lists, solve_parent_roll = self.define_solve(solve, [None,None], [])
+            # Create ParentSolveInfo for top-level solve (no parent)
+            parent_info = self.ParentSolveInfo(solve=None, roll=None)
+            solve_solves, solve_complete_solve, solve_active_time_lists, solve_fix_storage_time_lists, solve_realized_time_lists, solve_parent_roll = self._define_solve_recursive(solve, parent_info, None, None, -1)
             all_solves += solve_solves
             complete_solve.update(solve_complete_solve)
             parent_roll.update(solve_parent_roll)
             active_time_lists.update(solve_active_time_lists)
+            fix_storage_time_lists.update(solve_fix_storage_time_lists)
             realized_time_lists.update(solve_realized_time_lists)
 
-        period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, realized_time_lists, branch_start_time_lists = self.create_stochastic_periods(self.stochastic_branches, all_solves, complete_solve, active_time_lists, realized_time_lists)
+        period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, fix_storage_time_lists, realized_time_lists, branch_start_time_lists = self.create_stochastic_periods(self.stochastic_branches, all_solves, complete_solve, active_time_lists, fix_storage_time_lists, realized_time_lists)
 
         real_solves = [] 
         for solve in solves: #real solves are the defined solves not including the individual rolls
@@ -1998,8 +2208,8 @@ class FlexToolRunner:
             self.write_last_realized_step(realized_time_lists[solve], complete_solve[solve], 'solve_data/last_realized_timestep.csv')
             self.logger.info("Create realized timeline")
             self.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
-            self.write_fix_storage_timesteps(realized_time_lists[solve],complete_solve[solve])
-            self.write_delayed_durations(realized_time_lists[solve], complete_solve[solve])
+            self.write_fix_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
+            self.write_delayed_durations(active_time_lists[solve], complete_solve[solve])
             self.logger.info("Possible stochastics")
             self.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
             self.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve])
@@ -2053,6 +2263,7 @@ class FlexToolRunner:
             exit_status = self.model_run(complete_solve[solve])
             if exit_status == 0:
                 self.logger.info('Success!')
+                print("-------------------------------------------------------------------------------------------\n\n")
             else:
                 self.logger.error(f'Error: {exit_status}')
                 sys.exit(-1)

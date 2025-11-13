@@ -607,7 +607,7 @@ table data IN 'CSV' 'solve_data/period_capacity.csv' : period_capacity <- [perio
 
 #check
 set nodeBalancePeriod := {n in node : (n, 'balance_within_period') in node__node_type};
-
+display d_fix_storage_period, d_realized_period;
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
