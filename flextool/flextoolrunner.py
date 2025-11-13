@@ -15,7 +15,7 @@ from spinedb_api import DatabaseMapping
 from pathlib import Path
 from collections import OrderedDict
 from collections import defaultdict
-
+from types import SimpleNamespace
 
 #return_codes
 #0 : Success
@@ -121,6 +121,7 @@ class FlexToolRunner:
         self.first_of_complete_solve = []
         self.last_of_solve = []
         #self.write_full_timelines(self.timelines, 'steps.csv')
+
 
 
     def periods_to_tuples(self, db, cl, par):
@@ -1904,6 +1905,8 @@ class FlexToolRunner:
         branch_start_time_lists = defaultdict()
         all_solves=[]
 
+        timer = time.perf_counter()
+
         try:
             os.mkdir('solve_data')
         except FileExistsError:
@@ -1965,6 +1968,9 @@ class FlexToolRunner:
                 if (period,period) in period__branch_lists[solve] and not any(period== sublist[0] for sublist in solve_period_history[complete_solve[solve]]):
                     self.logger.error("The years_represented is defined, but not to all of the periods in the solve")
                     sys.exit(-1)
+
+        print(f"Pre-processing of data: {time.perf_counter() - timer:.4f} seconds")
+        timer = time.perf_counter()
 
         first = True
         previous_complete_solve = None
@@ -2043,24 +2049,29 @@ class FlexToolRunner:
                 self.write_headers_for_empty_output_files('output/co2.csv', 'param_co2,model_wide')
                 self.write_headers_for_empty_output_files('solve_data/period_capacity.csv', 'period')
             self.logger.info("Starting model creation")
+
             exit_status = self.model_run(complete_solve[solve])
             if exit_status == 0:
                 self.logger.info('Success!')
             else:
                 self.logger.error(f'Error: {exit_status}')
                 sys.exit(-1)
+
             #if multiple storage solve levels, save the storage fix of this level:
             if any(complete_solve[solve] == solve_period[0] for solve_period in self.fix_storage_periods):
                 shutil.copy("solve_data/fix_storage_quantity.csv","solve_data/fix_storage_quantity_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_price.csv", "solve_data/fix_storage_price_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_usage.csv","solve_data/fix_storage_usage_"+ complete_solve[solve]+".csv")
 
+        print(f"Solve loop: {time.perf_counter() - timer:.4f} seconds")
+        timer = time.perf_counter()
+
         #produce periodic data as post-process for rolling window solves
-        post_process_results = False
+        results_post_processed = False
         for solve in complete_solve.keys():
             if self.solve_modes[complete_solve[solve]] == "rolling_window":
-                post_process_results = True
-        if post_process_results:
+                results_post_processed = True
+        if results_post_processed:
             #[[group by], relation dimensions]
             #sums the solves with same period
             period_only = {
@@ -2101,10 +2112,15 @@ class FlexToolRunner:
         os.remove("output/annualized_investment_costs__period.csv")
         os.remove("output/group_node__period__t.csv")
         os.remove("output/unit_curtailment_share__outputNode__period__t.csv")
+
+        print(f"flextoolrunner post process: {time.perf_counter() - timer:.4f} seconds")
+        timer = time.perf_counter()
+
         if len(self.model_solve) > 1:
             self.logger.error(
                 f'Trying to run more than one model - not supported. The results of the first model are retained.')
             sys.exit(-1)
+        return 0
 
     def entities_to_dict(self, db, cl, mode):
         entities = db.find_entities(entity_class_name=cl)
@@ -2160,7 +2176,7 @@ class FlexToolRunner:
     def write_input(self, input_db_url, scenario_name=None):
         if scenario_name:
             scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
-        with (DatabaseMapping(input_db_url) as db):
+        with DatabaseMapping(input_db_url) as db:
             #it is faster to fetch all now than fetching multiple times
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
@@ -2582,7 +2598,6 @@ class FlexToolRunner:
                             filter_in_value="yes", no_value=True)
             write_default_values(db, [("model", "version")], "version", "input/db_version.csv",
                             filter_in_type=["float", "str", "bool"], only_value=True)
-
 
 
 def write_entity(db, cl, header, filename, entity_dimens=None):

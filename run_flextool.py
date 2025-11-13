@@ -6,6 +6,7 @@ import importlib.util
 from typing import Callable
 from functools import wraps
 import time
+from flextool.write_outputs import write_outputs
 
 class FlushingStream:
     def __init__(self, stream):
@@ -41,6 +42,9 @@ def main():
     parser.add_argument('input_db_url', help='Database URL to connect to (can be copied from Toolbox workflow db item')
     parser.add_argument('scenario_name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
+    parser.add_argument('--output-database', metavar='DB_URL', help='Save results to database')
+    
 
     args = parser.parse_args()
     input_db_url = args.input_db_url
@@ -52,24 +56,37 @@ def main():
         format='%(levelname)s:%(filename)s:%(lineno)d:%(message)s',
         handlers=[logging.StreamHandler(sys.stdout)]
     )
-    start_time = time.time()
+    timer = [] 
+    timer.append(time.perf_counter())
     if scenario_name:
         runner = flextoolrunner.FlexToolRunner(input_db_url, scenario_name)
-        print("--- Init time %s seconds ---" % (time.time() - start_time))
+        timer.insert(0, time.perf_counter())
+        print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
         runner.write_input(input_db_url, scenario_name)
-        print("--- write time %s seconds ---" % (time.time() - start_time))
+        timer.insert(0, time.perf_counter())
+        print("--- write time %.4s seconds ---" % (timer[0] - timer[1]))
     else:
         runner = flextoolrunner.FlexToolRunner(input_db_url)
-        print("--- Init time %s seconds ---" % (time.time() - start_time))
+        timer.insert(0, time.perf_counter())
+        print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
         runner.write_input(input_db_url)
-        print("--- write time %s seconds ---" % (time.time() - start_time))
+        timer.insert(0, time.perf_counter())
+        print("--- write time %.4s seconds ---" % (timer[0] - timer[1]))
     try:
         return_code = runner.run_model()
+        timer.insert(0, time.perf_counter())
+        print("--- run_model time %.4s seconds ---" % (timer[0] - timer[1]))
     except Exception as e:
         logging.error(f"Model run failed: {str(e)}\nTraceback:\n{traceback.format_exc()}")
         sys.exit(1)
+    
+    if return_code == 0:
+        write_outputs()
+
+        timer.insert(0, time.perf_counter())
+        ## print("--- write outputs time %s seconds ---" % (timer[0] - timer[1]))
     print(__file__)
-    print("--- full time %.12s seconds ---------------------------------------" % (time.time() - start_time))
+    print("--- full time %.4s seconds ---------------------------------------" % (timer[0] - timer[-1]))
     print("--------------------------------------------------------------------------\n\n")
     
     
