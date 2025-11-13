@@ -888,7 +888,7 @@ def unit_cf_outputNode_period(par, s, v, r):
 
     complete_hours = par.complete_period_share_of_year * 8760
     unit_cols = r.process_sink_flow_d.columns[r.process_sink_flow_d.columns.get_level_values(0).isin(s.process_unit)]
-    unit_capacity = r.entity_all_capacity[unit_cols.droplevel(1)]
+    unit_capacity = r.entity_all_capacity[unit_cols.droplevel(1).unique()].rename_axis('process', axis=1)
     unit_capacity.columns = unit_capacity.columns.get_level_values(0)
     result_multi = r.process_sink_flow_d[unit_cols].div(unit_capacity, level=0).div(complete_hours, axis=0)
     result_multi.columns.names = ['unit', 'sink']
@@ -902,7 +902,7 @@ def unit_cf_inputNode_period(par, s, v, r):
     # !!! This should account for efficiency losses in direct conversion units (but it does not)
     complete_hours = par.complete_period_share_of_year * 8760
     unit_source = r.process_source_flow_d.columns[r.process_source_flow_d.columns.get_level_values(0).isin(s.process_unit)]
-    unit_capacity = r.entity_all_capacity[unit_source.droplevel(1)]
+    unit_capacity = r.entity_all_capacity[unit_source.droplevel(1).unique()].rename_axis('process', axis=1)
     unit_capacity.columns = unit_capacity.columns.get_level_values(0)
     result_multi = r.process_source_flow_d[unit_source].div(unit_capacity, level=0).div(complete_hours, axis=0)
     result_multi.columns.names = ['unit', 'source']
@@ -1001,11 +1001,10 @@ def cost_summaries(par, s, v, r):
     results.append((costs_dt.reset_index(), costs_dt, 'costs_dt', 'tbl_costs_period_t'))
     
     # 2. Annualized dispatch costs (derived from costs_dt)
-    dispatch_dt = costs_dt.copy()
-    for col in dispatch_dt.columns:
-        dispatch_dt[col] = dispatch_dt[col] / period_share / to_millions
+    dispatch_period = costs_dt.groupby(level='period').sum()
+    dispatch_period = dispatch_period.div(period_share, axis=0) / to_millions
     
-    results.append((dispatch_dt.reset_index(), dispatch_dt, 'annualized_dispatch_costs_dt', 'tbl_annualized_dispatch_costs_period_t'))
+    # results.append((dispatch_period.reset_index(), dispatch_period, 'annualized_dispatch_costs_dt', 'tbl_annualized_dispatch_costs_period_t'))
     
     # 3. Annualized investment costs (d_realize_invest only)
     investment_costs = pd.DataFrame(index=s.d_realize_invest, dtype=float)
@@ -1015,10 +1014,9 @@ def cost_summaries(par, s, v, r):
     investment_costs['fixed_cost_existing'] = r.costExistingFixed_d / discount_ops / to_millions
     investment_costs['capacity_margin_penalty'] = r.costPenalty_capacity_margin_d.sum(axis=1) / discount_ops / to_millions
     
-    results.append((investment_costs.reset_index(), investment_costs, 'annualized_investment_costs_d', 'tbl_annualized_investment_costs_period'))
+    # results.append((investment_costs.reset_index(), investment_costs, 'annualized_investment_costs_d', 'tbl_annualized_investment_costs_period'))
     
     # 4. Combined summary (investment + dispatch aggregated to period)
-    dispatch_period = dispatch_dt.groupby(level='period').sum()
     all_periods = s.d_realized_period.union(s.d_realize_invest)
     summary = pd.DataFrame(index=all_periods, dtype=float)
     

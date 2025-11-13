@@ -396,7 +396,7 @@ def post_process_results(par, s, v):
             node = col[2]  # node is third level in (process, commodity, node)
             if node in nodes_in_group:
                 total += r.process_emissions_co2_dt[col]
-        r.group_emissions_co2_dt[group] = total * prices
+        r.group_emissions_co2_dt[group] = prices.mul(total, axis=0)
 
     r.cost_co2_dt = r.group_emissions_co2_dt.sum(axis=1)
     
