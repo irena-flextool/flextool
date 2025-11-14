@@ -3505,7 +3505,7 @@ if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/v_invest.csv";
   for {e in entityInvest} {printf ",%s", e >> "output_raw/v_invest.csv";}
 }
-for {s in solve_current, d in d_realize_dispatch_or_invest} {
+for {s in solve_current, d in d_realize_invest} {
     printf "\n%s,%s", s, d >> "output_raw/v_invest.csv";
     for {e in entityInvest} {
         printf ",%g", (if (e, d) in ed_invest then v_invest[e, d].val else 0) >> "output_raw/v_invest.csv";
@@ -3517,7 +3517,7 @@ if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/v_divest.csv";
   for {e in entityDivest} {printf ",%s", e >> "output_raw/v_divest.csv";}
 }
-for {s in solve_current, d in d_realize_dispatch_or_invest} {
+for {s in solve_current, d in d_realize_invest} {
     printf "\n%s,%s", s, d >> "output_raw/v_divest.csv";
     for {e in entityDivest} {
         printf ",%g", (if (e, d) in ed_divest then v_divest[e, d].val else 0) >> "output_raw/v_divest.csv";
@@ -3593,7 +3593,7 @@ if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/vq_capacity_margin.csv";
   for {g in groupCapacityMargin} {printf ",%s", g >> "output_raw/vq_capacity_margin.csv";}
 }
-for {s in solve_current, d in d_realize_dispatch_or_invest} {
+for {s in solve_current, d in d_realize_invest} {
     printf "\n%s,%s", s, d >> "output_raw/vq_capacity_margin.csv";
     for {g in groupCapacityMargin} {
         printf ",%g", vq_capacity_margin[g, d].val >> "output_raw/vq_capacity_margin.csv";
@@ -4009,7 +4009,7 @@ if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/pdGroup_penalty_capacity_margin.csv";
   for {g in group} {printf ",%s", g >> "output_raw/pdGroup_penalty_capacity_margin.csv";}
 }
-for {s in solve_current, d in d_realized_period} {
+for {s in solve_current, d in d_realize_invest} {
     printf "\n%s,%s", s, d >> "output_raw/pdGroup_penalty_capacity_margin.csv";
     for {g in group} {
         printf ",%g", pdGroup[g, 'penalty_capacity_margin', d] >> "output_raw/pdGroup_penalty_capacity_margin.csv";
@@ -4031,7 +4031,7 @@ if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/pdGroup_capacity_margin.csv";
   for {g in group} {printf ",%s", g >> "output_raw/pdGroup_capacity_margin.csv";}
 }
-for {s in solve_current, d in d_realized_period} {
+for {s in solve_current, d in d_realize_invest} {
     printf "\n%s,%s", s, d >> "output_raw/pdGroup_capacity_margin.csv";
     for {g in group} {
         printf ",%g", pdGroup[g, 'capacity_margin', d] >> "output_raw/pdGroup_capacity_margin.csv";
@@ -4043,7 +4043,7 @@ if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/ed_entity_annual_discounted.csv";
   for {e in entityInvest} {printf ",%s", e >> "output_raw/ed_entity_annual_discounted.csv";}
 }
-for {s in solve_current, d in d_realize_dispatch_or_invest} {
+for {s in solve_current, d in d_realize_invest} {
     printf "\n%s,%s", s, d >> "output_raw/ed_entity_annual_discounted.csv";
     for {e in entityInvest} {
         printf ",%g", (if (e, d) in ed_invest then ed_entity_annual_discounted[e, d] else 0) >> "output_raw/ed_entity_annual_discounted.csv";
@@ -4055,7 +4055,7 @@ if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/ed_entity_annual_divest_discounted.csv";
   for {e in entityDivest} {printf ",%s", e >> "output_raw/ed_entity_annual_divest_discounted.csv";}
 }
-for {s in solve_current, d in d_realize_dispatch_or_invest} {
+for {s in solve_current, d in d_realize_invest} {
     printf "\n%s,%s", s, d >> "output_raw/ed_entity_annual_divest_discounted.csv";
     for {e in entityDivest} {
         printf ",%g", (if (e, d) in ed_divest then ed_entity_annual_divest_discounted[e, d] else 0) >> "output_raw/ed_entity_annual_divest_discounted.csv";
@@ -4074,7 +4074,7 @@ for {s in solve_current, d in d_realized_period} {
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,value" > "output_raw/p_discount_factor_investment_yearly.csv";
 }
-for {s in solve_current, d in d_realized_period} {
+for {s in solve_current, d in d_realize_invest} {
     printf "\n%s,%s,%g", s, d, p_discount_factor_investment_yearly[d] >> "output_raw/p_discount_factor_investment_yearly.csv";
 }
 
