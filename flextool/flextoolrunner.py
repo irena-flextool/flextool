@@ -2118,6 +2118,14 @@ class FlexToolRunner:
             os.mkdir('solve_data')
         except FileExistsError:
             print("solve_data folder existed")
+        try:
+            os.mkdir('output_raw')
+        except FileExistsError:
+            print("output_raw folder existed")
+        try:
+            os.mkdir('output_plots')
+        except FileExistsError:
+            print("output_plots folder existed")
 
         if not self.model_solve:
             self.logger.error("No model. Make sure the 'model' class defines solves [Array].")
