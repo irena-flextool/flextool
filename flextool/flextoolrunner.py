@@ -64,6 +64,7 @@ class FlexToolRunner:
             if len(db.get_scenario_alternative_items(scenario_name=scen_names[0]['name'])) == 0:
                 self.logger.error("No alternatives in the scenario, i.e. empty scenario.")
                 sys.exit(-1)
+            
             db.fetch_all("parameter_value")
             self.check_version(db=db)
             self.timelines = self.params_to_dict(db=db, cl="timeline", par="timestep_duration", mode="defaultdict")
@@ -640,7 +641,7 @@ class FlexToolRunner:
         cplex_sol_file = str(self.root_dir / "cplex.sol")
         flextool_sol_file = str(self.root_dir / "flextool.sol")
         if solver == "glpsol":
-            only_glpsol = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '--cbg','-w', glp_solution_file] + sys.argv[3:]
+            only_glpsol = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '--cbg','-w', glp_solution_file] + sys.argv[4:]
             try:
                 returncode = self.run_glpsol(only_glpsol)
                 if returncode != 0:
@@ -661,7 +662,7 @@ class FlexToolRunner:
 
         elif solver == "highs" or solver == "cplex":
             highs_step1 = [glpsol_file, '--check', '--model', flextool_model_file, '-d', flextool_base_data_file,
-                           '--wfreemps', mps_file] + sys.argv[3:]
+                           '--wfreemps', mps_file] + sys.argv[4:]
             returncode = self.run_glpsol(highs_step1)
             if returncode != 0:
                 sys.exit(returncode)
@@ -695,12 +696,12 @@ class FlexToolRunner:
                 if current_solve not in self.solver_precommand.keys():
                     if solver == "cplex":
                         if current_solve not in self.solver_arguments.keys():
-                            cplex_step = ['cplex', '-c', 'read', mps_file, 'opt', 'write', cplex_sol_file, 'quit']  + sys.argv[3:]
+                            cplex_step = ['cplex', '-c', 'read', mps_file, 'opt', 'write', cplex_sol_file, 'quit']  + sys.argv[4:]
                         else:
                             cplex_step = ['cplex', '-c', 'read', mps_file]
                             cplex_step += self.solver_arguments[current_solve]
                             cplex_step += ['opt', 'write', cplex_sol_file, 'quit']
-                            cplex_step += sys.argv[3:]
+                            cplex_step += sys.argv[4:]
 
                         completed = subprocess.run(cplex_step)
                         if completed.returncode != 0:
@@ -712,12 +713,12 @@ class FlexToolRunner:
                     s_wrapper = self.solver_precommand[current_solve]
                     if solver == "cplex":
                         if current_solve not in self.solver_arguments.keys():
-                            cplex_step = [s_wrapper, 'cplex', '-c', 'read', mps_file,'opt', 'write', cplex_sol_file, 'quit']  + sys.argv[3:]
+                            cplex_step = [s_wrapper, 'cplex', '-c', 'read', mps_file,'opt', 'write', cplex_sol_file, 'quit']  + sys.argv[4:]
                         else:
                             cplex_step = [s_wrapper, 'cplex', '-c', 'read', mps_file]
                             cplex_step += self.solver_arguments[current_solve]
                             cplex_step += ['opt', 'write', cplex_sol_file, 'quit']
-                            cplex_step += sys.argv[3:]
+                            cplex_step += sys.argv[4:]
 
                         completed = subprocess.run(cplex_step)
                         if completed.returncode != 0:
@@ -728,7 +729,7 @@ class FlexToolRunner:
 
 
             highs_step3 = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '-r',
-                        flextool_sol_file] + sys.argv[3:]
+                        flextool_sol_file] + sys.argv[4:]
             returncode = self.run_glpsol(highs_step3)
             if returncode != 0:
                 sys.exit(returncode)

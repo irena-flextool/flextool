@@ -20,7 +20,7 @@ def post_process_results(par, s, v):
     # entity_all_capacity
       # Existing capacity
     entity_all_capacity = par.entity_all_existing.copy()
-    periods = entity_all_capacity.index.get_level_values('period').unique()
+    periods = entity_all_capacity.index.get_level_values('period')
       # Add investments
     if not v.invest.empty:
         v_reindexed = v.invest.reindex(columns=pd.MultiIndex.from_product([par.entity_unitsize.index]), fill_value=0)
@@ -231,7 +231,6 @@ def post_process_results(par, s, v):
     # Initialize result
     r_state_change = pd.DataFrame(0.0, index=s.dt_realize_dispatch, columns=s.node_state, dtype=float)
     # Create index mappings from dtttdt
-    prev_solve_idx = s.dtttdt.droplevel(['period', 'time', 't_previous', 't_previous_within_timeset']).set_names(['period', 'time'])
     prev_period_idx = s.dtttdt.droplevel(['time', 't_previous_within_timeset', 'd_previous', 't_previous_within_solve']).set_names(['period', 'time'])
     prev_timeset_idx = s.dtttdt.droplevel(['time', 't_previous', 'd_previous', 't_previous_within_solve']).set_names(['period', 'time'])
 
@@ -243,49 +242,32 @@ def post_process_results(par, s, v):
     for n in s.node_state:
         if n not in v.state.columns:
             continue
-        
+
         state_change = pd.Series(0.0, index=current_idx)
-        
+
         v_current = v.state[n].squeeze()
-        v_prev_solve = pd.Series(v.state[n].squeeze().reindex(prev_solve_idx).values, index=current_idx)
         v_prev_period = pd.Series(v.state[n].squeeze().reindex(prev_period_idx).values, index=current_idx)
         v_prev_timeset = pd.Series(v.state[n].squeeze().reindex(prev_timeset_idx).values, index=current_idx)
-        
-        # Case 1: bind_forward_only
+
+        # bind_forward_only: change from start to finish, leaving first timestep empty
+        # (uses same timeline as bind_within_timeset)
         if (n, 'bind_forward_only') in s.node__storage_binding_method:
             mask = ~current_idx.isin(exclude_idx)
-            state_change += ((v_current - v_prev_solve) * unitsize[n]).where(mask, 0)
-        
-        # Cases 2-4 remain the same...
-        if ((n, 'bind_within_solve') in s.node__storage_binding_method and
-            (n, 'fix_start_end') not in s.node__storage_start_end_method):
-            state_change += (v_current - v_prev_solve) * unitsize[n]
-        
-        if ((n, 'bind_within_period') in s.node__storage_binding_method and
-            (n, 'fix_start_end') not in s.node__storage_start_end_method):
+            state_change += ((v_current - v_prev_timeset) * unitsize[n]).where(mask, 0)
+
+        # bind_within_solve: treated as bind_within_period since solve info is not available
+        if (n, 'bind_within_solve') in s.node__storage_binding_method:
             state_change += (v_current - v_prev_period) * unitsize[n]
-        
-        if ((n, 'bind_within_timeset') in s.node__storage_binding_method and
-            (n, 'fix_start_end') not in s.node__storage_start_end_method):
+
+        # bind_within_period: wraps the change over (difference between last and first
+        # timestep in period is assigned to first timestep)
+        if (n, 'bind_within_period') in s.node__storage_binding_method:
+            state_change += (v_current - v_prev_period) * unitsize[n]
+
+        # bind_within_timeset: continues timeline from one period to next, wraps over
+        # the whole set of results
+        if (n, 'bind_within_timeset') in s.node__storage_binding_method:
             state_change += (v_current - v_prev_timeset) * unitsize[n]
-        
-        # Case 5
-        if not par.nested_model.loc['solveFirst', 'value']:
-            mask = current_idx.isin(exclude_idx)
-            state_change += (v_current * unitsize[n] - par.roll_continue_state.loc[n, 'value']).where(mask, 0)
-        
-        # Case 6
-        if ((n, 'bind_forward_only') in s.node__storage_binding_method and
-            par.nested_model.loc['solveFirst', 'value'] and
-            ((n, 'fix_start') in s.node__storage_start_end_method or
-            (n, 'fix_start_end') in s.node__storage_start_end_method)):
-            
-            for idx_tuple in exclude_idx:
-                if idx_tuple in current_idx:
-                    state_change.loc[idx_tuple] += (
-                        v_current.loc[idx_tuple] * unitsize[n] -
-                        par.node.loc[('storage_state_start', n)] * entity_all_capacity.loc[idx_tuple[0], n]
-                    )
 
         # Assign
         r_state_change[n] = state_change
@@ -438,14 +420,14 @@ def post_process_results(par, s, v):
                 for d in par.node_capacity_for_scaling.index:
                     if n in par.node_capacity_for_scaling.columns:
                         period_mask = penalty.index.get_level_values('period') == d
-                        penalty.loc[period_mask] *= par.node_capacity_for_scaling.loc[d, n]
+                        penalty.loc[period_mask] *= par.node_capacity_for_scaling.loc[d, n].drop_duplicates()
                 r_penalty_state[(n, ud)] = penalty
             elif ud == 'down' and n in v.q_state_down.columns:
                 penalty = v.q_state_down[n] * par.node_penalty_down[n]
                 for d in par.node_capacity_for_scaling.index:
                     if n in par.node_capacity_for_scaling.columns:
                         period_mask = penalty.index.get_level_values('period') == d
-                        penalty.loc[period_mask] *= par.node_capacity_for_scaling.loc[d, n]
+                        penalty.loc[period_mask] *= par.node_capacity_for_scaling.loc[d, n].drop_duplicates()
                 r_penalty_state[(n, ud)] = penalty
     r.costPenalty_node_state_upDown_dt = r_penalty_state
 
@@ -872,33 +854,48 @@ def drop_levels(par, s, v):
     par.reserve_upDown_group_reservation = par.reserve_upDown_group_reservation.droplevel('solve')
     par.profile = par.profile.droplevel('solve')
     par.years_from_start_d = par.years_from_start_d.droplevel('solve')
+    par.years_from_start_d = par.years_from_start_d[par.years_from_start_d.index.duplicated(keep='first')]
     par.years_represented_d = par.years_represented_d.droplevel('solve')
-    par.entity_max_units = par.entity_max_units.droplevel('solve')
-    par.entity_all_existing = par.entity_all_existing.droplevel('solve')
+    par.years_represented_d = par.years_represented_d[par.years_represented_d.index.duplicated(keep='first')]
+    par.entity_max_units = par.entity_max_units.droplevel('solve').drop_duplicates()
+    par.entity_max_units = par.entity_max_units[par.entity_max_units.index.duplicated(keep='first')]
+    par.entity_all_existing = par.entity_all_existing.droplevel('solve').drop_duplicates()
+    par.entity_all_existing = par.entity_all_existing[~par.entity_all_existing.index.duplicated(keep='first')]
     par.process_startup_cost = par.process_startup_cost.droplevel('solve')
+    par.process_startup_cost = par.process_startup_cost[par.process_startup_cost.index.duplicated(keep='first')]
     par.process_fixed_cost = par.process_fixed_cost.droplevel('solve')
+    par.process_fixed_cost = par.process_fixed_cost[par.process_fixed_cost.index.duplicated(keep='first')]
     par.node_fixed_cost = par.node_fixed_cost.droplevel('solve')
+    par.node_fixed_cost = par.node_fixed_cost[par.node_fixed_cost.index.duplicated(keep='first')]
     par.node_annual_flow = par.node_annual_flow.droplevel('solve')
+    par.node_annual_flow = par.node_annual_flow[par.node_annual_flow.index.duplicated(keep='first')]
     par.group_penalty_inertia = par.group_penalty_inertia.droplevel('solve')
+    par.group_penalty_inertia = par.group_penalty_inertia[par.group_penalty_inertia.index.duplicated(keep='first')]
     par.group_penalty_non_synchronous = par.group_penalty_non_synchronous.droplevel('solve')
+    par.group_penalty_non_synchronous = par.group_penalty_non_synchronous[par.group_penalty_non_synchronous.index.duplicated(keep='first')]
     par.group_penalty_capacity_margin = par.group_penalty_capacity_margin.droplevel('solve')
     par.group_inertia_limit = par.group_inertia_limit.droplevel('solve')
+    par.group_inertia_limit = par.group_inertia_limit[par.group_inertia_limit.index.duplicated(keep='first')]
     par.group_capacity_margin = par.group_capacity_margin.droplevel('solve')
     par.entity_annual_discounted = par.entity_annual_discounted.droplevel('solve')
     par.entity_annual_divest_discounted = par.entity_annual_divest_discounted.droplevel('solve')
     par.discount_factor_operations_yearly = par.discount_factor_operations_yearly.droplevel('solve')
+    par.discount_factor_operations_yearly = par.discount_factor_operations_yearly[par.discount_factor_operations_yearly.index.duplicated(keep='first')]
     par.discount_factor_investment_yearly = par.discount_factor_investment_yearly.droplevel('solve')
     par.node_capacity_for_scaling = par.node_capacity_for_scaling.droplevel('solve')
+    par.node_capacity_for_scaling = par.node_capacity_for_scaling[par.node_capacity_for_scaling.index.duplicated(keep='first')]
     par.group_capacity_for_scaling = par.group_capacity_for_scaling.droplevel('solve')
+    par.group_capacity_for_scaling = par.group_capacity_for_scaling[par.group_capacity_for_scaling.index.duplicated(keep='first')]
     par.complete_period_share_of_year = par.complete_period_share_of_year.droplevel('solve')
+    par.complete_period_share_of_year = par.complete_period_share_of_year[par.complete_period_share_of_year.index.duplicated(keep='first')]
 
     s.period = s.period.droplevel('solve')
     s.period__time_first = s.period__time_first.droplevel('solve')
     s.period_first_of_solve = s.period_first_of_solve.droplevel('solve')
-    s.period_in_use = s.period_in_use.droplevel('solve')
-    s.d_realize_dispatch_or_invest = s.d_realize_dispatch_or_invest.droplevel('solve')
+    s.period_in_use = s.period_in_use.droplevel('solve').unique()
+    s.d_realize_dispatch_or_invest = s.d_realize_dispatch_or_invest.droplevel('solve').unique()
     s.d_realize_invest = s.d_realize_invest.droplevel('solve')
-    s.d_realized_period = s.d_realized_period.droplevel('solve')
+    s.d_realized_period = s.d_realized_period.droplevel('solve').unique()
     s.dt = s.dt.droplevel('solve')
     s.dt_fix_storage_timesteps = s.dt_fix_storage_timesteps.droplevel('solve')
     s.dt_realize_dispatch = s.dt_realize_dispatch.droplevel('solve')

@@ -6,7 +6,10 @@ import importlib.util
 from typing import Callable
 from functools import wraps
 import time
+import os
 from flextool.write_outputs import write_outputs
+from spinedb_api.filters.tools import name_from_dict
+from spinedb_api import DatabaseMapping, to_database
 
 class FlushingStream:
     def __init__(self, stream):
@@ -40,10 +43,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.description = "Run flextool using the specified database URL. Return codes are 0: success, 1: infeasible or unbounded, -1: failure."
     parser.add_argument('input_db_url', help='Database URL to connect to (can be copied from Toolbox workflow db item')
+    parser.add_argument('output_db_url', metavar='DB_URL', help='Save information about result location to database for post-processing')
     parser.add_argument('scenario_name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
-    parser.add_argument('--output-database', metavar='DB_URL', help='Save results to database')
     
 
     args = parser.parse_args()
@@ -72,6 +75,8 @@ def main():
         runner.write_input(input_db_url)
         timer.insert(0, time.perf_counter())
         print("--- write time %.4s seconds ---" % (timer[0] - timer[1]))
+        db_map = DatabaseMapping(input_db_url)
+        scenario_name = name_from_dict(db_map.get_filter_configs()[0])
     try:
         return_code = runner.run_model()
         timer.insert(0, time.perf_counter())
@@ -81,15 +86,55 @@ def main():
         sys.exit(1)
     
     if return_code == 0:
-        write_outputs()
+        write_outputs(scenario_name=scenario_name)
 
         timer.insert(0, time.perf_counter())
         ## print("--- write outputs time %s seconds ---" % (timer[0] - timer[1]))
     print(__file__)
     print("--- full time %.4s seconds ---------------------------------------" % (timer[0] - timer[-1]))
     print("--------------------------------------------------------------------------\n\n")
-    
-    
+
+    # Write scenario information to output database if provided
+    if args.output_db_url:
+        # Check if database exists
+        db_exists = os.path.exists(args.output_db_url.replace('sqlite:///', ''))
+
+        with DatabaseMapping(args.output_db_url, create=not db_exists) as output_db:
+            # Get the full path to the current working directory
+            folder_path = os.getcwd()
+
+            # Create/update scenario class if it doesn't exist
+            output_db.add_or_update_entity_class(name="scenario")
+
+            # Create/update parameter definition for 'folder'
+            output_db.add_or_update_parameter_definition(
+                entity_class_name="scenario",
+                name="folder",
+                description="Full path to the working directory"
+            )
+
+            # Add/update scenario entity
+            output_db.add_or_update_entity(
+                entity_class_name="scenario",
+                name=scenario_name
+            )
+
+            # Convert folder path to database representation
+            value, type_ = to_database(folder_path)
+
+            # Add/update parameter value for folder
+            output_db.add_or_update_parameter_value(
+                entity_class_name="scenario",
+                entity_byname=(scenario_name,),
+                parameter_definition_name="folder",
+                alternative_name="Base",
+                value=value,
+                type=type_
+            )
+
+            output_db.commit_session("Added/updated scenario information")
+
+
 
 # Debug flag
 DEBUG = False  # Set via environment variable or config

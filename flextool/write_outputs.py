@@ -1619,7 +1619,7 @@ ALL_OUTPUTS = [
 
 
 # writer.py - handles the actual writing
-def write_outputs(output_funcs=None, output_dir='output_raw', methods=['excel', 'db']):
+def write_outputs(scenario_name, output_funcs=None, output_dir='output_raw', methods=['excel', 'db']):
     """
     output_funcs: list of functions to run, or None for ALL_OUTPUTS
     """
@@ -1664,6 +1664,11 @@ def write_outputs(output_funcs=None, output_dir='output_raw', methods=['excel', 
     print(f"--- Formatted for output: {time.perf_counter() - start:.4f} seconds")
     start = time.perf_counter()
 
+    # Write to parquet
+    for name, df in results_multi.items():
+        df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
+        df.to_parquet(f'output_parquet/{name}.parquet')
+
     plot_dir = './output_plots'
     if not os.path.exists(plot_dir):
         os.makedirs(plot_dir)
@@ -1687,6 +1692,7 @@ def write_outputs(output_funcs=None, output_dir='output_raw', methods=['excel', 
     #    for name, (df, _, table) in results.items():
     #        api.upload(df, table=table)
 
+    
 
 if __name__ == "__main__":
-    write_outputs()
+    write_outputs("foo")
