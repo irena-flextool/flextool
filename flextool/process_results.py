@@ -440,34 +440,31 @@ def post_process_results(par, s, v):
         r.penalty_node_state_upDown_d = None
 
     # r_costPenalty_inertia_dt
-    r.costPenalty_inertia_dt = pd.DataFrame(index=v.q_inertia.index, columns=s.groupInertia, dtype=float)
-    for g in s.groupInertia:
-        if g in v.q_inertia.columns:
-            penalty = v.q_inertia[g] .mul(par.step_duration, axis=0)
-            for d in par.group_inertia_limit.index:
-                if g in par.group_inertia_limit.columns:
-                    period_mask = penalty.index.get_level_values('period') == d
-                    penalty.loc[period_mask] *= (par.group_inertia_limit.loc[d, g] * 
-                                                par.group_penalty_inertia.loc[d, g])
-            r.costPenalty_inertia_dt[g] = penalty
+    if not v.q_inertia.empty:
+        r.costPenalty_inertia_dt = v.q_inertia \
+            * par.group_inertia_limit \
+            * par.group_penalty_inertia
+    else: 
+        r.costPenalty_inertia_dt = pd.DataFrame(index=v.q_inertia.index)
 
     # r_costPenalty_non_synchronous_dt
-    r.costPenalty_non_synchronous_dt = pd.DataFrame(index=v.q_non_synchronous.index, columns=s.groupNonSync, dtype=float)
-    for g in s.groupNonSync:
-        if g in v.q_non_synchronous.columns:
-            penalty = v.q_non_synchronous[g].mul(par.step_duration, axis=0)
-            for d in par.group_capacity_for_scaling.index:
-                if g in par.group_capacity_for_scaling.columns:
-                    period_mask = penalty.index.get_level_values('period') == d
-                    penalty.loc[period_mask] *= (par.group_capacity_for_scaling.loc[d, g] * 
-                                                par.group_penalty_non_synchronous.loc[d, g])
-            r.costPenalty_non_synchronous_dt[g] = penalty
+    if not v.q_non_synchronous.empty:
+        r.costPenalty_non_synchronous_dt \
+            = ( v.q_non_synchronous 
+                * par.group_capacity_for_scaling[s.groupNonSync] 
+                * par.group_penalty_non_synchronous )
+    else:
+        r.costPenalty_non_synchronous_dt = pd.DataFrame(index=v.q_non_synchronous.index)
 
     # r_costPenalty_capacity_margin_d
-    r.costPenalty_capacity_margin_d = (v.q_capacity_margin 
-                                        * par.group_penalty_capacity_margin[s.groupCapacityMargin] 
-                                        * par.group_capacity_for_scaling[s.groupCapacityMargin]
-                                      ).mul(par.discount_factor_operations_yearly, axis=0)
+    if not v.q_capacity_margin.empty:
+        r.costPenalty_capacity_margin_d \
+            = ( v.q_capacity_margin
+                * par.group_capacity_for_scaling[s.groupCapacityMargin]
+                * par.group_penalty_capacity_margin
+              ).mul(par.discount_factor_operations_yearly, axis=0)
+    else:
+        r.costPenalty_capacity_margin_d = pd.DataFrame(index=v.q_capacity_margin.index)
     
     # r_costPenalty_reserve_upDown_dt
     r.costPenalty_reserve_upDown_dt = pd.DataFrame(index=v.q_reserve.index, columns=v.q_reserve.columns, dtype=float)
@@ -854,40 +851,40 @@ def drop_levels(par, s, v):
     par.reserve_upDown_group_reservation = par.reserve_upDown_group_reservation.droplevel('solve')
     par.profile = par.profile.droplevel('solve')
     par.years_from_start_d = par.years_from_start_d.droplevel('solve')
-    par.years_from_start_d = par.years_from_start_d[par.years_from_start_d.index.duplicated(keep='first')]
+    par.years_from_start_d = par.years_from_start_d[~par.years_from_start_d.index.duplicated(keep='first')]
     par.years_represented_d = par.years_represented_d.droplevel('solve')
-    par.years_represented_d = par.years_represented_d[par.years_represented_d.index.duplicated(keep='first')]
+    par.years_represented_d = par.years_represented_d[~par.years_represented_d.index.duplicated(keep='first')]
     par.entity_max_units = par.entity_max_units.droplevel('solve').drop_duplicates()
-    par.entity_max_units = par.entity_max_units[par.entity_max_units.index.duplicated(keep='first')]
+    par.entity_max_units = par.entity_max_units[~par.entity_max_units.index.duplicated(keep='first')]
     par.entity_all_existing = par.entity_all_existing.droplevel('solve').drop_duplicates()
     par.entity_all_existing = par.entity_all_existing[~par.entity_all_existing.index.duplicated(keep='first')]
     par.process_startup_cost = par.process_startup_cost.droplevel('solve')
-    par.process_startup_cost = par.process_startup_cost[par.process_startup_cost.index.duplicated(keep='first')]
+    par.process_startup_cost = par.process_startup_cost[~par.process_startup_cost.index.duplicated(keep='first')]
     par.process_fixed_cost = par.process_fixed_cost.droplevel('solve')
-    par.process_fixed_cost = par.process_fixed_cost[par.process_fixed_cost.index.duplicated(keep='first')]
+    par.process_fixed_cost = par.process_fixed_cost[~par.process_fixed_cost.index.duplicated(keep='first')]
     par.node_fixed_cost = par.node_fixed_cost.droplevel('solve')
-    par.node_fixed_cost = par.node_fixed_cost[par.node_fixed_cost.index.duplicated(keep='first')]
+    par.node_fixed_cost = par.node_fixed_cost[~par.node_fixed_cost.index.duplicated(keep='first')]
     par.node_annual_flow = par.node_annual_flow.droplevel('solve')
-    par.node_annual_flow = par.node_annual_flow[par.node_annual_flow.index.duplicated(keep='first')]
+    par.node_annual_flow = par.node_annual_flow[~par.node_annual_flow.index.duplicated(keep='first')]
     par.group_penalty_inertia = par.group_penalty_inertia.droplevel('solve')
-    par.group_penalty_inertia = par.group_penalty_inertia[par.group_penalty_inertia.index.duplicated(keep='first')]
+    par.group_penalty_inertia = par.group_penalty_inertia[~par.group_penalty_inertia.index.duplicated(keep='first')]
     par.group_penalty_non_synchronous = par.group_penalty_non_synchronous.droplevel('solve')
-    par.group_penalty_non_synchronous = par.group_penalty_non_synchronous[par.group_penalty_non_synchronous.index.duplicated(keep='first')]
+    par.group_penalty_non_synchronous = par.group_penalty_non_synchronous[~par.group_penalty_non_synchronous.index.duplicated(keep='first')]
     par.group_penalty_capacity_margin = par.group_penalty_capacity_margin.droplevel('solve')
     par.group_inertia_limit = par.group_inertia_limit.droplevel('solve')
-    par.group_inertia_limit = par.group_inertia_limit[par.group_inertia_limit.index.duplicated(keep='first')]
+    par.group_inertia_limit = par.group_inertia_limit[~par.group_inertia_limit.index.duplicated(keep='first')]
     par.group_capacity_margin = par.group_capacity_margin.droplevel('solve')
     par.entity_annual_discounted = par.entity_annual_discounted.droplevel('solve')
     par.entity_annual_divest_discounted = par.entity_annual_divest_discounted.droplevel('solve')
     par.discount_factor_operations_yearly = par.discount_factor_operations_yearly.droplevel('solve')
-    par.discount_factor_operations_yearly = par.discount_factor_operations_yearly[par.discount_factor_operations_yearly.index.duplicated(keep='first')]
+    par.discount_factor_operations_yearly = par.discount_factor_operations_yearly[~par.discount_factor_operations_yearly.index.duplicated(keep='first')]
     par.discount_factor_investment_yearly = par.discount_factor_investment_yearly.droplevel('solve')
     par.node_capacity_for_scaling = par.node_capacity_for_scaling.droplevel('solve')
-    par.node_capacity_for_scaling = par.node_capacity_for_scaling[par.node_capacity_for_scaling.index.duplicated(keep='first')]
+    par.node_capacity_for_scaling = par.node_capacity_for_scaling[~par.node_capacity_for_scaling.index.duplicated(keep='first')]
     par.group_capacity_for_scaling = par.group_capacity_for_scaling.droplevel('solve')
-    par.group_capacity_for_scaling = par.group_capacity_for_scaling[par.group_capacity_for_scaling.index.duplicated(keep='first')]
+    par.group_capacity_for_scaling = par.group_capacity_for_scaling[~par.group_capacity_for_scaling.index.duplicated(keep='first')]
     par.complete_period_share_of_year = par.complete_period_share_of_year.droplevel('solve')
-    par.complete_period_share_of_year = par.complete_period_share_of_year[par.complete_period_share_of_year.index.duplicated(keep='first')]
+    par.complete_period_share_of_year = par.complete_period_share_of_year[~par.complete_period_share_of_year.index.duplicated(keep='first')]
 
     s.period = s.period.droplevel('solve')
     s.period__time_first = s.period__time_first.droplevel('solve')

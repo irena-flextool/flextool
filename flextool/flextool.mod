@@ -3985,55 +3985,55 @@ for {s in solve_current, d in d_realized_period} {
 # Write pdGroup (penalty_inertia, penalty_non_synchronous, penalty_capacity_margin, inertia_limit, capacity_margin)
 if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/pdGroup_penalty_inertia.csv";
-  for {g in group} {printf ",%s", g >> "output_raw/pdGroup_penalty_inertia.csv";}
+  for {g in groupInertia} {printf ",%s", g >> "output_raw/pdGroup_penalty_inertia.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
     printf "\n%s,%s", s, d >> "output_raw/pdGroup_penalty_inertia.csv";
-    for {g in group} {
+    for {g in groupInertia} {
         printf ",%g", pdGroup[g, 'penalty_inertia', d] >> "output_raw/pdGroup_penalty_inertia.csv";
     }
 }
 
 if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/pdGroup_penalty_non_synchronous.csv";
-  for {g in group} {printf ",%s", g >> "output_raw/pdGroup_penalty_non_synchronous.csv";}
+  for {g in groupNonSync} {printf ",%s", g >> "output_raw/pdGroup_penalty_non_synchronous.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
     printf "\n%s,%s", s, d >> "output_raw/pdGroup_penalty_non_synchronous.csv";
-    for {g in group} {
+    for {g in groupNonSync} {
         printf ",%g", pdGroup[g, 'penalty_non_synchronous', d] >> "output_raw/pdGroup_penalty_non_synchronous.csv";
     }
 }
 
 if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/pdGroup_penalty_capacity_margin.csv";
-  for {g in group} {printf ",%s", g >> "output_raw/pdGroup_penalty_capacity_margin.csv";}
+  for {g in groupCapacityMargin} {printf ",%s", g >> "output_raw/pdGroup_penalty_capacity_margin.csv";}
 }
 for {s in solve_current, d in d_realize_invest} {
     printf "\n%s,%s", s, d >> "output_raw/pdGroup_penalty_capacity_margin.csv";
-    for {g in group} {
+    for {g in groupCapacityMargin} {
         printf ",%g", pdGroup[g, 'penalty_capacity_margin', d] >> "output_raw/pdGroup_penalty_capacity_margin.csv";
     }
 }
 
 if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/pdGroup_inertia_limit.csv";
-  for {g in group} {printf ",%s", g >> "output_raw/pdGroup_inertia_limit.csv";}
+  for {g in groupInertia} {printf ",%s", g >> "output_raw/pdGroup_inertia_limit.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
     printf "\n%s,%s", s, d >> "output_raw/pdGroup_inertia_limit.csv";
-    for {g in group} {
+    for {g in groupInertia} {
         printf ",%g", pdGroup[g, 'inertia_limit', d] >> "output_raw/pdGroup_inertia_limit.csv";
     }
 }
 
 if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/pdGroup_capacity_margin.csv";
-  for {g in group} {printf ",%s", g >> "output_raw/pdGroup_capacity_margin.csv";}
+  for {g in groupCapacityMargin} {printf ",%s", g >> "output_raw/pdGroup_capacity_margin.csv";}
 }
 for {s in solve_current, d in d_realize_invest} {
     printf "\n%s,%s", s, d >> "output_raw/pdGroup_capacity_margin.csv";
-    for {g in group} {
+    for {g in groupCapacityMargin} {
         printf ",%g", pdGroup[g, 'capacity_margin', d] >> "output_raw/pdGroup_capacity_margin.csv";
     }
 }

@@ -1362,44 +1362,24 @@ def slack_variables(par, s, v, r):
     if not v.q_reserve.empty:
         reserve_slack = v.q_reserve * par.reserve_upDown_group_reservation
         # pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['reserve', 'updown', 'node_group']), dtype=float)
-        
-        for col in v.q_reserve.columns:
-            if col in par.reserve_upDown_group_reservation.columns:
-                reserve_slack[col] = v.q_reserve[col] * par.reserve_upDown_group_reservation[col]
-        
+        # for col in v.q_reserve.columns:
+        #     if col in par.reserve_upDown_group_reservation.columns:
+        #         reserve_slack[col] = v.q_reserve[col] * par.reserve_upDown_group_reservation[col]
         results.append((reserve_slack.reset_index(), reserve_slack, 'slack_reserve_upDown_group_dt', 'tbl_slack_reserve_upDown_group_period_t'))
     
     # 2. Non-synchronous slack variables
     if not v.q_non_synchronous.empty:
-        nonsync_slack = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
-        
-        for g in s.groupNonSync:
-            if ('group', g) in v.q_non_synchronous.columns:
-                capacity_scaling = par.group_capacity_for_scaling[('group', g)]
-                nonsync_slack[g] = v.q_non_synchronous[('group', g)] * capacity_scaling
-        
+        nonsync_slack = v.q_non_synchronous * par.group_capacity_for_scaling[s.groupNonSync]
         results.append((nonsync_slack.reset_index(), nonsync_slack, 'slack_nonsync_group_dt', 'tbl_slack_nonsync_group_period_t'))
     
     # 3. Inertia slack variables
     if not v.q_inertia.empty:
-        inertia_slack = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
-        
-        for g in s.groupInertia:
-            if ('group', g) in v.q_inertia.columns:
-                inertia_limit = par.group_inertia_limit[('group', g)]
-                inertia_slack[g] = v.q_inertia[('group', g)] * inertia_limit
-        
+        inertia_slack = v.q_inertia * par.group_inertia_limit
         results.append((inertia_slack.reset_index(), inertia_slack, 'slack_inertia_group_dt', 'tbl_slack_inertia_group_period_t'))
     
     # 4. Capacity margin slack variables (for investment periods only)
     if not v.q_capacity_margin.empty:
-        capmargin_slack = pd.DataFrame(index=s.d_realize_invest, dtype=float)
-        
-        for g in s.groupCapacityMargin:
-            if ('group', g) in v.q_capacity_margin.columns:
-                capacity_scaling = par.group_capacity_for_scaling[('group', g)]
-                capmargin_slack[g] = v.q_capacity_margin[('group', g)] * capacity_scaling
-        
+        capmargin_slack = v.q_capacity_margin * par.group_capacity_for_scaling[s.groupCapacityMargin]
         results.append((capmargin_slack.reset_index(), capmargin_slack, 'slack_capacity_margin_d', 'tbl_slack_capacity_margin_period'))
     
     return results
@@ -1669,6 +1649,9 @@ def write_outputs(scenario_name, output_funcs=None, output_dir='output_raw', met
         df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
         df.to_parquet(f'output_parquet/{name}.parquet')
 
+    print(f"--- Wrote to parquet: {time.perf_counter() - start:.4f} seconds")
+    start = time.perf_counter()
+
     plot_dir = './output_plots'
     if not os.path.exists(plot_dir):
         os.makedirs(plot_dir)
@@ -1687,12 +1670,7 @@ def write_outputs(scenario_name, output_funcs=None, output_dir='output_raw', met
     print(f"Wrote to Excel: {time.perf_counter() - start:.4f} seconds")
     start = time.perf_counter()
 
-    # Write to database
-    #if 'db' in methods:
-    #    for name, (df, _, table) in results.items():
-    #        api.upload(df, table=table)
 
-    
 
 if __name__ == "__main__":
     write_outputs("foo")
