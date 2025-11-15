@@ -1,0 +1,13 @@
+{
+    "name": "scenario comparison",
+    "tooltype": "python",
+    "includes": [
+        "scenario_results.py"
+    ],
+    "description": "",
+    "inputfiles": [],
+    "inputfiles_opt": [],
+    "outputfiles": [],
+    "cmdline_args": [],
+    "includes_main_path": "../../../flextool"
+}
