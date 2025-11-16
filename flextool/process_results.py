@@ -420,14 +420,14 @@ def post_process_results(par, s, v):
                 for d in par.node_capacity_for_scaling.index:
                     if n in par.node_capacity_for_scaling.columns:
                         period_mask = penalty.index.get_level_values('period') == d
-                        penalty.loc[period_mask] *= par.node_capacity_for_scaling.loc[d, n].drop_duplicates()
+                        penalty.loc[period_mask] *= par.node_capacity_for_scaling.loc[d, n]
                 r_penalty_state[(n, ud)] = penalty
             elif ud == 'down' and n in v.q_state_down.columns:
                 penalty = v.q_state_down[n] * par.node_penalty_down[n]
                 for d in par.node_capacity_for_scaling.index:
                     if n in par.node_capacity_for_scaling.columns:
                         period_mask = penalty.index.get_level_values('period') == d
-                        penalty.loc[period_mask] *= par.node_capacity_for_scaling.loc[d, n].drop_duplicates()
+                        penalty.loc[period_mask] *= par.node_capacity_for_scaling.loc[d, n]
                 r_penalty_state[(n, ud)] = penalty
     r.costPenalty_node_state_upDown_dt = r_penalty_state
 

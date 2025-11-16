@@ -21,7 +21,10 @@
         "flextool/plot_results.py",
         "flextool/update_flextool.py",
         "bin/highs",
-        "bin/glpsol"
+        "bin/glpsol",
+        "flextool/read_flextool_outputs.py",
+        "flextool/process_results.py",
+        "flextool/write_outputs.py"
     ],
     "description": "",
     "inputfiles": [],

@@ -229,7 +229,8 @@ def read_parameters(output_dir):
     p.group_capacity_margin.columns = pd.MultiIndex.from_product([p.group_capacity_margin.columns], names=['group'])
     p.entity_annual_discounted.columns = pd.MultiIndex.from_product([p.entity_annual_discounted.columns], names=['entity'])
     p.entity_annual_divest_discounted.columns = pd.MultiIndex.from_product([p.entity_annual_divest_discounted.columns], names=['entity'])
-    p.node_capacity_for_scaling.columns = pd.MultiIndex.from_product([p.node_capacity_for_scaling.columns], names=['node'])
+    p.node_capacity_for_scaling.columns.name = 'node'
+    #p.node_capacity_for_scaling.columns = pd.MultiIndex.from_product([p.node_capacity_for_scaling.columns], names=['node'])
     p.group_capacity_for_scaling.columns = pd.MultiIndex.from_product([p.group_capacity_for_scaling.columns], names=['group'])
     p.node.columns = pd.MultiIndex.from_product([p.node.columns], names=['node'])
 
