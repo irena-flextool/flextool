@@ -1202,13 +1202,13 @@ def node_additional_results(par, s, v, r):
     
     # 3. Node upward slack
     if not v.q_state_up.empty:
-        upward_slack = v.q_state_up.mul(par.node_capacity_for_scaling[s.node_balance.union(s.node_balance_period)], level="node")
-        results.append((upward_slack.reset_index(), upward_slack, 'slack_upward_node_state_dt'))
+        upward_slack = v.q_state_up.mul(par.node_capacity_for_scaling[s.node_balance.union(s.node_balance_period)], level=0)
+        results.append((upward_slack.reset_index(), upward_slack, 'node_slack_up_dt_e'))
 
     # 4. Node downward slack
     if not v.q_state_down.empty:
-        downward_slack = v.q_state_down.mul(par.node_capacity_for_scaling[s.node_balance.union(s.node_balance_period)], level="node")
-        results.append((downward_slack.reset_index(), downward_slack, 'slack_downward_node_state_dt'))
+        downward_slack = v.q_state_down.mul(par.node_capacity_for_scaling[s.node_balance.union(s.node_balance_period)], level=0)
+        results.append((downward_slack.reset_index(), downward_slack, 'node_slack_down_dt_e'))
     
     return results
 
@@ -1218,15 +1218,15 @@ def investment_duals(par, s, v, r):
     
     # 1. v.dual_invest_unit
     if not v.dual_invest_unit.empty:
-        results.append((v.dual_invest_unit.reset_index(), v.dual_invest_unit, 'dual_invest_unit_d'))
+        results.append((v.dual_invest_unit.reset_index(), v.dual_invest_unit, 'dual_invest_unit_d_e'))
 
     # 2. v.dual_invest_connection
     if not v.dual_invest_connection.empty:
-        results.append((v.dual_invest_connection.reset_index(), v.dual_invest_connection, 'dual_invest_connection_d'))
+        results.append((v.dual_invest_connection.reset_index(), v.dual_invest_connection, 'dual_invest_connection_d_e'))
 
     # 3. v.dual_invest_node
     if not v.dual_invest_node.empty:
-        results.append((v.dual_invest_node.reset_index(), v.dual_invest_node, 'dual_invest_node_d'))
+        results.append((v.dual_invest_node.reset_index(), v.dual_invest_node, 'dual_invest_node_d_e'))
 
     return results
 
@@ -1279,7 +1279,7 @@ def inertia_results(par, s, v, r):
         
         group_inertia[g] = total_inertia
     
-    results.append((group_inertia.reset_index(), group_inertia, 'group_inertia_dt'))
+    results.append((group_inertia.reset_index(), group_inertia, 'group_inertia_dt_g'))
     
     # 2. Individual entity inertia
     unit_inertia = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['group', 'process', 'node']), dtype=float)
@@ -1301,7 +1301,7 @@ def inertia_results(par, s, v, r):
                     flow_online = get_flow_or_online(p, source, sink, s.dt_realize_dispatch)
                     unit_inertia[g, p, sink] = flow_online * inertia_const
     
-    results.append((unit_inertia.reset_index(), unit_inertia, 'group_unit_node_inertia_dt'))
+    results.append((unit_inertia.reset_index(), unit_inertia, 'group_unit_node_inertia_dt_gee'))
     
     # 3. Largest flow per group (for inertia constraint)
     largest_flow = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
@@ -1321,7 +1321,7 @@ def inertia_results(par, s, v, r):
         else:
             largest_flow[g] = 0
     
-    results.append((largest_flow.reset_index(), largest_flow, 'group_inertia_largest_flow_dt'))
+    results.append((largest_flow.reset_index(), largest_flow, 'group_inertia_largest_flow_dt_g'))
     
     return results
 
@@ -1619,6 +1619,8 @@ def write_outputs(scenario_name, output_funcs=None, output_dir='output_raw', met
     # Write to parquet
     for name, df in results_multi.items():
         if name.endswith('_d'):
+            if not os.path.exists('output_parquet'):
+                os.makedirs('output_parquet')
             df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
             df.to_parquet(f'output_parquet/{name}.parquet')
 
