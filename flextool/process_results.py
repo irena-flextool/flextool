@@ -18,23 +18,23 @@ def post_process_results(par, s, v):
     r.realized_period_share_of_year = hours_in_realized_period / 8760
     
     # entity_all_capacity
-      # Existing capacity
-    entity_all_capacity = par.entity_all_existing.copy()
-    periods = entity_all_capacity.index.get_level_values('period')
+    # Existing capacity
+    # Add investments
+    # r.entity_all_capacity = r.entity_all_capacity.add(v.invest.mul(par.entity_unitsize), fill_value=0.0)
+    r.entity_all_capacity = par.entity_all_existing.copy()
+    periods = r.entity_all_capacity.index.get_level_values('period')
       # Add investments
     if not v.invest.empty:
-        v_reindexed = v.invest.reindex(columns=pd.MultiIndex.from_product([par.entity_unitsize.index]), fill_value=0)
-        capacity_add = v_reindexed.mul(par.entity_unitsize.values, axis=1)
+        capacity_add = v.invest.mul(par.entity_unitsize[v.invest.columns])
+        capacity_add_broadcasted = capacity_add.reindex(columns=par.entity_unitsize.index)
         for i, period in enumerate(periods):
-            entity_all_capacity.loc[period] += capacity_add.loc[periods[:i+1]].sum()
+            r.entity_all_capacity.loc[period] = r.entity_all_capacity.loc[period].add(capacity_add_broadcasted.loc[periods[:i+1]].sum(), fill_value=0)
       # Subtract divestments
     if not v.divest.empty:
-        v_reindexed = v.divest.reindex(columns=pd.MultiIndex.from_product([par.entity_unitsize.index]), fill_value=0)
-        capacity_divest = v_reindexed.mul(par.entity_unitsize.values, axis=1)
+        capacity_sub = v.divest.mul(par.entity_unitsize[v.divest.columns])
+        capacity_sub_broadcasted = capacity_sub.reindex(columns=par.entity_unitsize.index)
         for i, period in enumerate(periods):
-            entity_all_capacity.loc[period] -= capacity_divest.loc[periods[:i+1]].sum()
-    r.entity_all_capacity = entity_all_capacity
-
+            r.entity_all_capacity.loc[period] = r.entity_all_capacity.loc[period].sub(capacity_sub_broadcasted.loc[periods[:i+1]].sum(), fill_value=0)
 
     # r_process_Online__dt - just sum the two DataFrames
     r.process_online_dt = v.online_linear.add(v.online_integer, fill_value=0)
@@ -370,7 +370,7 @@ def post_process_results(par, s, v):
     )
     for group in s.group_co2_price['group']:
         # Get nodes for this group
-        nodes_in_group = s.group_node[s.group_node.get_level_values('group') == group].get_level_values('node')
+        nodes_in_group = s.group_node[s.group_node['group'].isin([group])]['node']
         prices = par.group_co2_price[group]
         # Sum all columns where node matches
         total = pd.Series(0.0, index=r.process_emissions_co2_dt.index)
@@ -406,30 +406,10 @@ def post_process_results(par, s, v):
             r.cost_startup_dt[p] = cost
 
     # r_costPenalty_node_state_upDown_dt
-    nodes = list(s.node_balance) + list(s.node_balance_period)
-    node_updown_columns = pd.MultiIndex.from_product([nodes, s.upDown], names=['node', 'upDown'])
-    r_penalty_state = pd.DataFrame(
-        index=v.q_state_up.index if hasattr(v, 'q_state_up') and not v.q_state_up.empty else v.q_state_down.index,
-        columns=node_updown_columns, 
-        dtype=float
-    )
-    for n in nodes:
-        for ud in s.upDown:
-            if ud == 'up' and n in v.q_state_up.columns:
-                penalty = v.q_state_up[n] * par.node_penalty_up[n]
-                for d in par.node_capacity_for_scaling.index:
-                    if n in par.node_capacity_for_scaling.columns:
-                        period_mask = penalty.index.get_level_values('period') == d
-                        penalty.loc[period_mask] *= par.node_capacity_for_scaling.loc[d, n]
-                r_penalty_state[(n, ud)] = penalty
-            elif ud == 'down' and n in v.q_state_down.columns:
-                penalty = v.q_state_down[n] * par.node_penalty_down[n]
-                for d in par.node_capacity_for_scaling.index:
-                    if n in par.node_capacity_for_scaling.columns:
-                        period_mask = penalty.index.get_level_values('period') == d
-                        penalty.loc[period_mask] *= par.node_capacity_for_scaling.loc[d, n]
-                r_penalty_state[(n, ud)] = penalty
-    r.costPenalty_node_state_upDown_dt = r_penalty_state
+    upward = v.q_state_up.mul(par.node_penalty_up[v.q_state_up.columns]).mul(par.node_capacity_for_scaling[v.q_state_up.columns])
+    downward = v.q_state_down.mul(par.node_penalty_up[v.q_state_down.columns]).mul(par.node_capacity_for_scaling[v.q_state_down.columns])
+    r.costPenalty_node_state_upDown_dt = pd.concat([upward, downward], axis=1, keys=['up', 'down'], names=['upDown'])
+    r.costPenalty_node_state_upDown_dt = r.costPenalty_node_state_upDown_dt.reorder_levels([1, 0], axis=1)
 
     # r_penalty_node_state_upDown_d
     if not r.costPenalty_node_state_upDown_dt.empty:
@@ -476,22 +456,10 @@ def post_process_results(par, s, v):
         r.costPenalty_reserve_upDown_dt[col] = penalty
 
     # r_cost_entity_invest_d
-    r.cost_entity_invest_d = pd.DataFrame(index=v.invest.index, columns=v.invest.columns, dtype=float)
-    for e in v.invest.columns:
-        for d in v.invest.index:
-            if (e, d) in s.ed_invest:
-                r.cost_entity_invest_d.loc[d, e] = (v.invest.loc[d, e] * 
-                                        par.entity_unitsize[e] * 
-                                        par.entity_annual_discounted.loc[d, e])
+    r.cost_entity_invest_d = v.invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted)
     
     # r_cost_entity_divest_d
-    r.cost_entity_divest_d = pd.DataFrame(index=v.divest.index, columns=v.divest.columns, dtype=float)
-    for e in v.divest.columns:
-        for d in v.divest.index:
-            if (e, d) in s.ed_divest:
-                r.cost_entity_divest_d.loc[d, e] = (-v.divest.loc[d, e] * 
-                                        par.entity_unitsize[e] * 
-                                        par.entity_annual_divest_discounted.loc[d, e])
+    r.cost_entity_divest_d = v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_annual_discounted)
     
     # r_cost_entity_existing_fixed
     combined_fixed = pd.concat([par.process_fixed_cost, par.node_fixed_cost], axis=1).rename_axis('entity', axis=1)
@@ -574,33 +542,42 @@ def post_process_results(par, s, v):
     r.node_inflow_d = par.node_inflow.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
     
     # potentialVREgen_dt
-    r.potentialVREgen_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=s.process_VRE, dtype=float)
-    for _, row in s.process_VRE.iterrows():
-        p, n = row['process'], row['node']
-        if (p, n) not in s.process_sink:
-            continue
-        # Find matching profile method with upper_limit
+    # Filter VRE processes that are in process_sink and have upper_limit profile method
+    vre_with_sink = s.process_VRE[s.process_VRE.isin(s.process_sink)]
+
+    if len(vre_with_sink) > 0:
+        # Merge to find profiles for each VRE process-sink pair
         profile_methods = s.process__source__sink__profile__profile_method[
-            (s.process__source__sink__profile__profile_method['process'] == p) &
-            (s.process__source__sink__profile__profile_method['sink'] == n) &
-            (s.process__source__sink__profile__profile_method['method'] == 'upper_limit')
-        ]
-        if not profile_methods.empty:
-            f = profile_methods['profile'].iloc[0]
-            if (f in par.profile.columns and 
-                p in r.entity_all_capacity.columns and
-                p in par.process_availability.columns):
-                r.potentialVREgen_dt[p, n] = par.profile[f].squeeze() * par.process_availability[p].squeeze() * r.entity_all_capacity[p].squeeze()
-    #r.potentialVREgen_dt = pd.DataFrame(vre_potential_dt, dtype=float) if vre_potential_dt else pd.DataFrame()
-    #r.potentialVREgen_dt.columns.names=['process', 'node']
-    
-    # potentialVREgen - sum over dt_realize_dispatch
-    if not r.potentialVREgen_dt.empty:
-        r.potentialVREgen = r.potentialVREgen_dt[
-            r.potentialVREgen_dt.index.get_level_values('period').isin(s.d_realized_period)
-        ].groupby(level='period').sum()
+            s.process__source__sink__profile__profile_method['method'] == 'upper_limit'
+        ].set_index(['process', 'sink'])
+
+        # Create DataFrame with multi-index columns
+        r.potentialVREgen_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=vre_with_sink, dtype=float)
+
+        # Vectorized calculation for each (process, node) pair
+        for (p, n) in vre_with_sink:
+            if (p, n) in profile_methods.index:
+                f = profile_methods.loc[(p, n), 'profile']
+                if (f in par.profile.columns and
+                    p in r.entity_all_capacity.columns and
+                    p in par.process_availability.columns):
+                    r.potentialVREgen_dt[(p, n)] = (
+                        par.profile[f].squeeze() *
+                        par.process_availability[p].squeeze() *
+                        r.entity_all_capacity[p].squeeze()
+                    )
     else:
-        r.potentialVREgen = pd.DataFrame(0.0, index=s.d_realized_period, columns=[])
+        r.potentialVREgen_dt = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
+
+    # potentialVREgen - aggregate by period
+    if not r.potentialVREgen_dt.empty and len(r.potentialVREgen_dt.columns) > 0:
+        r.potentialVREgen = r.potentialVREgen_dt.groupby(level='period').sum()
+        # Filter to only realized periods if needed
+        r.potentialVREgen = r.potentialVREgen[
+            r.potentialVREgen.index.isin(s.d_realized_period)
+        ]
+    else:
+        r.potentialVREgen = pd.DataFrame(index=s.d_realized_period, dtype=float)
 
     # r_group_output__group_aggregate_Unit_to_group__dt
     r_unit_to_group = {}
@@ -785,9 +762,9 @@ def post_process_results(par, s, v):
         else pd.DataFrame(0.0, index=s.d_realized_period, columns=s.groupOutputNodeFlows))
     
     # r_group_node penalties
-    r.group_node_up_penalties__dt = (v.q_state_up * par.node_capacity_for_scaling).mul(par.step_duration, axis=0)
+    r.group_node_up_penalties__dt = v.q_state_up.mul(par.node_capacity_for_scaling, level=0).mul(par.step_duration, axis=0)
     r.group_node_up_penalties__d = r.group_node_up_penalties__dt.groupby('period').sum()
-    r.group_node_down_penalties__dt = (v.q_state_down * par.node_capacity_for_scaling).mul(par.step_duration, axis=0)
+    r.group_node_down_penalties__dt = v.q_state_down.mul(par.node_capacity_for_scaling, level=0).mul(par.step_duration, axis=0)
     r.group_node_down_penalties__d = r.group_node_down_penalties__dt.groupby('period').sum()
     
     # r_storage_usage_dt
@@ -854,9 +831,9 @@ def drop_levels(par, s, v):
     par.years_from_start_d = par.years_from_start_d[~par.years_from_start_d.index.duplicated(keep='first')]
     par.years_represented_d = par.years_represented_d.droplevel('solve')
     par.years_represented_d = par.years_represented_d[~par.years_represented_d.index.duplicated(keep='first')]
-    par.entity_max_units = par.entity_max_units.droplevel('solve').drop_duplicates()
+    par.entity_max_units = par.entity_max_units.droplevel('solve')
     par.entity_max_units = par.entity_max_units[~par.entity_max_units.index.duplicated(keep='first')]
-    par.entity_all_existing = par.entity_all_existing.droplevel('solve').drop_duplicates()
+    par.entity_all_existing = par.entity_all_existing.droplevel('solve')
     par.entity_all_existing = par.entity_all_existing[~par.entity_all_existing.index.duplicated(keep='first')]
     par.process_startup_cost = par.process_startup_cost.droplevel('solve')
     par.process_startup_cost = par.process_startup_cost[~par.process_startup_cost.index.duplicated(keep='first')]

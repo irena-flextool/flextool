@@ -1,12 +1,10 @@
 import os
-import csv
 import pandas as pd
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import time
-from pathlib import Path
 from flextool.read_flextool_outputs import read_variables, read_parameters, read_sets
 from flextool.process_results import post_process_results
 import warnings
@@ -39,6 +37,7 @@ def unit_capacity(par, s, v, r):
     else:
         index = pd.Index(periods, name='period')
     result_multi = pd.DataFrame(index=index)
+    result_multi.columns.name = 'parameter'
     
     # Existing capacity - filter to process_unit only
     existing = par.entity_all_existing[processes].unstack()
@@ -79,6 +78,7 @@ def connection_capacity(par, s, v, r):
     else:
         index = pd.Index(periods, name='period')
     result_multi = pd.DataFrame(index=index)
+    result_multi.columns.name = 'parameter'
     
     # Existing capacity - filter to process_connection only
     existing = par.entity_all_existing[connections].unstack()
@@ -124,6 +124,7 @@ def node_capacity(par, s, v, r):
     else:
         index = pd.Index(periods, name='period')
     result_multi = pd.DataFrame(index=index)
+    result_multi.columns.name = 'parameter'
     
     # Existing capacity - filter to node_state only
     if nodes:
@@ -165,210 +166,158 @@ def model_co2(par, s, v, r):
     return result_multi.reset_index(), result_multi, 'CO2_d'
 
 
-def group_node_period(par, s, v, r):
-    """Group node results by period"""
-    
-    periods = list(s.d_realized_period)
-    groups = list(s.groupOutput_node)
-    
-    if not groups:
-        return pd.DataFrame(), pd.DataFrame(), 'nodeGroup_gd_p'
-    
-    # Create group-node mapping as DataFrame for easier merging
-    group_node_df = pd.DataFrame(s.group_node.to_list(), columns=['group', 'node'])
-    group_node_df = group_node_df[group_node_df['group'].isin(groups)]
-    
-    results = []
-    
-    for g in groups:
-        # Get nodes in this group
-        group_nodes = group_node_df[group_node_df['group'] == g]['node'].tolist()
-        
-        # 1. Sum of annualized inflows [MWh]
-        annualized_inflow = r.node_inflow_d[group_nodes].sum(axis=1)
-        period_inflow = par.node_inflow.sum(axis=1).groupby('period').sum()
-        
-        # 2. VRE share of annual inflow. Filter flows to VRE processes in this group's nodes
-        vre_processes = s.process_VRE['process'].unique()
-        vre_cols = []
-        if len(vre_processes) > 0:
-            flow_filtered = r.flow_d.loc[:, (slice(None), slice(None), group_nodes)]
-            # Select only VRE process columns
-            vre_cols = [(p, src, snk) for p, src, snk in flow_filtered.columns 
-                        if p in vre_processes and (p, src, snk) in s.process_source_sink_alwaysProcess]
-        if len(vre_processes) > 0 & len(vre_cols) > 0:
-            vre_flow_sum = flow_filtered[vre_cols].sum(axis=1)
-        else:
-            vre_flow_sum = pd.Series(0, index=s.d_realized_period)
-        vre_share = vre_flow_sum / (-period_inflow)
-        
-        # 3. Curtailed VRE share. Potential VRE generation for this group's nodes
-        potential_cols = [(p, n) for p, n in r.potentialVREgen.columns 
-                         if n in group_nodes and p in vre_processes]
-        if potential_cols:
-            potential_sum = r.potentialVREgen[potential_cols].sum(axis=1)
-        else:
-            potential_sum = pd.Series(0, index=periods)
-        curtailed_vre_share = (potential_sum - vre_flow_sum) / (-period_inflow)
-        
-        # Filter nodes that are in node_balance or node_balance_period
-        balance_nodes = [n for n in group_nodes 
-                        if n in set(s.node_balance) | set(s.node_balance_period)]
-        # 4. Upward slack. 
-        if balance_nodes:
-            up_cols = [(n, 'up') for n in balance_nodes if (n, 'up') in r.penalty_node_state_upDown_d.columns]
-            if up_cols:
-                upward_slack_sum = r.penalty_node_state_upDown_d[up_cols].sum(axis=1)
-            else:
-                upward_slack_sum = pd.Series(0, index=periods)
-        else:
-            upward_slack_sum = pd.Series(0, index=periods)
-        upward_slack = upward_slack_sum / (-annualized_inflow)
-        
-        # 5. Downward slack
-        if balance_nodes:
-            down_cols = [(n, 'down') for n in balance_nodes if (n, 'down') in r.penalty_node_state_upDown_d.columns]
-            if down_cols:
-                downward_slack_sum = r.penalty_node_state_upDown_d[down_cols].sum(axis=1)
-            else:
-                downward_slack_sum = pd.Series(0, index=periods)
-        else:
-            downward_slack_sum = pd.Series(0, index=periods)
-        downward_slack = downward_slack_sum / (-annualized_inflow)
-        
-        # Combine results for this group
-        group_result = pd.DataFrame({
-            'group': g,
-            'period': periods,
-            'sum_annualized_inflows': annualized_inflow.values,
-            'vre_share': vre_share.values,
-            'curtailed_vre_share': curtailed_vre_share.values,
-            'upward_slack': upward_slack.values,
-            'downward_slack': downward_slack.values
-        })
-        results.append(group_result)
-    
-    # Combine all groups
-    result_flat = pd.concat(results, ignore_index=True)
-    
-    # Create multi-index version
-    result_multi = result_flat.set_index(['group', 'period'])[
-        ['sum_annualized_inflows', 'vre_share', 'curtailed_vre_share', 
-         'upward_slack', 'downward_slack']
-    ]
-    
-    return result_flat, result_multi, 'nodeGroup_gd_p'
+def group_node(par, s, v, r):
+    """Group node results by period and time, then aggregate to period only"""
 
-def group_node_period_time(par, s, v, r):
-    """Group node results by period and time"""
-    
+    results = []
     groups = list(s.groupOutput_node)
-    
+
     if not groups:
-        return pd.DataFrame(), pd.DataFrame(), 'nodeGroup_gdt_p'
-    
-    # Create group-node mapping
-    group_node_df = pd.DataFrame(s.group_node.to_list(), columns=['group', 'node'])
-    group_node_df = group_node_df[group_node_df['group'].isin(groups)]
-    
+        return results
+
     # Get time steps
     dt_index = s.dt_realize_dispatch  # Should be MultiIndex with (period, time)
-    
-    results = []
-    
+
+    # Calculate timestep-level results first
+    results_dt = []
+
     for g in groups:
         # Get nodes in this group
-        group_nodes = group_node_df[group_node_df['group'] == g]['node'].tolist()
-        
+        group_nodes = s.group_node[s.group_node['group'].isin([g])]['node'].tolist()
+
         # Filter out nodes with 'no_inflow' method
         if hasattr(s, 'node__inflow_method'):
             no_inflow_nodes = [n for (n, method) in s.node__inflow_method if method == 'no_inflow']
             group_nodes_with_inflow = [n for n in group_nodes if n not in no_inflow_nodes]
         else:
             group_nodes_with_inflow = group_nodes
-        
+
         # 1. pdtNodeInflow (negative sum)
         if group_nodes_with_inflow:
             group_inflow = -par.node_inflow[group_nodes_with_inflow].sum(axis=1)
         else:
             group_inflow = pd.Series(0, index=dt_index)
-        
+
         # 2. Sum of annualized inflows [MWh]
-        # Need to divide by complete_period_share_of_year for each period
-        # Align complete_period_share_of_year with dt_index
         period_shares = group_inflow.index.get_level_values('period').map(
             lambda p: par.complete_period_share_of_year[p]
         )
         annualized_inflow = group_inflow / period_shares
-        
+
         # 3. VRE share (actual flow)
-        vre_processes = s.process_VRE['process'].unique()
-        vre_cols = []
+        vre_processes = s.process_VRE.get_level_values('process').unique()
         if len(vre_processes) > 0:
-            flow_filtered = r.flow_dt.loc[:, (slice(None), slice(None), group_nodes)]
-            vre_cols = [(p, src, snk) for p, src, snk in flow_filtered.columns 
-                        if p in vre_processes and (p, src, snk) in s.process_source_sink_alwaysProcess]
-        if len(vre_processes) > 0 & len(vre_cols) > 0:
-            vre_flow_sum = flow_filtered[vre_cols].sum(axis=1) / group_inflow
+            vre_cols = r.flow_dt.columns[
+                r.flow_dt.columns.get_level_values('sink').isin(group_nodes) &
+                r.flow_dt.columns.get_level_values('process').isin(vre_processes) &
+                r.flow_dt.columns.isin(s.process_source_sink_alwaysProcess)
+            ]
+            if len(vre_cols) > 0:
+                vre_flow_sum = r.flow_dt[vre_cols].sum(axis=1)
+            else:
+                vre_flow_sum = pd.Series(0, index=dt_index)
         else:
-            vre_flow_sum = pd.Series(0, index=s.dt_realize_dispatch)
-        
+            vre_flow_sum = pd.Series(0, index=dt_index)
+
+        # VRE share calculation (avoid division by zero)
+        vre_share = vre_flow_sum / group_inflow.where(group_inflow != 0, pd.NA)
+
         # 4. Curtailed VRE share
-        # Potential VRE generation for this group's nodes
-        potential_cols = [(p, n) for p, n in r.potentialVREgen_dt.columns 
-                         if n in group_nodes and p in vre_processes]
-        if potential_cols:
+        potential_cols = r.potentialVREgen_dt.columns[
+            r.potentialVREgen_dt.columns.get_level_values(1).isin(group_nodes) &
+            r.potentialVREgen_dt.columns.get_level_values(0).isin(vre_processes)
+        ]
+        if len(potential_cols) > 0:
             potential_sum = r.potentialVREgen_dt[potential_cols].sum(axis=1)
         else:
             potential_sum = pd.Series(0, index=dt_index)
-        curtailed_vre = (potential_sum - vre_flow_sum) / group_inflow
-        
-        balance_nodes = [n for n in group_nodes 
-                        if n in set(s.node_balance) | set(s.node_balance_period)]
+        curtailed_vre = (potential_sum - vre_flow_sum)
+        curtailed_vre_share = curtailed_vre / group_inflow.where(group_inflow != 0, pd.NA)
+
+        # Filter balance nodes directly from the sets
+        balance_nodes = s.node_balance.union(s.node_balance_period)
+        balance_set = set(s.node_balance) | set(s.node_balance_period)
+        balance_nodes = [n for n in group_nodes if n in balance_set]
+
         # 5. Upward slack
         if balance_nodes and not v.q_state_up.empty:
-            up_cols = [n for n in balance_nodes if n in v.q_state_up.columns]
-            if up_cols:
-                upward_slack = (v.q_state_up[up_cols] * par.node_capacity_for_scaling[up_cols]).sum(axis=1)
-            else:
-                upward_slack = pd.Series(0, index=dt_index)
+            upward_slack = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).sum(axis=1)
         else:
             upward_slack = pd.Series(0, index=dt_index)
-        
+
         # 6. Downward slack
         if balance_nodes and not v.q_state_down.empty:
-            down_cols = [n for n in balance_nodes if n in v.q_state_down.columns]
-            if down_cols:
-                downward_slack = (v.q_state_down[down_cols] * par.node_capacity_for_scaling[down_cols]).sum(axis=1)
-            else:
-                downward_slack = pd.Series(0, index=dt_index)
+            downward_slack = v.q_state_down.mul(par.node_capacity_for_scaling[v.q_state_down.columns]).sum(axis=1)
         else:
             downward_slack = pd.Series(0, index=dt_index)
 
-        # Combine results for this group
-        group_result = pd.DataFrame({
+        # Combine timestep results for this group
+        group_result_dt = pd.DataFrame({
             'group': g,
             'period': dt_index.get_level_values('period'),
             'time': dt_index.get_level_values('time'),
             'pdtNodeInflow': group_inflow.values,
-            'sum_annualized_inflows': annualized_inflow.values,
-            'vre_share': vre_flow_sum.values,
-            'curtailed_vre_share': curtailed_vre.values,
+            'annualized_inflows': annualized_inflow.values,
+            'vre_share': vre_share.fillna(0).values,
+            'curtailed_vre_share': curtailed_vre_share.fillna(0).values,
             'upward_slack': upward_slack.fillna(0).values,
             'downward_slack': downward_slack.fillna(0).values
         })
-        results.append(group_result)
-    
-    # Combine all groups
-    result_flat = pd.concat(results, ignore_index=True)
-    
-    # Create multi-index version
-    result_multi = result_flat.set_index(['group', 'period', 'time'])[
-        ['pdtNodeInflow', 'sum_annualized_inflows', 'vre_share', 'curtailed_vre_share', 
+        results_dt.append(group_result_dt)
+
+    # Combine all groups for timestep level
+    result_flat_dt = pd.concat(results_dt, ignore_index=True)
+
+    # Create multi-index version for timestep level
+    result_multi_dt = result_flat_dt.set_index(['group', 'period', 'time'])[
+        ['pdtNodeInflow', 'annualized_inflows', 'vre_share', 'curtailed_vre_share',
          'upward_slack', 'downward_slack']
     ]
-    
-    return result_flat, result_multi, 'nodeGroup_gdt_p'
+    result_multi_dt.columns.name = "parameter"
+
+    results.append((result_flat_dt, result_multi_dt, 'nodeGroup_gdt_p'))
+
+    # Aggregate to period level
+    result_multi_d = result_multi_dt.groupby(level=['group', 'period']).sum()
+
+    # For shares, we need to recalculate properly:
+    # Sum the numerators and denominators separately, then divide
+    inflow_d = result_multi_dt['pdtNodeInflow'].groupby(level=['group', 'period']).sum()
+    annualized_d = result_multi_dt['annualized_inflows'].groupby(level=['group', 'period']).sum()
+
+    # For VRE share: need to sum absolute flows and recalculate
+    # Since we have vre_share * inflow = vre_flow, we can recover vre_flow
+    vre_flow_dt = result_multi_dt['vre_share'] * result_multi_dt['pdtNodeInflow']
+    vre_flow_d = vre_flow_dt.groupby(level=['group', 'period']).sum()
+    vre_share_d = vre_flow_d / inflow_d.where(inflow_d != 0, pd.NA)
+
+    # For curtailed VRE share: similar recovery
+    curtailed_flow_dt = result_multi_dt['curtailed_vre_share'] * result_multi_dt['pdtNodeInflow']
+    curtailed_flow_d = curtailed_flow_dt.groupby(level=['group', 'period']).sum()
+    curtailed_vre_share_d = curtailed_flow_d / inflow_d.where(inflow_d != 0, pd.NA)
+
+    # Slack shares: sum absolute values and recalculate
+    upward_slack_d = result_multi_dt['upward_slack'].groupby(['group', 'period']).sum()
+    upward_slack_d = upward_slack_d.div(annualized_d.where(annualized_d != 0, pd.NA))
+
+    downward_slack_d = result_multi_dt['downward_slack'].groupby(['group', 'period']).sum()
+    downward_slack_d = downward_slack_d.div(annualized_d.where(annualized_d != 0, pd.NA))
+
+    # Combine period-level results
+    result_multi_d = pd.DataFrame({
+        'sum_annualized_inflows': annualized_d,
+        'vre_share': vre_share_d.fillna(0),
+        'curtailed_vre_share': curtailed_vre_share_d.fillna(0),
+        'upward_slack': upward_slack_d.fillna(0),
+        'downward_slack': downward_slack_d.fillna(0)
+    })
+    result_multi_d.columns.name = "parameter"
+
+    result_flat_d = result_multi_d.reset_index()
+
+    results.append((result_flat_d, result_multi_d, 'nodeGroup_gd_p'))
+
+    return results
 
 
 def print_namespace_structure(namespace, name='r', max_items=3, output_file='namespace_structure.txt'):
@@ -416,17 +365,26 @@ def print_namespace_structure(namespace, name='r', max_items=3, output_file='nam
 
 def group_node_VRE_share(par, s, v, r):
     """VRE share for node groups by period and time"""
-    
+
+    results = []
+
     # Get timesteps and groups
     timesteps = list(s.dt_realize_dispatch)
     
     # Filter groups that have nodes with inflow
     groups_with_inflow = []
     for g in s.groupOutput_node:
-        has_inflow = any((grp, n) in s.group_node and (n, 'no_inflow') not in s.node__inflow_method 
-                        for (grp, n) in s.group_node if grp == g)
-        if has_inflow:
-            groups_with_inflow.append(g)
+        # Get nodes in this group
+        group_nodes_df = s.group_node[s.group_node['group'] == g]
+        if not group_nodes_df.empty:
+            # Check if any node has inflow (not marked as 'no_inflow')
+            if hasattr(s, 'node__inflow_method'):
+                no_inflow_nodes = set(n for (n, method) in s.node__inflow_method if method == 'no_inflow')
+                has_inflow = any(n not in no_inflow_nodes for n in group_nodes_df['node'])
+            else:
+                has_inflow = True
+            if has_inflow:
+                groups_with_inflow.append(g)
     
     if not groups_with_inflow or not timesteps:
         index = pd.MultiIndex.from_tuples([], names=['period', 'time'])
@@ -438,13 +396,17 @@ def group_node_VRE_share(par, s, v, r):
     result_multi = pd.DataFrame(index=index, columns=groups_with_inflow, dtype=float)
     
     # Get VRE processes
-    vre_processes = set(s.process_VRE['process'])
+    vre_processes = s.process_VRE.unique()
     
     # Calculate for each group
     for g in groups_with_inflow:
         # Get nodes in this group with inflow
-        group_nodes = [n for (grp, n) in s.group_node 
-                      if grp == g and (n, 'no_inflow') not in s.node__inflow_method]
+        group_nodes_df = s.group_node[s.group_node['group'] == g]
+        if hasattr(s, 'node__inflow_method'):
+            no_inflow_nodes = set(n for (n, method) in s.node__inflow_method if method == 'no_inflow')
+            group_nodes = [n for n in group_nodes_df['node'] if n not in no_inflow_nodes]
+        else:
+            group_nodes = group_nodes_df['node'].tolist()
         node_cols = [col for col in par.node_inflow.columns.get_level_values(0) if col in group_nodes]
         
         # Total inflow to group nodes (vectorized)
@@ -462,7 +424,15 @@ def group_node_VRE_share(par, s, v, r):
         # Calculate share (avoid division by zero)
         result_multi[g] = (vre_flow / (-total_inflow)).fillna(0.0)
     
-    return result_multi.reset_index(), result_multi, 'nodeGroup_VRE_share_dt_g'
+    results.append((result_multi.reset_index(), result_multi, 'nodeGroup_VRE_share_dt_g'))
+
+    # Return period results
+    result_multi_d = result_multi.groupby(level='period').mean()
+    result_multi_d.columns.name = 'group'
+    results.append((result_multi_d.reset_index(), result_multi_d, 'nodeGroup_VRE_share_d_g'))
+
+    return results
+
 
 def group_process_CO2(par, s, v, r):
     """Annualized CO2 Mt for groups by period"""
@@ -503,369 +473,352 @@ def group_process_CO2(par, s, v, r):
     
     return result_multi.reset_index(), result_multi, 'CO2_d_g'
 
-def group_process_node_flow_period(par, s, v, r):
-    """Flow results for groups by period"""
-    
-    # Get periods
-    periods = list(s.d_realized_period)
-    groups = list(s.groupOutput_process)
-    
-    if not groups or not periods:
-        result_multi = pd.DataFrame(index=pd.Index([], name='period'), columns=groups)
-        return result_multi.reset_index(), result_multi, 'flow_gd'
-    
-    # Create index
-    result_multi = pd.DataFrame(index=pd.Index(periods, name='period'), columns=groups, dtype=float)
-    
-    # Get period shares
-    period_shares = par.complete_period_share_of_year
-    
-    # Calculate for each group
-    for g in groups:
-        # Flows into nodes (process -> node sink)
-        sink_cols = [(p, src, snk) for (p, src, snk) in s.process_source_sink_alwaysProcess 
-                     if (g, p, snk) in s.group_process_node]
-        
-        # Flows from nodes (node source -> process)
-        source_cols = [(p, src, snk) for (p, src, snk) in s.process_source_sink_alwaysProcess 
-                       if (g, p, src) in s.group_process_node]
-        
-        inflow = r.flow_d[sink_cols].sum(axis=1) if sink_cols else 0
-        outflow = r.flow_d[source_cols].sum(axis=1) if source_cols else 0
-        
-        result_multi[g] = (inflow - outflow) / period_shares
-    
-    return result_multi.reset_index(), result_multi, 'flow_gd'
+def group_process_node_flow(par, s, v, r):
+    """Flow results for groups by period and time, then aggregate to period only"""
 
-def group_process_node_flow_dt(par, s, v, r):
-    """Flow results for groups by period and time"""
-    
-    # Get timesteps
+    results = []
+    groups = list(s.groupOutput_process)
+
+    if not groups:
+        return results
+
     timesteps = list(s.dt_realize_dispatch)
-    groups = list(s.groupOutput_process)
-    
-    if not groups or not timesteps:
-        index = pd.MultiIndex.from_tuples([], names=['period', 'time'])
-        result_multi = pd.DataFrame(index=index, columns=groups)
-        return result_multi.reset_index(), result_multi, 'flow_gdt'
-    
-    # Create index
+    if not timesteps:
+        return results
+
+    # Calculate timestep-level results first
     index = pd.MultiIndex.from_tuples(timesteps, names=['period', 'time'])
-    result_multi = pd.DataFrame(index=index, columns=groups, dtype=float)
-    
+    result_multi_dt = pd.DataFrame(index=index, columns=groups, dtype=float)
+
     # Calculate for each group
     for g in groups:
         # Flows into nodes (process -> node sink)
-        sink_cols = [(p, src, snk) for (p, src, snk) in s.process_source_sink_alwaysProcess 
-                     if (g, p, snk) in s.group_process_node]
-        
+        # Filter for (g, process, node) in group_process_node where node is the sink
+        sink_cols = r.flow_dt.columns[
+            r.flow_dt.columns.isin(s.process_source_sink_alwaysProcess) &
+            r.flow_dt.columns.to_series().apply(
+                lambda col: (g, col[0], col[2]) in s.group_process_node
+            )
+        ]
+
         # Flows from nodes (node source -> process)
-        source_cols = [(p, src, snk) for (p, src, snk) in s.process_source_sink_alwaysProcess 
-                       if (g, p, src) in s.group_process_node]
-        
-        inflow = r.flow_dt[sink_cols].sum(axis=1) if sink_cols else 0
-        outflow = r.flow_dt[source_cols].sum(axis=1) if source_cols else 0
-        
-        result_multi[g] = inflow - outflow
-    
-    return result_multi.reset_index(), result_multi, 'flow_gdt'
+        # Filter for (g, process, node) in group_process_node where node is the source
+        source_cols = r.flow_dt.columns[
+            r.flow_dt.columns.isin(s.process_source_sink_alwaysProcess) &
+            r.flow_dt.columns.to_series().apply(
+                lambda col: (g, col[0], col[1]) in s.group_process_node
+            )
+        ]
 
-def unit_outputNode_period(par, s, v, r):
-    """Unit output node flow for periods"""
-    if r.process_sink_flow_d.empty:
-        result_multi = pd.DataFrame(index=pd.Index([], name='period'))
-        return result_multi.reset_index(), result_multi, 'unit_outputNode_d_ee'
-    result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['unit', 'node']))
-    for col in r.process_sink_flow_d.columns:
-        if col[0] in s.process_unit:
-            result_multi[col] = r.process_sink_flow_d[col] / par.complete_period_share_of_year
-    return result_multi.reset_index(), result_multi, 'unit_outputNode_d_ee'
+        inflow = r.flow_dt[sink_cols].sum(axis=1) if len(sink_cols) > 0 else 0
+        outflow = r.flow_dt[source_cols].sum(axis=1) if len(source_cols) > 0 else 0
 
-def unit_outputNode_dt(par, s, v, r):
-    """Unit output node flow for time"""
+        result_multi_dt[g] = inflow - outflow
+    result_multi_dt.columns.name = 'group'
+
+
+    # Return timestep results
+    results.append((result_multi_dt.reset_index(), result_multi_dt, 'flow_dt_g'))
+
+    # Aggregate to period level
+    result_multi_d = result_multi_dt.groupby(level='period').sum()
+
+    # Divide by period shares to annualize
+    result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
+    result_multi_d.columns.name = 'group'
+
+    # Return period results
+    results.append((result_multi_d.reset_index(), result_multi_d, 'flow_d_g'))
+
+    return results
+
+
+def unit_outputNode(par, s, v, r):
+    """Unit output node flow for periods and time, then aggregate to period only"""
+
+    results = []
+
     if r.flow_dt.empty:
-        result_multi = pd.DataFrame(index=s.dt_realize_dispatch)
-        return result_multi.reset_index(), result_multi, 'unit_outputNode_dt_ee'
-    result_multi = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['unit', 'node']))
-    for col in r.flow_dt.columns:
+        return results
+
+    # Calculate timestep-level results first
+    result_multi_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['unit', 'node']))
+
+    # Filter columns: unit processes that have sinks
+    unit_sink_cols = r.flow_dt.columns[
+        r.flow_dt.columns.get_level_values(0).isin(s.process_unit) &
+        r.flow_dt.columns.to_series().apply(lambda col: (col[0], col[2]) in s.process_sink)
+    ]
+
+    for col in unit_sink_cols:
         u, source, sink = col
-        if (u, sink) in s.process_sink and u in s.process_unit:
-            result_multi[(u, sink)] = r.flow_dt[col]
-    return result_multi.reset_index(), result_multi, 'unit_outputNode_dt_ee'
+        result_multi_dt[(u, sink)] = r.flow_dt[col]
 
-def unit_inputNode_period(par, s, v, r):
-    """Unit input node flow for periods"""
-    if r.process_source_flow_d.empty:
-        result_multi = pd.DataFrame(index=pd.Index([], name='period'))
-        return result_multi.reset_index(), result_multi, 'unit_inputNode_d_ee'
-    result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['unit', 'node']))
-    for col in r.process_source_flow_d.columns:
-        if col[0] in s.process_unit:
-            result_multi[col] = -r.process_source_flow_d[col] / par.complete_period_share_of_year
-    return result_multi.reset_index(), result_multi, 'unit_inputNode_d_ee'
+    # Return timestep results
+    results.append((result_multi_dt.reset_index(), result_multi_dt, 'unit_outputNode_dt_ee'))
 
-def unit_inputNode_dt(par, s, v, r):
-    """Unit input node flow for time"""
+    # Aggregate to period level
+    result_multi_d = result_multi_dt.groupby(level='period').sum()
+
+    # Divide by period shares to annualize
+    result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
+
+    # Return period results
+    results.append((result_multi_d.reset_index(), result_multi_d, 'unit_outputNode_d_ee'))
+
+    return results
+
+def unit_inputNode(par, s, v, r):
+    """Unit input node flow for periods and time, then aggregate to period only"""
+
+    results = []
+
     if r.flow_dt.empty:
-        result_multi = pd.DataFrame(index=s.dt_realize_dispatch)
-        return result_multi.reset_index(), result_multi, 'unit_inputNode_dt_ee'
-    result_multi = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['unit', 'node']))
-    for col in r.flow_dt.columns:
+        return results
+
+    # Calculate timestep-level results first
+    result_multi_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['unit', 'node']))
+
+    # Filter columns: unit processes that have sources
+    unit_source_cols = r.flow_dt.columns[
+        r.flow_dt.columns.get_level_values(0).isin(s.process_unit) &
+        r.flow_dt.columns.to_series().apply(lambda col: (col[0], col[1]) in s.process_source)
+    ]
+
+    for col in unit_source_cols:
         u, source, sink = col
-        if (u, source) in s.process_source and u in s.process_unit:
-            result_multi[(u, source)] = -r.flow_dt[col]
-    return result_multi.reset_index(), result_multi, 'unit_inputNode_dt_ee'
+        result_multi_dt[(u, source)] = -r.flow_dt[col]
+
+    # Return timestep results
+    results.append((result_multi_dt.reset_index(), result_multi_dt, 'unit_inputNode_dt_ee'))
+
+    # Aggregate to period level
+    result_multi_d = result_multi_dt.groupby(level='period').sum()
+
+    # Divide by period shares to annualize
+    result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
+
+    # Return period results
+    results.append((result_multi_d.reset_index(), result_multi_d, 'unit_inputNode_d_ee'))
+
+    return results
 
 
-def connection_period(par, s, v, r):
-    """Connection flow for periods"""
-    if r.connection_d.empty:
-        result_multi = pd.DataFrame(index=pd.Index([], name='period'))
-        return result_multi.reset_index(), result_multi, 'connection_d_eee'
-    result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['connection', 'node_left', 'node_right']))
-    conn_map = s.process_source_sink[
-        s.process_source_sink['process'].isin(s.process_connection) &
-        s.process_source_sink.apply(lambda row: (row['process'], row['sink']) in s.process_sink, axis=1)
-    ].set_index('process')
-    for c in r.connection_d.columns:
-        if c in conn_map.index:
-            row = conn_map.loc[c]
-            result_multi[c, row['source'], row['sink']] = r.connection_d[c] / par.complete_period_share_of_year
-    return result_multi.reset_index(), result_multi, 'connection_d_eee'
+def connection(par, s, v, r):
+    """Connection flow for periods and time, then aggregate to period only"""
 
+    results = []
 
-def connection_dt(par, s, v, r):
-    """Connection flow for time"""
     if r.connection_dt.empty:
-        result_multi = pd.DataFrame(index=s.dt_realize_dispatch)
-        return result_multi.reset_index(), result_multi, 'connection_dt_eee'
-    result_multi = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['connection', 'node_left', 'node_right']))
+        return results
+
+    # Create connection mapping once (reused for both timestep and period)
     conn_map = s.process_source_sink[
         s.process_source_sink['process'].isin(s.process_connection) &
         s.process_source_sink.apply(lambda row: (row['process'], row['sink']) in s.process_sink, axis=1)
     ].set_index('process')
+
+    # Calculate timestep-level results first
+    result_multi_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['connection', 'node_left', 'node_right']))
+
     for c in r.connection_dt.columns:
         if c in conn_map.index:
             row = conn_map.loc[c]
-            result_multi[(c, row['source'], row['sink'])] = r.connection_dt[c]
-    return result_multi.reset_index(), result_multi, 'connection_dt_eee', 
+            result_multi_dt[(c, row['source'], row['sink'])] = r.connection_dt[c]
+
+    # Return timestep results
+    results.append((result_multi_dt.reset_index(), result_multi_dt, 'connection_dt_eee'))
+
+    # Aggregate to period level
+    result_multi_d = result_multi_dt.groupby(level='period').sum()
+
+    # Divide by period shares to annualize
+    result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
+
+    # Return period results
+    results.append((result_multi_d.reset_index(), result_multi_d, 'connection_d_eee'))
+
+    return results 
 
 
-def connection_to_right_node_period(par, s, v, r):
-    """Connection flow to right node for periods"""
-    if r.connection_to_right_node__d.empty:
-        result_multi = pd.DataFrame(index=pd.Index([], name='period'))
-        return result_multi.reset_index(), result_multi, 'connection_rightward_d_eee'
-    result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['process', 'connection', 'node']))
-    conn_map = s.process_source_sink[
-        s.process_source_sink['process'].isin(s.process_connection) &
-        s.process_source_sink.apply(lambda row: (row['process'], row['sink']) in s.process_sink, axis=1)
-    ].set_index('process')
-    for c in r.connection_to_right_node__d.columns:
-        if c in conn_map.index:
-            row = conn_map.loc[c]
-            result_multi[(c, row['source'], row['sink'])] = r.connection_to_right_node__d[c] / par.complete_period_share_of_year
-    return result_multi.reset_index(), result_multi, 'connection_rightward_d_eee'
+def connection_rightward(par, s, v, r):
+    """Connection flow to right node for periods and time, then aggregate to period only"""
 
+    results = []
 
-def connection_to_right_node_dt(par, s, v, r):
-    """Connection flow to right node for time"""
     if r.connection_to_right_node__dt.empty:
-        result_multi = pd.DataFrame(index=s.dt_realize_dispatch)
-        return result_multi.reset_index(), result_multi, 'connection_rightward_dt_eee'
-    result_multi = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['process', 'connection', 'node']))
+        return results
+
+    # Create connection mapping once
     conn_map = s.process_source_sink[
         s.process_source_sink['process'].isin(s.process_connection) &
         s.process_source_sink.apply(lambda row: (row['process'], row['sink']) in s.process_sink, axis=1)
     ].set_index('process')
+
+    # Calculate timestep-level results first
+    result_multi_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['process', 'connection', 'node']))
+
     for c in r.connection_to_right_node__dt.columns:
         if c in conn_map.index:
             row = conn_map.loc[c]
-            result_multi[(c, row['source'], row['sink'])] = r.connection_to_right_node__dt[c]
-    return result_multi.reset_index(), result_multi, 'connection_rightward_dt_eee'
+            result_multi_dt[(c, row['source'], row['sink'])] = r.connection_to_right_node__dt[c]
+
+    # Return timestep results
+    results.append((result_multi_dt.reset_index(), result_multi_dt, 'connection_rightward_dt_eee'))
+
+    # Aggregate to period level
+    result_multi_d = result_multi_dt.groupby(level='period').sum()
+
+    # Divide by period shares to annualize
+    result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
+
+    # Return period results
+    results.append((result_multi_d.reset_index(), result_multi_d, 'connection_rightward_d_eee'))
+
+    return results
 
 
-def connection_to_left_node_period(par, s, v, r):
-    """Connection flow to left node for periods"""
-    if r.connection_to_left_node__d.empty:
-        result_multi = pd.DataFrame(index=pd.Index([], name='period'))
-        return result_multi.reset_index(), result_multi, 'connection_leftward_d_eee'
-    result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['process', 'connection', 'node']))
-    conn_map = s.process_source_sink[
-        s.process_source_sink['process'].isin(s.process_connection) &
-        s.process_source_sink.apply(lambda row: (row['process'], row['sink']) in s.process_sink, axis=1)
-    ].set_index('process')
-    for c in r.connection_to_left_node__d.columns:
-        if c in conn_map.index:
-            row = conn_map.loc[c]
-            result_multi[(c, row['sink'], row['source'])] = r.connection_to_left_node__d[c] / par.complete_period_share_of_year
-    return result_multi.reset_index(), result_multi, 'connection_leftward_d_ee'
+def connection_leftward(par, s, v, r):
+    """Connection flow to left node for periods and time, then aggregate to period only"""
 
+    results = []
 
-def connection_to_left_node_dt(par, s, v, r):
-    """Connection flow to left node for time"""
     if r.connection_to_left_node__dt.empty:
-        result_multi = pd.DataFrame(index=s.dt_realize_dispatch)
-        return result_multi.reset_index(), result_multi, 'connection_leftward_dt_eee'
-    result_multi = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['process', 'connection', 'node']))
+        return results
+
+    # Create connection mapping once
     conn_map = s.process_source_sink[
         s.process_source_sink['process'].isin(s.process_connection) &
         s.process_source_sink.apply(lambda row: (row['process'], row['sink']) in s.process_sink, axis=1)
     ].set_index('process')
+
+    # Calculate timestep-level results first
+    result_multi_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['process', 'connection', 'node']))
+
     for c in r.connection_to_left_node__dt.columns:
         if c in conn_map.index:
             row = conn_map.loc[c]
-            result_multi[(c, row['sink'], row['source'])] = r.connection_to_left_node__dt[c]
-    return result_multi.reset_index(), result_multi, 'connection_leftward_dt_eee'
+            result_multi_dt[(c, row['sink'], row['source'])] = r.connection_to_left_node__dt[c]
+
+    # Return timestep results
+    results.append((result_multi_dt.reset_index(), result_multi_dt, 'connection_leftward_dt_eee'))
+
+    # Aggregate to period level
+    result_multi_d = result_multi_dt.groupby(level='period').sum()
+
+    # Divide by period shares to annualize
+    result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
+
+    # Return period results
+    results.append((result_multi_d.reset_index(), result_multi_d, 'connection_leftward_d_eee'))
+
+    return results
 
 
-def group_flows_dt(par, s, v, r):
-    """Group output flows for time"""
-    
+def group_flows(par, s, v, r):
+    """Group output flows for periods and time, then aggregate to period only"""
+
+    results = []
+
     if s.groupOutputNodeFlows.empty or s.dt_realize_dispatch.empty:
-        result_multi = pd.DataFrame(index=s.dt_realize_dispatch)
-        return result_multi.reset_index(), result_multi, 'nodeGroup_flows_dt_gpe'
-    
-    result_multi = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['group', 'type', 'item']))
-    
+        return results
+
+    # Calculate timestep-level results first
+    result_multi_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['group', 'type', 'item']))
+
     # Process each group
     for g in s.groupOutputNodeFlows:
         # Slack upward
         if g in r.group_node_up_penalties__dt.columns:
-            result_multi[g, 'slack', 'upward'] = r.group_node_up_penalties__dt[g]
-        
+            result_multi_dt[g, 'slack', 'upward'] = r.group_node_up_penalties__dt[g]
+
         # Unit aggregates (unit to group)
         for col in r.group_output__group_aggregate_Unit_to_group__dt.columns:
             if col[0] == g:
-                result_multi[g, 'unit_aggregate', col[1]] = r.group_output__group_aggregate_Unit_to_group__dt[col]
-        
+                result_multi_dt[g, 'unit_aggregate', col[1]] = r.group_output__group_aggregate_Unit_to_group__dt[col]
+
         # Units not in aggregate (unit to node)
         for idx, row in s.group_output__process__unit__to_node_Not_in_aggregate.iterrows():
             if row['group'] == g:
                 flow_col = (row['process'], row['unit'], row['node'])
                 if flow_col in r.flow_dt.columns:
-                    result_multi[g, 'unit', row['process']] = r.flow_dt[flow_col]
-        
+                    result_multi_dt[g, 'unit', row['process']] = r.flow_dt[flow_col]
+
         # Connection aggregates
         for col in r.group_output__group_aggregate_Connection__dt.columns:
             if col[0] == g:
-                result_multi[g, 'connection', col[1]] = r.group_output__group_aggregate_Connection__dt[col]
-        
+                result_multi_dt[g, 'connection', col[1]] = r.group_output__group_aggregate_Connection__dt[col]
+
         # Connections not in aggregate
         for col in r.group_output__connection_not_in_aggregate__dt.columns:
             if col[0] == g:
-                result_multi[g, 'connection', col[1]] = r.group_output__connection_not_in_aggregate__dt[col]
-        
+                result_multi_dt[g, 'connection', col[1]] = r.group_output__connection_not_in_aggregate__dt[col]
+
         # Storage flows (negative)
-        for (grp, n) in s.group_node:
-            if grp == g and n in s.node_state and n in r.node_state_change_dt.columns:
-                result_multi[g, 'storage_flow', g] = -r.node_state_change_dt[n]
-        
+        group_nodes_in_state = s.group_node[
+            (s.group_node['group'] == g) &
+            s.group_node['node'].isin(s.node_state)
+        ]['node']
+        for n in group_nodes_in_state:
+            if n in r.node_state_change_dt.columns:
+                result_multi_dt[g, 'storage_flow', g] = -r.node_state_change_dt[n]
+
         # Group to unit aggregates
         for col in r.group_output__group_aggregate_Group_to_unit__dt.columns:
             if col[0] == g:
-                result_multi[g, 'unit_aggregate', col[1]] = r.group_output__group_aggregate_Group_to_unit__dt[col]
-        
+                result_multi_dt[g, 'unit_aggregate', col[1]] = r.group_output__group_aggregate_Group_to_unit__dt[col]
+
         # Node to unit not in aggregate (negative)
         for idx, row in s.group_output__process__node__to_unit_Not_in_aggregate.iterrows():
             if row['group'] == g:
                 flow_col = (row['process'], row['node'], row['unit'])
                 if flow_col in r.flow_dt.columns:
-                    result_multi[g, 'unit', row['process']] = -r.flow_dt[flow_col]
-        
+                    result_multi_dt[g, 'unit', row['process']] = -r.flow_dt[flow_col]
+
         # Internal losses (negative)
         if g in r.group_output_Internal_connection_losses__dt.columns:
-            result_multi[g, 'internal_losses', 'connections'] = -r.group_output_Internal_connection_losses__dt[g]
+            result_multi_dt[g, 'internal_losses', 'connections'] = -r.group_output_Internal_connection_losses__dt[g]
         if g in r.group_output_Internal_unit_losses__dt.columns:
-            result_multi[g, 'internal_losses', 'units'] = -r.group_output_Internal_unit_losses__dt[g]
+            result_multi_dt[g, 'internal_losses', 'units'] = -r.group_output_Internal_unit_losses__dt[g]
         if g in r.group_node_state_losses__dt.columns:
-            result_multi[g, 'internal_losses', 'storages'] = -r.group_node_state_losses__dt[g]
-        
+            result_multi_dt[g, 'internal_losses', 'storages'] = -r.group_node_state_losses__dt[g]
+
         # Slack downward
         if g in r.group_node_down_penalties__dt.columns:
-            result_multi[g, 'slack', 'downward'] = r.group_node_down_penalties__dt[g]
-        
+            result_multi_dt[g, 'slack', 'downward'] = r.group_node_down_penalties__dt[g]
+
         # Inflow
         if g in r.group_node_inflow_dt.columns:
-            result_multi[g, 'inflow', g] = r.group_node_inflow_dt[g]
-    
-    result_multi.columns.names = ['group', 'type', 'item']
-    
-    return result_multi.reset_index(), result_multi, 'nodeGroup_flows_dt_gpe'
+            result_multi_dt[g, 'inflow', g] = r.group_node_inflow_dt[g]
 
-def group_flows_period(par, s, v, r):
-    """Group output flows for periods"""
-    
-    if s.groupOutputNodeFlows.empty or s.d_realized_period.empty:
-        result_multi = pd.DataFrame(index=s.d_realized_period)
-        return result_multi.reset_index(), result_multi, 'nodeGroup_flows_d_gpe'
-    
-    result_multi = pd.DataFrame(index=s.d_realized_period, columns=pd.MultiIndex.from_tuples([], names=['group', 'type', 'item']))
-    
-    # Process each group
-    for g in s.groupOutputNodeFlows:
-        # Slack upward
-        if g in r.group_node_up_penalties__d.columns:
-            result_multi[g, 'slack', 'upward'] = r.group_node_up_penalties__d[g]
-        
-        # Unit aggregates (unit to group)
-        for col in r.group_output__group_aggregate_Unit_to_group__d.columns:
-            if col[0] == g:
-                result_multi[g, 'unit_aggregate', col[1]] = r.group_output__group_aggregate_Unit_to_group__d[col]
-        
-        # Units not in aggregate (unit to node)
-        for idx, row in s.group_output__process__unit__to_node_Not_in_aggregate.iterrows():
-            if row['group'] == g:
-                flow_col = (row['process'], row['unit'], row['node'])
-                if flow_col in r.flow_d.columns:
-                    result_multi[g, 'unit', row['process']] = r.flow_d[flow_col]
-        
-        # Connection aggregates
-        for col in r.group_output__group_aggregate_Connection__d.columns:
-            if col[0] == g:
-                result_multi[g, 'connection', col[1]] = r.group_output__group_aggregate_Connection__d[col]
-        
-        # Connections not in aggregate
-        for col in r.group_output__connection_not_in_aggregate__d.columns:
-            if col[0] == g:
-                result_multi[g, 'connection', col[1]] = r.group_output__connection_not_in_aggregate__d[col]
-        
-        # Storage flows (negative)
-        for (grp, n) in s.group_node:
-            if grp == g and n in s.node_state and n in r.node_state_change_d.columns:
-                result_multi[g, 'storage_flow', g] = -r.node_state_change_d[n]
-        
-        # Group to unit aggregates
-        for col in r.group_output__group_aggregate_Group_to_unit__d.columns:
-            if col[0] == g:
-                result_multi[g, 'unit_aggregate', col[1]] = r.group_output__group_aggregate_Group_to_unit__d[col]
-        
-        # Node to unit not in aggregate (negative)
-        for idx, row in s.group_output__process__node__to_unit_Not_in_aggregate.iterrows():
-            if row['group'] == g:
-                flow_col = (row['process'], row['node'], row['unit'])
-                if flow_col in r.flow_d.columns:
-                    result_multi[g, 'unit', row['process']] = -r.flow_d[flow_col]
-        
-        # Internal losses (negative)
-        if g in r.group_output_Internal_connection_losses__d.columns:
-            result_multi[g, 'internal_losses', 'connections'] = -r.group_output_Internal_connection_losses__d[g]
-        if g in r.group_output_Internal_unit_losses__d.columns:
-            result_multi[g, 'internal_losses', 'units'] = -r.group_output_Internal_unit_losses__d[g]
-        if g in r.group_node_state_losses__d.columns:
-            result_multi[g, 'internal_losses', 'storages'] = -r.group_node_state_losses__d[g]
-        
-        # Slack downward
-        if g in r.group_node_down_penalties__d.columns:
-            result_multi[g, 'slack', 'downward'] = r.group_node_down_penalties__d[g]
-        
-        # Inflow
-        if g in r.group_node_inflow_d.columns:
-            result_multi[g, 'inflow', g] = r.group_node_inflow_d[g]
-    
-    return result_multi.reset_index(), result_multi, 'nodeGroup_flows_d_gpe'
+    result_multi_dt.columns.names = ['group', 'type', 'item']
 
-def unit_cf_outputNode_period(par, s, v, r):
+    # Return timestep results
+    results.append((result_multi_dt.reset_index(), result_multi_dt, 'nodeGroup_flows_dt_gpe'))
+
+    # Aggregate to period level
+    result_multi_d = result_multi_dt.groupby(level='period').sum()
+
+    # Return period results
+    results.append((result_multi_d.reset_index(), result_multi_d, 'nodeGroup_flows_d_gpe'))
+
+    return results
+
+def connection_cf(par, s, v, r):
+    """Connection capacity factors for periods"""
+    if r.process_sink_flow_d.empty:
+        result_multi = pd.DataFrame(index=pd.Index([], name='period'))
+        return result_multi.reset_index(), result_multi, 'connection_cf_d_e'
+
+    complete_hours = par.complete_period_share_of_year * 8760
+    connection_cols = r.process_sink_flow_d.columns[r.process_sink_flow_d.columns.get_level_values(0).isin(s.process_connection)]
+    connection_capacity = r.entity_all_capacity[connection_cols.droplevel(1).unique()].rename_axis('process', axis=1)
+    connection_capacity.columns = connection_capacity.columns.get_level_values(0)
+    result_multi = r.connection_dt.abs().groupby('period').sum().div(connection_capacity, level=0).div(complete_hours, axis=0)
+    result_multi.columns.names = ['connection']
+    return result_multi.reset_index(), result_multi, 'connection_cf_d_e'
+
+def unit_cf_outputNode(par, s, v, r):
     """Unit capacity factors by output node for periods"""
     if r.process_sink_flow_d.empty:
         result_multi = pd.DataFrame(index=pd.Index([], name='period'))
@@ -879,7 +832,7 @@ def unit_cf_outputNode_period(par, s, v, r):
     result_multi.columns.names = ['unit', 'sink']
     return result_multi.reset_index(), result_multi, 'unit_outputs_cf_d_ee'
 
-def unit_cf_inputNode_period(par, s, v, r):
+def unit_cf_inputNode(par, s, v, r):
     """Unit capacity factors by input node for periods"""
     if r.process_source_flow_d.empty:
         result_multi = pd.DataFrame(index=pd.Index([], name='period'))
@@ -898,7 +851,7 @@ def unit_VRE_curtailment_and_potential(par, s, v, r):
     """Unit VRE curtailment and potential for both periods and timesteps"""
     
     results = []
-    vre_processes = set(s.process_VRE['process'])
+    vre_processes = s.process_VRE.unique()
     
     # Timestep-level curtailment (absolute values) - calculate first
     if not r.flow_dt.empty and not r.potentialVREgen_dt.empty:
@@ -1004,6 +957,7 @@ def cost_summaries(par, s, v, r):
     # 4. Combined summary (investment + dispatch aggregated to period)
     all_periods = s.d_realized_period.union(s.d_realize_invest)
     summary = pd.DataFrame(index=all_periods, dtype=float)
+    summary.columns.name = 'parameter'    
     
     # Investment costs (only for d_realize_invest)
     for col in investment_costs.columns:
@@ -1259,8 +1213,8 @@ def inertia_results(par, s, v, r):
         total_inertia = pd.Series(0, index=s.dt_realize_dispatch, dtype=float)
         
         # Inertia from sources
-        s.group_node_inertia = s.group_node[s.group_node.get_level_values(0).isin([g])]
-        s.process_source_inertia = s.process_source[s.process_source.get_level_values(1).isin(s.group_node_inertia.get_level_values(1))]
+        s.group_node_inertia = s.group_node[s.group_node['group'].isin([g])]
+        s.process_source_inertia = s.process_source[s.process_source.get_level_values(1).isin(s.group_node_inertia['node'])]
         s.pss_inertia = s.process_source_sink_alwaysProcess[s.process_source_sink_alwaysProcess.droplevel(2).isin(s.process_source_inertia)]
         for (p, source, sink) in s.pss_inertia:
             inertia_const = get_inertia_constant(p, source, 'source')
@@ -1269,7 +1223,7 @@ def inertia_results(par, s, v, r):
                 total_inertia += (flow_online * inertia_const).squeeze()
         
         # Inertia from sinks
-        s.process_sink_inertia = s.process_sink[s.process_sink.get_level_values(1).isin(s.group_node_inertia.get_level_values(1))]
+        s.process_sink_inertia = s.process_sink[s.process_sink.get_level_values(1).isin(s.group_node_inertia['node'])]
         s.pss_inertia = s.process_source_sink_alwaysProcess[s.process_source_sink_alwaysProcess.droplevel(1).isin(s.process_sink_inertia)]
         for (p, source, sink) in s.pss_inertia:
             inertia_const = get_inertia_constant(p, sink, 'sink')
@@ -1279,7 +1233,7 @@ def inertia_results(par, s, v, r):
         
         group_inertia[g] = total_inertia
     
-    results.append((group_inertia.reset_index(), group_inertia, 'group_inertia_dt_g'))
+    results.append((group_inertia.reset_index(), group_inertia, 'nodeGroup_inertia_dt_g'))
     
     # 2. Individual entity inertia
     unit_inertia = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['group', 'process', 'node']), dtype=float)
@@ -1301,14 +1255,14 @@ def inertia_results(par, s, v, r):
                     flow_online = get_flow_or_online(p, source, sink, s.dt_realize_dispatch)
                     unit_inertia[g, p, sink] = flow_online * inertia_const
     
-    results.append((unit_inertia.reset_index(), unit_inertia, 'group_unit_node_inertia_dt_gee'))
+    results.append((unit_inertia.reset_index(), unit_inertia, 'nodeGroup_unit_node_inertia_dt_gee'))
     
     # 3. Largest flow per group (for inertia constraint)
     largest_flow = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
     
     for g in s.groupInertia:
         max_flows = []
-        
+        # This is poor processing and probably not working correctly.
         for (p, source, sink) in s.process_source_sink_alwaysProcess:
             if (p, sink) in s.process_sink and (g, sink) in s.group_node:
                 unitsize = par.entity_unitsize[p]
@@ -1321,7 +1275,7 @@ def inertia_results(par, s, v, r):
         else:
             largest_flow[g] = 0
     
-    results.append((largest_flow.reset_index(), largest_flow, 'group_inertia_largest_flow_dt_g'))
+    results.append((largest_flow.reset_index(), largest_flow, 'nodeGroup_inertia_largest_flow_dt_g'))
     
     return results
 
@@ -1337,22 +1291,22 @@ def slack_variables(par, s, v, r):
         # for col in v.q_reserve.columns:
         #     if col in par.reserve_upDown_group_reservation.columns:
         #         reserve_slack[col] = v.q_reserve[col] * par.reserve_upDown_group_reservation[col]
-        results.append((reserve_slack.reset_index(), reserve_slack, 'slack_reserve_upDown_group_dt'))
+        results.append((reserve_slack.reset_index(), reserve_slack, 'nodeGroup_slack_reserve_dt_rug'))
     
     # 2. Non-synchronous slack variables
     if not v.q_non_synchronous.empty:
         nonsync_slack = v.q_non_synchronous * par.group_capacity_for_scaling[s.groupNonSync]
-        results.append((nonsync_slack.reset_index(), nonsync_slack, 'slack_nonsync_group_dt'))
+        results.append((nonsync_slack.reset_index(), nonsync_slack, 'nodeGroup_slack_nonsync_dt_g'))
     
     # 3. Inertia slack variables
     if not v.q_inertia.empty:
         inertia_slack = v.q_inertia * par.group_inertia_limit
-        results.append((inertia_slack.reset_index(), inertia_slack, 'slack_inertia_group_dt'))
+        results.append((inertia_slack.reset_index(), inertia_slack, 'nodeGroup_slack_inertia_dt_g'))
     
     # 4. Capacity margin slack variables (for investment periods only)
     if not v.q_capacity_margin.empty:
         capmargin_slack = v.q_capacity_margin * par.group_capacity_for_scaling[s.groupCapacityMargin]
-        results.append((capmargin_slack.reset_index(), capmargin_slack, 'slack_capacity_margin_d'))
+        results.append((capmargin_slack.reset_index(), capmargin_slack, 'nodeGroup_slack_capacity_margin_d_g'))
     
     return results
 
@@ -1374,8 +1328,8 @@ def plot_dict_of_dataframes(results_dict, output_dir='.'):
                 plot_dt_type(df, key, output_dir)
             elif key.endswith('_d'):
                 plot_d_type(df, key, output_dir)
-            else:
-                plot_other_type(df, key, output_dir)
+            #else:
+            #    plot_other_type(df, key, output_dir)
         
         plt.close('all')  # Clean up
 
@@ -1545,26 +1499,19 @@ ALL_OUTPUTS = [
     connection_capacity,
     node_capacity,
     model_co2,
-    group_node_period,
-    group_node_period_time,
+    group_node,
     group_node_VRE_share,
     group_process_CO2,
-    group_process_node_flow_period,
-    group_process_node_flow_dt,
-    unit_outputNode_period,
-    unit_outputNode_dt,
-    unit_inputNode_period,
-    unit_inputNode_dt,
-    connection_period,
-    connection_dt,
-    connection_to_right_node_period,
-    connection_to_right_node_dt,
-    connection_to_left_node_period,
-    connection_to_left_node_dt,
-    group_flows_dt,
-    group_flows_period,
-    unit_cf_outputNode_period,
-    unit_cf_inputNode_period,
+    group_process_node_flow,
+    unit_outputNode,
+    unit_inputNode,
+    connection,
+    connection_rightward,
+    connection_leftward,
+    group_flows,
+    connection_cf,
+    unit_cf_outputNode,
+    unit_cf_inputNode,
     unit_VRE_curtailment_and_potential,
     unit_ramps,
 ]
@@ -1618,7 +1565,11 @@ def write_outputs(scenario_name, output_funcs=None, output_dir='output_raw', met
 
     # Write to parquet
     for name, df in results_multi.items():
-        if name.endswith('_d'):
+        if name.endswith(('_d_p', '_d_e', '_d_ep', '_d_peppe', '_d_g', '_d', '_gd_p', \
+                          '_ed_p', '_d_ee', '_d_eee', '_d_gpe', \
+                          'node_slack_up_dt_e', 'unit_outputNode_dt_ee', 'unit_inputNode_dt_ee', \
+                          'connection_dt_eee', 'connection_rightward_dt_eee', 'connection_leftward_dt_eee', \
+                          'flow_dt_g', 'unit_curtailment_outputNode_dt_ee')):
             if not os.path.exists('output_parquet'):
                 os.makedirs('output_parquet')
             df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
@@ -1637,7 +1588,7 @@ def write_outputs(scenario_name, output_funcs=None, output_dir='output_raw', met
 
     # Write to excel
     if 'excel' in methods:
-        with pd.ExcelWriter('output.xlsx') as writer:
+        with pd.ExcelWriter('output' + scenario_name + '.xlsx') as writer:
             for name, df in results_flat.items():
                 if (not df.empty) & (len(df) > 0):
                     df.to_excel(writer, sheet_name=name)

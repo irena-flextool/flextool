@@ -12,9 +12,4 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = [
-    "flextoolrunner",
-    "update_database",
-    "migrate_database",
-    "initialize_database"
-]
+packages = ["flextool"]

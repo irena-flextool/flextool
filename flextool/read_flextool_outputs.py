@@ -67,14 +67,16 @@ def read_variables(output_dir):
     v.online_integer.columns = pd.MultiIndex.from_product([v.online_integer.columns], names=['process'])
     v.startup_integer.columns = pd.MultiIndex.from_product([v.startup_integer.columns], names=['process'])
     v.shutdown_integer.columns = pd.MultiIndex.from_product([v.shutdown_integer.columns], names=['process'])
-    v.q_state_up.columns = pd.MultiIndex.from_product([v.q_state_up.columns], names=['node'])
-    v.q_state_down.columns = pd.MultiIndex.from_product([v.q_state_down.columns], names=['node'])
-    v.q_inertia.columns = pd.MultiIndex.from_product([v.q_inertia.columns], names=['group'])
-    v.q_non_synchronous.columns = pd.MultiIndex.from_product([v.q_non_synchronous.columns], names=['group'])
-    v.q_state_up_group.columns = pd.MultiIndex.from_product([v.q_state_up_group.columns], names=['group'])
-    v.q_capacity_margin.columns = pd.MultiIndex.from_product([v.q_capacity_margin.columns], names=['group'])
-    v.invest.columns = pd.MultiIndex.from_product([v.invest.columns], names=['entity'])
-    v.divest.columns = pd.MultiIndex.from_product([v.divest.columns], names=['entity'])
+    v.q_state_up.columns.name = 'node'
+    v.q_state_down.columns.name = 'node'
+    v.q_inertia.columns.name = 'group'
+    v.q_non_synchronous.columns.name = 'group'
+    v.q_state_up_group.columns.name = 'group'
+    v.q_capacity_margin.columns.name = 'group'
+    # v.invest.columns = pd.MultiIndex.from_product([v.invest.columns], names=['entity'])
+    v.invest.columns.name = 'entity'
+    # v.divest.columns = pd.MultiIndex.from_product([v.divest.columns], names=['entity'])
+    v.divest.columns.name = 'entity'
     v.dual_node_balance.columns = pd.MultiIndex.from_product([v.dual_node_balance.columns], names=['node'])
     v.dual_invest_unit.columns = pd.MultiIndex.from_product([v.dual_invest_unit.columns], names=['unit'])
     v.dual_invest_connection.columns = pd.MultiIndex.from_product([v.dual_invest_connection.columns], names=['connection'])
@@ -210,28 +212,28 @@ def read_parameters(output_dir):
     p.process_section.columns = pd.MultiIndex.from_product([p.process_section.columns], names=['process'])
     p.process_availability.columns = pd.MultiIndex.from_product([p.process_availability.columns], names=['process'])
     p.node_self_discharge_loss.columns = pd.MultiIndex.from_product([p.node_self_discharge_loss.columns], names=['node'])
-    p.node_penalty_up.columns = pd.MultiIndex.from_product([p.node_penalty_up.columns], names=['node'])
-    p.node_penalty_down.columns = pd.MultiIndex.from_product([p.node_penalty_down.columns], names=['node'])
+    p.node_penalty_up.columns.name = 'node'
+    p.node_penalty_down.columns.name = 'node'
     p.node_inflow.columns = pd.MultiIndex.from_product([p.node_inflow.columns], names=['node'])
     p.commodity_price.columns = pd.MultiIndex.from_product([p.commodity_price.columns], names=['commodity'])
     p.group_co2_price.columns = pd.MultiIndex.from_product([p.group_co2_price.columns], names=['group'])
     p.profile.columns = pd.MultiIndex.from_product([p.profile.columns], names=['profile'])
-    p.entity_max_units.columns = pd.MultiIndex.from_product([p.entity_max_units.columns], names=['entity'])
-    p.entity_all_existing.columns = pd.MultiIndex.from_product([p.entity_all_existing.columns], names=['entity'])
+    p.entity_max_units.columns.name = 'entity'
+    p.entity_all_existing.columns.name = 'entity'
     p.process_startup_cost.columns = pd.MultiIndex.from_product([p.process_startup_cost.columns], names=['process'])
-    p.process_fixed_cost.columns = pd.MultiIndex.from_product([p.process_fixed_cost.columns], names=['process'])
-    p.node_fixed_cost.columns = pd.MultiIndex.from_product([p.node_fixed_cost.columns], names=['node'])
+    p.process_fixed_cost.columns.name = 'process'
+    p.node_fixed_cost.columns.name = 'node'
     p.node_annual_flow.columns = pd.MultiIndex.from_product([p.node_annual_flow.columns], names=['node'])
-    p.group_penalty_inertia.columns = pd.MultiIndex.from_product([p.group_penalty_inertia.columns], names=['group'])
-    p.group_penalty_non_synchronous.columns = pd.MultiIndex.from_product([p.group_penalty_non_synchronous.columns], names=['group'])
-    p.group_penalty_capacity_margin.columns = pd.MultiIndex.from_product([p.group_penalty_capacity_margin.columns], names=['group'])
-    p.group_inertia_limit.columns = pd.MultiIndex.from_product([p.group_inertia_limit.columns], names=['group'])
-    p.group_capacity_margin.columns = pd.MultiIndex.from_product([p.group_capacity_margin.columns], names=['group'])
-    p.entity_annual_discounted.columns = pd.MultiIndex.from_product([p.entity_annual_discounted.columns], names=['entity'])
-    p.entity_annual_divest_discounted.columns = pd.MultiIndex.from_product([p.entity_annual_divest_discounted.columns], names=['entity'])
+    p.group_penalty_inertia.columns.name = 'group'
+    p.group_penalty_non_synchronous.columns.name = 'group'
+    p.group_penalty_capacity_margin.columns.name = 'group'
+    p.group_inertia_limit.columns.name = 'group'
+    p.group_capacity_margin.columns.name = 'group'
+    p.entity_annual_discounted.columns.name = 'entity'
+    p.entity_annual_divest_discounted.columns.name = 'entity'
+    p.entity_unitsize.name = 'entity'
     p.node_capacity_for_scaling.columns.name = 'node'
-    #p.node_capacity_for_scaling.columns = pd.MultiIndex.from_product([p.node_capacity_for_scaling.columns], names=['node'])
-    p.group_capacity_for_scaling.columns = pd.MultiIndex.from_product([p.group_capacity_for_scaling.columns], names=['group'])
+    p.group_capacity_for_scaling.columns.name = 'group'
     p.node.columns = pd.MultiIndex.from_product([p.node.columns], names=['node'])
 
     return p
@@ -324,7 +326,7 @@ def read_sets(output_dir):
     s.process_connection = pd.Index(df.iloc[:, 0])
     s.process_source = pd.read_csv(output_path / 'set_process_source.csv').set_index(['process', 'source']).index
     s.process_sink = pd.read_csv(output_path / 'set_process_sink.csv').set_index(['process', 'sink']).index
-    s.process_VRE = pd.read_csv(output_path / 'set_process_VRE.csv')
+    s.process_VRE = pd.read_csv(output_path / 'set_process_VRE.csv').set_index(['process', 'node']).index
     s.process__source__sink__profile__profile_method = pd.read_csv(output_path / 'set_process__source__sink__profile__profile_method.csv')
 
     # Commodity-related sets
@@ -362,7 +364,7 @@ def read_sets(output_dir):
     s.group_output__group_aggregate__process__connection__to_node = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__connection__to_node.csv')
     s.group_output__group_aggregate__process__node__to_connection = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__node__to_connection.csv')
     s.group_output__process_fully_inside = pd.read_csv(output_path / 'set_group_output__process_fully_inside.csv').set_index(['group', 'process']).index
-    s.group_node = pd.read_csv(output_path / 'set_group_node.csv').set_index(['group', 'node']).index
+    s.group_node = pd.read_csv(output_path / 'set_group_node.csv')
     s.group_process = pd.read_csv(output_path / 'set_group_process.csv').set_index(['group', 'process']).index
     s.group_process_node = pd.read_csv(output_path / 'set_group_process_node.csv').set_index(['group', 'process', 'node']).index
 
