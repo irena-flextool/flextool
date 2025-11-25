@@ -544,6 +544,9 @@ class FlexToolRunner:
                 for period_name, period in timeline.items():
                     for item in period:
                         outfile.write(period_name + ',' + item[0] + ',' + str(item[2]) + '\n')
+                        if float(item[2]) <= 0:
+                            self.logger.error("Error: Timeline contains steps with zero or negative duration in complete timeline output.")
+                            sys.exit(-1)
 
     def write_years_represented(self, period__branch, years_represented, filename):
         """
