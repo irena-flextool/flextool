@@ -1037,7 +1037,7 @@ param pProcess_source_sink {(p, source, sink, param) in process__source__sink__p
 		  else if (p, sink, param) in process__sink__param
 		  then p_process_sink[p, sink, param]
 		  else 0;
-
+display setup1;
 set process_source_sourceSinkTimeParam_in_use :=
   {(p, source) in process_source, param in sourceSinkTimeParam:
     param in sourceSinkTimeParamRequired ||
@@ -1369,6 +1369,7 @@ set gd_divest_period := {(g, d) in gd_invest : (g, 'retire_period') in group__in
                                                || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
 set g_divest_total := {g in group_divest : (g, 'retire_total') in group__invest_method || (g, 'retire_period_total') in group__invest_method 
                                                || (g, 'invest_retire_total') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
+set g_invest_cumulative := {g in group_invest : (g, 'invest_cumulative') in group__invest_method};
 
 param e_invest_max_total{e in entityInvest} :=
   + (if e in process then p_process[e, 'invest_max_total'])
@@ -1812,7 +1813,7 @@ check {(p,m) in process_method, (d,t) in dt: m in method_2way_1var}:
 printf 'Checking: node not in more than one loss of load sharing group\n';
 check {n in node}:
   sum{(g,n) in group_node: g in group_loss_share} 1 < 2;
-
+display group_entity, entityInvest;
 printf 'Checking: Groups with investment constraints have entities that can be invested in\n';
 check {g in group_invest, d in period_invest}:
   sum{(g,e) in group_entity: e in entityInvest } 1 > 0;
@@ -2879,6 +2880,26 @@ s.t. maxInvestGroup_entity_total {g in g_invest_total, d in period_invest} :
   + sum{(g, e) in group_entity} p_entity_previously_invested_capacity[e, d]
   <=
   + p_group[g, 'invest_max_total']
+;
+
+s.t. maxInvestGroup_entity_cumulative {g in g_invest_cumulative , d in period_invest : p_group[g, 'invest_max_cumulative']} :
+  + sum{(g, e) in group_entity, d_invest in period_in_use : (e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity} p_entity_previously_invested_capacity[e, d]
+#  - sum{(g, e) in group_entity, d_divest in period_in_use : e in entityDivest} v_divest[e, d_divest] * p_entity_unitsize[e]
+#  - sum{(g, e) in group_entity : e in entityDivest} (if not p_model['solveFirst'] then p_entity_divested[e])
+  + sum{(g, e) in group_entity} p_entity_all_existing[e, d]
+  <=
+  + p_group[g, 'invest_max_cumulative']
+;
+
+s.t. minInvestGroup_entity_cumulative {g in g_invest_cumulative , d in period_invest: p_group[g, 'invest_min_cumulative']} :
+  + sum{(g, e) in group_entity, d_invest in period_in_use : (e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e]
+  + sum{(g, e) in group_entity} p_entity_previously_invested_capacity[e, d]
+  - sum{(g, e) in group_entity, d_divest in period_in_use : e in entityDivest} v_divest[e, d_divest] * p_entity_unitsize[e]
+  - sum{(g, e) in group_entity : e in entityDivest} (if not p_model['solveFirst'] then p_entity_divested[e])
+  + sum{(g, e) in group_entity} p_entity_all_existing[e, d]
+  <=
+  + p_group[g, 'invest_min_cumulative']
 ;
 
 s.t. maxDivestGroup_entity_total {g in g_divest_total} :

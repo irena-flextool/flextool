@@ -2493,6 +2493,8 @@ class FlexToolRunner:
                                  ("group", "inertia_limit"),
                                  ("group", "invest_max_total"),
                                  ("group", "invest_min_total"),
+                                 ("group", "invest_max_cumulative"),
+                                 ("group", "invest_min_cumulative"),
                                  ("group", "max_cumulative_flow"),
                                  ("group", "max_instant_flow"),
                                  ("group", "min_cumulative_flow"),
