@@ -178,7 +178,7 @@ set reserveTimeParam := reservation;
 set invest_method := not_allowed, invest_no_limit, invest_period, invest_total, invest_period_total, 
                   retire_no_limit, retire_period, retire_total, retire_period_total, 
 				  invest_retire_no_limit, invest_retire_period, invest_retire_total, invest_retire_period_total,
-				  cumulative_limits;
+				  cumulative_limits, invest_cumulative;
 set lifetime_method := reinvest_automatic, reinvest_choice;
 set lifetime_method_default := reinvest_automatic;
 set co2_method := no_method, price, period, total, price_period, price_total, period_total, price_period_total;
@@ -191,7 +191,8 @@ set groupParam := has_capacity_margin, capacity_margin, has_inertia, inertia_lim
                   retire_max_total, retire_min_total, retire_max_period, retire_min_period,
 				  non_synchronous_limit, co2_price, co2_max_period, co2_max_total, 
 				  penalty_inertia, penalty_non_synchronous, max_cumulative_flow, min_cumulative_flow, 
-				  max_instant_flow, min_instant_flow, output_results, penalty_capacity_margin;
+				  max_instant_flow, min_instant_flow, output_results, penalty_capacity_margin,
+				  invest_max_cumulative, invest_min_cumulative;
 set groupPeriodParam := capacity_margin, co2_price, co2_max_period, co2_max_total, inertia_limit, invest_max_period,
                   invest_min_period, max_cumulative_flow, min_cumulative_flow,
 				  non_synchronous_limit, penalty_inertia, penalty_non_synchronous,
