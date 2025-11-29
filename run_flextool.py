@@ -10,6 +10,7 @@ import os
 from flextool.write_outputs import write_outputs
 from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import DatabaseMapping, to_database
+from spinedb_api.exception import NothingToCommit
 
 class FlushingStream:
     def __init__(self, stream):
@@ -132,7 +133,10 @@ def main():
                 type=type_
             )
 
-            output_db.commit_session("Added/updated scenario information")
+            try:
+                output_db.commit_session("Added/updated scenario information")
+            except NothingToCommit:
+                pass
 
 
 

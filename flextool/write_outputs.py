@@ -9,6 +9,64 @@ from flextool.read_flextool_outputs import read_variables, read_parameters, read
 from flextool.process_results import post_process_results
 import warnings
 
+result_set_map = [
+    ('annualized_costs__period.csv', 'annualized_costs_d_p'),
+    ('co2.csv', 'CO2_d'),
+    ('connection__period.csv', 'connection_d_eee'),
+    ('connection__period__t.csv', 'connection_dt_eee'),
+    ('connection_capacity__period.csv', 'connection_capacity_ed_p'),
+    ('connection_cf__period.csv', 'connection_cf_d_e'),
+    ('connection_invest_marginal__period.csv', 'dual_invest_connection_d_e'),
+    ('costs__period__t.csv', 'costs_dt_p'),
+    ('costs_discounted.csv', 'costs_discounted_p'),
+    ('costs_discounted__solve.csv', ''),
+    ('discount_factors__period.csv', ''),
+    ('entity_annuity.csv', ''),
+    ('group__process__node__period.csv', 'flow_d_g'),
+    ('group__process__node__period__t.csv', 'flow_dt_g'),
+    ('group__unit__node_inertia__period__t.csv', 'nodeGroup_unit_node_inertia_dt_gee'),
+    ('group_flows__period.csv', 'nodeGroup_flows_d_gpe'),
+    ('group_flows__period__t.csv', 'nodeGroup_flows_dt_gpe'),
+    ('group_inertia__period__t.csv', 'nodeGroup_inertia_dt_g'),
+    ('group_inertia_largest_flow__period__t.csv', 'nodeGroup_inertia_largest_flow_dt_g'),
+    ('group_node__period.csv', 'nodeGroup_gd_p'),
+    ('group_node_VRE_share__period__t.csv', 'nodeGroup_VRE_share_dt_g'),
+    ('group_CO2__period.csv', 'CO2_d_g'),
+    ('node__period.csv', 'node_d_ep'),
+    ('node__period__t.csv', 'node_dt_ep'),
+    ('node_capacity__period.csv', 'node_capacity_ed_p'),
+    ('node_invest_marginal__period.csv', 'dual_invest_node_d_e'),
+    ('node_prices__period__t.csv', 'node_prices_dt_e'),
+    ('node_ramp__period__t.csv', ''),
+    ('node_state__period__t.csv', 'node_state_dt_e'),
+    ('process__period_co2.csv', 'process_co2_d_e'),
+    ('process__reserve__upDown__node__period__t.csv', 'process_reserve_upDown_node_dt_peppe'),
+    ('process__reserve__upDown__node__period_average.csv', 'process_reserve_average_d_peppe'),
+    ('reserve_price__upDown__group__period__t.csv', 'reserve_prices_dt_ppg'),
+    ('slack__capacity_margin__period.csv', 'nodeGroup_slack_capacity_margin_d_g'),
+    ('slack__downward__node_state__period__t.csv', 'node_slack_down_dt_e'),
+    ('slack__inertia_group__period__t.csv', 'nodeGroup_slack_inertia_dt_g'),
+    ('slack__nonsync_group__period__t.csv', 'nodeGroup_slack_nonsync_dt_g'),
+    ('slack__reserve__upDown__group__period__t.csv', 'nodeGroup_slack_reserve_dt_rug'),
+    ('slack__upward__node_state__period__t.csv', 'node_slack_up_dt_e'),
+    ('summary_solve.csv', ''),
+    ('unit__inputNode__period.csv', 'unit_inputNode_d_ee'),
+    ('unit__inputNode__period__t.csv', 'unit_inputNode_dt_ee'),
+    ('unit__outputNode__period.csv', 'unit_outputNode_d_ee'),
+    ('unit__outputNode__period__t.csv', 'unit_outputNode_dt_ee'),
+    ('unit_capacity__period.csv', 'unit_capacity_ed_p'),
+    ('unit_cf__inputNode__period.csv', 'unit_inputs_cf_d_ee'),
+    ('unit_cf__outputNode__period.csv', 'unit_outputs_cf_d_ee'),
+    ('unit_curtailment__outputNode__period__t.csv', 'unit_curtailment_outputNode_dt_ee'),
+    ('unit_curtailment_share__outputNode__period.csv', 'unit_curtailment_share_outputNode_d_ee'),
+    ('unit_invest_marginal__period.csv', 'dual_invest_unit_d_e'),
+    ('unit_online__period__t.csv', 'unit_online_dt_e'),
+    ('unit_online__period_average.csv', 'unit_online_average_d_e'),
+    ('unit_ramp__inputNode__dt.csv', 'unit_ramp_inputNode_dt_ee'),
+    ('unit_ramp__outputNode__dt.csv', 'unit_ramp_outputs_dt_ee'),
+    ('unit_startup__period.csv', 'unit_startup_d_e')
+]
+
 def read_outputs(output_dir):
     """
     Read solver output files.
@@ -158,14 +216,6 @@ def node_capacity(par, s, v, r):
     return result_flat, result_multi, 'node_capacity_ed_p'
 
 
-def model_co2(par, s, v, r):
-    """Model-wide CO2 emissions per period"""
-    # Calculate CO2 emissions in Mt
-    total_co2 = (r.emissions_co2_d * par.years_represented_d) / 1000000
-    result_multi = total_co2.to_frame(name="CO2 [Mt]")
-    return result_multi.reset_index(), result_multi, 'CO2_d'
-
-
 def group_node(par, s, v, r):
     """Group node results by period and time, then aggregate to period only"""
 
@@ -183,7 +233,7 @@ def group_node(par, s, v, r):
 
     for g in groups:
         # Get nodes in this group
-        group_nodes = s.group_node[s.group_node['group'].isin([g])]['node'].tolist()
+        group_nodes = s.group_node[s.group_node.get_level_values('group').isin([g])].get_level_values('node').tolist()
 
         # Filter out nodes with 'no_inflow' method
         if hasattr(s, 'node__inflow_method'):
@@ -375,12 +425,12 @@ def group_node_VRE_share(par, s, v, r):
     groups_with_inflow = []
     for g in s.groupOutput_node:
         # Get nodes in this group
-        group_nodes_df = s.group_node[s.group_node['group'] == g]
+        group_nodes_df = s.group_node[s.group_node.get_level_values('group') == g]
         if not group_nodes_df.empty:
             # Check if any node has inflow (not marked as 'no_inflow')
             if hasattr(s, 'node__inflow_method'):
                 no_inflow_nodes = set(n for (n, method) in s.node__inflow_method if method == 'no_inflow')
-                has_inflow = any(n not in no_inflow_nodes for n in group_nodes_df['node'])
+                has_inflow = any(n not in no_inflow_nodes for n in group_nodes_df.get_level_values('node'))
             else:
                 has_inflow = True
             if has_inflow:
@@ -401,12 +451,12 @@ def group_node_VRE_share(par, s, v, r):
     # Calculate for each group
     for g in groups_with_inflow:
         # Get nodes in this group with inflow
-        group_nodes_df = s.group_node[s.group_node['group'] == g]
+        group_nodes_df = s.group_node[s.group_node.get_level_values('group') == g]
         if hasattr(s, 'node__inflow_method'):
             no_inflow_nodes = set(n for (n, method) in s.node__inflow_method if method == 'no_inflow')
-            group_nodes = [n for n in group_nodes_df['node'] if n not in no_inflow_nodes]
+            group_nodes = [n for n in group_nodes_df.get_level_values('node') if n not in no_inflow_nodes]
         else:
-            group_nodes = group_nodes_df['node'].tolist()
+            group_nodes = group_nodes_df.get_level_values('node').tolist()
         node_cols = [col for col in par.node_inflow.columns.get_level_values(0) if col in group_nodes]
         
         # Total inflow to group nodes (vectorized)
@@ -434,44 +484,21 @@ def group_node_VRE_share(par, s, v, r):
     return results
 
 
-def group_process_CO2(par, s, v, r):
+def CO2(par, s, v, r):
     """Annualized CO2 Mt for groups by period"""
-    
-    # Get periods
-    periods = list(s.d_realized_period)
-    
-    # Filter groups that have processes with CO2 emissions
-    co2_processes = set(s.process__commodity__node_co2['process'])
-    group_processes_df = pd.DataFrame(s.group_process.tolist(), columns=['group', 'process'])
-    groups_with_co2 = group_processes_df[group_processes_df['process'].isin(co2_processes)]['group'].unique().tolist()
-    
-    if not groups_with_co2 or not periods:
-        result_multi = pd.DataFrame(index=pd.Index([], name='period'), columns=groups_with_co2)
-        return result_multi.reset_index(), result_multi, 'CO2_d_g'
-    
-    # Create index
-    result_multi = pd.DataFrame(index=pd.Index(periods, name='period'), columns=groups_with_co2, dtype=float)
-    
-    # Get process-commodity-node tuples
-    pcn_tuples = list(zip(s.process__commodity__node_co2['process'], 
-                         s.process__commodity__node_co2['commodity'], 
-                         s.process__commodity__node_co2['node']))
-    
-    # Calculate for each group
-    for g in groups_with_co2:
-        # Get processes in this group that have CO2 emissions
-        group_processes = [p for (grp, p) in s.group_process if grp == g]
-        
-        # Filter CO2 columns for processes in this group
-        co2_cols = [(p, c, n) for (p, c, n) in pcn_tuples if p in group_processes]
-        
-        if co2_cols:
-            # Sum emissions across processes and convert to Mt (divide by 1,000,000)
-            result_multi[g] = r.process_emissions_co2_d[co2_cols].sum(axis=1) / 1000000
-        else:
-            result_multi[g] = 0.0
-    
-    return result_multi.reset_index(), result_multi, 'CO2_d_g'
+    results = []
+
+    # Calculate CO2 emissions in Mt
+    total_co2 = ((r.emissions_co2_d * par.years_represented_d) / 1000000)
+    result_multi = total_co2.to_frame(name="CO2 [Mt]")
+    results.append((result_multi, result_multi, 'CO2_d'))
+
+    # Process co2 emissions    
+    results.append((r.process_emissions_co2_d.reset_index(), r.process_emissions_co2_d, 'process_co2_d_e'))
+
+    # Group co2 emissions
+    results.append((r.group_co2_d.reset_index(), r.group_co2_d, 'CO2_d_g'))
+    return results
 
 def group_process_node_flow(par, s, v, r):
     """Flow results for groups by period and time, then aggregate to period only"""
@@ -636,7 +663,7 @@ def connection(par, s, v, r):
     result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
 
     # Return period results
-    results.append((result_multi_d.reset_index(), result_multi_d, 'connection_d_eee'))
+    results.append((result_multi_d, result_multi_d, 'connection_d_eee'))
 
     return results 
 
@@ -756,9 +783,9 @@ def group_flows(par, s, v, r):
 
         # Storage flows (negative)
         group_nodes_in_state = s.group_node[
-            (s.group_node['group'] == g) &
-            s.group_node['node'].isin(s.node_state)
-        ]['node']
+            (s.group_node.get_level_values('group') == g) &
+            s.group_node.get_level_values('node').isin(s.node_state)
+        ].get_level_values('node')
         for n in group_nodes_in_state:
             if n in r.node_state_change_dt.columns:
                 result_multi_dt[g, 'storage_flow', g] = -r.node_state_change_dt[n]
@@ -914,6 +941,7 @@ def cost_summaries(par, s, v, r):
     
     # Common calculations
     discount_ops = par.discount_factor_operations_yearly
+    discount_invs = par.discount_factor_investment_yearly
     period_share = par.complete_period_share_of_year
     to_millions = 1000000
     
@@ -946,11 +974,11 @@ def cost_summaries(par, s, v, r):
     
     # 3. Annualized investment costs (d_realize_invest only)
     investment_costs = pd.DataFrame(index=s.d_realize_invest, dtype=float)
-    investment_costs['unit_investment_retirement'] = (r.costInvestUnit_d + r.costDivestUnit_d) / discount_ops / to_millions
-    investment_costs['connection_investment_retirement'] = (r.costInvestConnection_d + r.costDivestConnection_d) / discount_ops / to_millions
-    investment_costs['storage_investment_retirement'] = (r.costInvestState_d + r.costDivestState_d) / discount_ops / to_millions
-    investment_costs['fixed_cost_existing'] = r.costExistingFixed_d / discount_ops / to_millions
-    investment_costs['capacity_margin_penalty'] = r.costPenalty_capacity_margin_d.sum(axis=1) / discount_ops / to_millions
+    investment_costs['unit_investment_retirement'] = (r.costInvestUnit_d + r.costDivestUnit_d) / to_millions
+    investment_costs['connection_investment_retirement'] = (r.costInvestConnection_d + r.costDivestConnection_d) / to_millions
+    investment_costs['storage_investment_retirement'] = (r.costInvestState_d + r.costDivestState_d) / to_millions
+    investment_costs['fixed_cost_existing'] = r.costExistingFixed_d / to_millions
+    investment_costs['capacity_margin_penalty'] = r.costPenalty_capacity_margin_d.sum(axis=1) / to_millions
     
     # results.append((investment_costs.reset_index(), investment_costs, 'annualized_investment_costs_d', 'tbl_annualized_investment_costs_period'))
     
@@ -967,7 +995,11 @@ def cost_summaries(par, s, v, r):
     for col in dispatch_period.columns:
         summary[col] = dispatch_period[col].reindex(all_periods, fill_value=0)
     
-    results.append((summary.reset_index(), summary, 'annualized_costs_d_p'))
+    results.append((summary, summary, 'annualized_costs_d_p'))
+    
+    summary_all_years = summary.mul(par.years_represented_d, axis=0).sum(axis=0)
+
+    results.append((summary_all_years, summary_all_years, 'costs_discounted_p'))
     
     return results
 
@@ -1039,7 +1071,7 @@ def node_summary(par, s, v, r):
     for n in nodes:
         # Inflow
         if (n, 'no_inflow') not in s.node__inflow_method and n in s.node_balance.union(s.node_balance_period):
-            node_dt[n, 'inflow'] = par.node_inflow[(n,)].values
+            node_dt[n, 'inflow'] = par.node_inflow[n].values
         else:
             node_dt[n, 'inflow'] = 0
         
@@ -1093,7 +1125,7 @@ def node_summary(par, s, v, r):
     for n in nodes:
         # Inflow
         if (n, 'no_inflow') not in s.node__inflow_method and n in s.node_balance.union(s.node_balance_period):
-            node_d[n, 'inflow'] = r.node_inflow_d[(n,)]
+            node_d[n, 'inflow'] = r.node_inflow_d[n]
         else:
             node_d[n, 'inflow'] = 0
         
@@ -1213,8 +1245,8 @@ def inertia_results(par, s, v, r):
         total_inertia = pd.Series(0, index=s.dt_realize_dispatch, dtype=float)
         
         # Inertia from sources
-        s.group_node_inertia = s.group_node[s.group_node['group'].isin([g])]
-        s.process_source_inertia = s.process_source[s.process_source.get_level_values(1).isin(s.group_node_inertia['node'])]
+        s.group_node_inertia = s.group_node[s.group_node.get_level_values('group').isin([g])]
+        s.process_source_inertia = s.process_source[s.process_source.get_level_values(1).isin(s.group_node_inertia.get_level_values('node'))]
         s.pss_inertia = s.process_source_sink_alwaysProcess[s.process_source_sink_alwaysProcess.droplevel(2).isin(s.process_source_inertia)]
         for (p, source, sink) in s.pss_inertia:
             inertia_const = get_inertia_constant(p, source, 'source')
@@ -1223,7 +1255,7 @@ def inertia_results(par, s, v, r):
                 total_inertia += (flow_online * inertia_const).squeeze()
         
         # Inertia from sinks
-        s.process_sink_inertia = s.process_sink[s.process_sink.get_level_values(1).isin(s.group_node_inertia['node'])]
+        s.process_sink_inertia = s.process_sink[s.process_sink.get_level_values(1).isin(s.group_node_inertia.get_level_values('node'))]
         s.pss_inertia = s.process_source_sink_alwaysProcess[s.process_source_sink_alwaysProcess.droplevel(1).isin(s.process_sink_inertia)]
         for (p, source, sink) in s.pss_inertia:
             inertia_const = get_inertia_constant(p, sink, 'sink')
@@ -1498,10 +1530,9 @@ ALL_OUTPUTS = [
     unit_capacity,
     connection_capacity,
     node_capacity,
-    model_co2,
     group_node,
     group_node_VRE_share,
-    group_process_CO2,
+    CO2,
     group_process_node_flow,
     unit_outputNode,
     unit_inputNode,
@@ -1518,7 +1549,7 @@ ALL_OUTPUTS = [
 
 
 # writer.py - handles the actual writing
-def write_outputs(scenario_name, output_funcs=None, output_dir='output_raw', methods=['excel', 'db']):
+def write_outputs(scenario_name, output_funcs=None, output_dir='output_raw', methods=['excel', 'db', 'csv']):
     """
     output_funcs: list of functions to run, or None for ALL_OUTPUTS
     """
@@ -1586,6 +1617,32 @@ def write_outputs(scenario_name, output_funcs=None, output_dir='output_raw', met
     print(f"--- Plotted figures: {time.perf_counter() - start:.4f} seconds")
     start = time.perf_counter()
 
+    # Write to csv
+    if 'csv' in methods:
+        csv_dir = 'output_csv'
+        if not os.path.exists(csv_dir):
+            os.makedirs(csv_dir)
+
+        for csv_filename, table_name in result_set_map:
+            if table_name and table_name in results_flat:
+                df = results_multi[table_name]
+                if 'solve' not in df.index.names and 'period' in df.index.names:
+                    df.index = s.solve_period.join(df.index)
+                if not df.empty and len(df) > 0:
+                    # Add scenario name as first column
+                    #df_to_write = df.copy()
+                    #df_to_write.insert(0, 'solve', scenario_name)
+
+                    # Write to CSV with proper multi-index column handling
+                    csv_path = os.path.join(csv_dir, csv_filename)
+                    df = df.reset_index()
+                    df.columns.names = [None] * df.columns.nlevels
+                    df.to_csv(csv_path, index=False, float_format='%.12g')
+
+        print(f"Wrote to CSV: {time.perf_counter() - start:.4f} seconds")
+        start = time.perf_counter()
+        
+
     # Write to excel
     if 'excel' in methods:
         with pd.ExcelWriter('output' + scenario_name + '.xlsx') as writer:
@@ -1595,8 +1652,6 @@ def write_outputs(scenario_name, output_funcs=None, output_dir='output_raw', met
 
     print(f"Wrote to Excel: {time.perf_counter() - start:.4f} seconds")
     start = time.perf_counter()
-
-
 
 if __name__ == "__main__":
     write_outputs("foo")

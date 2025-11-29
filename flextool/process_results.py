@@ -28,13 +28,13 @@ def post_process_results(par, s, v):
         capacity_add = v.invest.mul(par.entity_unitsize[v.invest.columns])
         capacity_add_broadcasted = capacity_add.reindex(columns=par.entity_unitsize.index)
         for i, period in enumerate(periods):
-            r.entity_all_capacity.loc[period] = r.entity_all_capacity.loc[period].add(capacity_add_broadcasted.loc[periods[:i+1]].sum(), fill_value=0)
+            r.entity_all_capacity.loc[period] = r.entity_all_capacity.loc[period].add(capacity_add_broadcasted.loc[periods[:1].join(s.d_realize_invest)].sum(), fill_value=0)
       # Subtract divestments
     if not v.divest.empty:
         capacity_sub = v.divest.mul(par.entity_unitsize[v.divest.columns])
         capacity_sub_broadcasted = capacity_sub.reindex(columns=par.entity_unitsize.index)
         for i, period in enumerate(periods):
-            r.entity_all_capacity.loc[period] = r.entity_all_capacity.loc[period].sub(capacity_sub_broadcasted.loc[periods[:i+1]].sum(), fill_value=0)
+            r.entity_all_capacity.loc[period] = r.entity_all_capacity.loc[period].sub(capacity_sub_broadcasted.loc[periods[:1].join(s.d_realize_invest)].sum(), fill_value=0)
 
     # r_process_Online__dt - just sum the two DataFrames
     r.process_online_dt = v.online_linear.add(v.online_integer, fill_value=0)
@@ -281,106 +281,94 @@ def post_process_results(par, s, v):
     r.node_state_change_d = r_state_change_d
     
     # r_self_discharge_loss_dt - element-wise multiplication
-    r.self_discharge_loss_dt = pd.DataFrame(index=dt_dispatch_idx, columns=s.node_self_discharge, dtype=float)
-    for n in s.node_self_discharge:
-        if n in v.state.columns and n in par.node_self_discharge_loss.columns:
-            r.self_discharge_loss_dt[n] = (
-                v.state[n].reindex(dt_dispatch_idx) * 
-                par.node_self_discharge_loss[n].reindex(dt_dispatch_idx) * 
-                par.entity_unitsize[n]
-            )
+    r.self_discharge_loss_dt = v.state.mul(par.node_self_discharge_loss).mul(par.entity_unitsize, axis='columns', level=0)
     
     # r_self_discharge_loss_d - multiply by step_duration then sum
     r.self_discharge_loss_d = r.self_discharge_loss_dt.mul(step_duration, axis=0).groupby('period').sum()
 
     # r_cost_commodity_dt
-    commodity_node_columns = pd.MultiIndex.from_tuples(list(s.commodity_node), names=['commodity', 'node'])
-    r_commodity_cost = pd.DataFrame(index=r.flow_dt.index, columns=commodity_node_columns, dtype=float)
-    for (c, n) in s.commodity_node:
-        net_flow = pd.Series(0.0, index=r.flow_dt.index)
-        # Flows into node (p, n, sink)
-        for col in r.flow_dt.columns:
-            if col[1] == n:
-                net_flow += r.flow_dt[col]
-        # Flows out of node (p, source, n) - negative
-        for col in r.flow_dt.columns:
-            if col[2] == n:
-                net_flow -= r.flow_dt[col]
-        # Multiply by step_duration and price
-        cost = net_flow.copy()
-        for idx in cost.index:
-            if idx in par.step_duration.index and idx in par.commodity_price.index:
-                cost.loc[idx] *= par.step_duration.loc[idx] * par.commodity_price.loc[idx, c]
-        r_commodity_cost[(c, n)] = cost
-    r.cost_commodity_dt = r_commodity_cost
+    # Filter flows with isin
+    flow_from_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=1).isin(s.commodity_node.get_level_values(level=1))]]
+    flow_to_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=2).isin(s.commodity_node.get_level_values(level=1))]]
+    
+    par.commodity_price.columns = par.commodity_price.columns.join(s.commodity_node)
+    flow_from_commodity_node.columns.names = ['process', 'node', 'sink']
+    # Filter columns with join
+    flow_from_commodity_node.columns = flow_from_commodity_node.columns.join(par.commodity_price.columns)
+    flow_from_commodity = flow_from_commodity_node.groupby('commodity', axis=1).sum()
+    from_commodity_cost = flow_from_commodity.mul(par.commodity_price).mul(par.step_duration, axis=0)
+    flow_to_commodity_node.columns.names = ['process', 'source', 'node']
+    flow_to_commodity_node.columns = flow_to_commodity_node.columns.join(par.commodity_price.columns)
+    flow_to_commodity = flow_to_commodity_node.groupby('commodity', axis=1).sum()
+    to_commodity_cost = flow_to_commodity.mul(par.commodity_price).mul(par.step_duration, axis=0)
+    r.cost_commodity_dt = from_commodity_cost.sub(to_commodity_cost, fill_value=0)
 
     # r_process_commodity_d
-    process_commodity_columns = pd.MultiIndex.from_frame(s.process__commodity__node)
-    r.process_commodity_d = pd.DataFrame(index=s.d_realized_period, columns=process_commodity_columns)
-    for _, row in s.process__commodity__node.iterrows():
-        p, c, n = row['process'], row['commodity'], row['node']
-        net_flow = pd.Series(0.0, index=r.flow_d.index)
-        # Flows into node (p, n, sink)
-        for col in r.flow_d.columns:
-            if col[0] == p and col[1] == n:
-                net_flow += r.flow_d[col]
-        # Flows out of node (p, source, n) - negative
-        for col in r.flow_d.columns:
-            if col[0] == p and col[2] == n:
-                net_flow -= r.flow_d[col]
-        r.process_commodity_d[(p, c, n)] = net_flow
+    r.cost_commodity_d = r.cost_commodity_dt.groupby('period').sum()
      
     # r_process_emissions_co2_dt
-    process_commodity_node_columns = pd.MultiIndex.from_frame(s.process__commodity__node_co2[['process', 'commodity', 'node']])
-    r.process_emissions_co2_dt = pd.DataFrame(index=r.flow_dt.index, columns=process_commodity_node_columns, dtype=float)
-    for _, row in s.process__commodity__node_co2.iterrows():
-        p, c, n = row['process'], row['commodity'], row['node']
-        net_flow = pd.Series(0.0, index=r.flow_dt.index)
-        # Flows into node (p, n, sink)
-        for col in r.flow_dt.columns:
-            if col[0] == p and col[1] == n:
-                net_flow += r.flow_dt[col]
-        # Flows out of node (p, source, n) - negative
-        for col in r.flow_dt.columns:
-            if col[0] == p and col[2] == n:
-                net_flow -= r.flow_dt[col]
-        # Multiply by step_duration and co2_content
-        emissions = net_flow.copy()
-        for idx in emissions.index:
-            if idx in par.step_duration.index:
-                emissions.loc[idx] *= (par.step_duration.loc[idx] * 
-                                    par.commodity_co2_content.loc[c])
-        r.process_emissions_co2_dt[(p, c, n)] = emissions
-    
+    # Create a DataFrame with (process, node, commodity) mapping for filtering
+    pcn_map = s.process__commodity__node_co2[['process', 'node', 'commodity']].copy()
+    # Get flow columns as DataFrame for merging
+    flow_cols = r.flow_dt.columns.to_frame(index=False)
+
+    # Flows into node: (process, source, sink) where (process, source) matches (process, node)
+    flow_into_cols = flow_cols.merge(pcn_map, left_on=['process', 'source'], right_on=['process', 'node'], how='inner')
+    flow_into_node = r.flow_dt.iloc[:, flow_into_cols.index].copy()
+    flow_into_node.columns = pd.MultiIndex.from_frame(flow_into_cols[['process', 'commodity', 'node']])
+
+    # Flows out of node: (process, source, sink) where (process, sink) matches (process, node)
+    flow_out_cols = flow_cols.merge(pcn_map, left_on=['process', 'sink'], right_on=['process', 'node'], how='inner')
+    flow_out_of_node = r.flow_dt.iloc[:, flow_out_cols.index].copy()
+    flow_out_of_node.columns = pd.MultiIndex.from_frame(flow_out_cols[['process', 'commodity', 'node']])
+
+    # Group by (process, commodity, node) and sum (handles duplicate columns)
+    flow_into_grouped = flow_into_node.groupby(level=[0, 1, 2], axis=1).sum()
+    flow_out_grouped = flow_out_of_node.groupby(level=[0, 1, 2], axis=1).sum()
+
+    # Net flow = into - out
+    net_flow = flow_into_grouped.sub(flow_out_grouped, fill_value=0)
+
+    # Multiply by step_duration and co2_content
+    net_flow_with_duration = net_flow.mul(par.step_duration, axis=0)
+    commodity_level = net_flow_with_duration.columns.get_level_values(1)
+    co2_values = commodity_level.map(par.commodity_co2_content)
+    r.process_emissions_co2_dt = net_flow_with_duration.mul(co2_values, axis=1)
+
+    # Add 'type' level to process_emissions_co2_dt columns
+    cols_df = r.process_emissions_co2_dt.columns.to_frame(index=False)
+    cols_df['type'] = 'unit'  # default
+    cols_df.loc[cols_df['process'].isin(s.process_connection), 'type'] = 'connection'
+    r.process_emissions_co2_dt.columns = pd.MultiIndex.from_frame(
+        cols_df[['type', 'process', 'commodity', 'node']]
+    )    
+
     # r_process_emissions_co2_d - sum and divide by complete_period_share_of_year
     r.process_emissions_co2_d = r.process_emissions_co2_dt.groupby(level='period').sum()
     r.process_emissions_co2_d = r.process_emissions_co2_d.div(par.complete_period_share_of_year, axis=0)
     
     # r_emissions_co2_d - sum processes over period
     r.emissions_co2_d = r.process_emissions_co2_d.sum(axis=1)
+    r.emissions_co2 = r.process_emissions_co2_d.sum(axis=0)
 
     # r_emissions_co2_dt - sum processes over period__time
     r.emissions_co2_dt = r.process_emissions_co2_dt.sum(axis=1)
 
-    # r_cost_co2_dt
-    r.cost_co2 = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
-    r.group_emissions_co2_dt = pd.DataFrame(
-        index=r.process_emissions_co2_dt.index,
-        columns=pd.MultiIndex.from_tuples([(g,) for g in s.group_co2_price['group']], names=['group'])
-    )
-    for group in s.group_co2_price['group']:
-        # Get nodes for this group
-        nodes_in_group = s.group_node[s.group_node['group'].isin([group])]['node']
-        prices = par.group_co2_price[group]
-        # Sum all columns where node matches
-        total = pd.Series(0.0, index=r.process_emissions_co2_dt.index)
-        for col in r.process_emissions_co2_dt.columns:
-            node = col[2]  # node is third level in (process, commodity, node)
-            if node in nodes_in_group:
-                total += r.process_emissions_co2_dt[col]
-        r.group_emissions_co2_dt[group] = prices.mul(total, axis=0)
-
-    r.cost_co2_dt = r.group_emissions_co2_dt.sum(axis=1)
+    # r_group co2
+    s.group_node_co2 = s.group_node[s.group_node.get_level_values('group').isin(par.group_co2_price.columns)]
+    group_process_co2_columns = r.process_emissions_co2_dt.columns.join(s.group_node_co2)
+    r.group_process_emissions_co2_dt = pd.DataFrame(index=r.process_emissions_co2_dt.index, columns=group_process_co2_columns)
+    for col in group_process_co2_columns:
+        r.group_process_emissions_co2_dt[col] = r.process_emissions_co2_dt[col[:4]]
+    # Sum emissions by group (handles multiple columns per group)
+    r.group_co2_dt = r.group_process_emissions_co2_dt.groupby('group', axis=1).sum()
+    r.group_co2_d = r.group_co2_dt.groupby('period', axis=0).sum().div(par.complete_period_share_of_year, axis=0)
+    # Multiply by CO2 prices for each group
+    r.group_cost_co2_dt = r.group_co2_dt.mul(par.group_co2_price)
+    r.group_cost_co2_d = r.group_co2_d.mul(par.group_co2_price)
+    # As CO2 price is set on groups, then the total co2 cost needs to be summed over groups
+    r.cost_co2_dt = r.group_cost_co2_dt.sum(axis=1)
+    r.cost_co2_d = r.group_cost_co2_d.groupby('period', axis=0).sum()
     
     # r_cost_process_other_operational_cost_dt
     r.cost_process_other_operational_cost_dt = pd.DataFrame(0.0, index=r.flow_dt.index, columns=s.process, dtype=float)
@@ -464,7 +452,7 @@ def post_process_results(par, s, v):
     # r_cost_entity_existing_fixed
     combined_fixed = pd.concat([par.process_fixed_cost, par.node_fixed_cost], axis=1).rename_axis('entity', axis=1)
     r.cost_entity_existing_fixed = (r.entity_all_capacity * combined_fixed * 1000).mul(par.discount_factor_operations_yearly, axis=0)
-
+    
     # Aggregate costs
     r.costOper_dt = (r.cost_commodity_dt.sum(axis=1) + 
                         r.cost_process_other_operational_cost_dt.sum(axis=1) + 
@@ -481,10 +469,6 @@ def post_process_results(par, s, v):
     # Period aggregations
     r.cost_process_other_operational_cost_d = r.cost_process_other_operational_cost_dt.groupby('period').sum()
     
-    r.cost_co2_d = (r.cost_co2_dt.groupby('period').sum() 
-    if not r.cost_co2_dt.empty 
-    else pd.Series(0.0, index=s.d_realized_period))
-
     r.cost_variable_d = r.cost_process_other_operational_cost_d.sum(axis=1)
 
     r.cost_startup_d = (r.cost_startup_dt[
@@ -544,40 +528,15 @@ def post_process_results(par, s, v):
     # potentialVREgen_dt
     # Filter VRE processes that are in process_sink and have upper_limit profile method
     vre_with_sink = s.process_VRE[s.process_VRE.isin(s.process_sink)]
-
-    if len(vre_with_sink) > 0:
-        # Merge to find profiles for each VRE process-sink pair
-        profile_methods = s.process__source__sink__profile__profile_method[
-            s.process__source__sink__profile__profile_method['method'] == 'upper_limit'
-        ].set_index(['process', 'sink'])
-
-        # Create DataFrame with multi-index columns
-        r.potentialVREgen_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=vre_with_sink, dtype=float)
-
-        # Vectorized calculation for each (process, node) pair
-        for (p, n) in vre_with_sink:
-            if (p, n) in profile_methods.index:
-                f = profile_methods.loc[(p, n), 'profile']
-                if (f in par.profile.columns and
-                    p in r.entity_all_capacity.columns and
-                    p in par.process_availability.columns):
-                    r.potentialVREgen_dt[(p, n)] = (
-                        par.profile[f].squeeze() *
-                        par.process_availability[p].squeeze() *
-                        r.entity_all_capacity[p].squeeze()
-                    )
-    else:
-        r.potentialVREgen_dt = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
+    vre_node_profile = vre_with_sink.join(s.process__node__profile__profile_method)
+    vre_node_profile_upper = vre_node_profile[vre_node_profile.get_level_values('profile_method').isin(['upper_limit'])]
+    vre_profiles_in_use = par.profile[vre_node_profile_upper.get_level_values('profile').unique()]
+    # Add process, node and profile_method levels to the profiles in use
+    vre_profiles_in_use.columns = vre_profiles_in_use.columns.join(vre_node_profile_upper)
+    r.potentialVREgen_dt = vre_profiles_in_use.mul(par.process_availability).mul(r.entity_all_capacity, axis=1, level=0).droplevel(axis=1, level=['profile', 'profile_method'])
 
     # potentialVREgen - aggregate by period
-    if not r.potentialVREgen_dt.empty and len(r.potentialVREgen_dt.columns) > 0:
-        r.potentialVREgen = r.potentialVREgen_dt.groupby(level='period').sum()
-        # Filter to only realized periods if needed
-        r.potentialVREgen = r.potentialVREgen[
-            r.potentialVREgen.index.isin(s.d_realized_period)
-        ]
-    else:
-        r.potentialVREgen = pd.DataFrame(index=s.d_realized_period, dtype=float)
+    r.potentialVREgen_d = r.potentialVREgen_dt.groupby('period').sum()
 
     # r_group_output__group_aggregate_Unit_to_group__dt
     r_unit_to_group = {}
@@ -863,6 +822,7 @@ def drop_levels(par, s, v):
     par.complete_period_share_of_year = par.complete_period_share_of_year.droplevel('solve')
     par.complete_period_share_of_year = par.complete_period_share_of_year[~par.complete_period_share_of_year.index.duplicated(keep='first')]
 
+    s.solve_period = s.period
     s.period = s.period.droplevel('solve')
     s.period__time_first = s.period__time_first.droplevel('solve')
     s.period_first_of_solve = s.period_first_of_solve.droplevel('solve')

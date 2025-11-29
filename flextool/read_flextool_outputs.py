@@ -61,26 +61,24 @@ def read_variables(output_dir):
 
     # Create multi-index for variables with single header row
     v.state.columns = pd.MultiIndex.from_product([v.state.columns], names=['node'])
-    v.online_linear.columns = pd.MultiIndex.from_product([v.online_linear.columns], names=['process'])
-    v.startup_linear.columns = pd.MultiIndex.from_product([v.startup_linear.columns], names=['process'])
-    v.shutdown_linear.columns = pd.MultiIndex.from_product([v.shutdown_linear.columns], names=['process'])
-    v.online_integer.columns = pd.MultiIndex.from_product([v.online_integer.columns], names=['process'])
-    v.startup_integer.columns = pd.MultiIndex.from_product([v.startup_integer.columns], names=['process'])
-    v.shutdown_integer.columns = pd.MultiIndex.from_product([v.shutdown_integer.columns], names=['process'])
+    v.online_linear.columns.name = 'process'
+    v.startup_linear.columns.name = 'process'
+    v.shutdown_linear.columns.name = 'process'
+    v.online_integer.columns.name = 'process'
+    v.startup_integer.columns.name = 'process'
+    v.shutdown_integer.columns.name = 'process'
     v.q_state_up.columns.name = 'node'
     v.q_state_down.columns.name = 'node'
     v.q_inertia.columns.name = 'group'
     v.q_non_synchronous.columns.name = 'group'
     v.q_state_up_group.columns.name = 'group'
     v.q_capacity_margin.columns.name = 'group'
-    # v.invest.columns = pd.MultiIndex.from_product([v.invest.columns], names=['entity'])
     v.invest.columns.name = 'entity'
-    # v.divest.columns = pd.MultiIndex.from_product([v.divest.columns], names=['entity'])
     v.divest.columns.name = 'entity'
-    v.dual_node_balance.columns = pd.MultiIndex.from_product([v.dual_node_balance.columns], names=['node'])
-    v.dual_invest_unit.columns = pd.MultiIndex.from_product([v.dual_invest_unit.columns], names=['unit'])
-    v.dual_invest_connection.columns = pd.MultiIndex.from_product([v.dual_invest_connection.columns], names=['connection'])
-    v.dual_invest_node.columns = pd.MultiIndex.from_product([v.dual_invest_node.columns], names=['node'])
+    v.dual_node_balance.columns.name = 'node'
+    v.dual_invest_unit.columns.name = 'unit'
+    v.dual_invest_connection.columns.name = 'connection'
+    v.dual_invest_node.columns.name = 'node'
 
     # Add multi-index to variables with multiple header rows
     v.flow.columns = pd.MultiIndex.from_tuples(
@@ -208,22 +206,23 @@ def read_parameters(output_dir):
     #)
 
     # Create a multi-index for those that have only one index in the header rows (i.e. columns)
-    p.process_slope.columns = pd.MultiIndex.from_product([p.process_slope.columns], names=['process'])
-    p.process_section.columns = pd.MultiIndex.from_product([p.process_section.columns], names=['process'])
-    p.process_availability.columns = pd.MultiIndex.from_product([p.process_availability.columns], names=['process'])
-    p.node_self_discharge_loss.columns = pd.MultiIndex.from_product([p.node_self_discharge_loss.columns], names=['node'])
+    p.process_slope.columns.name = 'process'
+    p.process_section.columns.name = 'process'
+    p.process_availability.columns.name = 'process'
+    p.node_self_discharge_loss.columns.name = 'node'
+    # p.years_represented_d.columns.name = 'period'
     p.node_penalty_up.columns.name = 'node'
     p.node_penalty_down.columns.name = 'node'
-    p.node_inflow.columns = pd.MultiIndex.from_product([p.node_inflow.columns], names=['node'])
-    p.commodity_price.columns = pd.MultiIndex.from_product([p.commodity_price.columns], names=['commodity'])
-    p.group_co2_price.columns = pd.MultiIndex.from_product([p.group_co2_price.columns], names=['group'])
-    p.profile.columns = pd.MultiIndex.from_product([p.profile.columns], names=['profile'])
+    p.node_inflow.columns.name = 'node'
+    p.commodity_price.columns.name = 'commodity'
+    p.group_co2_price.columns.name = 'group'
+    p.profile.columns.name = 'profile'
     p.entity_max_units.columns.name = 'entity'
     p.entity_all_existing.columns.name = 'entity'
-    p.process_startup_cost.columns = pd.MultiIndex.from_product([p.process_startup_cost.columns], names=['process'])
+    p.process_startup_cost.columns.name = 'process'
     p.process_fixed_cost.columns.name = 'process'
     p.node_fixed_cost.columns.name = 'node'
-    p.node_annual_flow.columns = pd.MultiIndex.from_product([p.node_annual_flow.columns], names=['node'])
+    p.node_annual_flow.columns.name = 'node'
     p.group_penalty_inertia.columns.name = 'group'
     p.group_penalty_non_synchronous.columns.name = 'group'
     p.group_penalty_capacity_margin.columns.name = 'group'
@@ -234,7 +233,7 @@ def read_parameters(output_dir):
     p.entity_unitsize.name = 'entity'
     p.node_capacity_for_scaling.columns.name = 'node'
     p.group_capacity_for_scaling.columns.name = 'group'
-    p.node.columns = pd.MultiIndex.from_product([p.node.columns], names=['node'])
+    p.node.columns.name = 'node'
 
     return p
 
@@ -271,6 +270,7 @@ def read_sets(output_dir):
     s.ed_invest = pd.MultiIndex.from_frame(pd.read_csv(output_path / 'set_ed_invest.csv'))
     s.ed_divest = pd.MultiIndex.from_frame(pd.read_csv(output_path / 'set_ed_divest.csv'))
     s.edd_invest = pd.MultiIndex.from_frame(pd.read_csv(output_path / 'set_edd_invest.csv'))
+    s.process__node__profile__profile_method = pd.MultiIndex.from_frame(pd.read_csv(output_path / 'set_process__node__profile__profile_method.csv'))
 
     # Process topology sets
     s.process_source_sink = pd.read_csv(output_path / 'set_process_source_sink.csv')
@@ -364,7 +364,7 @@ def read_sets(output_dir):
     s.group_output__group_aggregate__process__connection__to_node = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__connection__to_node.csv')
     s.group_output__group_aggregate__process__node__to_connection = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__node__to_connection.csv')
     s.group_output__process_fully_inside = pd.read_csv(output_path / 'set_group_output__process_fully_inside.csv').set_index(['group', 'process']).index
-    s.group_node = pd.read_csv(output_path / 'set_group_node.csv')
+    s.group_node = pd.read_csv(output_path / 'set_group_node.csv').set_index(['group', 'node']).index
     s.group_process = pd.read_csv(output_path / 'set_group_process.csv').set_index(['group', 'process']).index
     s.group_process_node = pd.read_csv(output_path / 'set_group_process_node.csv').set_index(['group', 'process', 'node']).index
 

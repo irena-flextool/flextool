@@ -3,7 +3,8 @@
         "version": 13,
         "description": "",
         "settings": {
-            "enable_execute_all": false
+            "enable_execute_all": false,
+            "store_external_paths_as_relative": false
         },
         "specifications": {
             "Importer": [
@@ -45,6 +46,11 @@
                     "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Tool/migrate_database.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/scenario_comparison.json"
                 }
             ]
         },
@@ -282,7 +288,6 @@
                                 "5weeks_invest_fullYear_dispatch_coal_wind": false,
                                 "aggregate_outputs_network_coal_wind_chp": false,
                                 "all": false,
-                                "all_tech": true,
                                 "base": false,
                                 "capacity_margin": false,
                                 "coal": false,
@@ -309,6 +314,7 @@
                                 "multi_year_one_solve": false,
                                 "multi_year_one_solve_battery": false,
                                 "multi_year_one_solve_co2_limit": false,
+                                "network_all_tech": false,
                                 "network_coal_wind": false,
                                 "network_coal_wind_battery_co2_fullYear_availability": false,
                                 "network_coal_wind_battery_invest_cumulative": false,
@@ -318,6 +324,7 @@
                                 "network_coal_wind_reserve_n_1": false,
                                 "network_wind_coal_battery_fullYear_invest": false,
                                 "scale_to_peak_flow": false,
+                                "test_a_lot": false,
                                 "water_pump": false,
                                 "water_pump_delayed": false,
                                 "wind": false,
@@ -325,9 +332,13 @@
                                 "wind_battery_invest": false,
                                 "wind_battery_invest_lifetime_choice": false,
                                 "wind_battery_invest_lifetime_renew": false,
-                                "wind_battery_invest_lifetime_renew_4solve": false
+                                "wind_battery_invest_lifetime_renew_4solve": false,
+                                "y2020_2029_1x10y": false,
+                                "y2020_2029_2x5y": true
                             },
                             "alternative_filter": {
+                                "1x10y": false,
+                                "2x5y": false,
                                 "5weeks": false,
                                 "5weeks_only_invest": false,
                                 "aggregate_outputs": false,
@@ -458,6 +469,51 @@
                         "scenario_filter": true
                     }
                 }
+            },
+            {
+                "name": "from FlexTool to scenario info",
+                "from": [
+                    "FlexTool",
+                    "right"
+                ],
+                "to": [
+                    "scenario info",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from scenario info to scenario comparison",
+                "from": [
+                    "scenario info",
+                    "right"
+                ],
+                "to": [
+                    "scenario comparison",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {
+                        "db_url@scenario info": {
+                            "scenario_filter": {},
+                            "alternative_filter": {
+                                "Base": true
+                            }
+                        }
+                    },
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
             }
         ],
         "jumps": []
@@ -466,16 +522,16 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -143.73852182762346,
-            "y": -44.86761682382257,
+            "x": -145.76374479069105,
+            "y": -46.900291730497685,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
-                "port": "",
+                "port": null,
                 "database": {
                     "type": "path",
                     "relative": true,
-                    "path": "input_data.sqlite"
+                    "path": "input_data_save.sqlite"
                 },
                 "schema": ""
             }
@@ -503,7 +559,7 @@
             "url": {
                 "dialect": "sqlite",
                 "host": "",
-                "port": "",
+                "port": null,
                 "database": {
                     "type": "path",
                     "relative": true,
@@ -559,6 +615,8 @@
                     "path": "plot_settings/single_dataset/default_result_plots.json"
                 }
             ],
+            "file_patterns": [],
+            "directory_references": [],
             "db_references": []
         },
         "Open_summary": {
@@ -584,6 +642,8 @@
                     "path": "example_input.xlsx"
                 }
             ],
+            "file_patterns": [],
+            "directory_references": [],
             "db_references": []
         },
         "Examples": {
@@ -594,7 +654,7 @@
             "url": {
                 "dialect": "sqlite",
                 "host": "",
-                "port": "",
+                "port": null,
                 "database": {
                     "type": "path",
                     "relative": true,
@@ -607,7 +667,7 @@
             "type": "Importer",
             "description": "",
             "x": -330.6666295368962,
-            "y": -45.55749518840386,
+            "y": -46.57010666993769,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "on_conflict": "replace",
@@ -628,14 +688,18 @@
         "FlexTool": {
             "type": "Tool",
             "description": "",
-            "x": -12.55192794070453,
-            "y": -44.07720561930852,
+            "x": -27.852879317823724,
+            "y": -46.11733246959109,
             "specification": "FlexTool3",
             "execute_in_work": false,
             "cmd_line_args": [
                 {
                     "type": "resource",
                     "arg": "db_url@Input_data"
+                },
+                {
+                    "type": "resource",
+                    "arg": "db_url@scenario info"
                 }
             ],
             "kill_completed_processes": false,
@@ -652,6 +716,39 @@
                 {
                     "type": "resource",
                     "arg": "db_url@Input_data"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "scenario info": {
+            "type": "Data Store",
+            "description": "",
+            "x": 105.05162890233694,
+            "y": -154.02957719633324,
+            "url": {
+                "dialect": "sqlite",
+                "host": "",
+                "port": null,
+                "database": {
+                    "type": "path",
+                    "relative": true,
+                    "path": "scenario_info.sqlite"
+                },
+                "schema": ""
+            }
+        },
+        "scenario comparison": {
+            "type": "Tool",
+            "description": "",
+            "x": 250.25749506688786,
+            "y": -154.02957719633332,
+            "specification": "scenario comparison",
+            "execute_in_work": true,
+            "cmd_line_args": [
+                {
+                    "type": "resource",
+                    "arg": "db_url@scenario info"
                 }
             ],
             "kill_completed_processes": false,

@@ -495,6 +495,8 @@ def load_csvs_into_scenario_dataframe(scenario_folders, csv_filename, row_level_
                 index_col=list(range(n_row_index_levels))
             )
 
+            df = df.astype(float)
+
             # Ensure columns are MultiIndex
             if not isinstance(df.columns, pd.MultiIndex):
                 df.columns = pd.MultiIndex.from_tuples([(col,) for col in df.columns])

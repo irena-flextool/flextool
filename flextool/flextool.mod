@@ -1219,17 +1219,18 @@ param group_capacity_for_scaling{g in group, d in period_in_use} := 1;
 #param group_capacity_for_scaling{g in group, d in period_in_use} := ( if   sum{(g, n) in group_node} node_capacity_for_scaling[n, d]
 #                                                               then sum{(g, n) in group_node} node_capacity_for_scaling[n, d]
 #															   else 1 );
-
 param p_disc_rate := (if sum{m in model} 1 then max{m in model} p_discount_rate[m] else 0.05);
 param p_disc_offset_investment := (if sum{m in model} 1 then max{m in model} p_discount_offset_investment[m] else 0);
 param p_disc_offset_operations := (if sum{m in model} 1 then max{m in model} p_discount_offset_operations[m] else 0.5);
+param p_years_until_dispatch{(d, y) in period__year} := sum{y2 in year : y2 < y} (p_years_represented[d, y2]) + p_years_represented[d, y] / 2;
+param p_years_until_invest{(d, y) in period__year} := sum{y2 in year : y2 < y} (p_years_represented[d, y2]);
 param p_discount_factor_investment_yearly{d in period} :=
 		if sum{y in year} p_years_represented[d, y]
-		then sum{(d, y) in period__year} ( ( 1/(1 + p_disc_rate) ^ (p_discount_years[d] + p_disc_offset_investment) ) * p_years_represented[d, y] )
+		then sum{(d, y) in period__year} ( 1/(1 + p_disc_rate) ^ (p_years_until_invest[d, y]) )
 		else 1;
 param p_discount_factor_operations_yearly{d in period_in_use} :=
 		if sum{y in year} p_years_represented[d, y]
-		then sum{(d, y) in period__year} ( ( 1/(1 + p_disc_rate) ^ (p_years_from_solve[d, y] + p_disc_offset_operations) ) * p_years_represented[d, y] )
+		then sum{(d, y) in period__year} ( 1/(1 + p_disc_rate) ^ (p_years_until_dispatch[d, y]) )
 		else 1;
 
 # Check for division by zero
@@ -1273,7 +1274,7 @@ param ed_entity_annual_discounted{e in entityInvest, d in period_invest} :=
 				    ( p_discount_factor_investment_yearly[d_all] )
 		  )
 ;
-
+display period_in_use, p_discount_years, p_discount_factor_investment_yearly;
 param ed_entity_annual_divest{e in entityDivest, d in period_invest} :=
         + sum{m in invest_method : (e, m) in entity__invest_method && e in node && m not in divest_method_not_allowed}
           ( + (pdNode[e, 'salvage_value', d] * 1000 * ( pdNode[e, 'interest_rate', d]
@@ -2006,6 +2007,7 @@ minimize total_cost:
 	  * p_discount_factor_operations_yearly[d]
 ) * scale_the_objective
 ;
+display pd_branch_weight, ed_entity_annual, ed_entity_annual_discounted, complete_period_share_of_year;
 param w_total_cost := gmtime() - datetime0 - setup1 - w_calc_slope - setup2;
 display w_total_cost;
 printf("\nConstraint generation:\n");
@@ -2250,7 +2252,7 @@ display indirect;
 
 s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t]
-      + sum{(p, r, 'up', sink) in process_reserve_upDown_node} v_reserve[p, r, 'up', sink, d, t]
+      + sum{(p, r, 'up', sink) in process_reserve_upDown_node_active} v_reserve[p, r, 'up', sink, d, t]
 	) * 1000
   <=
   + pdtProfile[f, d, t]
@@ -2264,7 +2266,7 @@ s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__s
 
 s.t. profile_flow_lower_limit {(p, source, sink, f, 'lower_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t]
-      - sum{(p, r, 'down', sink) in process_reserve_upDown_node} v_reserve[p, r, 'down', sink, d, t]
+      - sum{(p, r, 'down', sink) in process_reserve_upDown_node_active} v_reserve[p, r, 'down', sink, d, t]
     ) * 1000
   >=
   + pdtProfile[f, d, t]
@@ -4281,6 +4283,12 @@ if p_model['solveFirst'] then {
       printf "%s\n", p >> "output_raw/set_process_profile.csv";
   }
 
+  # Process process__node__profile__profile_method set
+  printf "process,node,profile,profile_method\n" > "output_raw/set_process__node__profile__profile_method.csv";
+  for {(p, n, prof, m) in process__node__profile__profile_method} {
+      printf "%s,%s,%s,%s\n", p, n, prof, m >> "output_raw/set_process__node__profile__profile_method.csv";
+  }
+
   # Process method sets
   printf "process,method\n" > "output_raw/set_process_method.csv";
   for {(p, m) in process_method} {
@@ -4881,7 +4889,7 @@ param r_cost_entity_divest_d{(e, d) in ed_divest} :=
 
 param r_cost_entity_existing_fixed{e in entity, d in period_in_use} :=
   + ( + p_entity_all_existing[e, d]
-      + sum {(e, d_invest, d) in edd_invest: d_invest != d} v_invest[e, d_invest] * p_entity_unitsize[e])
+      + sum {(e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e])
       * ( + if e in process then pdProcess[e, 'fixed_cost', d] else 0
 	      + if e in node then pdNode[e, 'fixed_cost', d] else 0
 		)
@@ -6781,4 +6789,7 @@ display v_invest, v_divest, solve_current, total_cost;
 #display p_entity_all_existing;
 #display test_dt;
 #display {n in nodeState, (d,t) in period__time_last: (n, 'use_reference_value') in node__storage_solve_horizon_method}: pdtNode[n,'storage_state_reference_value',d,t];
+#set foo{d in period} := (1..p_years_represented[d]);
+display p_discount_factor_investment_yearly;
+
 end;
