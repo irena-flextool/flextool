@@ -566,6 +566,23 @@ table data IN 'CSV' 'solve_data/period_with_history.csv' : period_with_history <
 table data IN 'CSV' 'solve_data/realized_invest_periods_of_current_solve.csv' : d_realize_invest <- [period];
 table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_invest <- [period];
 table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
+
+# Clear some files in the first solve
+if p_model["solveFirst"] == 1 then {
+  printf "entity,p_entity_invested\n" > "solve_data/p_entity_invested.csv";
+  printf "entity,p_entity_divested\n" > "solve_data/p_entity_divested.csv";
+  printf "entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n" > "solve_data/p_entity_period_existing_capacity.csv";
+  printf "node, period, step, ndt_fix_storage_price\n" > "solve_data/fix_storage_price.csv";
+  printf "node, period, step, ndt_fix_storage_quantity\n" > "solve_data/fix_storage_quantity.csv";
+  printf "node, period, step, ndt_fix_storage_usage\n" > "solve_data/fix_storage_usage.csv";
+  printf "node, p_roll_continue_state\n" > "solve_data/p_roll_continue_state.csv";
+  printf 'param_costs,costs_discounted\n' > "output/costs_discounted.csv";
+  printf 'param_co2\n' > "output/co2.csv";
+  printf 'period\n' > 'solve_data/period_capacity.csv';
+  printf '' >> "output/costs_discounted.csv";  # To close the previous file and update the changes
+}
+
+# Further parameters from the solve loop
 table data IN 'CSV' 'solve_data/p_nested_model.csv' : [modelParam], p_nested_model;
 table data IN 'CSV' 'solve_data/realized_dispatch.csv' : dt_realize_dispatch_input <- [period, step];
 table data IN 'CSV' 'solve_data/fix_storage_timesteps.csv' : dt_fix_storage_timesteps <- [period, step];
@@ -607,7 +624,7 @@ table data IN 'CSV' 'solve_data/period_capacity.csv' : period_capacity <- [perio
 
 #check
 set nodeBalancePeriod := {n in node : (n, 'balance_within_period') in node__node_type};
-display d_fix_storage_period, d_realized_period;
+
 set ed_history_realized_first := {e in entity, d in (d_realize_invest union d_fix_storage_period union d_realized_period) : (d,d) in period__branch && p_model["solveFirst"]};
 set ed_history_realized := ed_history_realized_read union ed_history_realized_first;
 
@@ -2007,7 +2024,6 @@ minimize total_cost:
 	  * p_discount_factor_operations_yearly[d]
 ) * scale_the_objective
 ;
-display pd_branch_weight, ed_entity_annual, ed_entity_annual_discounted, complete_period_share_of_year;
 param w_total_cost := gmtime() - datetime0 - setup1 - w_calc_slope - setup2;
 display w_total_cost;
 printf("\nConstraint generation:\n");
@@ -5463,8 +5479,8 @@ for {s in solve_current}
     printf '%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n',
       s,
 	  sum{d in d_realize_invest} (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / 1000000,
-    sum{d in d_realize_invest} (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / 1000000,
-    sum{d in d_realize_invest} (r_costInvestState_d[d] + r_costDivestState_d[d]) / 1000000,
+      sum{d in d_realize_invest} (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / 1000000,
+      sum{d in d_realize_invest} (r_costInvestState_d[d] + r_costDivestState_d[d]) / 1000000,
 	  sum{d in d_realized_period} (r_costExistingFixed_d[d]) / 1000000,
 	  sum{d in d_realized_period} (r_cost_commodity_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) / 1000000,
 	  sum{d in d_realized_period} (r_cost_co2_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) / 1000000,
@@ -5483,21 +5499,21 @@ for {s in solve_current}
 printf 'Write discounted total cost for each cost type summed for all solves so far...\n';
 param fn_costs_discounted symbolic := "output/costs_discounted.csv";
 printf 'param_costs,costs_discounted\n' > fn_costs_discounted;
-printf '"unit investment/retirement",%.12g\n', costs_discounted["unit investment/retirement"] + sum{d in d_realize_invest} ((r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"connection investment/retirement",%.12g\n', costs_discounted["connection investment/retirement"] + sum{d in d_realize_invest} ((r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"storage investment/retirement",%.12g\n', costs_discounted["storage investment/retirement"] + sum{d in d_realize_invest} ((r_costInvestState_d[d] + r_costDivestState_d[d]) * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"fixed cost of existing assets",%.12g\n', costs_discounted["fixed cost of existing assets"] + sum{d in d_realized_period} (r_costExistingFixed_d[d] * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"commodity",%.12g\n', costs_discounted["commodity"] + sum{d in d_realized_period} (r_cost_commodity_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d] * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"CO2",%.12g\n', costs_discounted["CO2"] + sum{d in d_realized_period} (r_cost_co2_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d] * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"variable cost",%.12g\n', costs_discounted["variable cost"] + sum{d in d_realized_period} (r_cost_variable_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d] * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"starts",%.12g\n', costs_discounted["starts"] + sum{d in d_realized_period} (r_cost_startup_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d] * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"upward penalty",%.12g\n', costs_discounted["upward penalty"] + sum{d in d_realized_period} (sum{n in nodeBalance union nodeBalancePeriod} (r_costPenalty_nodeState_upDown_d[n, 'up', d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"downward penalty",%.12g\n', costs_discounted["downward penalty"] + sum{d in d_realized_period} (sum{n in nodeBalance union nodeBalancePeriod} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"inertia penalty",%.12g\n', costs_discounted["inertia penalty"] + sum{d in d_realized_period} (sum{g in groupInertia} (r_costPenalty_inertia_d[g, d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"non-synchronous penalty",%.12g\n', costs_discounted["non-synchronous penalty"] + sum{d in d_realized_period} (sum{g in groupNonSync} (r_costPenalty_non_synchronous_d[g, d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"capacity margin penalty",%.12g\n', costs_discounted["capacity margin penalty"] + sum{d in d_realize_invest} (sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d]) * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"upward reserve penalty",%.12g\n', costs_discounted["upward reserve penalty"] + sum{d in d_realized_period} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
-printf '"downward reserve penalty",%.12g\n', costs_discounted["downward reserve penalty"] + sum{d in d_realized_period} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) * p_years_represented_d[d]) / 1000000 >> fn_costs_discounted;
+printf '"unit investment/retirement",%.12g\n', costs_discounted["unit investment/retirement"] + sum{d in d_realize_invest} ((r_costInvestUnit_d[d] + r_costDivestUnit_d[d])) / 1000000 >> fn_costs_discounted;
+printf '"connection investment/retirement",%.12g\n', costs_discounted["connection investment/retirement"] + sum{d in d_realize_invest} ((r_costInvestConnection_d[d] + r_costDivestConnection_d[d])) / 1000000 >> fn_costs_discounted;
+printf '"storage investment/retirement",%.12g\n', costs_discounted["storage investment/retirement"] + sum{d in d_realize_invest} ((r_costInvestState_d[d] + r_costDivestState_d[d])) / 1000000 >> fn_costs_discounted;
+printf '"fixed cost of existing assets",%.12g\n', costs_discounted["fixed cost of existing assets"] + sum{d in d_realized_period} (r_costExistingFixed_d[d]) / 1000000 >> fn_costs_discounted;
+printf '"commodity",%.12g\n', costs_discounted["commodity"] + sum{d in d_realized_period} (r_cost_commodity_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) / 1000000 >> fn_costs_discounted;
+printf '"CO2",%.12g\n', costs_discounted["CO2"] + sum{d in d_realized_period} (r_cost_co2_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) / 1000000 >> fn_costs_discounted;
+printf '"variable cost",%.12g\n', costs_discounted["variable cost"] + sum{d in d_realized_period} (r_cost_variable_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) / 1000000 >> fn_costs_discounted;
+printf '"starts",%.12g\n', costs_discounted["starts"] + sum{d in d_realized_period} (r_cost_startup_d[d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d]) / 1000000 >> fn_costs_discounted;
+printf '"upward penalty",%.12g\n', costs_discounted["upward penalty"] + sum{d in d_realized_period} (sum{n in nodeBalance union nodeBalancePeriod} (r_costPenalty_nodeState_upDown_d[n, 'up', d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d])) / 1000000 >> fn_costs_discounted;
+printf '"downward penalty",%.12g\n', costs_discounted["downward penalty"] + sum{d in d_realized_period} (sum{n in nodeBalance union nodeBalancePeriod} (r_costPenalty_nodeState_upDown_d[n, 'down', d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d])) / 1000000 >> fn_costs_discounted;
+printf '"inertia penalty",%.12g\n', costs_discounted["inertia penalty"] + sum{d in d_realized_period} (sum{g in groupInertia} (r_costPenalty_inertia_d[g, d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d])) / 1000000 >> fn_costs_discounted;
+printf '"non-synchronous penalty",%.12g\n', costs_discounted["non-synchronous penalty"] + sum{d in d_realized_period} (sum{g in groupNonSync} (r_costPenalty_non_synchronous_d[g, d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d])) / 1000000 >> fn_costs_discounted;
+printf '"capacity margin penalty",%.12g\n', costs_discounted["capacity margin penalty"] + sum{d in d_realize_invest} (sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d])) / 1000000 >> fn_costs_discounted;
+printf '"upward reserve penalty",%.12g\n', costs_discounted["upward reserve penalty"] + sum{d in d_realized_period} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'up'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d])) / 1000000 >> fn_costs_discounted;
+printf '"downward reserve penalty",%.12g\n', costs_discounted["downward reserve penalty"] + sum{d in d_realized_period} (sum{(r, ud, ng) in reserve__upDown__group : ud = 'down'} (r_costPenalty_reserve_upDown_d[r, ud, ng, d] / complete_period_share_of_year[d] * p_discount_factor_operations_yearly[d])) / 1000000 >> fn_costs_discounted;
 
 printf 'Write annualized cost summary for realized periods...\n';
 param fn_summary_cost symbolic := "output/annualized_costs__period.csv";
@@ -5513,12 +5529,12 @@ for {s in solve_current, d in (d_realized_period union d_realize_invest)}
   {
     printf '%s,%s,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g,%.12g\n',
       s, d,
-    (if d in d_realize_invest then (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0),
-    (if d in d_realize_invest then  (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0),
-    (if d in d_realize_invest then  (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_factor_operations_yearly[d] / 1000000 else 0),
+      (if d in d_realize_invest then (r_costInvestUnit_d[d] + r_costDivestUnit_d[d]) / p_discount_factor_investment_yearly[d] / 1000000 else 0),
+      (if d in d_realize_invest then  (r_costInvestConnection_d[d] + r_costDivestConnection_d[d]) / p_discount_factor_investment_yearly[d] / 1000000 else 0),
+      (if d in d_realize_invest then  (r_costInvestState_d[d] + r_costDivestState_d[d]) / p_discount_factor_investment_yearly[d] / 1000000 else 0),
 	  (if d in d_realized_period then  r_costExistingFixed_d[d] / p_discount_factor_operations_yearly[d] / 1000000 else 0),
-    (if d in d_realize_invest then sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d] / p_discount_factor_operations_yearly[d]) / 1000000 else 0),
-    (if d in d_realized_period then  r_cost_commodity_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
+      (if d in d_realize_invest then sum{g in groupCapacityMargin} (r_costPenalty_capacity_margin_d[g, d] / p_discount_factor_operations_yearly[d]) / 1000000 else 0),
+      (if d in d_realized_period then  r_cost_commodity_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
 	  (if d in d_realized_period then r_cost_co2_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
 	  (if d in d_realized_period then r_cost_variable_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
 	  (if d in d_realized_period then r_cost_startup_d[d] / complete_period_share_of_year[d] / 1000000 else 0),
@@ -6789,7 +6805,4 @@ display v_invest, v_divest, solve_current, total_cost;
 #display p_entity_all_existing;
 #display test_dt;
 #display {n in nodeState, (d,t) in period__time_last: (n, 'use_reference_value') in node__storage_solve_horizon_method}: pdtNode[n,'storage_state_reference_value',d,t];
-#set foo{d in period} := (1..p_years_represented[d]);
-display p_discount_factor_investment_yearly;
-
 end;
