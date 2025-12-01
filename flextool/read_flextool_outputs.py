@@ -60,7 +60,7 @@ def read_variables(output_dir):
     v.divest.index.names = ['solve', 'period']
 
     # Create multi-index for variables with single header row
-    v.state.columns = pd.MultiIndex.from_product([v.state.columns], names=['node'])
+    v.state.columns.name = 'node'
     v.online_linear.columns.name = 'process'
     v.startup_linear.columns.name = 'process'
     v.shutdown_linear.columns.name = 'process'
@@ -159,6 +159,7 @@ def read_parameters(output_dir):
     p.group_penalty_capacity_margin = pd.read_csv(output_path / 'pdGroup_penalty_capacity_margin.csv', index_col=[0, 1]).astype(float)
     p.group_inertia_limit = pd.read_csv(output_path / 'pdGroup_inertia_limit.csv', index_col=[0, 1]).astype(float)
     p.group_capacity_margin = pd.read_csv(output_path / 'pdGroup_capacity_margin.csv', index_col=[0, 1]).astype(float)
+    p.entity_annuity = pd.read_csv(output_path / 'ed_entity_annuity.csv', index_col=[0, 1]).astype(float)
     p.entity_annual_discounted = pd.read_csv(output_path / 'ed_entity_annual_discounted.csv', index_col=[0, 1]).astype(float)
     p.entity_annual_divest_discounted = pd.read_csv(output_path / 'ed_entity_annual_divest_discounted.csv', index_col=[0, 1]).astype(float)
     p.discount_factor_operations_yearly = pd.read_csv(output_path / 'p_discount_factor_operations_yearly.csv', index_col=[0, 1])['value'].astype(float)
@@ -228,6 +229,7 @@ def read_parameters(output_dir):
     p.group_penalty_capacity_margin.columns.name = 'group'
     p.group_inertia_limit.columns.name = 'group'
     p.group_capacity_margin.columns.name = 'group'
+    p.entity_annuity.columns.name = 'entity'
     p.entity_annual_discounted.columns.name = 'entity'
     p.entity_annual_divest_discounted.columns.name = 'entity'
     p.entity_unitsize.name = 'entity'
@@ -280,14 +282,6 @@ def read_sets(output_dir):
     s.process_method = pd.read_csv(output_path / 'set_process_method.csv').set_index(['process', 'method']).index
     s.process__ct_method = pd.read_csv(output_path / 'set_process__ct_method.csv').set_index(['process', 'method']).index
 
-    # Process type sets
-    df = pd.read_csv(output_path / 'set_process_unit.csv')
-    s.process_unit = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(output_path / 'set_process_connection.csv')
-    s.process_connection = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(output_path / 'set_process_profile.csv')
-    s.process_profile = pd.Index(df.iloc[:, 0])
-
      # Method sets
     df = pd.read_csv(output_path / 'set_method_1var_per_way.csv')
     s.method_1var_per_way = pd.Index(df.iloc[:, 0])
@@ -318,22 +312,23 @@ def read_sets(output_dir):
     s.node__storage_nested_fix_method = pd.read_csv(output_path / 'set_node__storage_nested_fix_method.csv').set_index(['node', 'method']).index
 
     # Process-related sets
-    df = pd.read_csv(output_path / 'set_process.csv')
-    s.process = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(output_path / 'set_node.csv')
-    s.node = pd.Index(df.iloc[:, 0])
-    df = pd.read_csv(output_path / 'set_process_connection.csv')
-    s.process_connection = pd.Index(df.iloc[:, 0])
+    s.process = pd.read_csv(output_path / 'set_process.csv').set_index(['process']).index
+    s.node = pd.read_csv(output_path / 'set_node.csv').set_index(['node']).index
     s.process_source = pd.read_csv(output_path / 'set_process_source.csv').set_index(['process', 'source']).index
     s.process_sink = pd.read_csv(output_path / 'set_process_sink.csv').set_index(['process', 'sink']).index
     s.process_VRE = pd.read_csv(output_path / 'set_process_VRE.csv').set_index(['process', 'node']).index
     s.process__source__sink__profile__profile_method = pd.read_csv(output_path / 'set_process__source__sink__profile__profile_method.csv')
 
+    # Process type sets
+    s.process_unit = pd.read_csv(output_path / 'set_process_unit.csv').set_index(['process']).index
+    s.process_connection = pd.read_csv(output_path / 'set_process_connection.csv').set_index(['process']).index
+    s.process_profile = pd.read_csv(output_path / 'set_process_profile.csv').set_index(['process']).index
+
     # Commodity-related sets
     s.commodity_node = pd.read_csv(output_path / 'set_commodity_node.csv').set_index(['commodity', 'node']).index
     s.commodity_node_co2 = pd.read_csv(output_path / 'set_commodity_node_co2.csv').set_index(['commodity', 'node']).index
-    s.process__commodity__node = pd.read_csv(output_path / 'set_process__commodity__node.csv')
-    s.process__commodity__node_co2 = pd.read_csv(output_path / 'set_process__commodity__node_co2.csv')
+    s.process__commodity__node = pd.read_csv(output_path / 'set_process__commodity__node.csv').set_index(['process', 'commodity', 'node']).index
+    s.process__commodity__node_co2 = pd.read_csv(output_path / 'set_process__commodity__node_co2.csv').set_index(['process', 'commodity', 'node']).index
     s.group_co2_price = pd.read_csv(output_path / 'set_group_co2_price.csv')
 
     # Group-related sets

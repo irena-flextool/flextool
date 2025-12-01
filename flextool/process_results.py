@@ -16,7 +16,9 @@ def post_process_results(par, s, v):
 
     r.hours_in_realized_period = hours_in_realized_period
     r.realized_period_share_of_year = hours_in_realized_period / 8760
-    
+
+    s.nb = s.node_balance.union(s.node_balance_period)
+
     # entity_all_capacity
     # Existing capacity
     # Add investments
@@ -26,15 +28,17 @@ def post_process_results(par, s, v):
       # Add investments
     if not v.invest.empty:
         capacity_add = v.invest.mul(par.entity_unitsize[v.invest.columns])
-        capacity_add_broadcasted = capacity_add.reindex(columns=par.entity_unitsize.index)
+        capacity_add_recursive = pd.DataFrame(columns=v.invest.columns)
         for i, period in enumerate(periods):
-            r.entity_all_capacity.loc[period] = r.entity_all_capacity.loc[period].add(capacity_add_broadcasted.loc[periods[:1].join(s.d_realize_invest)].sum(), fill_value=0)
+            capacity_add_recursive.loc[period] = capacity_add.loc[periods[:i+1]].sum()
+        r.entity_all_capacity = r.entity_all_capacity.add(capacity_add_recursive, fill_value=0)
       # Subtract divestments
     if not v.divest.empty:
         capacity_sub = v.divest.mul(par.entity_unitsize[v.divest.columns])
-        capacity_sub_broadcasted = capacity_sub.reindex(columns=par.entity_unitsize.index)
+        capacity_sub_recursive = pd.DataFrame(columns=v.divest.columns)
         for i, period in enumerate(periods):
-            r.entity_all_capacity.loc[period] = r.entity_all_capacity.loc[period].sub(capacity_sub_broadcasted.loc[periods[:1].join(s.d_realize_invest)].sum(), fill_value=0)
+            capacity_sub_recursive.loc[period] = capacity_sub.loc[periods[:i+1]].sum()
+        r.entity_all_capacity = r.entity_all_capacity.sub(capacity_sub_recursive, fill_value=0)
 
     # r_process_Online__dt - just sum the two DataFrames
     r.process_online_dt = v.online_linear.add(v.online_integer, fill_value=0)
@@ -233,6 +237,7 @@ def post_process_results(par, s, v):
     # Create index mappings from dtttdt
     prev_period_idx = s.dtttdt.droplevel(['time', 't_previous_within_timeset', 'd_previous', 't_previous_within_solve']).set_names(['period', 'time'])
     prev_timeset_idx = s.dtttdt.droplevel(['time', 't_previous', 'd_previous', 't_previous_within_solve']).set_names(['period', 'time'])
+    prev_forward_only_idx = s.dtttdt.droplevel(['period', 'time', 't_previous', 't_previous_within_timeset']).set_names(['period', 'time'])
 
     # Create exclude_idx directly from MultiIndex
     exclude_idx = s.period__time_first[
@@ -247,17 +252,18 @@ def post_process_results(par, s, v):
 
         v_current = v.state[n].squeeze()
         v_prev_period = pd.Series(v.state[n].squeeze().reindex(prev_period_idx).values, index=current_idx)
-        v_prev_timeset = pd.Series(v.state[n].squeeze().reindex(prev_timeset_idx).values, index=current_idx)
+        v_prev_timeblock = pd.Series(v.state[n].squeeze().reindex(prev_timeset_idx).values, index=current_idx)
+        v_forward = pd.Series(v.state[n].squeeze().reindex(prev_forward_only_idx).values, index=current_idx)
 
         # bind_forward_only: change from start to finish, leaving first timestep empty
         # (uses same timeline as bind_within_timeset)
         if (n, 'bind_forward_only') in s.node__storage_binding_method:
             mask = ~current_idx.isin(exclude_idx)
-            state_change += ((v_current - v_prev_timeset) * unitsize[n]).where(mask, 0)
+            state_change += ((v_current - v_forward) * unitsize[n]).where(mask, 0)
 
-        # bind_within_solve: treated as bind_within_period since solve info is not available
+        # bind_within_solve: treated as bind_forward_only without exclude first since solve info is not available
         if (n, 'bind_within_solve') in s.node__storage_binding_method:
-            state_change += (v_current - v_prev_period) * unitsize[n]
+            state_change += (v_current - v_forward) * unitsize[n]
 
         # bind_within_period: wraps the change over (difference between last and first
         # timestep in period is assigned to first timestep)
@@ -267,21 +273,20 @@ def post_process_results(par, s, v):
         # bind_within_timeset: continues timeline from one period to next, wraps over
         # the whole set of results
         if (n, 'bind_within_timeset') in s.node__storage_binding_method:
-            state_change += (v_current - v_prev_timeset) * unitsize[n]
+            state_change += (v_current - v_prev_timeblock) * unitsize[n]
 
         # Assign
         r_state_change[n] = state_change
     
     r.node_state_change_dt = r_state_change
 
-    # r_node_state_change_d - sum over dt_realize_dispatch
-    r_state_change_d = r.node_state_change_dt[
-        r.node_state_change_dt.index.get_level_values('period').isin(s.d_realized_period)
-    ].groupby(level='period').sum()
-    r.node_state_change_d = r_state_change_d
+    # r_node_state_change_d
+    r.node_state_change_d = r.node_state_change_dt.groupby(level='period').sum()
     
     # r_self_discharge_loss_dt - element-wise multiplication
-    r.self_discharge_loss_dt = v.state.mul(par.node_self_discharge_loss).mul(par.entity_unitsize, axis='columns', level=0)
+    r.self_discharge_loss_dt = v.state[par.node_self_discharge_loss.columns] \
+                                .mul(par.node_self_discharge_loss, axis=1, level=0) \
+                                .mul(par.entity_unitsize[par.node_self_discharge_loss.columns], axis='columns', level=0)
     
     # r_self_discharge_loss_d - multiply by step_duration then sum
     r.self_discharge_loss_d = r.self_discharge_loss_dt.mul(step_duration, axis=0).groupby('period').sum()
@@ -291,49 +296,54 @@ def post_process_results(par, s, v):
     flow_from_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=1).isin(s.commodity_node.get_level_values(level=1))]]
     flow_to_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=2).isin(s.commodity_node.get_level_values(level=1))]]
     
-    par.commodity_price.columns = par.commodity_price.columns.join(s.commodity_node)
+    commodity_price = par.commodity_price[s.commodity_node.get_level_values('commodity').unique()]
+    commodity_price.columns = commodity_price.columns.join(s.commodity_node)
     flow_from_commodity_node.columns.names = ['process', 'node', 'sink']
     # Filter columns with join
-    flow_from_commodity_node.columns = flow_from_commodity_node.columns.join(par.commodity_price.columns)
+    flow_from_commodity_node.columns = flow_from_commodity_node.columns.join(commodity_price.columns)
     flow_from_commodity = flow_from_commodity_node.groupby('commodity', axis=1).sum()
-    from_commodity_cost = flow_from_commodity.mul(par.commodity_price).mul(par.step_duration, axis=0)
+    from_commodity_cost = flow_from_commodity.mul(commodity_price).mul(par.step_duration, axis=0)
     flow_to_commodity_node.columns.names = ['process', 'source', 'node']
-    flow_to_commodity_node.columns = flow_to_commodity_node.columns.join(par.commodity_price.columns)
+    flow_to_commodity_node.columns = flow_to_commodity_node.columns.join(commodity_price.columns)
     flow_to_commodity = flow_to_commodity_node.groupby('commodity', axis=1).sum()
-    to_commodity_cost = flow_to_commodity.mul(par.commodity_price).mul(par.step_duration, axis=0)
+    to_commodity_cost = flow_to_commodity.mul(commodity_price).mul(par.step_duration, axis=0)
     r.cost_commodity_dt = from_commodity_cost.sub(to_commodity_cost, fill_value=0)
 
     # r_process_commodity_d
     r.cost_commodity_d = r.cost_commodity_dt.groupby('period').sum()
      
     # r_process_emissions_co2_dt
-    # Create a DataFrame with (process, node, commodity) mapping for filtering
-    pcn_map = s.process__commodity__node_co2[['process', 'node', 'commodity']].copy()
-    # Get flow columns as DataFrame for merging
-    flow_cols = r.flow_dt.columns.to_frame(index=False)
+    # Flows out of node: (process, source, sink) where (process, sink) matches (process, node)
+    flow_outof_cols = r.flow_dt.columns.copy()
+    flow_outof_cols.names = ['process', 'node', 'sink']
+    flow_outof_cols = s.process__commodity__node_co2.join(flow_outof_cols)
+    flow_outof_cols = flow_outof_cols[~flow_outof_cols.get_level_values('sink').isna()]
 
     # Flows into node: (process, source, sink) where (process, source) matches (process, node)
-    flow_into_cols = flow_cols.merge(pcn_map, left_on=['process', 'source'], right_on=['process', 'node'], how='inner')
-    flow_into_node = r.flow_dt.iloc[:, flow_into_cols.index].copy()
-    flow_into_node.columns = pd.MultiIndex.from_frame(flow_into_cols[['process', 'commodity', 'node']])
+    flow_into_cols = r.flow_dt.columns.copy()
+    flow_into_cols.names = ['process', 'source', 'node']
+    flow_into_cols = s.process__commodity__node_co2.join(flow_into_cols)
+    flow_into_cols = flow_into_cols[~flow_into_cols.get_level_values('source').isna()]
+    flow_into_cols = flow_into_cols.reorder_levels(order = ['process', 'commodity', 'source', 'node'])
 
-    # Flows out of node: (process, source, sink) where (process, sink) matches (process, node)
-    flow_out_cols = flow_cols.merge(pcn_map, left_on=['process', 'sink'], right_on=['process', 'node'], how='inner')
-    flow_out_of_node = r.flow_dt.iloc[:, flow_out_cols.index].copy()
-    flow_out_of_node.columns = pd.MultiIndex.from_frame(flow_out_cols[['process', 'commodity', 'node']])
+    flow_outof_node = r.flow_dt[flow_outof_cols.droplevel('commodity')]
+    flow_outof_node.columns.names = ['process', 'node', 'sink']
+    flow_outof_node.columns = flow_outof_node.columns.join(flow_outof_cols)
+
+    flow_into_node = r.flow_dt[flow_into_cols.droplevel('commodity')]
+    flow_into_node.columns.names = ['process', 'source', 'node']
+    flow_into_node.columns = flow_into_node.columns.join(flow_into_cols)
 
     # Group by (process, commodity, node) and sum (handles duplicate columns)
-    flow_into_grouped = flow_into_node.groupby(level=[0, 1, 2], axis=1).sum()
-    flow_out_grouped = flow_out_of_node.groupby(level=[0, 1, 2], axis=1).sum()
+    flow_into_node_grouped = flow_into_node.groupby(level=[0, 2, 3], axis=1).sum()
+    flow_outof_node_grouped = flow_outof_node.groupby(level=[0, 1, 3], axis=1).sum()
 
     # Net flow = into - out
-    net_flow = flow_into_grouped.sub(flow_out_grouped, fill_value=0)
+    net_flow = flow_outof_node_grouped.sub(flow_into_node_grouped, fill_value=0)
 
     # Multiply by step_duration and co2_content
     net_flow_with_duration = net_flow.mul(par.step_duration, axis=0)
-    commodity_level = net_flow_with_duration.columns.get_level_values(1)
-    co2_values = commodity_level.map(par.commodity_co2_content)
-    r.process_emissions_co2_dt = net_flow_with_duration.mul(co2_values, axis=1)
+    r.process_emissions_co2_dt = net_flow_with_duration.mul(par.commodity_co2_content, axis=1, level='commodity')
 
     # Add 'type' level to process_emissions_co2_dt columns
     cols_df = r.process_emissions_co2_dt.columns.to_frame(index=False)
@@ -349,7 +359,6 @@ def post_process_results(par, s, v):
     
     # r_emissions_co2_d - sum processes over period
     r.emissions_co2_d = r.process_emissions_co2_d.sum(axis=1)
-    r.emissions_co2 = r.process_emissions_co2_d.sum(axis=0)
 
     # r_emissions_co2_dt - sum processes over period__time
     r.emissions_co2_dt = r.process_emissions_co2_dt.sum(axis=1)
@@ -394,18 +403,15 @@ def post_process_results(par, s, v):
             r.cost_startup_dt[p] = cost
 
     # r_costPenalty_node_state_upDown_dt
-    upward = v.q_state_up.mul(par.node_penalty_up[v.q_state_up.columns]).mul(par.node_capacity_for_scaling[v.q_state_up.columns])
-    downward = v.q_state_down.mul(par.node_penalty_up[v.q_state_down.columns]).mul(par.node_capacity_for_scaling[v.q_state_down.columns])
-    r.costPenalty_node_state_upDown_dt = pd.concat([upward, downward], axis=1, keys=['up', 'down'], names=['upDown'])
+    upward_node_slack = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).mul(par.step_duration, axis=0)
+    downward_node_slack = v.q_state_down.mul(par.node_capacity_for_scaling[v.q_state_down.columns]).mul(par.step_duration, axis=0)
+    upward_node_penalty = upward_node_slack.mul(par.node_penalty_up[v.q_state_up.columns])
+    downward_node_penalty = downward_node_slack.mul(par.node_penalty_down[v.q_state_down.columns])
+    r.costPenalty_node_state_upDown_dt = pd.concat([upward_node_penalty, downward_node_penalty], axis=1, keys=['up', 'down'], names=['upDown'])
     r.costPenalty_node_state_upDown_dt = r.costPenalty_node_state_upDown_dt.reorder_levels([1, 0], axis=1)
 
     # r_penalty_node_state_upDown_d
-    if not r.costPenalty_node_state_upDown_dt.empty:
-        r.penalty_node_state_upDown_d = r.costPenalty_node_state_upDown_dt[
-            r.costPenalty_node_state_upDown_dt.index.get_level_values('period').isin(s.d_realized_period)
-        ].groupby(level='period').sum()
-    else:
-        r.penalty_node_state_upDown_d = None
+    r.costPenalty_node_state_upDown_d = r.costPenalty_node_state_upDown_dt.groupby(level='period').sum()
 
     # r_costPenalty_inertia_dt
     if not v.q_inertia.empty:
@@ -475,11 +481,6 @@ def post_process_results(par, s, v):
         r.cost_startup_dt.index.get_level_values('period').isin(s.d_realized_period)
     ].groupby(level='period').sum() if not r.cost_startup_dt.empty 
     else pd.DataFrame(0.0, index=s.d_realized_period, columns=r.cost_startup_dt.columns if hasattr(r.cost_startup_dt, 'columns') else []))
-
-    r.costPenalty_node_state_upDown_d = (r.costPenalty_node_state_upDown_dt[
-        r.costPenalty_node_state_upDown_dt.index.get_level_values('period').isin(s.d_realized_period)
-    ].groupby(level='period').sum() if not r.costPenalty_node_state_upDown_dt.empty 
-    else pd.DataFrame(0.0, index=s.d_realized_period, columns=r.costPenalty_node_state_upDown_dt.columns if hasattr(r.costPenalty_node_state_upDown_dt, 'columns') else []))
 
     r.costPenalty_inertia_d = (r.costPenalty_inertia_dt[
         r.costPenalty_inertia_dt.index.get_level_values('period').isin(s.d_realized_period)
@@ -720,12 +721,18 @@ def post_process_results(par, s, v):
         ].groupby(level='period').sum() if not r.group_node_state_losses__dt.empty
         else pd.DataFrame(0.0, index=s.d_realized_period, columns=s.groupOutputNodeFlows))
     
-    # r_group_node penalties
-    r.group_node_up_penalties__dt = v.q_state_up.mul(par.node_capacity_for_scaling, level=0).mul(par.step_duration, axis=0)
-    r.group_node_up_penalties__d = r.group_node_up_penalties__dt.groupby('period').sum()
-    r.group_node_down_penalties__dt = v.q_state_down.mul(par.node_capacity_for_scaling, level=0).mul(par.step_duration, axis=0)
-    r.group_node_down_penalties__d = r.group_node_down_penalties__dt.groupby('period').sum()
-    
+    # r_group_node slacks
+    r.group_node_up_slack__dt = pd.DataFrame(index=s.dt_realize_dispatch)
+    r.group_node_down_slack__dt = pd.DataFrame(index=s.dt_realize_dispatch)
+    for g in s.groupOutputNodeFlows:
+        g_node = s.group_node[s.group_node.get_level_values('group').isin([g])].get_level_values('node')
+        r.group_node_up_slack__dt[g] = upward_node_slack[g_node].sum(axis=1)
+        r.group_node_down_slack__dt[g] = downward_node_slack[g_node].sum(axis=1)
+
+    # r.node_up_slack__d = r.group_node_up_slack__dt.groupby('period').sum()
+    # r.node_down_slack__d = r.group_node_down_slack__dt.groupby('period').sum()
+
+
     # r_storage_usage_dt
     dt_fix_idx = s.dt_fix_storage_timesteps
     r_storage_usage = {}
@@ -835,8 +842,10 @@ def drop_levels(par, s, v):
     s.dt_realize_dispatch = s.dt_realize_dispatch.droplevel('solve')
     s.dtt = s.dtt.droplevel('solve')
     s.dtttdt = s.dtttdt.droplevel('solve')
-    s.ed_invest = s.ed_invest.droplevel('solve')
+    s.ed_invest = s.ed_invest.droplevel('solve').join(s.d_realize_invest, how='inner')
     s.edd_invest = s.edd_invest.droplevel('solve')
-    s.ed_divest = s.ed_divest.droplevel('solve')
+    s.edd_invest.names = ['entity', 'period_invest', 'period']
+    s.edd_invest = s.edd_invest.join(s.d_realize_invest, how='inner')
+    s.ed_divest = s.ed_divest.droplevel('solve').join(s.d_realize_invest, how='inner')
 
     return par, s, v
