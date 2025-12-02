@@ -3384,6 +3384,15 @@ display w_solve;
 
 printf("\nOutputs:\n");
 
+# Write objective value
+if p_model["solveFirst"] == 1 then {
+  printf "solve,objective" > "output_raw/v_obj.csv";
+}
+for {s in solve_current} {
+    printf "\n%s,%.12g", s, total_cost.val / scale_the_objective >> "output_raw/v_obj.csv";
+}
+
+
 # Write v_flow
 if p_model["solveFirst"] == 1 then {
   printf "solve,period,time" > "output_raw/v_flow.csv";

@@ -79,8 +79,7 @@ def post_process_results(par, s, v):
         r.flow_dt[p, always_source, always_sink] = flow_val
 
     # r.flow_d - sum over dt_realize_dispatch
-    if not r.flow_dt.empty:
-        r.flow_d = r.flow_dt[r.flow_dt.index.get_level_values('period').isin(s.d_realized_period)].groupby(level='period').sum()
+    r.flow_d = r.flow_dt[r.flow_dt.index.get_level_values('period').isin(s.d_realized_period)].groupby(level='period').sum()
 
     # r_process_source_sink_ramp_dtt - difference between t and t_previous
     current_idx = s.dtt.droplevel('t_previous')
@@ -402,60 +401,60 @@ def post_process_results(par, s, v):
                     cost.loc[period_mask] *= par.process_startup_cost.loc[d, p]
             r.cost_startup_dt[p] = cost
 
-    # r_costPenalty_node_state_upDown_dt
-    upward_node_slack = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).mul(par.step_duration, axis=0)
-    downward_node_slack = v.q_state_down.mul(par.node_capacity_for_scaling[v.q_state_down.columns]).mul(par.step_duration, axis=0)
-    upward_node_penalty = upward_node_slack.mul(par.node_penalty_up[v.q_state_up.columns])
-    downward_node_penalty = downward_node_slack.mul(par.node_penalty_down[v.q_state_down.columns])
+    # Reserves
+    r.reserves_dt = v.reserve.mul(par.step_duration, axis=0)
+    r.reserves_d = r.reserves_dt.groupby('period').sum() \
+        .div(par.complete_period_share_of_year, axis=0)
+
+    # Node slacks
+    r.upward_node_slack_dt = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).mul(par.step_duration, axis=0)
+    r.upward_node_slack_d_not_annualized = r.upward_node_slack_dt.mul(par.step_duration, axis=0) \
+        .groupby('period').sum()
+    r.upward_node_slack_d = r.upward_node_slack_d_not_annualized.div(par.complete_period_share_of_year, axis=0)
+    r.downward_node_slack_dt = v.q_state_down.mul(par.node_capacity_for_scaling[v.q_state_down.columns]).mul(par.step_duration, axis=0)
+    r.downward_node_slack_d_not_annualized = r.downward_node_slack_dt.mul(par.step_duration, axis=0) \
+        .groupby('period').sum()
+    r.downward_node_slack_d = r.downward_node_slack_d_not_annualized.div(par.complete_period_share_of_year, axis=0)
+    upward_node_penalty = r.upward_node_slack_dt.mul(par.node_penalty_up[v.q_state_up.columns])
+    downward_node_penalty = r.downward_node_slack_dt.mul(par.node_penalty_down[v.q_state_down.columns])
     r.costPenalty_node_state_upDown_dt = pd.concat([upward_node_penalty, downward_node_penalty], axis=1, keys=['up', 'down'], names=['upDown'])
     r.costPenalty_node_state_upDown_dt = r.costPenalty_node_state_upDown_dt.reorder_levels([1, 0], axis=1)
-
-    # r_penalty_node_state_upDown_d
     r.costPenalty_node_state_upDown_d = r.costPenalty_node_state_upDown_dt.groupby(level='period').sum()
 
-    # r_costPenalty_inertia_dt
-    if not v.q_inertia.empty:
-        r.costPenalty_inertia_dt = v.q_inertia \
-            * par.group_inertia_limit \
-            * par.group_penalty_inertia
-    else: 
-        r.costPenalty_inertia_dt = pd.DataFrame(index=v.q_inertia.index)
+    # Inertia slack
+    r.q_inertia_dt = v.q_inertia.mul(par.group_inertia_limit)
+    r.q_inertia_d_not_annualized = r.q_inertia_dt.mul(par.step_duration, axis=0).groupby('period').sum()
+    r.q_inertia_d = r.q_inertia_d_not_annualized.div(par.complete_period_share_of_year, axis=0)
+    r.costPenalty_inertia_dt = r.q_inertia_dt.mul(par.group_penalty_inertia)
 
-    # r_costPenalty_non_synchronous_dt
-    if not v.q_non_synchronous.empty:
-        r.costPenalty_non_synchronous_dt \
-            = ( v.q_non_synchronous 
-                * par.group_capacity_for_scaling[s.groupNonSync] 
-                * par.group_penalty_non_synchronous )
-    else:
-        r.costPenalty_non_synchronous_dt = pd.DataFrame(index=v.q_non_synchronous.index)
+    # Non-synchronous slack
+    r.q_non_synchronous_dt = v.q_non_synchronous.mul(par.group_capacity_for_scaling[s.groupNonSync])
+    r.q_non_synchronous_d_not_annualized = r.q_non_synchronous_dt.mul(par.step_duration, axis=0) \
+        .groupby('period').sum()
+    r.q_non_synchronous_d = r.q_non_synchronous_d_not_annualized.div(par.complete_period_share_of_year, axis=0)
+    r.costPenalty_non_synchronous_dt = r.q_non_synchronous_dt.mul(par.group_penalty_non_synchronous)
 
-    # r_costPenalty_capacity_margin_d
-    if not v.q_capacity_margin.empty:
-        r.costPenalty_capacity_margin_d \
-            = ( v.q_capacity_margin
-                * par.group_capacity_for_scaling[s.groupCapacityMargin]
-                * par.group_penalty_capacity_margin
-              ).mul(par.discount_factor_operations_yearly, axis=0)
-    else:
-        r.costPenalty_capacity_margin_d = pd.DataFrame(index=v.q_capacity_margin.index)
+    # Capacity margin slack
+    r.q_capacity_margin_d_not_annualized = v.q_capacity_margin \
+        .mul(par.group_capacity_for_scaling[s.groupCapacityMargin])
+    r.costPenalty_capacity_margin_d = r.q_capacity_margin_d_not_annualized \
+        .mul(par.discount_factor_operations_yearly, axis=0).sum(axis=1)
     
-    # r_costPenalty_reserve_upDown_dt
-    r.costPenalty_reserve_upDown_dt = pd.DataFrame(index=v.q_reserve.index, columns=v.q_reserve.columns, dtype=float)
-    for col in v.q_reserve.columns:
-        res, ud, ng = col
-        penalty = (v.q_reserve[col].mul(par.step_duration, axis=0) * 
-                par.reserve_upDown_group_penalty.loc[(res, ud, ng)] * 
-                par.reserve_upDown_group_reservation[col])
-        r.costPenalty_reserve_upDown_dt[col] = penalty
+    # Reserve slack
+    r.q_reserves_dt = v.q_reserve.mul(par.reserve_upDown_group_reservation[v.q_reserve.columns], axis=1)
+    r.q_reserves_d_not_annualized = r.q_reserves_dt.mul(par.step_duration, axis=0).groupby(level='period').sum()
+    r.q_reserves_d = r.q_reserves_d_not_annualized.div(par.complete_period_share_of_year, axis=0)
+    r.costPenalty_reserve_upDown_dt = v.q_reserve.mul(par.step_duration, axis=0) \
+        .mul(par.reserve_upDown_group_penalty, axis=1) \
+        .mul(par.reserve_upDown_group_reservation, axis=1)
 
-    # r_cost_entity_invest_d
+    # Investment cost for entities
     r.cost_entity_invest_d = v.invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted)
     
-    # r_cost_entity_divest_d
+    # Divestment cost for entities
     r.cost_entity_divest_d = v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_annual_discounted)
     
-    # r_cost_entity_existing_fixed
+    # Fixed cost for entities
     combined_fixed = pd.concat([par.process_fixed_cost, par.node_fixed_cost], axis=1).rename_axis('entity', axis=1)
     r.cost_entity_existing_fixed = (r.entity_all_capacity * combined_fixed * 1000).mul(par.discount_factor_operations_yearly, axis=0)
     
@@ -469,8 +468,6 @@ def post_process_results(par, s, v):
                             r.costPenalty_inertia_dt.sum(axis=1) + 
                             r.costPenalty_non_synchronous_dt.sum(axis=1) + 
                             r.costPenalty_reserve_upDown_dt.sum(axis=1))
-    
-    r.costOper_and_penalty_dt = r.costOper_dt + r.costPenalty_dt
     
     # Period aggregations
     r.cost_process_other_operational_cost_d = r.cost_process_other_operational_cost_dt.groupby('period').sum()
@@ -497,17 +494,15 @@ def post_process_results(par, s, v):
     ].groupby(level='period').sum() if not r.costPenalty_reserve_upDown_dt.empty 
     else pd.DataFrame(0.0, index=s.d_realized_period, columns=r.costPenalty_reserve_upDown_dt.columns if hasattr(r.costPenalty_reserve_upDown_dt, 'columns') else []))
 
-    r.costOper_d = (r.costOper_dt.groupby(level='period').sum() 
-    if not r.costOper_dt.empty 
-    else pd.Series(0.0, index=s.d_realized_period))
+    r.costOper_d = r.costOper_dt.groupby('period').sum() \
+                                .mul(par.discount_factor_operations_yearly, axis=0) \
+                                .div(par.complete_period_share_of_year, axis=0)
 
-    r.costPenalty_d = (r.costPenalty_dt.groupby(level='period').sum() 
-    if not r.costPenalty_dt.empty 
-    else pd.Series(0.0, index=s.d_realized_period))
-
-    for d in s.d_realize_invest:
-        if d in r.costPenalty_d.index and not r.costPenalty_capacity_margin_d.empty:
-            r.costPenalty_d.loc[d] += r.costPenalty_capacity_margin_d.loc[d].sum()
+    r.costPenalty_d = r.costPenalty_dt.groupby('period').sum() \
+                                .mul(par.discount_factor_operations_yearly, axis=0) \
+                                .div(par.complete_period_share_of_year, axis=0)
+    
+    r.costPenalty_d = r.costPenalty_d.add(r.costPenalty_capacity_margin_d, fill_value=0)
 
     r.costOper_and_penalty_d = r.costOper_d.add(r.costPenalty_d, fill_value=0)        
 
@@ -726,8 +721,8 @@ def post_process_results(par, s, v):
     r.group_node_down_slack__dt = pd.DataFrame(index=s.dt_realize_dispatch)
     for g in s.groupOutputNodeFlows:
         g_node = s.group_node[s.group_node.get_level_values('group').isin([g])].get_level_values('node')
-        r.group_node_up_slack__dt[g] = upward_node_slack[g_node].sum(axis=1)
-        r.group_node_down_slack__dt[g] = downward_node_slack[g_node].sum(axis=1)
+        r.group_node_up_slack__dt[g] = r.upward_node_slack_dt[g_node].sum(axis=1)
+        r.group_node_down_slack__dt[g] = r.downward_node_slack_dt[g_node].sum(axis=1)
 
     # r.node_up_slack__d = r.group_node_up_slack__dt.groupby('period').sum()
     # r.node_down_slack__d = r.group_node_down_slack__dt.groupby('period').sum()

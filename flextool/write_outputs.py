@@ -1000,7 +1000,7 @@ def cost_summaries(par, s, v, r):
     investment_costs['storage_investment_retirement'] = (r.costInvestState_d + r.costDivestState_d) / to_millions
     annual_invest_costs = investment_costs.div(discount_invs, axis=0)
     investment_costs['fixed_cost_existing'] = r.costExistingFixed_d / to_millions
-    investment_costs['capacity_margin_penalty'] = r.costPenalty_capacity_margin_d.sum(axis=1) / to_millions
+    investment_costs['capacity_margin_penalty'] = r.costPenalty_capacity_margin_d / to_millions
     annual_invest_costs['fixed_cost_existing'] = investment_costs['fixed_cost_existing'].div(discount_ops, axis=0)
     annual_invest_costs['capacity_margin_penalty'] = investment_costs['capacity_margin_penalty'].div(discount_ops, axis=0)
 
@@ -1030,14 +1030,10 @@ def reserves(par, s, v, r):
     results = []
     
     # Timestep-level reserves
-    reserves_dt = v.reserve.mul(par.entity_unitsize[v.reserve.columns.get_level_values('process')], axis=1, level=0)
-    results.append((reserves_dt.reset_index(), reserves_dt, 'process_reserve_upDown_node_dt_peppe'))
+    results.append((r.reserves_dt.reset_index(), r.reserves_dt, 'process_reserve_upDown_node_dt_peppe'))
     
     # Period-level reserves (average)
-    reserves_d = reserves_dt.mul(par.step_duration, axis=0) \
-                 .groupby(level='period').sum() \
-                 .div(par.complete_period_share_of_year, axis=0)
-    results.append((reserves_d.reset_index(), reserves_d, 'process_reserve_average_d_peppe'))
+    results.append((r.reserves_d.reset_index(), r.reserves_d, 'process_reserve_average_d_peppe'))
 
     # Reserve price results
     results.append((v.dual_reserve_balance.reset_index(), v.dual_reserve_balance, 'reserve_prices_dt_ppg'))
@@ -1484,6 +1480,140 @@ def plot_other_type(df, key, output_dir):
     plt.savefig(f'{output_dir}/{key}.svg', bbox_inches='tight')
 
 
+def write_summary_csv(par, s, v, r):
+    """Write summary CSV file matching the GNU MathProg format"""
+    import os
+    from datetime import datetime
+
+    # Create output directory if needed
+    os.makedirs('output_csv', exist_ok=True)
+
+    # Output file path
+    fn_summary = "output_csv/summary_solve.csv"
+
+    # Get common parameters - these are Series indexed by period
+    p_discount_factor_operations_yearly = par.discount_factor_operations_yearly
+    p_discount_factor_investment_yearly = par.discount_factor_investment_yearly
+    complete_period_share_of_year = par.complete_period_share_of_year
+
+    # Get period sets
+    period_in_use = complete_period_share_of_year.index
+    d_realized_period = s.d_realized_period
+    d_realize_invest = s.d_realize_invest
+
+    # Open file and write all content
+    with open(fn_summary, 'w') as f:
+        # Header with timestamp
+        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        f.write(f'"Diagnostic results from all solves. Output at (UTC): {timestamp}"\n\n')
+
+        # Total cost from solver (M CUR)
+        f.write('\n')
+        f.write('"Solve","Objective","Total cost from solver, includes all penalty costs"\n')
+        for row_idx in v.obj.index:
+            f.write(f'{row_idx},{v.obj.loc[row_idx, "objective"] / 1000000:.12g}\n')
+
+        # Total cost (calculated) full horizon (M CUR)
+        # Sum over all periods: (operational + penalty) * discount / period_share + invest + divest
+        total_cost_full = (
+            r.costOper_and_penalty_d
+                .add(r.costInvest_d, fill_value=0.0)
+                .add(r.costDivest_d, fill_value=0.0)
+        ).sum(axis=0) / 1000000
+
+        f.write(f'"Total cost (calculated) full horizon (M CUR)",{total_cost_full:.12g},"Annualized operational, penalty and investment costs"\n')
+        f.write(f'"Total cost (calculated) realized periods (M CUR)",{total_cost_full:.12g}\n')
+
+        # Operational costs for realized periods (M CUR)
+        operational_costs = r.costOper_d.sum(axis=0) / 1000000
+        f.write(f'"Operational costs for realized periods (M CUR)",{operational_costs:.12g}\n')
+
+        # Investment costs for realized periods (M CUR)
+        investment_costs = r.costInvest_d.sum(axis=0) / 1000000
+        f.write(f'"Investment costs for realized periods (M CUR)",{investment_costs:.12g}\n')
+
+        # Retirement costs (negative salvage value) for realized periods (M CUR)
+        retirement_costs = r.costDivest_d.sum(axis=0) / 1000000
+        f.write(f'"Retirement costs (negative salvage value) for realized periods (M CUR)",{retirement_costs:.12g}\n')
+
+        # Fixed costs for existing units (M CUR)
+        fixed_costs = r.costExistingFixed_d.sum(axis=0) / 1000000
+        f.write(f'"Fixed costs for existing units (M CUR)",{fixed_costs:.12g}\n')
+
+        # Penalty (slack) costs for realized periods (M CUR)
+        penalty_costs = r.costPenalty_d.sum(axis=0) / 1000000
+        f.write(f'"Penalty (slack) costs for realized periods (M CUR)",{penalty_costs:.12g}\n')
+
+        # Period information table
+        f.write('\nPeriod')
+        for d in period_in_use:
+            f.write(f',{d}')
+        f.write('\n')
+
+        # Time in use in years
+        f.write('"Time in use in years"')
+        for d in period_in_use:
+            f.write(f',{complete_period_share_of_year[d]:.12g}')
+        f.write('\n')
+
+        # Operational discount factor
+        f.write('"Operational discount factor"')
+        for d in period_in_use:
+            f.write(f',{p_discount_factor_operations_yearly[d]:.12g}')
+        f.write('\n')
+
+        # Investment discount factor
+        f.write('"Investment discount factor"')
+        for d in s.d_realize_invest:
+            f.write(f',{p_discount_factor_investment_yearly[d]:.12g}')
+        f.write('\n\n')
+
+        # Emissions section
+        f.write('Emissions\n')
+        co2_total = r.emissions_co2_d.sum(axis=0) / 1000000
+        f.write(f'"CO2 [Mt]",{co2_total:.6g},"System-wide annualized CO2 emissions for realized periods"\n')
+
+        # Slack variables section
+        f.write('\n"Slack variables multiplied by timestep duration (creating or removing energy/matter, ')
+        f.write('creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"\n')
+
+        # Node state slack - upward (creating energy)
+        for node in r.upward_node_slack_d_not_annualized.columns:
+            for period in d_realized_period:
+                if period in r.upward_node_slack_d_not_annualized.index and r.upward_node_slack_d_not_annualized.loc[period, node] > 0:
+                    f.write(f'Created, {node}, {period}, {r.upward_node_slack_d_not_annualized.loc[period, node]:.5g}\n')
+
+        # Node state slack - downward (removing energy)
+        for node in r.downward_node_slack_d_not_annualized.columns:
+            for period in d_realized_period:
+                if period in r.downward_node_slack_d_not_annualized.index and r.downward_node_slack_d_not_annualized.loc[period, node] > 0:
+                    f.write(f'Removed, {node}, {period}, {r.downward_node_slack_d_not_annualized.loc[period, node]:.5g}\n')
+
+        # Inertia slack
+        for group in r.q_inertia_d_not_annualized.columns:
+            for period in d_realized_period:
+                if period in r.q_inertia_d_not_annualized.index and r.q_inertia_d_not_annualized.loc[period, group] > 0:
+                    f.write(f'Inertia, {group}, {period}, {r.q_inertia_d_not_annualized.loc[period, group]:.5g}\n')
+
+        # Non-synchronous slack
+        for group in r.q_non_synchronous_d_not_annualized.columns:
+            for period in d_realized_period:
+                if period in r.q_non_synchronous_d_not_annualized.index and r.q_non_synchronous_d_not_annualized.loc[period, group] > 0:
+                    f.write(f'NonSync, {group}, {period}, {r.q_non_synchronous_d_not_annualized.loc[period, group]:.5g}\n')
+
+        # Capacity margin slack
+        for group in r.q_capacity_margin_d_not_annualized.columns:
+            for period in d_realize_invest:
+                if period in r.q_capacity_margin_d_not_annualized.index and r.q_capacity_margin_d_not_annualized.loc[period, group] > 0:
+                    f.write(f'CapMargin, {group}, {period}, {r.q_capacity_margin_d_not_annualized.loc[period, group]:.5g}\n')
+        
+        # Reserve slack
+        for group in r.q_non_synchronous_d_not_annualized.columns:
+            for period in d_realized_period:
+                if period in r.q_reserves_d_not_annualized.index and r.q_reserves_d_not_annualized.loc[period, group] > 0:
+                    f.write(f'Reserve, {group}, {period}, {r.q_reserves_d_not_annualized.loc[period, group]:.5g}\n')
+
+
 # List of all output functions
 ALL_OUTPUTS = [
     generic,
@@ -1595,7 +1725,6 @@ def write_outputs(scenario_name, output_funcs=None, output_dir='output_raw', met
             if os.path.isfile(file_path):
                 os.remove(file_path)
 
-
         for csv_filename, table_name in result_set_map:
             if table_name and table_name in results_flat:
                 df = results_multi[table_name]
@@ -1621,6 +1750,8 @@ def write_outputs(scenario_name, output_funcs=None, output_dir='output_raw', met
 
         print(f"Wrote to CSV: {time.perf_counter() - start:.4f} seconds")
         start = time.perf_counter()
+
+        write_summary_csv(par, s, v, r)
         
 
     # Write to excel

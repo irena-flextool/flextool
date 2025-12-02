@@ -13,7 +13,8 @@ def read_variables(output_dir):
     v = SimpleNamespace()
     
     # Variables with (solve, period, time) index
-    
+
+    v.obj = pd.read_csv(output_path / 'v_obj.csv', header=[0], index_col=[0]).astype(float)    
     v.flow = pd.read_csv(output_path / 'v_flow.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
     v.ramp = pd.read_csv(output_path / 'v_ramp.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
     v.reserve = pd.read_csv(output_path / 'v_reserve.csv', header=[0, 1, 2, 3], index_col=[0, 1, 2]).astype(float)
@@ -176,7 +177,7 @@ def read_parameters(output_dir):
     p.process_source_sink_varCost.index.names = ['solve', 'period', 'time']
     p.reserve_upDown_group_reservation.index.names = ['solve', 'period', 'time']
 
-    # Create multi-index for data with more than one header row
+    # Create multi-index for data with more than one header row (will be missing when there is no data)
     p.process_source_sink_varCost.columns = pd.MultiIndex.from_tuples(
         [(col[0], col[1], col[2]) for col in p.process_source_sink_varCost.columns],
         names=['process', 'source', 'sink']
@@ -193,18 +194,19 @@ def read_parameters(output_dir):
         [(col[0], col[1], col[2]) for col in p.reserve_upDown_group_reservation.columns],
         names=['reserve', 'updown', 'node_group']
     )
-    #p.process_sink_coefficient.columns = pd.MultiIndex.from_tuples(
-    #    [(col[0], col[1]) for col in p.process_sink_coefficient.columns],
-    #    names=['process', 'sink']
-    #)
-    #p.process_source_coefficient.columns = pd.MultiIndex.from_tuples(
-    #    [(col[0], col[1]) for col in p.process_source_coefficient.columns],
-    #    names=['process', 'source']
-    #)
-    #p.reserve_upDown_group_penalty.columns = pd.MultiIndex.from_tuples(
-    #    [(col[0], col[1], col[2]) for col in p.reserve_upDown_group_penalty.columns],
-    #    names=['reserve', 'updown', 'node_group']
-    #)
+    # These have only one row of data and are therefore interpreted as Series by pd.read_csv (using index instead of columns)
+    p.process_sink_coefficient.index = pd.MultiIndex.from_tuples(
+        [(col[0], col[1]) for col in p.process_sink_coefficient.index],
+        names=['process', 'sink']
+    )
+    p.process_source_coefficient.index = pd.MultiIndex.from_tuples(
+        [(col[0], col[1]) for col in p.process_source_coefficient.index],
+        names=['process', 'source']
+    )
+    p.reserve_upDown_group_penalty.index = pd.MultiIndex.from_tuples(
+        [(col[0], col[1], col[2]) for col in p.reserve_upDown_group_penalty.index],
+        names=['reserve', 'updown', 'node_group']
+    )
 
     # Create a multi-index for those that have only one index in the header rows (i.e. columns)
     p.process_slope.columns.name = 'process'
