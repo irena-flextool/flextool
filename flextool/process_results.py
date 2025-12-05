@@ -92,53 +92,47 @@ def post_process_results(par, s, v):
     )
 
     # r_node_ramp_dtt - sum ramps for flows into/out of each node
-    r_node_ramp_dt = pd.DataFrame(index=r.ramp_dtt.index.droplevel('t_previous'), columns=s.node_balance, dtype=float)
-    for n in s.node_balance:
-        node_ramp = pd.Series(0.0, index=r_node_ramp_dt.index)
-        # Flows into node (process, n, sink)
-        for col in r.ramp_dtt.columns:
-            if col[1] == n:  # source == n
-                node_ramp += r.ramp_dtt[col].droplevel('t_previous')
-        # Flows out of node (process, source, n) - negative
-        for col in r.ramp_dtt.columns:
-            if col[2] == n:  # sink == n
-                node_ramp -= r.ramp_dtt[col].droplevel('t_previous')
-        r_node_ramp_dt[n] = node_ramp
+    # Drop t_previous from index first
+    ramp_dt_dropped = r.ramp_dtt.droplevel('t_previous')
+    nodes_source = s.node_balance.copy()
+    nodes_source.name = 'source'
+    nodes_sink = s.node_balance.copy()
+    nodes_sink.name = 'sink'
+
+    # Flows out of nodes (source == n, positive)
+    flows_out = ramp_dt_dropped[nodes_source.join(ramp_dt_dropped.columns).join(nodes_source, how='inner')].groupby('source', axis=1).sum()
+    # Flows into nodes (sink == n, negative)
+    flows_in = -ramp_dt_dropped[nodes_sink.join(ramp_dt_dropped.columns).join(nodes_sink, how='inner')].groupby('sink', axis=1).sum()
+    # Combine
+    r_node_ramp_dt = flows_out.add(flows_in, fill_value=0).reindex(columns=s.node_balance, fill_value=0.0)
 
     # r_connection_dt - net flow through connections
-    r.connection_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=s.process_connection, dtype=float)
-    for c in s.process_connection:
-        conn_flow = pd.Series(0.0, index=r.flow_dt.index)
-        # Flow to right: (c, c, n) where (c, n) in process_sink
-        for col in r.flow_dt.columns:
-            if col[0] == c and col[1] == c and (c, col[2]) in s.process_sink:
-                conn_flow += r.flow_dt[col]
-        # Flow to left: (c, c, n) where (c, n) in process_source - negative
-        for col in r.flow_dt.columns:
-            if col[0] == c and col[1] == c and (c, col[2]) in s.process_source:
-                conn_flow -= r.flow_dt[col]
-        r.connection_dt[c] = conn_flow
+    # Filter to connection-like flows (process == source, i.e., (c, c, n))
+    conn_mask = r.flow_dt.columns.get_level_values('process') == r.flow_dt.columns.get_level_values('source')
+    conn_flows = r.flow_dt.loc[:, conn_mask]
+
+    # Create MultiIndex for (process, sink) to match against process_sink/process_source
+    process_sink_idx = pd.MultiIndex.from_tuples(
+        [(col[0], col[2]) for col in conn_flows.columns],
+        names=['process', 'sink']
+    )
+
+    # Flow to right: where (process, sink) in s.process_sink
+    right_mask = process_sink_idx.isin(s.process_sink)
+    right_cols = conn_flows.columns[right_mask]
+    flow_right = conn_flows[right_cols].groupby(level='process', axis=1).sum() if len(right_cols) > 0 else pd.DataFrame(0.0, index=conn_flows.index, columns=[])
+
+    # Flow to left: where (process, sink) in s.process_source (negative)
+    left_mask = process_sink_idx.isin(s.process_source)
+    left_cols = conn_flows.columns[left_mask]
+    flow_left = conn_flows[left_cols].groupby(level='process', axis=1).sum() if len(left_cols) > 0 else pd.DataFrame(0.0, index=conn_flows.index, columns=[])
+
+    r.connection_dt = flow_right.sub(flow_left, fill_value=0).reindex(columns=s.process_connection, fill_value=0.0)
 
     # r_connection_to_left_node__dt and r_connection_to_right_node__dt
-    r_conn_left = pd.DataFrame(index=r.flow_dt.index, columns=s.process_connection, dtype=float)
-    r_conn_right = pd.DataFrame(index=r.flow_dt.index, columns=s.process_connection, dtype=float)
-    
-    for c in s.process_connection:
-        left_flow = pd.Series(0.0, index=r.flow_dt.index)
-        right_flow = pd.Series(0.0, index=r.flow_dt.index)
-        
-        for col in r.flow_dt.columns:
-            if col[0] == c and col[1] == c:
-                if (c, col[2]) in s.process_source:
-                    left_flow += r.flow_dt[col]
-                if (c, col[2]) in s.process_sink:
-                    right_flow += r.flow_dt[col]
-        
-        r_conn_left[c] = left_flow
-        r_conn_right[c] = right_flow
-    
-    r.connection_to_left_node__dt = r_conn_left
-    r.connection_to_right_node__dt = r_conn_right
+    # Using same conn_flows, right_cols, left_cols from above
+    r.connection_to_left_node__dt = conn_flows[left_cols].groupby(level='process', axis=1).sum().reindex(columns=s.process_connection, fill_value=0.0) if len(left_cols) > 0 else pd.DataFrame(0.0, index=r.flow_dt.index, columns=s.process_connection)
+    r.connection_to_right_node__dt = conn_flows[right_cols].groupby(level='process', axis=1).sum().reindex(columns=s.process_connection, fill_value=0.0) if len(right_cols) > 0 else pd.DataFrame(0.0, index=r.flow_dt.index, columns=s.process_connection)
     r.connection_to_left_node__d = r.connection_to_left_node__dt.groupby('period').sum()
     r.connection_to_right_node__d = r.connection_to_right_node__dt.groupby('period').sum()
     
@@ -184,22 +178,10 @@ def post_process_results(par, s, v):
     r.flow_d = r.flow_dt.mul(step_duration, axis=0).groupby('period').sum()
     
     # r_process_source_flow_d - sum over sinks
-    r.process_source_flow_d = pd.DataFrame(index=s.d_realized_period, columns=s.process_source, dtype=float)
-    for (p, source) in s.process_source:
-        flow_sum = pd.Series(0.0, index=s.d_realized_period)
-        for col in r.flow_d.columns:
-            if col[0] == p and col[1] == source:
-                flow_sum += r.flow_d[col]
-        r.process_source_flow_d[p, source] = flow_sum
-    
+    r.process_source_flow_d = r.flow_d.groupby(level=['process', 'source'], axis=1).sum().reindex(columns=s.process_source, fill_value=0.0)
+
     # r_process_sink_flow_d - sum over sources
-    r.process_sink_flow_d = pd.DataFrame(index=s.d_realized_period, columns=s.process_sink, dtype=float)
-    for (p, sink) in s.process_sink:
-        flow_sum = pd.Series(0.0, index=s.d_realized_period)
-        for col in r.flow_d.columns:
-            if col[0] == p and col[2] == sink:
-                flow_sum += r.flow_d[col]
-        r.process_sink_flow_d[p, sink] = flow_sum
+    r.process_sink_flow_d = r.flow_d.groupby(level=['process', 'sink'], axis=1).sum().reindex(columns=s.process_sink, fill_value=0.0)
     
     # r_connection_d - with step_duration
     r_conn_weighted = r.connection_dt.mul(step_duration, axis=0)    
@@ -211,22 +193,6 @@ def post_process_results(par, s, v):
     else:
         r.connection_d = pd.DataFrame(index=s.d_realized_period)
     
-    # r_connection_to_left_node__d and r_connection_to_right_node__d
-    if 'output_connection_flow_separate' in s.enable_optional_outputs:
-        r_conn_left_weighted = r_conn_left.mul(step_duration, axis=0)
-        r_conn_right_weighted = r_conn_right.mul(step_duration, axis=0)
-        
-        if not r_conn_left_weighted.empty:
-            r_conn_left_d = r_conn_left_weighted[
-                r_conn_left_weighted.index.get_level_values('period').isin(s.d_realized_period)
-            ].groupby(level='period').sum()
-            r.connection_to_left_node__d = r_conn_left_d
-        
-        if not r_conn_right_weighted.empty:
-            r_conn_right_d = r_conn_right_weighted[
-                r_conn_right_weighted.index.get_level_values('period').isin(s.d_realized_period)
-            ].groupby(level='period').sum()
-            r.connection_to_right_node__d = r_conn_right_d
 
     # Calculate r_node_state_change_dt
     # Filter dt_realize_dispatch
@@ -379,27 +345,28 @@ def post_process_results(par, s, v):
     r.cost_co2_d = r.group_cost_co2_d.groupby('period', axis=0).sum()
     
     # r_cost_process_other_operational_cost_dt
-    r.cost_process_other_operational_cost_dt = pd.DataFrame(0.0, index=r.flow_dt.index, columns=s.process, dtype=float)
-    for p in s.process:
-        for col in r.flow_dt.columns:
-            if col[0] == p and col in par.process_source_sink_varCost.columns:
-                r.cost_process_other_operational_cost_dt[p] += (par.step_duration * 
-                                                                par.process_source_sink_varCost[col] * 
-                                                                r.flow_dt[col])
+    # Filter flow columns that exist in varCost parameters
+    relevant_flows = r.flow_dt.loc[:, r.flow_dt.columns.intersection(par.process_source_sink_varCost.columns)]
+    # Multiply by step_duration and varCost
+    cost_flows = relevant_flows.mul(par.step_duration, axis=0).mul(par.process_source_sink_varCost, axis=1)
+    # Group by process (level 0 of column MultiIndex) and sum
+    r.cost_process_other_operational_cost_dt = cost_flows.groupby(level=0, axis=1).sum().reindex(columns=s.process, fill_value=0.0)
 
     # r_process_startup_dt
     r.process_startup_dt = v.startup_linear.add(v.startup_integer, fill_value=0)
-    
+
     # r_cost_startup_dt
     r.cost_startup_dt = pd.DataFrame(0.0, index=r.process_startup_dt.index, columns=s.process_online, dtype=float)
-    for p in s.process_online:
-        if p in r.process_startup_dt.columns and p in par.process_startup_cost.columns:
-            cost = r.process_startup_dt[p] * par.entity_unitsize[p]
-            for d in par.process_startup_cost.index:
-                if p in par.process_startup_cost.columns:
-                    period_mask = cost.index.get_level_values('period') == d
-                    cost.loc[period_mask] *= par.process_startup_cost.loc[d, p]
-            r.cost_startup_dt[p] = cost
+    # Filter to processes present in all required structures
+    valid_processes = s.process_online.intersection(r.process_startup_dt.columns).intersection(par.process_startup_cost.columns)
+    if len(valid_processes) > 0:
+        # Multiply by entity_unitsize
+        cost = r.process_startup_dt[valid_processes].mul(par.entity_unitsize[valid_processes], axis=1)
+        # Apply period-specific costs by mapping each row's period to the cost dataframe
+        periods = cost.index.get_level_values('period')
+        period_costs = par.process_startup_cost.loc[periods, valid_processes]
+        period_costs.index = cost.index  # Align indices
+        r.cost_startup_dt[valid_processes] = cost.mul(period_costs)
 
     # Reserves
     r.reserves_dt = v.reserve.mul(par.step_duration, axis=0)
@@ -452,11 +419,12 @@ def post_process_results(par, s, v):
     r.cost_entity_invest_d = v.invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted)
     
     # Divestment cost for entities
-    r.cost_entity_divest_d = v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_annual_discounted)
+    r.cost_entity_divest_d = -v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_annual_divest_discounted)
     
     # Fixed cost for entities
-    combined_fixed = pd.concat([par.process_fixed_cost, par.node_fixed_cost], axis=1).rename_axis('entity', axis=1)
-    r.cost_entity_existing_fixed = (r.entity_all_capacity * combined_fixed * 1000).mul(par.discount_factor_operations_yearly, axis=0)
+    r.cost_entity_fixed_pre_existing = (par.entity_pre_existing * par.entity_fixed_cost * 1000).mul(par.discount_factor_operations_yearly, axis=0)
+    r.cost_entity_fixed_invested = (v.invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns] * 1000))
+    r.cost_entity_fixed_divested = -(v.divest.mul(par.entity_unitsize[v.divest.columns] * par.entity_lifetime_fixed_cost_divest[v.divest.columns] * 1000))
     
     # Aggregate costs
     r.costOper_dt = (r.cost_commodity_dt.sum(axis=1) + 
@@ -516,7 +484,9 @@ def post_process_results(par, s, v):
     
     r.costInvest_d = r.costInvestUnit_d + r.costInvestConnection_d + r.costInvestState_d
     r.costDivest_d = r.costDivestUnit_d + r.costDivestConnection_d + r.costDivestState_d
-    r.costExistingFixed_d = r.cost_entity_existing_fixed.sum(axis=1)
+    r.costFixedPreExisting_d = r.cost_entity_fixed_pre_existing.sum(axis=1)
+    r.costFixedInvested_d = r.cost_entity_fixed_invested.sum(axis=1)
+    r.costFixedDivested_d = r.cost_entity_fixed_divested.sum(axis=1)
 
     # pdNodeInflow
     r.node_inflow_d = par.node_inflow.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
@@ -798,10 +768,12 @@ def drop_levels(par, s, v):
     par.entity_all_existing = par.entity_all_existing[~par.entity_all_existing.index.duplicated(keep='first')]
     par.process_startup_cost = par.process_startup_cost.droplevel('solve')
     par.process_startup_cost = par.process_startup_cost[~par.process_startup_cost.index.duplicated(keep='first')]
-    par.process_fixed_cost = par.process_fixed_cost.droplevel('solve')
-    par.process_fixed_cost = par.process_fixed_cost[~par.process_fixed_cost.index.duplicated(keep='first')]
-    par.node_fixed_cost = par.node_fixed_cost.droplevel('solve')
-    par.node_fixed_cost = par.node_fixed_cost[~par.node_fixed_cost.index.duplicated(keep='first')]
+    par.entity_fixed_cost = par.entity_fixed_cost.droplevel('solve')
+    par.entity_fixed_cost = par.entity_fixed_cost[~par.entity_fixed_cost.index.duplicated(keep='first')]
+    par.entity_lifetime_fixed_cost = par.entity_lifetime_fixed_cost.droplevel('solve')
+    par.entity_lifetime_fixed_cost = par.entity_lifetime_fixed_cost[~par.entity_lifetime_fixed_cost.index.duplicated(keep='first')]
+    par.entity_lifetime_fixed_cost_divest = par.entity_lifetime_fixed_cost_divest.droplevel('solve')
+    par.entity_lifetime_fixed_cost_divest = par.entity_lifetime_fixed_cost_divest[~par.entity_lifetime_fixed_cost_divest.index.duplicated(keep='first')]
     par.node_annual_flow = par.node_annual_flow.droplevel('solve')
     par.node_annual_flow = par.node_annual_flow[~par.node_annual_flow.index.duplicated(keep='first')]
     par.group_penalty_inertia = par.group_penalty_inertia.droplevel('solve')

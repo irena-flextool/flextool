@@ -151,9 +151,11 @@ def read_parameters(output_dir):
     p.years_represented_d = pd.read_csv(output_path / 'p_years_represented_d.csv', index_col=[0, 1])['value'].astype(float)
     p.entity_max_units = pd.read_csv(output_path / 'p_entity_max_units.csv', index_col=[0, 1]).astype(float)
     p.entity_all_existing = pd.read_csv(output_path / 'p_entity_all_existing.csv', index_col=[0, 1]).astype(float)
+    p.entity_pre_existing = pd.read_csv(output_path / 'p_entity_pre_existing.csv', index_col=[0, 1]).astype(float)
     p.process_startup_cost = pd.read_csv(output_path / 'pdProcess_startup_cost.csv', index_col=[0, 1]).astype(float)
-    p.process_fixed_cost = pd.read_csv(output_path / 'pdProcess_fixed_cost.csv', index_col=[0, 1]).astype(float)
-    p.node_fixed_cost = pd.read_csv(output_path / 'pdNode_fixed_cost.csv', index_col=[0, 1]).astype(float)
+    p.entity_fixed_cost = pd.read_csv(output_path / 'ed_fixed_cost.csv', index_col=[0, 1]).astype(float)
+    p.entity_lifetime_fixed_cost = pd.read_csv(output_path / 'ed_lifetime_fixed_cost.csv', index_col=[0, 1]).astype(float)
+    p.entity_lifetime_fixed_cost_divest = pd.read_csv(output_path / 'ed_lifetime_fixed_cost_divest.csv', index_col=[0, 1]).astype(float)
     p.node_annual_flow = pd.read_csv(output_path / 'pdNode_annual_flow.csv', index_col=[0, 1]).astype(float)
     p.group_penalty_inertia = pd.read_csv(output_path / 'pdGroup_penalty_inertia.csv', index_col=[0, 1]).astype(float)
     p.group_penalty_non_synchronous = pd.read_csv(output_path / 'pdGroup_penalty_non_synchronous.csv', index_col=[0, 1]).astype(float)
@@ -222,9 +224,11 @@ def read_parameters(output_dir):
     p.profile.columns.name = 'profile'
     p.entity_max_units.columns.name = 'entity'
     p.entity_all_existing.columns.name = 'entity'
+    p.entity_pre_existing.columns.name = 'entity'
     p.process_startup_cost.columns.name = 'process'
-    p.process_fixed_cost.columns.name = 'process'
-    p.node_fixed_cost.columns.name = 'node'
+    p.entity_fixed_cost.columns.name = 'entity'
+    p.entity_lifetime_fixed_cost.columns.name = 'entity'
+    p.entity_lifetime_fixed_cost_divest.columns.name = 'entity'
     p.node_annual_flow.columns.name = 'node'
     p.group_penalty_inertia.columns.name = 'group'
     p.group_penalty_non_synchronous.columns.name = 'group'

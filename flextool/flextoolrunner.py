@@ -562,11 +562,11 @@ class FlexToolRunner:
             for period__years in years_represented:
                 for i in range(int(max(1.0, float(period__years[1])))):
                     years_to_cover_within_year = min(1, float(period__years[1]))
-                    outfile.write(period__years[0] + ',y' + str(year_count) + ',' + str(year_count) + ','
+                    outfile.write(period__years[0] + ',' + str(year_count) + ',' + str(year_count) + ','
                             + str(years_to_cover_within_year) + '\n')
                     for pd in period__branch:
                         if pd[0] in period__years[0] and pd[0] != pd[1]:
-                            outfile.write(pd[1]+ ',y' + str(year_count) + ',' + str(year_count) + ','
+                            outfile.write(pd[1]+ ',' + str(year_count) + ',' + str(year_count) + ','
                             + str(years_to_cover_within_year) + '\n')
                     year_count = year_count + years_to_cover_within_year
 

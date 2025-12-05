@@ -969,20 +969,20 @@ def cost_summaries(par, s, v, r):
     costs_dt = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
     costs_dt['commodity'] = r.cost_commodity_dt.sum(axis=1)
     costs_dt['co2'] = r.cost_co2_dt
-    costs_dt['other_operational'] = r.cost_process_other_operational_cost_dt.sum(axis=1)
+    costs_dt['other operational'] = r.cost_process_other_operational_cost_dt.sum(axis=1)
     costs_dt['starts'] = r.cost_startup_dt.sum(axis=1)
-    costs_dt['upward_slack_penalty'] = r.costPenalty_node_state_upDown_dt.xs('up', level='upDown', axis=1).sum(axis=1)
-    costs_dt['downward_slack_penalty'] = r.costPenalty_node_state_upDown_dt.xs('down', level='upDown', axis=1).sum(axis=1)
-    costs_dt['inertia_slack_penalty'] = r.costPenalty_inertia_dt.sum(axis=1)
-    costs_dt['non_synchronous_slack_penalty'] = r.costPenalty_non_synchronous_dt.sum(axis=1)
+    costs_dt['upward slack penalty'] = r.costPenalty_node_state_upDown_dt.xs('up', level='upDown', axis=1).sum(axis=1)
+    costs_dt['downward slack penalty'] = r.costPenalty_node_state_upDown_dt.xs('down', level='upDown', axis=1).sum(axis=1)
+    costs_dt['inertia slack penalty'] = r.costPenalty_inertia_dt.sum(axis=1)
+    costs_dt['non-synchronous slack penalty'] = r.costPenalty_non_synchronous_dt.sum(axis=1)
     try:
-        costs_dt['upward_reserve_slack_penalty'] = r.costPenalty_reserve_upDown_dt.xs('up', level='updown', axis=1).sum(axis=1)
+        costs_dt['upward reserve slack penalty'] = r.costPenalty_reserve_upDown_dt.xs('up', level='updown', axis=1).sum(axis=1)
     except KeyError:
-        costs_dt['upward_reserve_slack_penalty'] = 0
+        costs_dt['upward reserve slack penalty'] = 0
     try:
-        costs_dt['downward_reserve_slack_penalty'] = r.costPenalty_reserve_upDown_dt.xs('down', level='updown', axis=1).sum(axis=1)
+        costs_dt['downward reserve slack penalty'] = r.costPenalty_reserve_upDown_dt.xs('down', level='updown', axis=1).sum(axis=1)
     except KeyError:
-        costs_dt['downward_reserve_slack_penalty'] = 0
+        costs_dt['downward reserve slack penalty'] = 0
     
     results.append((costs_dt.reset_index(), costs_dt, 'costs_dt_p'))
     
@@ -995,14 +995,20 @@ def cost_summaries(par, s, v, r):
     
     # 3. Discounted and inflation adjusted (with years represented) investment costs (d_realize_invest only)
     investment_costs = pd.DataFrame(index=s.d_realize_invest, dtype=float)
-    investment_costs['unit_investment_retirement'] = (r.costInvestUnit_d + r.costDivestUnit_d) / to_millions
-    investment_costs['connection_investment_retirement'] = (r.costInvestConnection_d + r.costDivestConnection_d) / to_millions
-    investment_costs['storage_investment_retirement'] = (r.costInvestState_d + r.costDivestState_d) / to_millions
+    investment_costs['unit investment retirement'] = (r.costInvestUnit_d + r.costDivestUnit_d) / to_millions
+    investment_costs['connection investment retirement'] = (r.costInvestConnection_d + r.costDivestConnection_d) / to_millions
+    investment_costs['storage investment retirement'] = (r.costInvestState_d + r.costDivestState_d) / to_millions
+    investment_costs['fixed cost pre-existing'] = r.costFixedPreExisting_d / to_millions
+    investment_costs['fixed cost invested'] = r.costFixedInvested_d / to_millions
+    investment_costs['fixed cost reduction due to divested'] = r.costFixedDivested_d / to_millions
+    investment_costs['capacity margin penalty'] = r.costPenalty_capacity_margin_d / to_millions
+
+    # Annualize back: Remove inflation adjustment and years represented
     annual_invest_costs = investment_costs.div(discount_invs, axis=0)
-    investment_costs['fixed_cost_existing'] = r.costExistingFixed_d / to_millions
-    investment_costs['capacity_margin_penalty'] = r.costPenalty_capacity_margin_d / to_millions
-    annual_invest_costs['fixed_cost_existing'] = investment_costs['fixed_cost_existing'].div(discount_ops, axis=0)
-    annual_invest_costs['capacity_margin_penalty'] = investment_costs['capacity_margin_penalty'].div(discount_ops, axis=0)
+    annual_invest_costs['fixed cost pre-existing'] = investment_costs['fixed cost pre-existing'].div(discount_ops, axis=0)
+    annual_invest_costs['fixed cost invested'] = investment_costs['fixed cost invested'].div(discount_ops, axis=0)
+    annual_invest_costs['fixed cost reduction due to divested'] = investment_costs['fixed cost divested'].div(discount_ops, axis=0)
+    annual_invest_costs['capacity margin penalty'] = investment_costs['capacity margin penalty'].div(discount_ops, axis=0)
 
     # results.append((investment_costs.reset_index(), investment_costs, 'annualized_investment_costs_d', 'tbl_annualized_investment_costs_period'))
     
@@ -1104,16 +1110,18 @@ def node_summary(par, s, v, r):
     node_dt[to_connections_cols] = to_connections
 
     # State change
+    state_change = r.node_state_change_dt[r.node_state_change_dt.columns.intersection(s.node_state)]
     state_change_cols = node_dt.columns[
-                        node_dt.columns.get_level_values('node').isin(r.node_state_change_dt.columns)
+                        node_dt.columns.get_level_values('node').isin(state_change.columns)
                         & node_dt.columns.get_level_values('category').isin(['state_change'])]
-    node_dt[state_change_cols] = r.node_state_change_dt
+    node_dt[state_change_cols] = state_change
 
     # Self discharge
+    self_discharge = r.self_discharge_loss_dt[r.self_discharge_loss_dt.columns.intersection(s.node_self_discharge)]
     self_discharge_cols = node_dt.columns[
-                        node_dt.columns.get_level_values('node').isin(r.self_discharge_loss_dt.columns)
+                        node_dt.columns.get_level_values('node').isin(self_discharge.columns)
                         & node_dt.columns.get_level_values('category').isin(['self_discharge'])]
-    node_dt[self_discharge_cols] = r.self_discharge_loss_dt
+    node_dt[self_discharge_cols] = self_discharge
 
     # Upward slack
     balanced_nodes = s.node_balance.union(s.node_balance_period)
@@ -1536,9 +1544,14 @@ def write_summary_csv(par, s, v, r):
         retirement_costs = r.costDivest_d.sum(axis=0) / 1000000
         f.write(f'"Retirement costs (negative salvage value) for realized periods (M CUR)",{retirement_costs:.12g}\n')
 
-        # Fixed costs for existing units (M CUR)
-        fixed_costs = r.costExistingFixed_d.sum(axis=0) / 1000000
-        f.write(f'"Fixed costs for existing units (M CUR)",{fixed_costs:.12g}\n')
+        # Fixed costs for existing entities (M CUR)
+        fixed_costs_pre_existing = r.costFixedPreExisting_d.sum(axis=0) / 1000000
+        fixed_costs_invested = r.costFixedInvested_d.sum(axis=0) / 1000000
+        fixed_costs_divested = r.costFixedDivested_d.sum(axis=0) / 1000000
+
+        f.write(f'"Fixed costs for pre-existing entities (M CUR)",{fixed_costs_pre_existing:.12g}\n')
+        f.write(f'"Fixed costs for invested entities (M CUR)",{fixed_costs_invested:.12g}\n')
+        f.write(f'"Fixed cost removal due to divested entities (M CUR)",{fixed_costs_divested:.12g}\n')
 
         # Penalty (slack) costs for realized periods (M CUR)
         penalty_costs = r.costPenalty_d.sum(axis=0) / 1000000
