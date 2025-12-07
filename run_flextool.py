@@ -86,6 +86,7 @@ def main():
         logging.error(f"Model run failed: {str(e)}\nTraceback:\n{traceback.format_exc()}")
         sys.exit(1)
     
+    # If successful write outputs
     if return_code == 0:
         write_outputs(scenario_name=scenario_name)
 

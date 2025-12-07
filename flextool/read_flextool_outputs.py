@@ -59,6 +59,11 @@ def read_variables(output_dir):
     v.q_capacity_margin.index.names = ['solve', 'period']
     v.invest.index.names = ['solve', 'period']
     v.divest.index.names = ['solve', 'period']
+    v.dual_node_balance.index.names = ['solve', 'period', 'time']
+    v.dual_reserve_balance.index.names = ['solve', 'period', 'time']
+    v.dual_invest_unit.index.names = ['solve', 'period']
+    v.dual_invest_connection.index.names = ['solve', 'period']
+    v.dual_invest_node.index.names = ['solve', 'period']
 
     # Create multi-index for variables with single header row
     v.state.columns.name = 'node'
@@ -81,7 +86,7 @@ def read_variables(output_dir):
     v.dual_invest_connection.columns.name = 'connection'
     v.dual_invest_node.columns.name = 'node'
 
-    # Add multi-index to variables with multiple header rows
+    # Add multi-index to variables with multiple header rows (this multi-index creation works also when the dataframe is empty)
     v.flow.columns = pd.MultiIndex.from_tuples(
         [(col[0], col[1], col[2]) for col in v.flow.columns],
         names=['process', 'source', 'sink']
@@ -281,8 +286,8 @@ def read_sets(output_dir):
     s.process__node__profile__profile_method = pd.MultiIndex.from_frame(pd.read_csv(output_path / 'set_process__node__profile__profile_method.csv'))
 
     # Process topology sets
-    s.process_source_sink = pd.read_csv(output_path / 'set_process_source_sink.csv')
-    s.process_method_sources_sinks = pd.read_csv(output_path / 'set_process_method_sources_sinks.csv')
+    s.process_source_sink = pd.read_csv(output_path / 'set_process_source_sink.csv').set_index(['process', 'source', 'sink']).index
+    s.process_method_sources_sinks = pd.read_csv(output_path / 'set_process_method_sources_sinks.csv').set_index(['process', 'method', 'orig_source', 'orig_sink', 'always_source', 'always_sink']).index
    
     # Process method sets
     s.process_method = pd.read_csv(output_path / 'set_process_method.csv').set_index(['process', 'method']).index
@@ -352,18 +357,22 @@ def read_sets(output_dir):
     s.groupOutput_process = pd.Index(df.iloc[:, 0])
     df = pd.read_csv(output_path / 'set_groupOutput.csv')
     s.groupOutput = pd.Index(df.iloc[:, 0])
-    s.group_output__connection_Not_in_aggregate = pd.read_csv(output_path / 'set_group_output__connection_Not_in_aggregate.csv')
-    s.group_output__process__unit__to_node_Not_in_aggregate = pd.read_csv(output_path / 'set_group_output__process__unit__to_node_Not_in_aggregate.csv')
-    s.group_output__process__node__to_unit_Not_in_aggregate = pd.read_csv(output_path / 'set_group_output__process__node__to_unit_Not_in_aggregate.csv')
-    s.group_output__process__connection__to_node_Not_in_aggregate = pd.read_csv(output_path / 'set_group_output__process__connection__to_node_Not_in_aggregate.csv')
-    s.group_output__process__node__to_connection_Not_in_aggregate = pd.read_csv(output_path / 'set_group_output__process__node__to_connection_Not_in_aggregate.csv')
-    s.group_output__group_aggregate_Unit_to_group = pd.read_csv(output_path / 'set_group_output__group_aggregate_Unit_to_group.csv')
-    s.group_output__group_aggregate__process__unit__to_node = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__unit__to_node.csv')
-    s.group_output__group_aggregate_Group_to_unit = pd.read_csv(output_path / 'set_group_output__group_aggregate_Group_to_unit.csv')
-    s.group_output__group_aggregate__process__node__to_unit = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__node__to_unit.csv')
-    s.group_output__group_aggregate_Connection = pd.read_csv(output_path / 'set_group_output__group_aggregate_Connection.csv')
-    s.group_output__group_aggregate__process__connection__to_node = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__connection__to_node.csv')
-    s.group_output__group_aggregate__process__node__to_connection = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__node__to_connection.csv')
+    s.group_output__connection_Not_in_aggregate = pd.read_csv(output_path / 'set_group_output__connection_Not_in_aggregate.csv').set_index(['group', 'connection']).index
+    s.group_output__process__unit__to_node_Not_in_aggregate = pd.read_csv(output_path / 'set_group_output__process__unit__to_node_Not_in_aggregate.csv').set_index(['group', 'process', 'unit', 'node']).index
+    s.group_output__process__node__to_unit_Not_in_aggregate = pd.read_csv(output_path / 'set_group_output__process__node__to_unit_Not_in_aggregate.csv').set_index(['group', 'process', 'node', 'unit']).index
+    s.group_output__process__connection__to_node_Not_in_aggregate = pd.read_csv(output_path / 'set_group_output__process__connection__to_node_Not_in_aggregate.csv').set_index(['group', 'process', 'connection', 'node']).index
+    s.group_output__process__node__to_connection_Not_in_aggregate = pd.read_csv(output_path / 'set_group_output__process__node__to_connection_Not_in_aggregate.csv').set_index(['group', 'process', 'node', 'connection']).index
+    s.group_output__group_aggregate_Unit_to_group = pd.read_csv(output_path / 'set_group_output__group_aggregate_Unit_to_group.csv').set_index(['group', 'group_aggregate']).index
+    s.group_output__group_aggregate__process__unit__to_node = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__unit__to_node.csv').set_index(['group', 'group_aggregate', 'unit', 'source', 'sink']).index
+    s.group_output__group_aggregate__process__unit__to_node.names = ['group', 'group_aggregate', 'process', 'unit', 'node']
+    s.group_output__group_aggregate_Group_to_unit = pd.read_csv(output_path / 'set_group_output__group_aggregate_Group_to_unit.csv').set_index(['group', 'group_aggregate']).index
+    s.group_output__group_aggregate__process__node__to_unit = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__node__to_unit.csv').set_index(['group', 'group_aggregate', 'unit', 'source', 'sink']).index
+    s.group_output__group_aggregate__process__node__to_unit.names = ['group', 'group_aggregate', 'process', 'node', 'unit']
+    s.group_output__group_aggregate_Connection = pd.read_csv(output_path / 'set_group_output__group_aggregate_Connection.csv').set_index(['group', 'group_aggregate']).index
+    s.group_output__group_aggregate__process__connection__to_node = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__connection__to_node.csv').set_index(['group', 'group_aggregate', 'connection', 'source', 'sink']).index
+    s.group_output__group_aggregate__process__connection__to_node.names = ['group', 'group_aggregate', 'process', 'connection', 'node']
+    s.group_output__group_aggregate__process__node__to_connection = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__node__to_connection.csv').set_index(['group', 'group_aggregate', 'connection', 'source', 'sink']).index
+    s.group_output__group_aggregate__process__node__to_connection.names = ['group', 'group_aggregate', 'process', 'connection', 'node']
     s.group_output__process_fully_inside = pd.read_csv(output_path / 'set_group_output__process_fully_inside.csv').set_index(['group', 'process']).index
     s.group_node = pd.read_csv(output_path / 'set_group_node.csv').set_index(['group', 'node']).index
     s.group_process = pd.read_csv(output_path / 'set_group_process.csv').set_index(['group', 'process']).index
