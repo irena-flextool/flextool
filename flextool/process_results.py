@@ -587,7 +587,7 @@ def post_process_results(par, s, v):
     unit_to_node_filtered = unit_to_node[group_losses_sets_unit_to_node.droplevel('group')]
     node_to_unit_filtered.columns = group_losses_sets_node_to_unit
     unit_to_node_filtered.columns = group_losses_sets_unit_to_node
-    
+
     # Calculate unit losses (input - output) only for filtered units
     unit_losses_dt = node_to_unit_filtered.sub(unit_to_node_filtered, axis=1, fill_value=0.0)
     r.group_output_Internal_unit_losses__dt = unit_losses_dt
@@ -689,6 +689,9 @@ def drop_levels(par, s, v):
     v.q_capacity_margin = v.q_capacity_margin.droplevel('solve')
     v.invest = v.invest.droplevel('solve')
     v.divest = v.divest.droplevel('solve')
+    v.dual_invest_connection = v.dual_invest_connection.droplevel('solve')
+    v.dual_invest_node = v.dual_invest_node.droplevel('solve')
+    v.dual_invest_unit = v.dual_invest_unit.droplevel('solve')
 
     par.step_duration = par.step_duration.droplevel('solve')
     par.flow_min = par.flow_min.droplevel('solve')

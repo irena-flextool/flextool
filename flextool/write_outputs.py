@@ -5,68 +5,12 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import time
+import yaml
 from flextool.read_flextool_outputs import read_variables, read_parameters, read_sets
 from flextool.process_results import post_process_results
+from flextool.plot_functions import plot_dict_of_dataframes
 import warnings
 
-result_set_map = {
-    'annualized_costs_d_p': ('annualized_costs__period.csv', True),
-    'CO2__': ('co2.csv', False),
-    'connection_d_eee': ('connection__period.csv', False),
-    'connection_losses_d_eee': ('connection__period_losses.csv', False),
-    'connection_dt_eee': ('connection__period__t.csv', False),
-    'connection_losses_dt_eee': ('connection__period__t_losses.csv', False),
-    'connection_capacity_ed_p': ('connection_capacity__period.csv', True),
-    'connection_cf_d_e': ('connection_cf__period.csv', True),
-    'dual_invest_connection_d_e': ('connection_invest_marginal__period.csv', True),
-    'costs_dt_p': ('costs__period__t.csv', True),
-    'costs_discounted_p_': ('costs_discounted.csv', False),
-    # '': ('costs_discounted__solve.csv', False),
-    # '': ('node_ramp__period__t.csv', '')
-    'discountFactors_d_p': ('discount_factors__period.csv', False),
-    'entity_annuity_d_p': ('entity_annuity.csv', False),
-    'total_inflow_d_g': ('group__process__node__period.csv', True),
-    'total_inflow_dt_g': ('group__process__node__period__t.csv', True),
-    'nodeGroup_unit_node_inertia_dt_gee': ('group__unit__node_inertia__period__t.csv', True),
-    'nodeGroup_flows_d_gpe': ('group_flows__period.csv', True),
-    'nodeGroup_flows_dt_gpe': ('group_flows__period__t.csv', True),
-    'nodeGroup_inertia_dt_g': ('group_inertia__period__t.csv', True),
-    'nodeGroup_inertia_largest_flow_dt_g': ('group_inertia_largest_flow__period__t.csv', True),
-    'nodeGroup_gd_p': ('group_node__period.csv', True),
-    'nodeGroup_VRE_share_dt_g': ('group_node_VRE_share__period__t.csv', True),
-    'CO2_d_g': ('group_CO2__period.csv', True),
-    'node_d_ep': ('node__period.csv', True),
-    'node_dt_ep': ('node__period__t.csv', True),
-    'node_capacity_ed_p': ('node_capacity__period.csv', True),
-    'dual_invest_node_d_e': ('node_invest_marginal__period.csv', True),
-    'node_prices_dt_e': ('node_prices__period__t.csv', True),
-    'node_state_dt_e': ('node_state__period__t.csv', True),
-    'process_co2_d_e': ('process__period_co2.csv', True),
-    'process_reserve_upDown_node_dt_eppe': ('process__reserve__upDown__node__period__t.csv', True),
-    'process_reserve_average_d_eppe': ('process__reserve__upDown__node__period_average.csv', True),
-    'reserve_prices_dt_ppg': ('reserve_price__upDown__group__period__t.csv', True),
-    'nodeGroup_slack_capacity_margin_d_g': ('slack__capacity_margin__period.csv', True),
-    'node_slack_down_dt_e': ('slack__downward__node_state__period__t.csv', True),
-    'nodeGroup_slack_inertia_dt_g': ('slack__inertia_group__period__t.csv', True),
-    'nodeGroup_slack_nonsync_dt_g': ('slack__nonsync_group__period__t.csv', True),
-    'nodeGroup_slack_reserve_dt_eeg': ('slack__reserve__upDown__group__period__t.csv', True),
-    'node_slack_up_dt_e': ('slack__upward__node_state__period__t.csv', False),
-    'unit_inputNode_d_ee': ('unit__inputNode__period.csv', True),
-    'unit_inputNode_dt_ee': ('unit__inputNode__period__t.csv', True),
-    'unit_outputNode_d_ee': ('unit__outputNode__period.csv', True),
-    'unit_outputNode_dt_ee': ('unit__outputNode__period__t.csv', True),
-    'unit_capacity_ed_p': ('unit_capacity__period.csv', True),
-    'unit_inputs_cf_d_ee': ('unit_cf__inputNode__period.csv', False),
-    'unit_outputs_cf_d_ee': ('unit_cf__outputNode__period.csv', True),
-    'unit_curtailment_outputNode_dt_ee': ('unit_curtailment__outputNode__period__t.csv', False),
-    'unit_curtailment_share_outputNode_d_ee': ('unit_curtailment_share__outputNode__period.csv', True),
-    'dual_invest_unit_d_e': ('unit_invest_marginal__period.csv', True),
-    'unit_online_dt_e': ('unit_online__period__t.csv', True),
-    'unit_online_average_d_e': ('unit_online__period_average.csv', True),
-    'unit_ramp_inputs_dt_ee': ('unit_ramp__inputNode__dt.csv', False),
-    'unit_ramp_outputs_dt_ee': ('unit_ramp__outputNode__dt.csv', False),
-    'unit_startup_d_e': ('unit_startup__period.csv', True)
-}
 
 def read_outputs(output_dir):
     """
@@ -249,7 +193,7 @@ def nodeGroup_indicators(par, s, v, r):
 
         # 1. pdtNodeInflow (negative sum)
         if group_nodes_with_inflow:
-            group_inflow = par.node_inflow[group_nodes_with_inflow].sum(axis=1)
+            group_inflow = -par.node_inflow[group_nodes_with_inflow].sum(axis=1)
         else:
             group_inflow = pd.Series(0, index=dt_index)
 
@@ -257,7 +201,7 @@ def nodeGroup_indicators(par, s, v, r):
         period_shares = group_inflow.index.get_level_values('period').map(
             lambda p: par.complete_period_share_of_year[p]
         )
-        annualized_inflow = group_inflow / period_shares
+        annualized_inflow = -group_inflow / period_shares
 
         # 3. VRE share (actual flow)
         vre_processes = s.process_VRE.get_level_values('process').unique()
@@ -275,7 +219,7 @@ def nodeGroup_indicators(par, s, v, r):
             vre_flow_sum = pd.Series(0, index=dt_index)
 
         # VRE share calculation (avoid division by zero)
-        vre_share = vre_flow_sum / group_inflow.where(group_inflow != 0, pd.NA)
+        vre_share = vre_flow_sum / -group_inflow.where(group_inflow != 0, pd.NA)
 
         # 4. Curtailed VRE share
         potential_cols = r.potentialVREgen_dt.columns[
@@ -287,7 +231,7 @@ def nodeGroup_indicators(par, s, v, r):
         else:
             potential_sum = pd.Series(0, index=dt_index)
         curtailed_vre = (potential_sum - vre_flow_sum)
-        curtailed_vre_share = curtailed_vre / group_inflow.where(group_inflow != 0, pd.NA)
+        curtailed_vre_share = curtailed_vre / -group_inflow.where(group_inflow != 0, pd.NA)
 
         # Filter balance nodes directly from the sets
         balance_nodes = s.node_balance.union(s.node_balance_period)
@@ -454,7 +398,7 @@ def CO2(par, s, v, r):
 
     # Process co2 emissions
     process_co2 = r.process_emissions_co2_d.groupby(['period']).sum()
-    results.append((process_co2, 'process_co2_d_ee'))
+    results.append((process_co2, 'process_co2_d_eee'))
 
     # Group co2 emissions
     results.append((r.group_co2_d, 'CO2_d_g'))
@@ -818,16 +762,7 @@ def unit_VRE_curtailment_and_potential(par, s, v, r):
         # Calculate curtailment share at period level
         curtail_share_period = (curtail_period / potential_period).where(potential_period != 0, 0)
 
-        # Add 'type' level to process_emissions_co2_dt columns
-        index_curtail = curtail_share_period.index.to_frame(index=False)
-        index_curtail['type'] = 'curtailment' 
-        curtail_share_period.index = pd.MultiIndex.from_frame(index_curtail[['type', 'period']])
-        index_potential = potential_period.index.to_frame(index=False)
-        index_potential['type'] = 'potential'
-        potential_period.index = pd.MultiIndex.from_frame(index_potential[['type', 'period']])
-        curt_pot = pd.concat([curtail_share_period, potential_period])
-
-        results.append((curt_pot, 'unit_curtailment_share_outputNode_d_ee'))
+        results.append((curtail_share_period, 'unit_curtailment_share_outputNode_d_ee'))
         results.append((potential_period, 'unit_VRE_potential_outputNode_d_ee'))
     
     return results
@@ -869,6 +804,7 @@ def cost_summaries(par, s, v, r):
     
     # 1. Costs at timestep level (non-annualized)
     costs_dt = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
+    costs_dt.columns.name = 'category'
     costs_dt['commodity'] = r.cost_commodity_dt.sum(axis=1)
     costs_dt['co2'] = r.cost_co2_dt
     costs_dt['other operational'] = r.cost_process_other_operational_cost_dt.sum(axis=1)
@@ -897,6 +833,7 @@ def cost_summaries(par, s, v, r):
     
     # 3. Discounted and inflation adjusted (with years represented) investment costs (d_realize_invest only)
     investment_costs = pd.DataFrame(index=s.d_realize_invest, dtype=float)
+    investment_costs.columns.name = 'category'
     investment_costs['unit investment retirement'] = (r.costInvestUnit_d + r.costDivestUnit_d) / to_millions
     investment_costs['connection investment retirement'] = (r.costInvestConnection_d + r.costDivestConnection_d) / to_millions
     investment_costs['storage investment retirement'] = (r.costInvestState_d + r.costDivestState_d) / to_millions
@@ -971,7 +908,7 @@ def node_summary(par, s, v, r):
     """Node balance summaries for periods and timesteps"""
     results = []
 
-    categories = ['inflow', 'from_units', 'from_connections', 'to_units', 'to_connections', 'state_change', 'self_discharge', 'upward_slack', 'downward_slack']
+    categories = ['inflow', 'from_units', 'from_connections', 'to_units', 'to_connections', 'self_discharge', 'upward_slack', 'downward_slack']
     nodes_sink = s.node.copy()
     nodes_sink.name = 'sink'
     nodes_source = s.node.copy()
@@ -1010,13 +947,6 @@ def node_summary(par, s, v, r):
                         node_dt.columns.get_level_values('node').isin(to_connections.columns)
                         & node_dt.columns.get_level_values('category').isin(['to_connections'])]
     node_dt[to_connections_cols] = to_connections
-
-    # State change
-    state_change = r.node_state_change_dt[r.node_state_change_dt.columns.intersection(s.node_state)]
-    state_change_cols = node_dt.columns[
-                        node_dt.columns.get_level_values('node').isin(state_change.columns)
-                        & node_dt.columns.get_level_values('category').isin(['state_change'])]
-    node_dt[state_change_cols] = state_change
 
     # Self discharge
     self_discharge = r.self_discharge_loss_dt[r.self_discharge_loss_dt.columns.intersection(s.node_self_discharge)]
@@ -1214,700 +1144,6 @@ def slack_variables(par, s, v, r):
     results.append((capmargin_slack, 'nodeGroup_slack_capacity_margin_d_g'))
     
     return results
-
-
-def plot_dict_of_dataframes(results_dict, plot_dir):
-    """
-    Plot dataframes from a dictionary according to key suffixes.
-    
-    Args:
-        results_dict: Dictionary of pandas DataFrames
-        plot_dir: Directory to save PNG files
-    """
-    # Empty csv dir
-    for filename in os.listdir(plot_dir):
-        file_path = os.path.join(plot_dir, filename)
-        if os.path.isfile(file_path):
-            os.remove(file_path)
-    
-    for key, df in results_dict.items():
-        # print(f"Processing {key}...")
-        # Do not create a plot if result_set_map has 'False'
-        if key not in result_set_map or not result_set_map[key][1]:
-            continue
-        
-        # Process the key (name, row index levels and column index levels)
-        split_key = key.split('_')
-        key_name = '_'.join(split_key[:-2])
-        e_locs = [i for i, char in enumerate(split_key[-1]) if char == 'e']
-        p_locs = [i for i, char in enumerate(split_key[-1]) if char == 'p']
-        g_locs = [i for i, char in enumerate(split_key[-1]) if char == 'g']
-
-        # Decide how to plot
-        if (not df.empty) & (len(df) > 0):
-            if 'd' in split_key[-2]:
-                if 't' in split_key[-2]:
-                    if 'nodeGroup' == key_name:
-                        # nodeGroup_gdt_p
-                        df = df.unstack('group')
-                        plot_dt_sub_lines(df, key_name, plot_dir, [0], [1])
-                        # no others yet
-                    elif 'e' in split_key[-1]:
-                        if 'p' in split_key[-1]:
-                            if 'g' in split_key[-1]:
-                                # _dt_gpe
-                                plot_dt_stack_sub(df, key_name, plot_dir, p_locs + e_locs, g_locs)
-                            else:
-                                # _dt_ep
-                                if key == 'node_dt_ep':
-                                    plot_dt_stack_sub(df, key_name, plot_dir, p_locs, e_locs, stack_element_to_split=['state_change'])
-                                else:
-                                    plot_dt_stack_sub(df, key_name, plot_dir, p_locs, e_locs)
-                        else:
-                            # _dt_e
-                            plot_dt_stack_sub(df, key_name, plot_dir, e_locs, [])
-                    elif 'g' in split_key[-1]:
-                        if 'p' in split_key[-1]:
-                            # _dt_pg
-                            plot_dt_sub_lines(df, key_name, plot_dir, g_locs, p_locs)
-                        # else: handle other _dt_g cases if needed
-                        else:
-                            #_dt_g
-                            plot_dt_sub_lines(df, key_name, plot_dir, [], g_locs)
-                    elif 'p' in split_key[-1]:
-                        #_dt_p
-                        plot_dt_sub_lines(df, key_name, plot_dir, [], p_locs)
-                else:
-                    if 'p' in split_key[-1]:
-                        if 'e' in split_key[-1]:
-                            if 'g' in split_key[-1]:
-                                # _d_gpe
-                                plot_rowbars_stack_groupbars(df, key_name, plot_dir, p_locs + e_locs, g_locs)
-                            else:
-                                # _d_pe
-                                plot_rowbars_stack_groupbars(df, key_name, plot_dir, p_locs, e_locs)
-                #         elif 'g' in split_key[-1]:
-                #             #_d_gp   nothing yet
-                #             pass
-                        else:
-                            #_d_p
-                            plot_rowbars_stack_groupbars(df, key_name, plot_dir, p_locs, [])
-                    elif 'e' in split_key[-1]:
-                        if 'g' in split_key[-1]:
-                            #_d_gp
-                            pass
-                        else:
-                            #_d_e
-                            plot_rowbars_stack_groupbars(df, key_name, plot_dir, e_locs, [])
-
-            #elif key.endswith('_d'):
-             #   plot_d_type(df, key, plot_dir)
-            #else:
-            #    plot_other_type(df, key, plot_dir)
-        
-        plt.close('all')  # Clean up
-
-
-def plot_dt_sub_lines(df, plot_name, plot_dir, sub_levels, line_levels, rows=(0,167)):
-    # Take plotted time
-    df_plot = df.iloc[rows[0]:rows[1]]
-
-    # Convert level indices to level names for later use after xs operations
-    if isinstance(df_plot.columns, pd.MultiIndex):
-        line_level_names = [df_plot.columns.names[i] for i in line_levels]
-    else:
-        # Single level index - use indices directly
-        line_level_names = line_levels
-
-    # Handle empty sub_levels (single plot, no subplotting)
-    if not sub_levels:
-        subs = [None]
-    elif len(sub_levels) == 1:
-        subs = df_plot.columns.get_level_values(sub_levels[0]).unique().tolist()
-    else:
-        # Join multiple levels as tuples
-        sub_df = df_plot.columns.to_frame().iloc[:, sub_levels].drop_duplicates()
-        subs = [tuple(row) for row in sub_df.values]
-
-    # Calculate subplot grid (max 3 columns)
-    n_subs = len(subs)
-    n_cols = min(3, n_subs)
-    n_rows = (n_subs + n_cols - 1) // n_cols  # Ceiling division
-
-    # Create figure and axes
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 4*n_rows))
-    if n_subs == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
-
-    # Get time index (drop period level)
-    time_index = df_plot.index.get_level_values('time')
-
-    for idx, sub in enumerate(subs):
-        ax = axes[idx]
-
-        # Extract data for this subplot using xs
-        if sub is None:
-            # No sub_levels - use full dataframe
-            df_sub = df_plot
-        elif len(sub_levels) == 1:
-            df_sub = df_plot.xs(sub, level=sub_levels[0], axis=1)
-        else:
-            # For multiple sub_levels, apply xs for all levels at once
-            df_sub = df_plot.xs(sub, level=sub_levels, axis=1)
-
-        # Get line combinations from line_levels
-        if isinstance(df_sub, pd.Series):
-            # Only one line to plot
-            ax.plot(time_index, df_sub.values, label=str(sub))
-        else:
-            # Check if columns are MultiIndex
-            is_multiindex = isinstance(df_sub.columns, pd.MultiIndex)
-
-            if is_multiindex:
-                if len(line_level_names) == 1:
-                    lines = df_sub.columns.get_level_values(line_level_names[0]).unique().tolist()
-                else:
-                    # Join multiple levels as tuples (use names since sub_levels may have been dropped)
-                    line_df = df_sub.columns.to_frame()[line_level_names].drop_duplicates()
-                    lines = [tuple(row) for row in line_df.values]
-            else:
-                # Single level index, just get unique column values
-                lines = df_sub.columns.unique().tolist()
-
-            # Plot each line
-            for line in lines:
-                if is_multiindex:
-                    if len(line_level_names) == 1:
-                        y_data = df_sub.xs(line, level=line_level_names[0], axis=1)
-                    else:
-                        # For multiple line_levels, apply xs for all levels at once
-                        y_data = df_sub.xs(line, level=line_level_names, axis=1)
-                else:
-                    # Direct column selection for non-MultiIndex
-                    y_data = df_sub[line]
-
-                # Sum if there are still multiple columns remaining
-                if isinstance(y_data, pd.DataFrame):
-                    y_data = y_data.sum(axis=1)
-
-                ax.plot(time_index, y_data.values, label=str(line))
-
-        # Subplot formatting
-        if sub is not None:
-            ax.set_title(str(sub))
-
-        # Only add legend to rightmost column (or always if single plot)
-        if not sub_levels:
-            # Single plot - always show legend
-            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
-        else:
-            # Multiple subplots - only rightmost column
-            col = idx % n_cols
-            if col == n_cols - 1 or idx == n_subs - 1:
-                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
-
-        ax.grid(True, alpha=0.3)
-
-        # Set xticks for every 24th time point
-        tick_positions = range(0, len(time_index), 24)
-        ax.set_xticks(tick_positions)
-        ax.set_xticklabels([time_index[i] for i in tick_positions], rotation=45, ha='right')
-
-    # Hide unused subplots
-    for idx in range(n_subs, len(axes)):
-        axes[idx].set_visible(False)
-
-    # Overall title
-    fig.suptitle(plot_name)
-
-    plt.tight_layout()
-    plt.savefig(f'{plot_dir}/{plot_name}_dt.svg', bbox_inches='tight')
-    plt.close(fig)
-
-def plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, sub_levels, rows=(0,167), stack_element_to_split=None):
-    # Take plotted time
-    df_plot = df.iloc[rows[0]:rows[1]]
-
-    # Convert level indices to level names for later use after xs operations
-    if isinstance(df_plot.columns, pd.MultiIndex):
-        stack_level_names = [df_plot.columns.names[i] for i in stack_levels]
-    else:
-        # Single level index - use indices directly
-        stack_level_names = stack_levels
-
-    # Handle empty sub_levels (single plot, no subplotting)
-    if not sub_levels:
-        subs = [None]
-    elif len(sub_levels) == 1:
-        subs = df_plot.columns.get_level_values(sub_levels[0]).unique().tolist()
-    else:
-        # Join multiple levels as tuples
-        sub_df = df_plot.columns.to_frame().iloc[:, sub_levels].drop_duplicates()
-        subs = [tuple(row) for row in sub_df.values]
-
-    # Calculate subplot grid (max 3 columns)
-    n_subs = len(subs)
-    n_cols = min(3, n_subs)
-    n_rows = (n_subs + n_cols - 1) // n_cols  # Ceiling division
-
-    # Create figure and axes
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 4*n_rows))
-    if n_subs == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
-
-    # Get time index (drop period level)
-    time_index = df_plot.index.get_level_values('time')
-
-    for idx, sub in enumerate(subs):
-        ax = axes[idx]
-
-        # Extract data for this subplot using xs
-        if sub is None:
-            # No sub_levels - use full dataframe
-            df_sub = df_plot
-        elif len(sub_levels) == 1:
-            df_sub = df_plot.xs(sub, level=sub_levels[0], axis=1)
-        else:
-            # For multiple sub_levels, apply xs for all levels at once
-            df_sub = df_plot.xs(sub, level=sub_levels, axis=1)
-
-        # Get stack combinations from stack_levels
-        if isinstance(df_sub, pd.Series):
-            # Only one series to plot
-            df_to_plot = df_sub.to_frame()
-        else:
-            # Check if columns are MultiIndex
-            is_multiindex = isinstance(df_sub.columns, pd.MultiIndex)
-
-            if is_multiindex:
-                if len(stack_level_names) == 1:
-                    stacks = df_sub.columns.get_level_values(stack_level_names[0]).unique().tolist()
-                else:
-                    # Join multiple levels as tuples (use names since levels may have been dropped)
-                    stack_df = df_sub.columns.to_frame()[stack_level_names].drop_duplicates()
-                    stacks = [tuple(row) for row in stack_df.values]
-            else:
-                # Single level index, just get unique column values
-                stacks = df_sub.columns.unique().tolist()
-
-            # Build DataFrame with columns for each stack element
-            data_dict = {}
-            for stack in stacks:
-                if is_multiindex:
-                    if len(stack_level_names) == 1:
-                        y_data = df_sub.xs(stack, level=stack_level_names[0], axis=1)
-                    else:
-                        # For multiple stack_levels, apply xs for all levels at once
-                        y_data = df_sub.xs(stack, level=stack_level_names, axis=1)
-                else:
-                    # Direct column selection for non-MultiIndex
-                    y_data = df_sub[stack]
-
-                # Sum if there are still multiple columns remaining
-                if isinstance(y_data, pd.DataFrame):
-                    y_data = y_data.sum(axis=1)
-
-                data_dict[str(stack)] = y_data
-
-            df_to_plot = pd.DataFrame(data_dict, index=df_sub.index)
-
-        # Reset index to use time only (drop period)
-        df_to_plot.index = time_index
-
-        # Split columns with both positive and negative values if requested
-        if stack_element_to_split:
-            for col_name in stack_element_to_split:
-                if col_name in df_to_plot.columns:
-                    # Create positive and negative columns using clip
-                    df_to_plot[f'{col_name}_pos'] = df_to_plot[col_name].clip(lower=0)
-                    df_to_plot[f'{col_name}_neg'] = df_to_plot[col_name].clip(upper=0)
-                    # Drop the original column
-                    df_to_plot = df_to_plot.drop(columns=[col_name])
-
-        # Create stacked area plot using pandas (handles pos/neg correctly)
-        df_to_plot.plot.area(stacked=True, ax=ax, alpha=0.7, legend=False, linewidth=0)
-
-        # Subplot formatting
-        if sub is not None:
-            ax.set_title(str(sub))
-
-        # Only add legend to rightmost column (or always if single plot)
-        if not sub_levels:
-            # Single plot - always show legend
-            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
-        else:
-            # Multiple subplots - only rightmost column
-            col = idx % n_cols
-            if col == n_cols - 1 or idx == n_subs - 1:
-                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
-
-        ax.grid(True, alpha=0.3)
-
-        # Set xticks for every 24th time point
-        tick_positions = range(0, len(time_index), 24)
-        ax.set_xticks(tick_positions)
-        ax.set_xticklabels([time_index[i] for i in tick_positions], rotation=45, ha='right')
-
-    # Hide unused subplots
-    for idx in range(n_subs, len(axes)):
-        axes[idx].set_visible(False)
-
-    # Overall title
-    fig.suptitle(plot_name)
-
-    plt.tight_layout()
-    plt.savefig(f'{plot_dir}/{plot_name}_dt.svg', bbox_inches='tight')
-    plt.close(fig)
-
-def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_levels):
-    """
-    Create horizontal stacked and grouped bar plot.
-
-    Parameters:
-    -----------
-    df : pd.DataFrame
-        DataFrame with 'period' row index and MultiIndex columns
-    key_name : str
-        Name for the plot (used in title and filename)
-    plot_dir : str
-        Directory to save the plot
-    stack_levels : list of int
-        Column level indices that create colored segments within each bar
-    group_levels : list of int
-        Column level indices that create groups of bars
-    """
-
-    # Convert level indices to names for stability
-    if isinstance(df.columns, pd.MultiIndex):
-        stack_level_names = [df.columns.names[i] for i in stack_levels]
-        group_level_names = [df.columns.names[i] for i in group_levels] if group_levels else []
-    else:
-        # Single level index - use indices directly
-        stack_level_names = stack_levels
-        group_level_names = group_levels if group_levels else []
-
-    # Get unique group combinations
-    if not group_levels:
-        groups = [None]
-    elif len(group_level_names) == 1:
-        groups = df.columns.get_level_values(group_level_names[0]).unique().tolist()
-    else:
-        group_df = df.columns.to_frame().iloc[:, group_levels].drop_duplicates()
-        groups = [tuple(row) for row in group_df.values]
-
-    # Get periods from row index
-    periods = df.index.tolist()
-
-    # Build list of all bars (for y-axis positioning)
-    all_bars = []
-    if not group_levels:
-        # No groups - just one bar per period
-        for period in periods:
-            all_bars.append((None, period))
-    else:
-        # Each group has one bar per period
-        for group in groups:
-            for period in periods:
-                all_bars.append((group, period))
-
-    # Figure size
-    fig, ax = plt.subplots(figsize=(6, 0.3 * len(all_bars) + 0.8))
-
-    # Get stack combinations (for colors and legend)
-    if len(stack_level_names) == 1:
-        stacks = df.columns.get_level_values(stack_level_names[0]).unique().tolist()
-    else:
-        stack_df = df.columns.to_frame().iloc[:, stack_levels].drop_duplicates()
-        stacks = [tuple(row) for row in stack_df.values]
-
-    # Colors for stacking
-    n_stack = len(stacks)
-    colors = plt.colormaps['tab10'](np.linspace(0, 1, min(n_stack, 10)))
-    if n_stack > 10:
-        colors = plt.colormaps['tab20'](np.linspace(0, 1, n_stack))
-
-    # Plot bars
-    for bar_idx, (group, period) in enumerate(all_bars):
-        # Get data for this group
-        if group is None:
-            # No groups - use full dataframe
-            df_bar = df
-        elif len(group_level_names) == 1:
-            df_bar = df.xs(group, level=group_level_names[0], axis=1)
-        else:
-            # For multiple group_levels, apply xs for all levels at once
-            df_bar = df.xs(group, level=group_level_names, axis=1)
-
-        # Collect all values for this bar
-        values = []
-        for stack_idx, stack in enumerate(stacks):
-            # Get value for this stack segment
-            if isinstance(df_bar, pd.Series):
-                value = df_bar.loc[period] if period in df_bar.index else 0
-            else:
-                if isinstance(df_bar.columns, pd.MultiIndex):
-                    if len(stack_level_names) == 1:
-                        try:
-                            df_stack = df_bar.xs(stack, level=stack_level_names[0], axis=1)
-                        except KeyError:
-                            value = 0
-                            df_stack = None
-                    else:
-                        try:
-                            # For multiple stack_levels, apply xs for all levels at once
-                            df_stack = df_bar.xs(stack, level=stack_level_names, axis=1)
-                        except KeyError:
-                            value = 0
-                            df_stack = None
-                else:
-                    # Single column remaining
-                    if stack in df_bar.columns:
-                        df_stack = df_bar[stack]
-                    else:
-                        value = 0
-                        df_stack = None
-
-                if df_stack is not None:
-                    if isinstance(df_stack, pd.DataFrame):
-                        df_stack = df_stack.sum(axis=1)
-                    value = df_stack.loc[period] if period in df_stack.index else 0
-                else:
-                    value = 0
-
-            values.append(value)
-
-        # Stack positive values to the right from 0
-        left_pos = 0
-        for stack_idx, value in enumerate(values):
-            if value > 0:
-                ax.barh(bar_idx, value, left=left_pos,
-                       label=str(stacks[stack_idx]) if bar_idx == 0 else '',
-                       color=colors[stack_idx % len(colors)])
-                left_pos += value
-
-        # Stack negative values to the left from 0
-        left_neg = 0
-        for stack_idx, value in enumerate(values):
-            if value < 0:
-                ax.barh(bar_idx, value, left=left_neg,
-                       color=colors[stack_idx % len(colors)])
-                left_neg += value
-
-    # Set up y-axis with groups and bars
-    # Extract bar labels (just periods)
-    bar_labels = [str(period) for _, period in all_bars]
-
-    # Set main y-axis for individual bars
-    ax.set_yticks(range(len(all_bars)), labels=bar_labels)
-    ax.tick_params('y', length=0)
-    ax.set_ylim(-0.5, len(all_bars) - 0.5)
-
-    if group_levels:
-        # Multiple groups - add two-level y-axis
-        # Calculate group centers
-        group_centers = []
-        group_lefts = []
-        bar_idx = 0
-        for group in groups:
-            # Count bars in this group (one per period)
-            n_bars_in_group = len(periods)
-            group_center = bar_idx + (n_bars_in_group - 1) / 2
-            group_centers.append(group_center)
-            group_lefts.append(bar_idx - 0.5)
-            bar_idx += n_bars_in_group
-        group_lefts.append(bar_idx - 0.5)
-
-        # Calculate padding
-        max_label_length_bars = max(len(str(label)) for label in bar_labels)
-        max_label_length_groups = max(len(str(label)) for label in groups)
-        pad_value_bars = max_label_length_bars * 5.8
-        pad_value_groups = pad_value_bars + max_label_length_groups * 5.8
-
-        # Extra padding for group labels to position them further left
-        extra_group_pad = max_label_length_groups * 6
-
-        # Add separators between individual bars
-        bar_sep_ax = ax.secondary_yaxis(location=0)
-        bar_sep_ax.set_yticks([x - 0.5 for x in range(len(all_bars) + 1)], [''] * (len(all_bars) + 1))
-        bar_sep_ax.tick_params('y', length=pad_value_bars)
-
-        # Add secondary y-axis for groups
-        group_ax = ax.secondary_yaxis(location=0)
-        group_ax.set_yticks(group_centers, labels=[str(g) for g in groups])
-        group_ax.tick_params('y', length=0, pad=pad_value_bars + 3 + extra_group_pad)
-
-        # Separators for groups
-        group_sep_ax = ax.secondary_yaxis(location=0)
-        group_sep_ax.set_yticks(group_lefts, [''] * (len(groups) + 1))
-        group_sep_ax.tick_params('y', length=pad_value_groups)
-
-    # Legend
-    handles, labels = ax.get_legend_handles_labels()
-    legend_title = ', '.join([str(n) for n in stack_level_names])
-    ax.legend(handles[::-1], labels[::-1], title=legend_title,
-             bbox_to_anchor=(1.01, 1), loc='upper left')
-
-    # Labels and title
-    ax.set_xlabel('Value')
-    ax.set_title(key_name)
-
-    plt.tight_layout()
-    plt.savefig(f'{plot_dir}/{key_name}_d.svg', bbox_inches='tight')
-    plt.close(fig)
-
-def plot_dt_type(df, key, plot_dir):
-    """Line plot for _dt type: 168 rows, all columns as lines"""
-    fig, ax = plt.subplots(figsize=(16, 10))
-    
-    # Take first 168 rows
-    df_plot = df.iloc[:168]
-    
-    # Plot each column as a line
-    for col in df_plot.columns:
-        if isinstance(col, tuple):
-            label = ' - '.join(str(c) for c in col)
-        else:
-            label = str(col)
-        ax.plot(range(len(df_plot)), df_plot[col], label=label, alpha=0.7)
-    
-    # Set x-axis labels to show multi-index
-    if isinstance(df_plot.index, pd.MultiIndex):
-        # Create labels from multi-index
-        x_labels = [' '.join(str(idx) for idx in row) for row in df_plot.index]
-        # Show every nth label to avoid overcrowding
-        step = max(1, len(x_labels) // 20)
-        ax.set_xticks(range(0, len(x_labels), step))
-        ax.set_xticklabels([x_labels[i] for i in range(0, len(x_labels), step)], 
-                          rotation=45, ha='right')
-        
-        # Set x-axis label from index names
-        xlabel = ' - '.join(str(name) for name in df_plot.index.names if name)
-        ax.set_xlabel(xlabel)
-    else:
-        ax.set_xlabel(df_plot.index.name or 'Index')
-    
-    # Set y-axis label from column names
-    if isinstance(df.columns, pd.MultiIndex):
-        ylabel = ' - '.join(str(name) for name in df.columns.names if name)
-    else:
-        ylabel = df.columns.name or 'Value'
-    ax.set_ylabel(ylabel)
-    
-    ax.set_title(key)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
-    ax.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(f'{plot_dir}/{key}.svg', bbox_inches='tight')
-
-
-def plot_d_type(df, key, plot_dir):
-    """Grouped bar plot for _d type: separate bars for columns, grouped by index"""
-    fig, ax = plt.subplots(figsize=(16, 10))
-    
-    # Transpose so columns become x-axis groups
-    df_plot = df.T
-    
-    # Create x positions for bar groups
-    n_groups = len(df_plot.index)  # number of columns
-    n_bars = len(df.index)  # number of periods
-    
-    # Width of each bar and spacing
-    bar_width = 0.8 / n_bars
-    x = np.arange(n_groups)
-    
-    # Plot grouped bars
-    for i, idx_val in enumerate(df.index):
-        values = df_plot[idx_val].values
-        label = str(idx_val)
-        offset = (i - n_bars/2 + 0.5) * bar_width
-        ax.bar(x + offset, values, bar_width, label=label)
-    
-    # Set x-axis labels
-    if isinstance(df.columns, pd.MultiIndex):
-        x_labels = ['\n'.join(str(c) for c in col) for col in df.columns]
-    else:
-        x_labels = [str(col) for col in df.columns]
-    
-    ax.set_xticks(x)
-    ax.set_xticklabels(x_labels, rotation=45, ha='right')
-    
-    # Set labels
-    if isinstance(df.columns, pd.MultiIndex):
-        xlabel = ' - '.join(str(name) for name in df.columns.names if name)
-    else:
-        xlabel = df.columns.name or 'Columns'
-    ax.set_xlabel(xlabel)
-    
-    ylabel = df.index.name or 'Value'
-    ax.set_ylabel(ylabel)
-    
-    ax.set_title(key)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(True, alpha=0.3, axis='y')
-    
-    plt.tight_layout()
-    plt.savefig(f'{plot_dir}/{key}.svg', bbox_inches='tight')
-
-
-def plot_other_type(df, key, plot_dir):
-    """Subplots (2xN) for other types: one subplot per column, bars for index rows"""
-    n_cols = len(df.columns)
-    n_rows = int(np.ceil(n_cols / 2))
-    
-    fig, axes = plt.subplots(n_rows, 2, figsize=(16, 10))
-    fig.suptitle(key, fontsize=16)
-    
-    # Flatten axes array for easier iteration
-    if n_rows == 1:
-        axes = axes.reshape(1, -1)
-    axes_flat = axes.flatten()
-    
-    for idx, col in enumerate(df.columns):
-        ax = axes_flat[idx]
-        
-        # Get data for this column
-        data = df[col]
-        
-        # Create bar plot
-        x = np.arange(len(data))
-        ax.bar(x, data, width=0.8)
-        
-        # Set x-axis labels
-        if isinstance(df.index, pd.MultiIndex):
-            x_labels = ['\n'.join(str(i) for i in row) for row in df.index]
-        else:
-            x_labels = [str(i) for i in df.index]
-        
-        ax.set_xticks(x)
-        ax.set_xticklabels(x_labels, rotation=45, ha='right', fontsize=8)
-        
-        # Set subplot title (column name)
-        if isinstance(col, tuple):
-            col_title = '\n'.join(str(c) for c in col)
-        else:
-            col_title = str(col)
-        ax.set_title(col_title, fontsize=10)
-        
-        # Set x-axis label from index names
-        if isinstance(df.index, pd.MultiIndex):
-            xlabel = ' - '.join(str(name) for name in df.index.names if name)
-        else:
-            xlabel = df.index.name or 'Index'
-        ax.set_xlabel(xlabel, fontsize=9)
-        
-        ax.grid(True, alpha=0.3, axis='y')
-    
-    # Hide unused subplots
-    for idx in range(n_cols, len(axes_flat)):
-        axes_flat[idx].set_visible(False)
-    
-    plt.tight_layout()
-    plt.savefig(f'{plot_dir}/{key}.svg', bbox_inches='tight')
 
 
 def print_namespace_structure(namespace, name='r', max_items=3, output_file='namespace_structure.txt'):
@@ -2121,11 +1357,25 @@ ALL_OUTPUTS = [
 
 
 # writer.py - handles the actual writing
-def write_outputs(scenario_name, output_funcs=None, subdir=None, read_parquet_dir=False, methods=['plot', 'parquet', 'excel', 'db', 'csv'], debug=False):
+def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=None, read_parquet_dir=False, methods=['plot', 'parquet', 'excel', 'db', 'csv'], plot_rows=(0, 167), debug=False):
     """
-    output_funcs: list of functions to run, or None for ALL_OUTPUTS
+    Write FlexTool outputs to various formats.
+
+    Args:
+        scenario_name: Name of the scenario
+        output_config_path: Path to YAML configuration file defining outputs
+        output_funcs: list of functions to run, or None for ALL_OUTPUTS
+        subdir: Subdirectory for outputs
+        read_parquet_dir: Directory to read existing parquet files from
+        methods: List of output methods ('plot', 'parquet', 'excel', 'db', 'csv')
+        plot_rows: Tuple of first and last row to plot in a time series plots. Default is (0, 167).
+        debug: Enable debug output
     """
     warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
+
+    # Load output configuration from YAML
+    with open(output_config_path, 'r') as f:
+        settings = yaml.safe_load(f)
 
     if subdir:
         parquet_dir = os.path.join(subdir, 'output_parquet')
@@ -2206,7 +1456,7 @@ def write_outputs(scenario_name, output_funcs=None, subdir=None, read_parquet_di
     if 'plot' in methods:
         if not os.path.exists( plot_dir):
             os.makedirs( plot_dir)
-        plot_dict_of_dataframes(results, plot_dir)
+        plot_dict_of_dataframes(results, plot_dir, settings, plot_rows=plot_rows)
 
         print(f"--- Plotted figures: {time.perf_counter() - start:.4f} seconds")
         start = time.perf_counter()
@@ -2223,12 +1473,10 @@ def write_outputs(scenario_name, output_funcs=None, subdir=None, read_parquet_di
 
         write_summary_csv(par, s, v, r, csv_dir)
 
-        for table_name, attributes in result_set_map.items():
-            if table_name and table_name in results:
+        for table_name, attributes in settings.items():
+            if table_name and table_name in results and attributes[0]:
                 csv_filename = attributes[0]
                 df = results[table_name]
-                if table_name == 'connection_capacity_ed_p':
-                    pass
                 if 'solve' not in df.index.names and 'period' in df.index.names: # and csv_filename not in ['costs_discounted.csv']
                     df.index = df.index.join(s.solve_period)
                     names = list(df.index.names)
@@ -2261,4 +1509,30 @@ def write_outputs(scenario_name, output_funcs=None, subdir=None, read_parquet_di
         start = time.perf_counter()
 
 if __name__ == "__main__":
-    write_outputs("foo")
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Write FlexTool outputs to various formats')
+    parser.add_argument('scenario_name', type=str, help='Name of the scenario')
+    parser.add_argument('--config', type=str, default='templates/default_plots.yaml',
+                        help='Path to output configuration YAML file (default: templates/default_plots.yaml)')
+    parser.add_argument('--subdir', type=str, default=None,
+                        help='Subdirectory for outputs (default: current directory)')
+    parser.add_argument('--methods', type=str, nargs='+', default=['plot', 'parquet', 'csv'],
+                        choices=['plot', 'parquet', 'excel', 'db', 'csv'],
+                        help='Output methods to use (default: plot parquet csv)')
+    parser.add_argument('--plot-rows', type=int, nargs=2, default=[0, 167],
+                        help='First and last row to plot in time series (default: 0 167)')
+    parser.add_argument('--debug', action='store_true',
+                        help='Enable debug output')
+
+    args = parser.parse_args()
+
+    write_outputs(
+        args.scenario_name,
+        args.config,
+        output_funcs=None,
+        subdir=args.subdir,
+        methods=args.methods,
+        plot_rows=tuple(args.plot_rows),
+        debug=args.debug
+    )
