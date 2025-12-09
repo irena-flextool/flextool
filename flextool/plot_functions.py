@@ -7,7 +7,38 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
 
-def plot_dict_of_dataframes(results_dict, plot_dir, settings, plot_rows=(0,167)):
+def estimate_legend_width(labels, title='', base_width=1.5):
+    """
+    Estimate the width in inches needed for a legend based on label content.
+
+    Args:
+        labels: List of label strings
+        title: Legend title string
+        base_width: Minimum width in inches (default: 1.5)
+
+    Returns:
+        Estimated width in inches
+    """
+    if not labels:
+        return base_width
+
+    # Calculate max label length
+    max_label_len = max(len(str(label)) for label in labels)
+    title_len = len(str(title)) if title else 0
+
+    # Estimate width: ~0.09 inches per character + base padding
+    # This accounts for typical matplotlib font sizes (8-10pt)
+    char_width = 0.09
+    label_width = max_label_len * char_width
+    title_width = title_len * char_width
+
+    # Use the larger of label or title width, plus padding
+    estimated_width = max(label_width, title_width, base_width) + 0.8
+
+    return estimated_width
+
+
+def plot_dict_of_dataframes(results_dict, plot_dir, settings, plot_rows=(0,167), delete_existing_plots=True):
     """
     Plot dataframes from a dictionary according to key suffixes.
 
@@ -15,12 +46,14 @@ def plot_dict_of_dataframes(results_dict, plot_dir, settings, plot_rows=(0,167))
         results_dict: Dictionary of pandas DataFrames
         plot_dir: Directory to save PNG files
         result_set_map: Dictionary mapping result keys to (filename, plot_flag) tuples
+        delete_existing_plots: If True, delete all existing plots in plot_dir before creating new ones (default: True)
     """
-    # Empty csv dir
-    for filename in os.listdir(plot_dir):
-        file_path = os.path.join(plot_dir, filename)
-        if os.path.isfile(file_path):
-            os.remove(file_path)
+    # Empty plot dir if requested
+    if delete_existing_plots:
+        for filename in os.listdir(plot_dir):
+            file_path = os.path.join(plot_dir, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
 
     for key, df in results_dict.items():
         # print(f"Processing {key}...")
@@ -64,12 +97,12 @@ def plot_dict_of_dataframes(results_dict, plot_dir, settings, plot_rows=(0,167))
             if chart_type == 'time':
                 if 'nodeGroup' == key_name:
                     # nodeGroup_gdt_p
-                    plot_dt_sub_lines(df, key_name, plot_dir, [0], [1])
+                    plot_dt_sub_lines(df, key_name, plot_dir, [0], [1], legend_position=legend_position)
                     # no others yet
                 elif s_locs:
-                    plot_dt_stack_sub(df, key_name, plot_dir, s_locs, u_locs, rows=plot_rows)
+                    plot_dt_stack_sub(df, key_name, plot_dir, s_locs, u_locs, rows=plot_rows, legend_position=legend_position)
                 elif l_locs:
-                    plot_dt_sub_lines(df, key_name, plot_dir, u_locs, l_locs, rows=plot_rows)
+                    plot_dt_sub_lines(df, key_name, plot_dir, u_locs, l_locs, rows=plot_rows, legend_position=legend_position)
             elif chart_type == 'bar':
                 plot_rowbars_stack_groupbars(df, key_name, plot_dir, s_locs, g_locs, u_locs, subplots_per_row=subplots_per_row, legend_position=legend_position)
 
@@ -79,7 +112,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, settings, plot_rows=(0,167))
         plt.close('all')  # Clean up
 
 
-def plot_dt_sub_lines(df, plot_name, plot_dir, sub_levels, line_levels, rows=(0,167), subplots_per_row=3):
+def plot_dt_sub_lines(df, plot_name, plot_dir, sub_levels, line_levels, rows=(0,167), subplots_per_row=3, legend_position='right'):
     # Take plotted time
     df_plot = df.iloc[rows[0]:rows[1]]
 
@@ -105,12 +138,63 @@ def plot_dt_sub_lines(df, plot_name, plot_dir, sub_levels, line_levels, rows=(0,
     n_cols = min(subplots_per_row, n_subs)
     n_rows = (n_subs + n_cols - 1) // n_cols  # Ceiling division
 
+    # Calculate legend width if needed
+    legend_width = 0
+    if legend_position == 'all' and n_cols > 1:
+        max_legend_width = 0
+
+        for sub in subs:
+            # Extract data for this subplot
+            if sub is None:
+                df_sub_temp = df_plot
+            elif len(sub_levels) == 1:
+                df_sub_temp = df_plot.xs(sub, level=sub_levels[0], axis=1)
+            else:
+                df_sub_temp = df_plot.xs(sub, level=sub_levels, axis=1)
+
+            # Get line labels
+            is_multiindex = isinstance(df_sub_temp.columns, pd.MultiIndex)
+            if is_multiindex:
+                if len(line_level_names) == 1:
+                    lines_temp = df_sub_temp.columns.get_level_values(line_level_names[0]).unique().tolist()
+                else:
+                    line_df = df_sub_temp.columns.to_frame()[line_level_names].drop_duplicates()
+                    lines_temp = [tuple(row) for row in line_df.values]
+            else:
+                lines_temp = df_sub_temp.columns.unique().tolist()
+
+            # Format labels
+            legend_labels = [str(line) for line in lines_temp]
+
+            # Estimate width
+            width = estimate_legend_width(legend_labels)
+            max_legend_width = max(max_legend_width, width)
+
+        legend_width = max_legend_width
+
     # Create figure and axes
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 4*n_rows))
+    BASE_WIDTH_PER_COL = 6
+    BASE_HEIGHT_PER_ROW = 4
+
+    if legend_width > 0 and n_cols > 1:
+        total_width = BASE_WIDTH_PER_COL * n_cols + legend_width * (n_cols - 1)
+    else:
+        total_width = BASE_WIDTH_PER_COL * n_cols
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(total_width, BASE_HEIGHT_PER_ROW * n_rows))
     if n_subs == 1:
         axes = [axes]
     else:
         axes = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
+
+    # Adjust subplot spacing to accommodate legends
+    if legend_width > 0 and n_cols > 1:
+        # wspace is the width of spacing as a fraction of average axes width
+        wspace = legend_width / BASE_WIDTH_PER_COL
+        # Calculate vertical spacing to prevent row overlap
+        # Add space for ~1.5 rows of text, normalized to subplot height
+        hspace = 0.225 / BASE_HEIGHT_PER_ROW if BASE_HEIGHT_PER_ROW > 0 else 0.15
+        fig.subplots_adjust(wspace=wspace, hspace=hspace)
 
     # Get time index (drop period level)
     time_index = df_plot.index.get_level_values('time')
@@ -169,15 +253,20 @@ def plot_dt_sub_lines(df, plot_name, plot_dir, sub_levels, line_levels, rows=(0,
         if sub is not None:
             ax.set_title(str(sub))
 
-        # Only add legend to rightmost column (or always if single plot)
-        if not sub_levels:
-            # Single plot - always show legend
+        # Determine if legend should be shown
+        show_legend = False
+        if legend_position == 'all':
+            show_legend = True
+        elif legend_position == 'right':
+            if not sub_levels:
+                show_legend = True
+            else:
+                col = idx % n_cols
+                if col == n_cols - 1 or idx == n_subs - 1:
+                    show_legend = True
+
+        if show_legend:
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
-        else:
-            # Multiple subplots - only rightmost column
-            col = idx % n_cols
-            if col == n_cols - 1 or idx == n_subs - 1:
-                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
 
         ax.grid(True, alpha=0.3)
 
@@ -193,11 +282,10 @@ def plot_dt_sub_lines(df, plot_name, plot_dir, sub_levels, line_levels, rows=(0,
     # Overall title
     fig.suptitle(plot_name)
 
-    plt.tight_layout()
     plt.savefig(f'{plot_dir}/{plot_name}_dt.svg', bbox_inches='tight')
     plt.close(fig)
 
-def plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, sub_levels, rows=(0,167), stack_element_to_split=None, subplots_per_row=3):
+def plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, sub_levels, rows=(0,167), stack_element_to_split=None, subplots_per_row=3, legend_position='right'):
     # Take plotted time
     df_plot = df.iloc[rows[0]:rows[1]]
 
@@ -223,12 +311,63 @@ def plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, sub_levels, rows=(0
     n_cols = min(subplots_per_row, n_subs)
     n_rows = (n_subs + n_cols - 1) // n_cols  # Ceiling division
 
+    # Calculate legend width if needed
+    legend_width = 0
+    if legend_position == 'all' and n_cols > 1:
+        max_legend_width = 0
+
+        for sub in subs:
+            # Extract data for this subplot
+            if sub is None:
+                df_sub_temp = df_plot
+            elif len(sub_levels) == 1:
+                df_sub_temp = df_plot.xs(sub, level=sub_levels[0], axis=1)
+            else:
+                df_sub_temp = df_plot.xs(sub, level=sub_levels, axis=1)
+
+            # Get stack labels
+            is_multiindex = isinstance(df_sub_temp.columns, pd.MultiIndex)
+            if is_multiindex:
+                if len(stack_level_names) == 1:
+                    stacks_temp = df_sub_temp.columns.get_level_values(stack_level_names[0]).unique().tolist()
+                else:
+                    stack_df = df_sub_temp.columns.to_frame()[stack_level_names].drop_duplicates()
+                    stacks_temp = [tuple(row) for row in stack_df.values]
+            else:
+                stacks_temp = df_sub_temp.columns.unique().tolist()
+
+            # Format labels
+            legend_labels = [str(stack) for stack in stacks_temp]
+
+            # Estimate width
+            width = estimate_legend_width(legend_labels)
+            max_legend_width = max(max_legend_width, width)
+
+        legend_width = max_legend_width
+
     # Create figure and axes
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 4*n_rows))
+    BASE_WIDTH_PER_COL = 6
+    BASE_HEIGHT_PER_ROW = 4
+
+    if legend_width > 0 and n_cols > 1:
+        total_width = BASE_WIDTH_PER_COL * n_cols + legend_width * (n_cols - 1)
+    else:
+        total_width = BASE_WIDTH_PER_COL * n_cols
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(total_width, BASE_HEIGHT_PER_ROW * n_rows))
     if n_subs == 1:
         axes = [axes]
     else:
         axes = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
+
+    # Adjust subplot spacing to accommodate legends
+    if legend_width > 0 and n_cols > 1:
+        # wspace is the width of spacing as a fraction of average axes width
+        wspace = legend_width / BASE_WIDTH_PER_COL
+        # Calculate vertical spacing to prevent row overlap
+        # Add space for ~1.5 rows of text, normalized to subplot height
+        hspace = 0.225 / BASE_HEIGHT_PER_ROW if BASE_HEIGHT_PER_ROW > 0 else 0.15
+        fig.subplots_adjust(wspace=wspace, hspace=hspace)
 
     # Get time index (drop period level)
     time_index = df_plot.index.get_level_values('time')
@@ -306,15 +445,20 @@ def plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, sub_levels, rows=(0
         if sub is not None:
             ax.set_title(str(sub))
 
-        # Only add legend to rightmost column (or always if single plot)
-        if not sub_levels:
-            # Single plot - always show legend
+        # Determine if legend should be shown
+        show_legend = False
+        if legend_position == 'all':
+            show_legend = True
+        elif legend_position == 'right':
+            if not sub_levels:
+                show_legend = True
+            else:
+                col = idx % n_cols
+                if col == n_cols - 1 or idx == n_subs - 1:
+                    show_legend = True
+
+        if show_legend:
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
-        else:
-            # Multiple subplots - only rightmost column
-            col = idx % n_cols
-            if col == n_cols - 1 or idx == n_subs - 1:
-                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
 
         ax.grid(True, alpha=0.3)
 
@@ -330,7 +474,6 @@ def plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, sub_levels, rows=(0
     # Overall title
     fig.suptitle(plot_name)
 
-    plt.tight_layout()
     plt.savefig(f'{plot_dir}/{plot_name}_dt.svg', bbox_inches='tight')
     plt.close(fig)
 
@@ -352,8 +495,13 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
         Column level indices that create groups of bars
     sub_levels : list of int, optional
         Column level indices that create separate subplots (default: [])
-    legend : str, optional
-        Legend placement: 'all' shows legend on all subplots, 'right' shows only on rightmost column (default: 'right')
+    legend_position : str, optional
+        Legend placement: 'all' shows legend on all subplots,
+        'right' shows only on rightmost column (default: 'right').
+
+        Note: When legend_position='all' and multiple columns are used,
+        the figure width is automatically increased based on legend content
+        to prevent overlap with adjacent subplots.
     subplots_per_row : int, optional
         Number of subplots per row (default: 3)
     """
@@ -424,16 +572,145 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
         row_height = 0.3 * max_bars_in_row + 0.8
         row_heights.append(row_height)
 
+    # Calculate legend width if needed
+    legend_width = 0
+    if legend_position == 'all' and n_cols > 1 and stack_levels:
+        # Determine what the legend labels will be by analyzing stack levels
+        max_legend_width = 0
+
+        for sub in subs:
+            # Extract data for this subplot
+            if sub is None:
+                df_sub_temp = df
+            elif len(sub_levels) == 1:
+                df_sub_temp = df.xs(sub, level=sub_levels[0], axis=1)
+            else:
+                df_sub_temp = df.xs(sub, level=sub_levels, axis=1)
+
+            # Get stack combinations
+            if len(stack_level_names) == 1:
+                stacks_temp = df_sub_temp.columns.get_level_values(stack_level_names[0]).unique().tolist()
+            else:
+                stack_df = df_sub_temp.columns.to_frame()[stack_level_names].drop_duplicates()
+                stacks_temp = [tuple(row) for row in stack_df.values]
+
+            # Format labels as they will appear in legend
+            legend_labels = []
+            for stack in stacks_temp:
+                if isinstance(stack, (tuple, list)):
+                    label = ' | '.join(str(v) for v in stack)
+                else:
+                    label = str(stack)
+                legend_labels.append(label)
+
+            # Generate legend title
+            if isinstance(df_sub_temp.columns, pd.MultiIndex):
+                legend_title = ' | '.join([str(n) for n in stack_level_names])
+            else:
+                legend_title = str(df_sub_temp.columns.name) if df_sub_temp.columns.name else 'stack'
+
+            # Estimate width for this subplot's legend
+            width = estimate_legend_width(legend_labels, legend_title)
+            max_legend_width = max(max_legend_width, width)
+
+        legend_width = max_legend_width
+
+    # Calculate left margin width needed for group labels
+    left_margin_width = 0
+    if group_levels and n_cols > 1:
+        max_left_margin = 0
+
+        for sub in subs:
+            # Extract data for this subplot
+            if sub is None:
+                df_sub_temp = df
+            elif len(sub_levels) == 1:
+                df_sub_temp = df.xs(sub, level=sub_levels[0], axis=1)
+            else:
+                df_sub_temp = df.xs(sub, level=sub_levels, axis=1)
+
+            # Get group combinations
+            if len(group_level_names) == 1:
+                groups_temp = df_sub_temp.columns.get_level_values(group_level_names[0]).unique().tolist()
+            else:
+                groups_temp = []
+                for group_level_name in group_level_names:
+                    groups_temp.append(df_sub_temp.columns.get_level_values(group_level_name).tolist())
+                groups_temp = list(zip(*groups_temp))
+
+            periods_temp = df_sub_temp.index.tolist()
+
+            # Format group labels
+            group_labels = []
+            for group in groups_temp:
+                if isinstance(group, (tuple, list)):
+                    label = ' | '.join(str(v) for v in group)
+                else:
+                    label = str(group)
+                group_labels.append(label)
+
+            # Format period labels
+            period_labels = [str(p) if not isinstance(p, tuple) else ' | '.join(str(v) for v in p) for p in periods_temp]
+
+            # Estimate width needed for bar labels and group labels
+            # Bar labels: ~0.055 inches per character (smaller font, size 9)
+            # Group labels: ~0.065 inches per character (size 10)
+            max_bar_label_len = max(len(label) for label in period_labels) if period_labels else 0
+            max_group_label_len = max(len(label) for label in group_labels) if group_labels else 0
+
+            # Estimate left margin: bar labels width + group labels width + padding
+            bar_label_width = max_bar_label_len * 0.055
+            group_label_width = max_group_label_len * 0.065
+            left_margin = bar_label_width + group_label_width + 0.3  # 0.3 inches padding
+
+            max_left_margin = max(max_left_margin, left_margin)
+
+        left_margin_width = max_left_margin
+
     # Create figure and axes
+    BASE_WIDTH_PER_COL = 6  # inches
+
     if n_subs == 1:
-        # Will be created inside the loop with dynamic sizing
+        # Single plot - bbox_inches='tight' handles legend and margins automatically
         fig = None
         axes = [None]
     else:
         # Use GridSpec for variable row heights
         total_height = sum(row_heights)
-        fig = plt.figure(figsize=(6*n_cols, total_height))
-        gs = GridSpec(n_rows, n_cols, figure=fig, height_ratios=row_heights)
+
+        # Calculate width with legend and left margin accommodation
+        total_width = BASE_WIDTH_PER_COL * n_cols
+
+        # Add extra width for legends on non-rightmost columns
+        if legend_width > 0 and n_cols > 1:
+            # Rightmost column doesn't need extra space (bbox_inches='tight' handles it)
+            total_width += legend_width * (n_cols - 1)
+
+        # Add extra width for left margins on all columns with groups
+        if left_margin_width > 0 and n_cols > 1:
+            # All columns need left margin space, but the leftmost is handled by tight_layout
+            # Only add for additional columns beyond the first
+            total_width += left_margin_width * (n_cols - 1)
+
+        fig = plt.figure(figsize=(total_width, total_height))
+
+        # Calculate horizontal spacing
+        wspace = 0.2  # Default matplotlib spacing
+        if legend_width > 0 and n_cols > 1:
+            # Add spacing for legends between non-rightmost columns
+            wspace = legend_width / BASE_WIDTH_PER_COL
+        if left_margin_width > 0 and n_cols > 1:
+            # Add spacing for left margins (accumulated with legend spacing)
+            wspace += left_margin_width / BASE_WIDTH_PER_COL
+
+        # Calculate vertical spacing to prevent row overlap
+        # Add space for ~1.5 rows of text (title + labels)
+        # Assuming 0.15 inches per text row, 1.5 rows = 0.225 inches
+        # hspace is relative to average subplot height
+        avg_subplot_height = total_height / n_rows if n_rows > 0 else 1
+        hspace = 1.4 / avg_subplot_height if avg_subplot_height > 0 else 0.15
+
+        gs = GridSpec(n_rows, n_cols, figure=fig, height_ratios=row_heights, wspace=wspace, hspace=hspace)
         axes = []
         for i in range(n_subs):
             row = i // n_cols
@@ -725,6 +1002,5 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
     for idx in range(n_subs, len(axes)):
         axes[idx].set_visible(False)
 
-    plt.tight_layout()
     plt.savefig(f'{plot_dir}/{key_name}_d.svg', bbox_inches='tight')
     plt.close(fig)

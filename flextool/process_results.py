@@ -99,9 +99,9 @@ def post_process_results(par, s, v):
     nodes_sink.name = 'sink'
 
     # Flows out of nodes (source == n, positive)
-    flows_out = ramp_dt_dropped[nodes_source.join(ramp_dt_dropped.columns).join(nodes_source, how='inner')].groupby('source', axis=1).sum()
+    flows_out = ramp_dt_dropped[nodes_source.join(ramp_dt_dropped.columns).join(nodes_source, how='inner')].T.groupby('source').sum().T
     # Flows into nodes (sink == n, negative)
-    flows_in = -ramp_dt_dropped[nodes_sink.join(ramp_dt_dropped.columns).join(nodes_sink, how='inner')].groupby('sink', axis=1).sum()
+    flows_in = -ramp_dt_dropped[nodes_sink.join(ramp_dt_dropped.columns).join(nodes_sink, how='inner')].T.groupby('sink').sum().T
     # Combine
     r_node_ramp_dt = flows_out.add(flows_in, fill_value=0).reindex(columns=s.node_balance, fill_value=0.0)
 
@@ -169,14 +169,14 @@ def post_process_results(par, s, v):
     group_agg_sets = from_conn.columns.join(from_conn_agg_set, how='inner')
     from_conn_agg_selected = from_conn[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     from_conn_agg_selected.columns = group_agg_sets
-    r.group_output__from_connection_aggregate__dt = from_conn_agg_selected.groupby(level=['group', 'group_aggregate', 'node'], axis=1).sum()
+    r.group_output__from_connection_aggregate__dt = from_conn_agg_selected.T.groupby(level=['group', 'group_aggregate', 'node']).sum().T
 
     # r_group_output__to_connection_aggregate__dt
     to_conn_agg_set = s.group_output__group_aggregate__process__node__to_connection.droplevel('connection')
     group_agg_sets = to_conn.columns.join(to_conn_agg_set, how='inner')
     to_conn_agg_selected = to_conn[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     to_conn_agg_selected.columns = group_agg_sets
-    r.group_output__to_connection_aggregate__dt = to_conn_agg_selected.groupby(level=['group', 'group_aggregate', 'node'], axis=1).sum()
+    r.group_output__to_connection_aggregate__dt = to_conn_agg_selected.T.groupby(level=['group', 'group_aggregate', 'node']).sum().T
 
     # Daily aggregations
     r.group_output__from_connection_aggregate__d = r.group_output__from_connection_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
@@ -197,10 +197,10 @@ def post_process_results(par, s, v):
     r.flow_d = r.flow_dt.mul(step_duration, axis=0).groupby('period').sum()
     
     # r_process_source_flow_d - sum over sinks
-    r.process_source_flow_d = r.flow_d.groupby(level=['process', 'source'], axis=1).sum().reindex(columns=s.process_source, fill_value=0.0)
+    r.process_source_flow_d = r.flow_d.T.groupby(level=['process', 'source']).sum().T.reindex(columns=s.process_source, fill_value=0.0)
 
     # r_process_sink_flow_d - sum over sources
-    r.process_sink_flow_d = r.flow_d.groupby(level=['process', 'sink'], axis=1).sum().reindex(columns=s.process_sink, fill_value=0.0)
+    r.process_sink_flow_d = r.flow_d.T.groupby(level=['process', 'sink']).sum().T.reindex(columns=s.process_sink, fill_value=0.0)
     
     # r_connection_d - with step_duration
     r_conn_weighted = r.connection_dt.mul(step_duration, axis=0)    
@@ -285,11 +285,11 @@ def post_process_results(par, s, v):
     flow_from_commodity_node.columns.names = ['process', 'node', 'sink']
     # Filter columns with join
     flow_from_commodity_node.columns = flow_from_commodity_node.columns.join(commodity_price.columns)
-    flow_from_commodity = flow_from_commodity_node.groupby('commodity', axis=1).sum()
+    flow_from_commodity = flow_from_commodity_node.T.groupby('commodity').sum().T
     from_commodity_cost = flow_from_commodity.mul(commodity_price).mul(par.step_duration, axis=0)
     flow_to_commodity_node.columns.names = ['process', 'source', 'node']
     flow_to_commodity_node.columns = flow_to_commodity_node.columns.join(commodity_price.columns)
-    flow_to_commodity = flow_to_commodity_node.groupby('commodity', axis=1).sum()
+    flow_to_commodity = flow_to_commodity_node.T.groupby('commodity').sum().T
     to_commodity_cost = flow_to_commodity.mul(commodity_price).mul(par.step_duration, axis=0)
     r.cost_commodity_dt = from_commodity_cost.sub(to_commodity_cost, fill_value=0)
 
@@ -319,8 +319,8 @@ def post_process_results(par, s, v):
     flow_into_node.columns = flow_into_node.columns.join(flow_into_cols)
 
     # Group by (process, commodity, node) and sum (handles duplicate columns)
-    flow_into_node_grouped = flow_into_node.groupby(level=[0, 2, 3], axis=1).sum()
-    flow_outof_node_grouped = flow_outof_node.groupby(level=[0, 1, 3], axis=1).sum()
+    flow_into_node_grouped = flow_into_node.T.groupby(level=[0, 2, 3]).sum().T
+    flow_outof_node_grouped = flow_outof_node.T.groupby(level=[0, 1, 3]).sum().T
 
     # Net flow = into - out
     net_flow = flow_outof_node_grouped.sub(flow_into_node_grouped, fill_value=0)
@@ -354,14 +354,14 @@ def post_process_results(par, s, v):
     for col in group_process_co2_columns:
         r.group_process_emissions_co2_dt[col] = r.process_emissions_co2_dt[col[:4]]
     # Sum emissions by group (handles multiple columns per group)
-    r.group_co2_dt = r.group_process_emissions_co2_dt.groupby('group', axis=1).sum()
-    r.group_co2_d = r.group_co2_dt.groupby('period', axis=0).sum().div(par.complete_period_share_of_year, axis=0)
+    r.group_co2_dt = r.group_process_emissions_co2_dt.T.groupby('group').sum().T
+    r.group_co2_d = r.group_co2_dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
     # Multiply by CO2 prices for each group
     r.group_cost_co2_dt = r.group_co2_dt.mul(par.group_co2_price)
     r.group_cost_co2_d = r.group_co2_d.mul(par.group_co2_price)
     # As CO2 price is set on groups, then the total co2 cost needs to be summed over groups
     r.cost_co2_dt = r.group_cost_co2_dt.sum(axis=1)
-    r.cost_co2_d = r.group_cost_co2_d.groupby('period', axis=0).sum()
+    r.cost_co2_d = r.group_cost_co2_d.groupby('period').sum()
     
     # r_cost_process_other_operational_cost_dt
     # Filter flow columns that exist in varCost parameters
@@ -369,7 +369,7 @@ def post_process_results(par, s, v):
     # Multiply by step_duration and varCost
     cost_flows = relevant_flows.mul(par.step_duration, axis=0).mul(par.process_source_sink_varCost, axis=1)
     # Group by process (level 0 of column MultiIndex) and sum
-    r.cost_process_other_operational_cost_dt = cost_flows.groupby(level=0, axis=1).sum().reindex(columns=s.process, fill_value=0.0)
+    r.cost_process_other_operational_cost_dt = cost_flows.T.groupby(level=0).sum().T.reindex(columns=s.process, fill_value=0.0)
 
     # r_process_startup_dt
     r.process_startup_dt = v.startup_linear.add(v.startup_integer, fill_value=0)
@@ -561,7 +561,7 @@ def post_process_results(par, s, v):
     group_agg_sets = unit_to_node.columns.join(unit_to_group_set, how='inner')
     unit_to_group_selected = unit_to_node[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     unit_to_group_selected.columns = group_agg_sets
-    r.group_output__group_aggregate_Unit_to_group__dt = unit_to_group_selected.groupby(level=['group', 'group_aggregate'], axis=1).sum()
+    r.group_output__group_aggregate_Unit_to_group__dt = unit_to_group_selected.T.groupby(level=['group', 'group_aggregate']).sum().T
 
     # r_group_output__group_aggregate_Unit_to_group__d
     r.group_output__group_aggregate_Unit_to_group__d = r.group_output__group_aggregate_Unit_to_group__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
@@ -571,7 +571,7 @@ def post_process_results(par, s, v):
     group_agg_sets = node_to_unit.columns.join(group_to_unit_set, how='inner')
     group_to_unit_selected = node_to_unit[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     group_to_unit_selected.columns = group_agg_sets
-    r.group_output__group_aggregate_Group_to_unit__dt = -group_to_unit_selected.groupby(level=['group', 'group_aggregate'], axis=1).sum()
+    r.group_output__group_aggregate_Group_to_unit__dt = -group_to_unit_selected.T.groupby(level=['group', 'group_aggregate']).sum().T
 
     # r_group_output__group_aggregate_Group_to_unit__d
     r.group_output__group_aggregate_Group_to_unit__d = r.group_output__group_aggregate_Group_to_unit__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)

@@ -6,6 +6,7 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import time
 import yaml
+from datetime import datetime, timezone
 from flextool.read_flextool_outputs import read_variables, read_parameters, read_sets
 from flextool.process_results import post_process_results
 from flextool.plot_functions import plot_dict_of_dataframes
@@ -15,15 +16,15 @@ import warnings
 def read_outputs(output_dir):
     """
     Read solver output files.
-    
+
     Args:
     """
-    
+
     # Read solver output files
     p = read_parameters(output_dir)
     s = read_sets(output_dir)
     v = read_variables(output_dir)
-    
+
     return p, s, v
 
 def generic(par, s, v, r):
@@ -654,12 +655,12 @@ def nodeGroup_flows(par, s, v, r):
     result_multi_dt[temp.columns] = temp
 
     # Internal losses - connections (sum across processes, negate)
-    temp = r.group_output_Internal_connection_losses__dt.groupby('group', axis=1).sum()
+    temp = r.group_output_Internal_connection_losses__dt.T.groupby('group').sum().T
     temp.columns = pd.MultiIndex.from_tuples([(g, 'internal_losses', 'connections') for g in temp.columns], names=['group', 'type', 'item'])
     result_multi_dt[temp.columns] = temp
 
     # Internal losses - units (sum across processes, negate)
-    temp = r.group_output_Internal_unit_losses__dt.groupby('group', axis=1).sum()
+    temp = r.group_output_Internal_unit_losses__dt.T.groupby('group').sum().T
     temp.columns = pd.MultiIndex.from_tuples([(g, 'internal_losses', 'units') for g in temp.columns], names=['group', 'type', 'item'])
     result_multi_dt[temp.columns] = temp
 
@@ -785,7 +786,7 @@ def unit_ramps(par, s, v, r):
     process_source_ramp_input = s.process_source[s.process_source.get_level_values(0).isin(s.process_unit)]
     pss_ramp_input = r.ramp_dtt.columns[r.ramp_dtt.columns.droplevel(2).isin(process_source_ramp_input)]
     ramp_input = r.ramp_dtt[pss_ramp_input].droplevel('t_previous')
-    ramp_input.columns = ramp_input.columns.droplevel(1)  # Remove 'source' from (process, source, sink) to get (unit, source)
+    ramp_input.columns = ramp_input.columns.droplevel(2)  # Remove 'sink' from (process, source, sink) to get (unit, source)
     ramp_input.columns.names = ['unit', 'source']
     results.append((ramp_input, 'unit_ramp_inputs_dt_ee'))
 
@@ -921,28 +922,28 @@ def node_summary(par, s, v, r):
                     & node_dt.columns.get_level_values('category').isin(['inflow'])]
     node_dt[inflow_cols] = par.node_inflow
     
-    from_units = r.flow_dt[s.process_unit.join(r.flow_dt.columns).join(nodes_sink, how='inner')].groupby('sink', axis=1).sum()
+    from_units = r.flow_dt[s.process_unit.join(r.flow_dt.columns).join(nodes_sink, how='inner')].T.groupby('sink').sum().T
     from_units_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(from_units.columns)
                         & node_dt.columns.get_level_values('category').isin(['from_units'])]
     node_dt[from_units_cols] = from_units
 
     # From connections
-    from_connections = r.flow_dt[s.process_connection.join(r.flow_dt.columns).join(nodes_sink, how='inner')].groupby('sink', axis=1).sum()
+    from_connections = r.flow_dt[s.process_connection.join(r.flow_dt.columns).join(nodes_sink, how='inner')].T.groupby('sink').sum().T
     from_connections_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(from_connections.columns)
                         & node_dt.columns.get_level_values('category').isin(['from_connections'])]
     node_dt[from_connections_cols] = from_connections
 
     # To units (negative)
-    to_units = -r.flow_dt[s.process_unit.join(r.flow_dt.columns).join(nodes_source, how='inner')].groupby('source', axis=1).sum()
+    to_units = -r.flow_dt[s.process_unit.join(r.flow_dt.columns).join(nodes_source, how='inner')].T.groupby('source').sum().T
     to_units_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(to_units.columns)
                         & node_dt.columns.get_level_values('category').isin(['to_units'])]
     node_dt[to_units_cols] = to_units
 
     # To connections (negative)
-    to_connections = -r.flow_dt[s.process_connection.join(r.flow_dt.columns).join(nodes_source, how='inner')].groupby('source', axis=1).sum()
+    to_connections = -r.flow_dt[s.process_connection.join(r.flow_dt.columns).join(nodes_source, how='inner')].T.groupby('source').sum().T
     to_connections_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(to_connections.columns)
                         & node_dt.columns.get_level_values('category').isin(['to_connections'])]
@@ -1192,7 +1193,6 @@ def print_namespace_structure(namespace, name='r', max_items=3, output_file='nam
 def write_summary_csv(par, s, v, r, csv_dir):
     """Write summary CSV file matching the GNU MathProg format"""
     import os
-    from datetime import datetime
 
     # Output file path
     fn_summary = os.path.join(csv_dir, 'summary_solve.csv')
@@ -1210,7 +1210,7 @@ def write_summary_csv(par, s, v, r, csv_dir):
     # Open file and write all content
     with open(fn_summary, 'w') as f:
         # Header with timestamp
-        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        timestamp = datetime.now(timezone.utc)
         f.write(f'"Diagnostic results from all solves. Output at (UTC): {timestamp}"\n\n')
 
         # Total cost from solver (M CUR)
@@ -1357,7 +1357,7 @@ ALL_OUTPUTS = [
 
 
 # writer.py - handles the actual writing
-def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=None, read_parquet_dir=False, methods=['plot', 'parquet', 'excel', 'db', 'csv'], plot_rows=(0, 167), debug=False):
+def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=None, read_parquet_dir=False, methods=['plot', 'parquet', 'excel', 'db', 'csv'], plot_rows=(0, 167), debug=False, single_result=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -1370,43 +1370,124 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
         methods: List of output methods ('plot', 'parquet', 'excel', 'db', 'csv')
         plot_rows: Tuple of first and last row to plot in a time series plots. Default is (0, 167).
         debug: Enable debug output
+        single_result: Tuple of (key, csv_name, plot_name, plot_type, subplots_per_row, legend_position)
+                       for processing a single result. Overrides config file.
     """
     warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
 
-    # Load output configuration from YAML
-    with open(output_config_path, 'r') as f:
-        settings = yaml.safe_load(f)
+    # Load output configuration from YAML or create from single_result
+    if single_result:
+        # Parse single_result tuple
+        key, csv_name, plot_name, plot_type, subplots_per_row, legend_position = single_result
+
+        # Convert string "null" to None
+        def parse_value(val):
+            if val == "null" or val == "None":
+                return None
+            # Try to convert to int if it's a numeric string
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return val
+
+        csv_name = parse_value(csv_name)
+        plot_name = parse_value(plot_name)
+        plot_type = parse_value(plot_type)
+        subplots_per_row = parse_value(subplots_per_row)
+        legend_position = parse_value(legend_position)
+
+        # Create single-entry settings dict
+        settings = {
+            key: [csv_name, plot_name, plot_type, subplots_per_row, legend_position]
+        }
+    else:
+        # Load output configuration from YAML
+        with open(output_config_path, 'r') as f:
+            settings = yaml.safe_load(f)
 
     if subdir:
-        parquet_dir = os.path.join(subdir, 'output_parquet')
-        csv_dir = os.path.join(subdir, 'output_csv')
-        plot_dir = os.path.join(subdir, ' output_plots')
+        parquet_dir = os.path.join('output_parquet', subdir)
+        csv_dir = os.path.join('output_csv', subdir)
+        plot_dir = os.path.join('output_plots', subdir)  # Fixed: was os.path.join(subdir, ' output_plots')
     else:
         parquet_dir = 'output_parquet'
         csv_dir = 'output_csv'
         plot_dir = 'output_plots'
 
 
-    # If results already exist as parquet files, just read them without processing
-    if read_parquet_dir:
-        r = {}
-        for filename in os.listdir(parquet_dir):
-            if filename.endswith('.parquet'):
-                key = filename[:-8]  # Remove '.parquet' extension
-                filepath = os.path.join(read_parquet_dir, filename)
-                r[key] = pd.read_parquet(filepath)
+    # Handle single_result mode with special data reading logic
+    if single_result:
+        key = single_result[0]
+        csv_name = settings[key][0]  # Already parsed above
+        results = {}
 
-    # Read original raw outputs from FlexTool
+        start = time.perf_counter()
+
+        if read_parquet_dir:
+            # Read single parquet file
+            parquet_path = os.path.join(read_parquet_dir, f'{key}.parquet')
+            if not os.path.exists(parquet_path):
+                raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
+            results[key] = pd.read_parquet(parquet_path)
+            print(f"--- Read single parquet file ({key}): {time.perf_counter() - start:.4f} seconds")
+        else:
+            # Read single CSV file
+            if not csv_name:
+                raise ValueError(f"CSV name is required for key '{key}' when not reading from parquet")
+
+            csv_path = os.path.join(csv_dir, csv_name)
+            if not os.path.exists(csv_path):
+                raise FileNotFoundError(f"CSV file not found: {csv_path}")
+
+            # Read CSV with multi-level index/header inference
+            df = pd.read_csv(csv_path, header=0, index_col=0)
+            results[key] = df
+            print(f"--- Read single CSV file ({csv_name}): {time.perf_counter() - start:.4f} seconds")
+
+        start = time.perf_counter()
+    # Otherwise, use normal data reading pipeline
     else:
         start = time.perf_counter()
-        par, s, v = read_outputs('output_raw')
-        print(f"--- Read flextool outputs: {time.perf_counter() - start:.4f} seconds")
-        start = time.perf_counter()
+        # If results already exist as parquet files, just read them without processing
+        if read_parquet_dir:
+            results = {}
+            for filename in os.listdir(read_parquet_dir):
+                if filename.endswith('.parquet'):
+                    key = filename[:-8]  # Remove '.parquet' extension
+                    filepath = os.path.join(read_parquet_dir, filename)
+                    results[key] = pd.read_parquet(filepath)
+            print(f"--- Read parquet files: {time.perf_counter() - start:.4f} seconds")
+            start = time.perf_counter()
 
-        # Pre-process results to be closer to what needed for output writing
-        r = post_process_results(par, s, v)
-        print(f"--- Post processed outputs: {time.perf_counter() - start:.4f} seconds")
-        start = time.perf_counter()
+        # Read original raw outputs from FlexTool
+        else:
+            par, s, v = read_outputs('output_raw')
+            print(f"--- Read flextool outputs: {time.perf_counter() - start:.4f} seconds")
+            start = time.perf_counter()
+
+            # Pre-process results to be closer to what needed for output writing
+            r = post_process_results(par, s, v)
+            print(f"--- Post processed outputs: {time.perf_counter() - start:.4f} seconds")
+            start = time.perf_counter()
+
+            # Call the final processing functions for each category of outputs
+            # and make a dict of dataframes to hold final results
+            output_funcs = output_funcs or ALL_OUTPUTS
+
+            results = {}
+            for func in output_funcs:
+                func_results = func(par, s, v, r)
+
+                # Handle both single result (wrapped in list) and multiple results
+                if not isinstance(func_results, list):
+                    func_results = [func_results]
+
+                for result_df, table_name in func_results:
+                    # Use excel_sheet as the key to allow multiple outputs per function
+                    results[table_name] = result_df
+
+            print(f"--- Formatted for output: {time.perf_counter() - start:.4f} seconds")
+            start = time.perf_counter()
 
     # Write files for debugging purposes
     if debug:
@@ -1415,88 +1496,85 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
         print_namespace_structure(s, 's')
         print_namespace_structure(v, 'v')
         print_namespace_structure(par, 'par')
-
-
-    # Call the final processing functions for each category of outputs
-    # and make a dict of dataframes to hold final results
-    output_funcs = output_funcs or ALL_OUTPUTS
-
-    results = {}
-    for func in output_funcs:
-        func_results = func(par, s, v, r)
-       
-        # Handle both single result (wrapped in list) and multiple results
-        if not isinstance(func_results, list):
-            func_results = [func_results]
-        
-        for result_df, table_name in func_results:
-            # Use excel_sheet as the key to allow multiple outputs per function
-            results[table_name] = result_df
-
-    print(f"--- Formatted for output: {time.perf_counter() - start:.4f} seconds")
-    start = time.perf_counter()
+        print(f"--- Debug outputs: {time.perf_counter() - start:.4f} seconds")
+        start = time.perf_counter()
 
     # Write to parquet
-    if 'parquet' in methods and read_parquet_dir is None:
+    if 'parquet' in methods and not read_parquet_dir:
         for name, df in results.items():
-            if name.endswith(('_d_p', '_d_e', '_d_ep', '_d_eppe', '_d_g', '_d', '_gd_p', \
-                            '_ed_p', '_d_ee', '_d_eee', '_d_gpe', \
-                            'node_slack_up_dt_e', 'unit_outputNode_dt_ee', 'unit_inputNode_dt_ee', \
-                            'connection_dt_eee', 'connection_rightward_dt_eee', 'connection_leftward_dt_eee', \
-                            'flow_dt_g', 'unit_curtailment_outputNode_dt_ee')):
-                if not os.path.exists(parquet_dir):
-                    os.makedirs(parquet_dir)
-                df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
-                df.to_parquet(f'{parquet_dir}/{name}.parquet')
+            if not os.path.exists(parquet_dir):
+                os.makedirs(parquet_dir)
+            df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
+            df.to_parquet(f'{parquet_dir}/{name}.parquet')
 
         print(f"--- Wrote to parquet: {time.perf_counter() - start:.4f} seconds")
         start = time.perf_counter()
 
     # Plot results
     if 'plot' in methods:
-        if not os.path.exists( plot_dir):
-            os.makedirs( plot_dir)
-        plot_dict_of_dataframes(results, plot_dir, settings, plot_rows=plot_rows)
+        if not os.path.exists(plot_dir):
+            os.makedirs(plot_dir)
+        # Don't delete existing plots when processing single result
+        delete_plots = not bool(single_result)
+        plot_dict_of_dataframes(results, plot_dir, settings, plot_rows=plot_rows, delete_existing_plots=delete_plots)
 
         print(f"--- Plotted figures: {time.perf_counter() - start:.4f} seconds")
         start = time.perf_counter()
 
     # Write to csv
     if 'csv' in methods:
-        if not os.path.exists(csv_dir):
-            os.makedirs(csv_dir)
-        # Empty csv dir
-        for filename in os.listdir(csv_dir):
-            file_path = os.path.join(csv_dir, filename)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
+        if single_result and read_parquet_dir:
+            # Simplified CSV writing for single result from parquet
+            if not os.path.exists(csv_dir):
+                os.makedirs(csv_dir)
 
-        write_summary_csv(par, s, v, r, csv_dir)
+            for table_name, attributes in settings.items():
+                if table_name and table_name in results and attributes[0]:
+                    csv_filename = attributes[0]
+                    df = results[table_name]
+                    csv_path = os.path.join(csv_dir, csv_filename)
+                    df_copy = df.reset_index()
+                    df_copy.columns.names = [None] * df_copy.columns.nlevels
+                    df_copy.to_csv(csv_path, index=False, float_format='%.8g')
 
-        for table_name, attributes in settings.items():
-            if table_name and table_name in results and attributes[0]:
-                csv_filename = attributes[0]
-                df = results[table_name]
-                if 'solve' not in df.index.names and 'period' in df.index.names: # and csv_filename not in ['costs_discounted.csv']
-                    df.index = df.index.join(s.solve_period)
-                    names = list(df.index.names)
-                    solve_pos = names.index('solve')
-                    period_pos = names.index('period')
-                    names.pop(solve_pos)
-                    if solve_pos < period_pos:
-                        period_pos -= 1
-                    names.insert(period_pos, 'solve')
-                    df.index = df.index.reorder_levels(order=names)
+            print(f"--- Wrote to CSV: {time.perf_counter() - start:.4f} seconds")
+            start = time.perf_counter()
+        elif not (single_result and read_parquet_dir):
+            # Original CSV writing logic with full processing
+            if not os.path.exists(csv_dir):
+                os.makedirs(csv_dir)
+            # Empty csv dir
+            for filename in os.listdir(csv_dir):
+                file_path = os.path.join(csv_dir, filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
 
-                #if not df.empty and len(df) > 0:
-                # Write to CSV with proper multi-index column handling
-                csv_path = os.path.join(csv_dir, csv_filename)
-                df = df.reset_index()
-                df.columns.names = [None] * df.columns.nlevels
-                df.to_csv(csv_path, index=False, float_format='%.8g')
+            write_summary_csv(par, s, v, r, csv_dir)
 
-        print(f"Wrote to CSV: {time.perf_counter() - start:.4f} seconds")
-        start = time.perf_counter()
+            for table_name, attributes in settings.items():
+                if table_name and table_name in results and attributes[0]:
+                    csv_filename = attributes[0]
+                    df = results[table_name]
+                    if 'solve' not in df.index.names and 'period' in df.index.names: # and csv_filename not in ['costs_discounted.csv']
+                        df.index = df.index.join(s.solve_period)
+                        names = list(df.index.names)
+                        solve_pos = names.index('solve')
+                        period_pos = names.index('period')
+                        names.pop(solve_pos)
+                        if solve_pos < period_pos:
+                            period_pos -= 1
+                        names.insert(period_pos, 'solve')
+                        df.index = df.index.reorder_levels(order=names)
+
+                    #if not df.empty and len(df) > 0:
+                    # Write to CSV with proper multi-index column handling
+                    csv_path = os.path.join(csv_dir, csv_filename)
+                    df = df.reset_index()
+                    df.columns.names = [None] * df.columns.nlevels
+                    df.to_csv(csv_path, index=False, float_format='%.8g')
+
+            print(f"Wrote to CSV: {time.perf_counter() - start:.4f} seconds")
+            start = time.perf_counter()
 
     # Write to excel
     if 'excel' in methods:
@@ -1517,6 +1595,8 @@ if __name__ == "__main__":
                         help='Path to output configuration YAML file (default: templates/default_plots.yaml)')
     parser.add_argument('--subdir', type=str, default=None,
                         help='Subdirectory for outputs (default: current directory)')
+    parser.add_argument('--read-parquet-dir', type=str, default=False,
+                        help='Directory to read existing parquet files from (default: False, reads from raw CSV files)')
     parser.add_argument('--methods', type=str, nargs='+', default=['plot', 'parquet', 'csv'],
                         choices=['plot', 'parquet', 'excel', 'db', 'csv'],
                         help='Output methods to use (default: plot parquet csv)')
@@ -1524,6 +1604,9 @@ if __name__ == "__main__":
                         help='First and last row to plot in time series (default: 0 167)')
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug output')
+    parser.add_argument('--single-result', type=str, nargs=6,
+                        metavar=('KEY', 'CSV_NAME', 'PLOT_NAME', 'PLOT_TYPE', 'SUBPLOTS_PER_ROW', 'LEGEND_POSITION'),
+                        help='Process a single result (overrides --config): key csv_name plot_name plot_type subplots_per_row legend_position. Use "null" for None values.')
 
     args = parser.parse_args()
 
@@ -1532,7 +1615,9 @@ if __name__ == "__main__":
         args.config,
         output_funcs=None,
         subdir=args.subdir,
+        read_parquet_dir=args.read_parquet_dir,
         methods=args.methods,
         plot_rows=tuple(args.plot_rows),
-        debug=args.debug
+        debug=args.debug,
+        single_result=tuple(args.single_result) if args.single_result else None
     )

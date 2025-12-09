@@ -570,6 +570,6 @@ if __name__ == '__main__':
 
     scenario_names, combined_dfs = get_scenario_results(db_url=args.db_url, parquet_subdir=args.parquet_subdir)
 
-    foo = combined_dfs['nodeGroup_gd_p'].groupby('scenario', axis=1).sum()
+    foo = combined_dfs['nodeGroup_gd_p'].T.groupby('scenario').sum().T
     plot_horizontal_bar(foo, filename='foo.svg', figsize=(10, 6), sum_index_level=0, n_subplot_cols=2)
     plot_horizontal_bar(combined_dfs['nodeGroup_gd_p'], filename='foo.svg', figsize=(10, 6), subplot=1, sum_index_level=0, n_subplot_cols=2)
