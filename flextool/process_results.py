@@ -286,15 +286,15 @@ def post_process_results(par, s, v):
     # Filter columns with join
     flow_from_commodity_node.columns = flow_from_commodity_node.columns.join(commodity_price.columns)
     flow_from_commodity = flow_from_commodity_node.T.groupby('commodity').sum().T
-    from_commodity_cost = flow_from_commodity.mul(commodity_price).mul(par.step_duration, axis=0)
+    r.cost_commodity_dt = flow_from_commodity.mul(commodity_price).mul(par.step_duration, axis=0)
     flow_to_commodity_node.columns.names = ['process', 'source', 'node']
     flow_to_commodity_node.columns = flow_to_commodity_node.columns.join(commodity_price.columns)
     flow_to_commodity = flow_to_commodity_node.T.groupby('commodity').sum().T
-    to_commodity_cost = flow_to_commodity.mul(commodity_price).mul(par.step_duration, axis=0)
-    r.cost_commodity_dt = from_commodity_cost.sub(to_commodity_cost, fill_value=0)
+    r.sales_commodity_dt = flow_to_commodity.mul(commodity_price).mul(par.step_duration, axis=0)
 
     # r_process_commodity_d
     r.cost_commodity_d = r.cost_commodity_dt.groupby('period').sum()
+    r.sales_commodity_d = r.sales_commodity_dt.groupby('period').sum()
      
     # r_process_emissions_co2_dt
     # Flows out of node: (process, source, sink) where (process, sink) matches (process, node)
@@ -446,7 +446,8 @@ def post_process_results(par, s, v):
     r.cost_entity_fixed_divested = -(v.divest.mul(par.entity_unitsize[v.divest.columns] * par.entity_lifetime_fixed_cost_divest[v.divest.columns] * 1000))
     
     # Aggregate costs
-    r.costOper_dt = (r.cost_commodity_dt.sum(axis=1) + 
+    r.costOper_dt = (r.cost_commodity_dt.sum(axis=1) -
+                        r.sales_commodity_dt.sum(axis=1) +
                         r.cost_process_other_operational_cost_dt.sum(axis=1) + 
                         r.cost_startup_dt.sum(axis=1) +
                         r.cost_co2_dt

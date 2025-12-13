@@ -6,6 +6,7 @@ from spinedb_api import DatabaseMapping
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+from flextool.plot_functions import plot_rowbars_stack_groupbars
 
 
 def plot_horizontal_bar(df, filename=None, title=None, figsize=(10, 6), show_plot=False, subplot=None, stacked=None, sum_index_level=None, n_subplot_cols=1, xlabel=None, ylabel=None):    
@@ -449,86 +450,6 @@ def combine_parquet_files(files_by_name):
 
     return combined_dfs
 
-
-def load_csvs_into_scenario_dataframe(scenario_folders, csv_filename, row_level_names, col_level_names, output_subdir="output_parquet"):
-    """
-    Load CSV files of a particular name from scenario folders and concatenate them into a single dataframe.
-
-    The scenario name is added as an additional dimension to the column index level as the lowest level
-    (closest to the data). This means column levels are always a MultiIndex, and row index levels are
-    also always a MultiIndex.
-
-    Parameters:
-    -----------
-    scenario_folders : dict
-        Dictionary mapping scenario names to folder paths
-    csv_filename : str
-        Name of the CSV file to load from each scenario folder (e.g., 'results.csv')
-    n_row_index_levels : int
-        Number of columns to use as row index (always the first N columns)
-    n_col_index_levels : int
-        Number of header rows in the CSV file to use as column index
-    output_subdir : str, optional
-        Subdirectory within each folder containing CSV files (default: 'output_parquet')
-
-    Returns:
-    --------
-    pd.DataFrame : Combined dataframe with scenario name added as lowest column index level
-    """
-    dfs_to_concat = []
-
-    for scenario_name, folder_path in scenario_folders.items():
-        csv_dir = Path(folder_path)
-        csv_path = csv_dir / csv_filename
-
-        if not csv_path.exists():
-            print(f"Warning: {csv_path} does not exist for scenario {scenario_name}")
-            continue
-        
-        n_col_index_levels = len(col_level_names)
-        n_row_index_levels = len(row_level_names)
-        try:
-            # Read CSV with multi-level headers and index
-            df = pd.read_csv(
-                csv_path,
-                header=list(range(n_col_index_levels)) if n_col_index_levels > 0 else 0,
-                index_col=list(range(n_row_index_levels))
-            )
-
-            df = df.astype(float)
-
-            # Ensure columns are MultiIndex
-            if not isinstance(df.columns, pd.MultiIndex):
-                df.columns = pd.MultiIndex.from_tuples([(col,) for col in df.columns])
-
-            # Add scenario name as the lowest (innermost) level of column index
-            new_columns = pd.MultiIndex.from_tuples(
-                [tuple(list(col) + [scenario_name]) for col in df.columns]
-            )
-            df.columns = new_columns
-
-            dfs_to_concat.append(df)
-
-        except Exception as e:
-            print(f"Error reading {csv_path} for scenario {scenario_name}: {e}")
-            continue
-
-    if not dfs_to_concat:
-        print(f"Warning: No valid data found for {csv_filename}")
-        return pd.DataFrame()
-
-    # Concatenate along columns (axis=1)
-    combined_df = pd.concat(dfs_to_concat, axis=1)
-    combined_df.index.names = row_level_names
-    combined_df = combined_df.droplevel('solve')
-    col_level_names.append('scenario')
-    combined_df.columns.names = col_level_names
-    
-
-    print(f"Combined {len(dfs_to_concat)} CSV files for '{csv_filename}' (shape: {combined_df.shape})")
-
-    return combined_df
-
 def get_scenario_results(db_url, parquet_subdir='output_parquet'):
     # Read scenario folders from database
     print(f"Reading scenario information from {db_url}...")
@@ -572,4 +493,6 @@ if __name__ == '__main__':
 
     foo = combined_dfs['nodeGroup_gd_p'].T.groupby('scenario').sum().T
     plot_horizontal_bar(foo, filename='foo.svg', figsize=(10, 6), sum_index_level=0, n_subplot_cols=2)
-    plot_horizontal_bar(combined_dfs['nodeGroup_gd_p'], filename='foo.svg', figsize=(10, 6), subplot=1, sum_index_level=0, n_subplot_cols=2)
+    plot_horizontal_bar(combined_dfs['nodeGroup_gd_p'], filename='output_scen_comp/hor_bar.svg', figsize=(10, 6), subplot=1, sum_index_level=0, n_subplot_cols=2)
+    plot_rowbars_stack_groupbars(combined_dfs['nodeGroup_gd_p'].unstack('group'), key_name='nodeGroup', plot_dir='output_scen_comp',
+        sum_levels=[-1], stack_levels=[], expand_axis_levels=[2], grouped_bar_levels=[0], sub_levels=[1], legend_position='right', subplots_per_row=2)

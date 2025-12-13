@@ -88,7 +88,7 @@ def main():
     
     # If successful write outputs
     if return_code == 0:
-        write_outputs(scenario_name=scenario_name)
+        write_outputs(scenario_name=scenario_name, output_config_path='templates/default_plots.yaml')
 
         timer.insert(0, time.perf_counter())
         ## print("--- write outputs time %s seconds ---" % (timer[0] - timer[1]))

@@ -753,30 +753,64 @@ class FlexToolRunner:
         process = subprocess.Popen(command_args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         
         buffer = []
-        in_check = False
+        previous = False
+        counter = 0
+        already_stripped_end_of_line = False
         
         for line in process.stdout:
-            if line.startswith('Reading') or line.startswith('Display statement'):
+            if line.startswith('Reading data...'):
                 continue
             
+            # Take not if Generating has been followed by Display statement
+            if line.startswith('Display statement'):
+                if previous == 'generate':
+                    previous = 'generate_display'
+                else:
+                    previous = False
+                continue
+
+            # Remove line-end from time statement
+            if previous == 'generate_display':
+                previous = 'generate'
+                if already_stripped_end_of_line:
+                    print(line.rstrip(), end='  ')
+                else:
+                    print('\n' + line.rstrip(), end='  ')
+                counter = 0
+                continue
+
             if line.startswith('Generating ') or line.startswith('Write '):
-                print(line.replace('Generating ', '').rstrip(), end='  ')
+                previous = 'generate'
+                counter += 1
+                already_stripped_end_of_line = False
+                if line.startswith('Generating '):
+                    if command_args[5] == '-r':
+                        continue
+                    line = line.replace('Generating ', '  ').rstrip()
+                elif line.startswith('Write '):
+                    line = line.replace('Write ', '  ').rstrip()
+                if counter == 3:
+                    line = line + '\n'
+                    counter = 0
+                    already_stripped_end_of_line = True
+                print(line, end='')
                 continue
 
             if line.startswith('Checking'):
-                in_check = True
-                buffer = [line]
-            elif in_check:
+                if line.startswith('Checking:'):
+                    previous = 'check'
+                    buffer = [line]
+            elif previous == 'check':
                 buffer.append(line)
                 if 'error' in line.lower() or 'failed' in line.lower() or 'assertion' in line.lower():
-                    output = ''.join(buffer)
+                    output = '\n' + ''.join(buffer)
                     output = output.replace('Checking (line', ' (flextool/flextool.mod line')
                     print(output)
                     buffer = []
-                    in_check = False
+                    previous = False
                 elif line.strip() == '' or (not line.startswith(' ') and not line.startswith('Created')):
                     buffer = []
-                    in_check = False
+                    previous = False
             else:
                 print(line, end='')
         

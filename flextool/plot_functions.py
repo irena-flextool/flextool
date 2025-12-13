@@ -5,37 +5,48 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+import logging
+import time
+from contextlib import contextmanager
 
+logging.getLogger('matplotlib.category').disabled = True
 
-def estimate_legend_width(labels, title='', base_width=1.5):
-    """
-    Estimate the width in inches needed for a legend based on label content.
+# Performance tracking
+PERF_STATS = {}
 
-    Args:
-        labels: List of label strings
-        title: Legend title string
-        base_width: Minimum width in inches (default: 1.5)
+@contextmanager
+def time_block(name, verbose=False):
+    """Context manager to time a block of code and accumulate stats"""
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - start
+        if name not in PERF_STATS:
+            PERF_STATS[name] = {'count': 0, 'total': 0, 'min': float('inf'), 'max': 0}
+        PERF_STATS[name]['count'] += 1
+        PERF_STATS[name]['total'] += elapsed
+        PERF_STATS[name]['min'] = min(PERF_STATS[name]['min'], elapsed)
+        PERF_STATS[name]['max'] = max(PERF_STATS[name]['max'], elapsed)
+        if verbose:
+            print(f"  [{name}] {elapsed:.4f}s")
 
-    Returns:
-        Estimated width in inches
-    """
-    if not labels:
-        return base_width
+def print_perf_summary():
+    """Print summary of performance statistics"""
+    if not PERF_STATS:
+        return
 
-    # Calculate max label length
-    max_label_len = max(len(str(label)) for label in labels)
-    title_len = len(str(title)) if title else 0
+    print("\n" + "="*80)
+    print("PERFORMANCE SUMMARY")
+    print("="*80)
+    print(f"{'Operation':<40} {'Count':>8} {'Total':>10} {'Avg':>10} {'Min':>10} {'Max':>10}")
+    print("-"*80)
 
-    # Estimate width: ~0.09 inches per character + base padding
-    # This accounts for typical matplotlib font sizes (8-10pt)
-    char_width = 0.09
-    label_width = max_label_len * char_width
-    title_width = title_len * char_width
+    for name, stats in sorted(PERF_STATS.items(), key=lambda x: x[1]['total'], reverse=True):
+        avg = stats['total'] / stats['count']
+        print(f"{name:<40} {stats['count']:>8} {stats['total']:>10.4f}s {avg:>10.4f}s {stats['min']:>10.4f}s {stats['max']:>10.4f}s")
 
-    # Use the larger of label or title width, plus padding
-    estimated_width = max(label_width, title_width, base_width) + 0.8
-
-    return estimated_width
+    print("="*80 + "\n")
 
 
 def plot_dict_of_dataframes(results_dict, plot_dir, settings, plot_rows=(0,167), delete_existing_plots=True):
@@ -48,6 +59,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, settings, plot_rows=(0,167),
         result_set_map: Dictionary mapping result keys to (filename, plot_flag) tuples
         delete_existing_plots: If True, delete all existing plots in plot_dir before creating new ones (default: True)
     """
+
     # Empty plot dir if requested
     if delete_existing_plots:
         for filename in os.listdir(plot_dir):
@@ -56,7 +68,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, settings, plot_rows=(0,167),
                 os.remove(file_path)
 
     for key, df in results_dict.items():
-        # print(f"Processing {key}...")
+        #print(f"\nProcessing: {key}")
         # Do not create a plot if result_set_map has 'False'
         if key not in settings:
             continue
@@ -94,27 +106,285 @@ def plot_dict_of_dataframes(results_dict, plot_dir, settings, plot_rows=(0,167),
             l_locs = [i for i, char in enumerate(rules) if char == 'l']
             s_locs = [i for i, char in enumerate(rules) if char == 's']
             u_locs = [i for i, char in enumerate(rules) if char == 'u']
+            y_locs = [i for i, char in enumerate(rules) if char == 'y']
             if chart_type == 'time':
                 if 'nodeGroup' == key_name:
                     # nodeGroup_gdt_p
-                    plot_dt_sub_lines(df, key_name, plot_dir, [0], [1], legend_position=legend_position)
+                    with time_block(f"{key} - plot"):
+                        plot_dt_sub_lines(df, key_name, plot_dir, [0], [1], legend_position=legend_position)
                     # no others yet
                 elif s_locs:
-                    plot_dt_stack_sub(df, key_name, plot_dir, s_locs, u_locs, rows=plot_rows, legend_position=legend_position)
+                    with time_block(f"{key} - plot"):
+                        plot_dt_stack_sub(df, key_name, plot_dir, s_locs, u_locs, rows=plot_rows, legend_position=legend_position)
                 elif l_locs:
-                    plot_dt_sub_lines(df, key_name, plot_dir, u_locs, l_locs, rows=plot_rows, legend_position=legend_position)
+                    with time_block(f"{key} - plot"):
+                        plot_dt_sub_lines(df, key_name, plot_dir, u_locs, l_locs, rows=plot_rows, legend_position=legend_position)
             elif chart_type == 'bar':
-                plot_rowbars_stack_groupbars(df, key_name, plot_dir, s_locs, g_locs, u_locs, subplots_per_row=subplots_per_row, legend_position=legend_position)
+                with time_block(f"{key} - plot"):
+                    plot_rowbars_stack_groupbars(df, key_name, plot_dir, s_locs, g_locs, u_locs, y_locs, subplots_per_row=subplots_per_row, legend_position=legend_position)
 
             else:
                 print(f'Could not interpret plot rule for {key}')
 
         plt.close('all')  # Clean up
 
+    # Print summary after all plots
+    print_perf_summary()
 
-def plot_dt_sub_lines(df, plot_name, plot_dir, sub_levels, line_levels, rows=(0,167), subplots_per_row=3, legend_position='right'):
+
+def estimate_legend_width(labels, title='', base_width=1.5):
+    """
+    Estimate the width in inches needed for a legend based on label content.
+
+    Args:
+        labels: List of label strings
+        title: Legend title string
+        base_width: Minimum width in inches (default: 1.5)
+
+    Returns:
+        Estimated width in inches
+    """
+    if not labels:
+        return base_width
+
+    # Calculate max label length
+    max_label_len = max(len(str(label)) for label in labels)
+    title_len = len(str(title)) if title else 0
+
+    # Estimate width: ~0.09 inches per character + base padding
+    # This accounts for typical matplotlib font sizes (8-10pt)
+    char_width = 0.09
+    label_width = max_label_len * char_width
+    title_width = title_len * char_width
+
+    # Use the larger of label or title width, plus padding
+    estimated_width = max(label_width, title_width, base_width) + 0.8
+
+    return estimated_width
+
+
+def apply_aggregation_and_adjust_levels(df, sum_levels=[], mean_levels=[],
+                                       stack_levels=None, sub_levels=None,
+                                       line_levels=None, expand_axis_levels=None,
+                                       grouped_bar_levels=None):
+    """
+    Apply sum/mean aggregations and adjust level indices accordingly.
+
+    Args:
+        df: DataFrame to aggregate
+        sum_levels: List of level indices to collapse by summing (negative for row index)
+        mean_levels: List of level indices to collapse by averaging (negative for row index)
+        stack_levels, sub_levels, line_levels, expand_axis_levels, grouped_bar_levels:
+            Level index lists that need to be adjusted after aggregation
+
+    Returns:
+        tuple: (aggregated_df, adjusted_stack_levels, adjusted_sub_levels,
+                adjusted_line_levels, adjusted_expand_axis_levels, adjusted_grouped_bar_levels)
+    """
+    if not sum_levels:
+        sum_levels = []
+    if not mean_levels:
+        mean_levels = []
+
+    # Validate no overlap between sum_levels and mean_levels
+    overlap = set(sum_levels) & set(mean_levels)
+    if overlap:
+        raise ValueError(f"sum_levels and mean_levels cannot contain the same levels. Overlapping levels: {overlap}")
+
+    # Separate row (negative) and column (non-negative) operations
+    sum_levels_row = [lvl for lvl in sum_levels if lvl < 0]
+    sum_levels_col = sorted([lvl for lvl in sum_levels if lvl >= 0], reverse=True)
+    mean_levels_row = [lvl for lvl in mean_levels if lvl < 0]
+    mean_levels_col = sorted([lvl for lvl in mean_levels if lvl >= 0], reverse=True)
+
+    # Convert negative row indices to positive indices BEFORE any operations
+    # This ensures they refer to the same actual levels even after stacking
+    n_row_levels_original = df.index.nlevels if isinstance(df.index, pd.MultiIndex) else 1
+
+    sum_levels_row_positive = []
+    for lvl in sum_levels_row:
+        pos_level = lvl % n_row_levels_original
+        if pos_level >= n_row_levels_original:
+            raise ValueError(f"Row level {lvl} (absolute: {pos_level}) out of range (max: {n_row_levels_original-1})")
+        sum_levels_row_positive.append(pos_level)
+
+    mean_levels_row_positive = []
+    for lvl in mean_levels_row:
+        pos_level = lvl % n_row_levels_original
+        if pos_level >= n_row_levels_original:
+            raise ValueError(f"Row level {lvl} (absolute: {pos_level}) out of range (max: {n_row_levels_original-1})")
+        mean_levels_row_positive.append(pos_level)
+
+    # Check if we need to rescue the row index before row aggregations
+    # (move a level from expand_axis_levels to row index to keep at least one row level)
+    if sum_levels_row_positive or mean_levels_row_positive:
+        # Determine which row levels would be removed
+        all_row_agg_positive = sorted(set(sum_levels_row_positive + mean_levels_row_positive), reverse=True)
+        levels_to_remove = set(all_row_agg_positive)
+
+        remaining_row_levels = n_row_levels_original - len(levels_to_remove)
+
+        # If we would remove all row levels, rescue from expand_axis_levels
+        if remaining_row_levels == 0:
+            if not expand_axis_levels:
+                raise ValueError(
+                    "Cannot remove all row index levels: no expand_axis_levels available to rescue. "
+                    "At least one row index level must remain after aggregation."
+                )
+
+            # Find first available level in expand_axis_levels
+            # (not marked for column aggregation)
+            rescued_level = None
+            rescued_level_idx_in_expand = None
+            for level_idx, level in enumerate(expand_axis_levels):
+                if level not in sum_levels_col and level not in mean_levels_col:
+                    rescued_level = level
+                    rescued_level_idx_in_expand = level_idx
+                    break
+
+            if rescued_level is None:
+                raise ValueError(
+                    "Cannot remove all row index levels: all expand_axis_levels are also marked for "
+                    "aggregation. At least one level must remain available to move to row index."
+                )
+
+            # Move this column level to row index using stack
+            if not isinstance(df.columns, pd.MultiIndex):
+                raise ValueError("Cannot rescue row index: columns are not a MultiIndex")
+
+            df = df.stack(level=rescued_level)
+
+            # Update expand_axis_levels - remove the rescued level (by position)
+            expand_axis_levels = [lvl for i, lvl in enumerate(expand_axis_levels) if i != rescued_level_idx_in_expand]
+
+            # Adjust column level indices for all levels
+            # The rescued level is removed from columns, so levels above it shift down
+            def adjust_for_rescue(lvl):
+                if lvl > rescued_level:
+                    return lvl - 1
+                elif lvl == rescued_level:
+                    raise ValueError(f"Column level {lvl} was moved to row index but is still referenced")
+                return lvl
+
+            def adjust_levels_for_rescue(levels):
+                if levels is None or not levels:
+                    return levels
+                return [adjust_for_rescue(lvl) for lvl in levels]
+
+            # Adjust all level lists
+            expand_axis_levels = adjust_levels_for_rescue(expand_axis_levels)
+            stack_levels = adjust_levels_for_rescue(stack_levels)
+            sub_levels = adjust_levels_for_rescue(sub_levels)
+            line_levels = adjust_levels_for_rescue(line_levels)
+            grouped_bar_levels = adjust_levels_for_rescue(grouped_bar_levels)
+
+            # Adjust column aggregation level indices
+            sum_levels_col = [adjust_for_rescue(lvl) for lvl in sum_levels_col]
+            mean_levels_col = [adjust_for_rescue(lvl) for lvl in mean_levels_col]
+
+    # Apply row aggregations (axis=0)
+    # Process in reverse order to avoid index shifting issues
+    # Use positive indices that were converted earlier
+    removed_row_levels = []
+    if sum_levels_row_positive or mean_levels_row_positive:
+        n_row_levels = df.index.nlevels if isinstance(df.index, pd.MultiIndex) else 1
+
+        # Process in reverse order (highest index first)
+        for pos_level in all_row_agg_positive:
+            # pos_level is already a positive index
+            if pos_level >= n_row_levels:
+                raise ValueError(f"Row level {pos_level} out of range (max: {n_row_levels-1})")
+
+            # Keep all levels except the one being aggregated
+            keep_levels = [i for i in range(n_row_levels) if i != pos_level]
+            if not keep_levels:
+                raise ValueError(
+                    "Internal error: Cannot remove all row index levels. "
+                    "This should have been caught by the rescue logic."
+                )
+
+            try:
+                if pos_level in sum_levels_row_positive:
+                    df = df.groupby(level=keep_levels).sum()
+                else:  # mean
+                    df = df.groupby(level=keep_levels).mean()
+            except Exception as e:
+                raise ValueError(f"Error aggregating row level {pos_level}: {str(e)}")
+
+            removed_row_levels.append(pos_level)
+            n_row_levels -= 1
+
+    # Apply column aggregations (axis=1) - non-negative indices
+    # Process in reverse order to avoid index shifting issues
+    removed_col_levels = []
+    if sum_levels_col or mean_levels_col:
+        if not isinstance(df.columns, pd.MultiIndex):
+            if sum_levels_col or mean_levels_col:
+                raise ValueError("Cannot aggregate column levels: columns are not a MultiIndex")
+        else:
+            n_col_levels = df.columns.nlevels
+
+            all_col_agg = sorted(set(sum_levels_col + mean_levels_col), reverse=True)
+            for agg_level in all_col_agg:
+                if agg_level >= n_col_levels:
+                    raise ValueError(f"Column level {agg_level} out of range (max: {n_col_levels-1})")
+
+                # Keep all levels except the one being aggregated
+                keep_levels = [i for i in range(n_col_levels) if i != agg_level]
+                if not keep_levels:
+                    raise ValueError("Cannot remove all column levels")
+
+                try:
+                    if agg_level in sum_levels_col:
+                        df = df.T.groupby(level=keep_levels).sum().T
+                    else:  # mean
+                        df = df.T.groupby(level=keep_levels).mean().T
+                except Exception as e:
+                    raise ValueError(f"Error aggregating column level {agg_level}: {str(e)}")
+
+                removed_col_levels.append(agg_level)
+                n_col_levels -= 1
+
+    # Adjust column level indices
+    # For each level index in the various *_levels parameters,
+    # we need to adjust it based on how many levels were removed before it
+    removed_col_levels_sorted = sorted(removed_col_levels)
+
+    def adjust_col_level(lvl):
+        """Adjust a column level index after aggregations."""
+        if lvl in removed_col_levels:
+            raise ValueError(f"Column level {lvl} was removed by aggregation but is still referenced")
+        # Count how many removed levels are below this level
+        adjustment = sum(1 for r in removed_col_levels_sorted if r < lvl)
+        return lvl - adjustment
+
+    def adjust_col_levels(levels):
+        """Adjust a list of column level indices."""
+        if levels is None:
+            return None
+        return [adjust_col_level(lvl) for lvl in levels]
+
+    # Adjust all the level parameters
+    adjusted_stack_levels = adjust_col_levels(stack_levels) if stack_levels else stack_levels
+    adjusted_sub_levels = adjust_col_levels(sub_levels) if sub_levels else sub_levels
+    adjusted_line_levels = adjust_col_levels(line_levels) if line_levels else line_levels
+    adjusted_expand_axis_levels = adjust_col_levels(expand_axis_levels) if expand_axis_levels else expand_axis_levels
+    adjusted_grouped_bar_levels = adjust_col_levels(grouped_bar_levels) if grouped_bar_levels else grouped_bar_levels
+
+    return (df, adjusted_stack_levels, adjusted_sub_levels, adjusted_line_levels,
+            adjusted_expand_axis_levels, adjusted_grouped_bar_levels)
+
+
+def plot_dt_sub_lines(df, plot_name, plot_dir, sub_levels, line_levels, rows=(0,167), subplots_per_row=3, legend_position='right', sum_levels=[], mean_levels=[], xlabel=None, ylabel=None, base_width_per_col=6):
     # Take plotted time
     df_plot = df.iloc[rows[0]:rows[1]]
+
+    # Apply aggregations and adjust level indices
+    (df_plot, _, sub_levels, line_levels, _, _) = apply_aggregation_and_adjust_levels(
+        df_plot, sum_levels, mean_levels,
+        stack_levels=None, sub_levels=sub_levels, line_levels=line_levels,
+        expand_axis_levels=None, grouped_bar_levels=None
+    )
 
     # Convert level indices to level names for later use after xs operations
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -173,13 +443,12 @@ def plot_dt_sub_lines(df, plot_name, plot_dir, sub_levels, line_levels, rows=(0,
         legend_width = max_legend_width
 
     # Create figure and axes
-    BASE_WIDTH_PER_COL = 6
     BASE_HEIGHT_PER_ROW = 4
 
     if legend_width > 0 and n_cols > 1:
-        total_width = BASE_WIDTH_PER_COL * n_cols + legend_width * (n_cols - 1)
+        total_width = base_width_per_col * n_cols + legend_width * (n_cols - 1)
     else:
-        total_width = BASE_WIDTH_PER_COL * n_cols
+        total_width = base_width_per_col * n_cols
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(total_width, BASE_HEIGHT_PER_ROW * n_rows))
     if n_subs == 1:
@@ -190,14 +459,17 @@ def plot_dt_sub_lines(df, plot_name, plot_dir, sub_levels, line_levels, rows=(0,
     # Adjust subplot spacing to accommodate legends
     if legend_width > 0 and n_cols > 1:
         # wspace is the width of spacing as a fraction of average axes width
-        wspace = legend_width / BASE_WIDTH_PER_COL
+        wspace = legend_width / base_width_per_col
         # Calculate vertical spacing to prevent row overlap
         # Add space for ~1.5 rows of text, normalized to subplot height
         hspace = 0.225 / BASE_HEIGHT_PER_ROW if BASE_HEIGHT_PER_ROW > 0 else 0.15
         fig.subplots_adjust(wspace=wspace, hspace=hspace)
 
-    # Get time index (drop period level)
-    time_index = df_plot.index.get_level_values('time')
+    # Get x-axis index (use last level if MultiIndex, otherwise use the index itself)
+    if isinstance(df_plot.index, pd.MultiIndex):
+        time_index = df_plot.index.get_level_values(-1)
+    else:
+        time_index = df_plot.index
 
     for idx, sub in enumerate(subs):
         ax = axes[idx]
@@ -270,6 +542,14 @@ def plot_dt_sub_lines(df, plot_name, plot_dir, sub_levels, line_levels, rows=(0,
 
         ax.grid(True, alpha=0.3)
 
+        # Apply axis labels conditionally based on subplot position
+        row = idx // n_cols
+        col = idx % n_cols
+        if ylabel and col == 0:
+            ax.set_ylabel(ylabel)
+        if xlabel and row == n_rows - 1:
+            ax.set_xlabel(xlabel)
+
         # Set xticks for every 24th time point
         tick_positions = range(0, len(time_index), 24)
         ax.set_xticks(tick_positions)
@@ -285,9 +565,16 @@ def plot_dt_sub_lines(df, plot_name, plot_dir, sub_levels, line_levels, rows=(0,
     plt.savefig(f'{plot_dir}/{plot_name}_dt.svg', bbox_inches='tight')
     plt.close(fig)
 
-def plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, sub_levels, rows=(0,167), stack_element_to_split=None, subplots_per_row=3, legend_position='right'):
+def plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, sub_levels, rows=(0,167), stack_element_to_split=None, subplots_per_row=3, legend_position='right', sum_levels=[], mean_levels=[], xlabel=None, ylabel=None, base_width_per_col=6):
     # Take plotted time
     df_plot = df.iloc[rows[0]:rows[1]]
+
+    # Apply aggregations and adjust level indices
+    (df_plot, stack_levels, sub_levels, _, _, _) = apply_aggregation_and_adjust_levels(
+        df_plot, sum_levels, mean_levels,
+        stack_levels=stack_levels, sub_levels=sub_levels, line_levels=None,
+        expand_axis_levels=None, grouped_bar_levels=None
+    )
 
     # Convert level indices to level names for later use after xs operations
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -346,13 +633,12 @@ def plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, sub_levels, rows=(0
         legend_width = max_legend_width
 
     # Create figure and axes
-    BASE_WIDTH_PER_COL = 6
     BASE_HEIGHT_PER_ROW = 4
 
     if legend_width > 0 and n_cols > 1:
-        total_width = BASE_WIDTH_PER_COL * n_cols + legend_width * (n_cols - 1)
+        total_width = base_width_per_col * n_cols + legend_width * (n_cols - 1)
     else:
-        total_width = BASE_WIDTH_PER_COL * n_cols
+        total_width = base_width_per_col * n_cols
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(total_width, BASE_HEIGHT_PER_ROW * n_rows))
     if n_subs == 1:
@@ -363,14 +649,17 @@ def plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, sub_levels, rows=(0
     # Adjust subplot spacing to accommodate legends
     if legend_width > 0 and n_cols > 1:
         # wspace is the width of spacing as a fraction of average axes width
-        wspace = legend_width / BASE_WIDTH_PER_COL
+        wspace = legend_width / base_width_per_col
         # Calculate vertical spacing to prevent row overlap
         # Add space for ~1.5 rows of text, normalized to subplot height
         hspace = 0.225 / BASE_HEIGHT_PER_ROW if BASE_HEIGHT_PER_ROW > 0 else 0.15
         fig.subplots_adjust(wspace=wspace, hspace=hspace)
 
-    # Get time index (drop period level)
-    time_index = df_plot.index.get_level_values('time')
+    # Get x-axis index (use last level if MultiIndex, otherwise use the index itself)
+    if isinstance(df_plot.index, pd.MultiIndex):
+        time_index = df_plot.index.get_level_values(-1)
+    else:
+        time_index = df_plot.index
 
     for idx, sub in enumerate(subs):
         ax = axes[idx]
@@ -462,6 +751,14 @@ def plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, sub_levels, rows=(0
 
         ax.grid(True, alpha=0.3)
 
+        # Apply axis labels conditionally based on subplot position
+        row = idx // n_cols
+        col = idx % n_cols
+        if ylabel and col == 0:
+            ax.set_ylabel(ylabel)
+        if xlabel and row == n_rows - 1:
+            ax.set_xlabel(xlabel)
+
         # Set xticks for every 24th time point
         tick_positions = range(0, len(time_index), 24)
         ax.set_xticks(tick_positions)
@@ -477,7 +774,7 @@ def plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, sub_levels, rows=(0
     plt.savefig(f'{plot_dir}/{plot_name}_dt.svg', bbox_inches='tight')
     plt.close(fig)
 
-def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_levels, sub_levels=[], legend_position='right', subplots_per_row=3):
+def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_axis_levels, sub_levels=[], grouped_bar_levels=None, legend_position='right', subplots_per_row=3, sum_levels=[], mean_levels=[], xlabel=None, ylabel=None, base_width_per_col=6):
     """
     Create horizontal stacked and grouped bar plot.
 
@@ -489,12 +786,18 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
         Name for the plot (used in title and filename)
     plot_dir : str
         Directory to save the plot
-    stack_levels : list of int
-        Column level indices that create colored segments within each bar
-    group_levels : list of int
-        Column level indices that create groups of bars
+    stack_levels : list of int or None
+        Column level indices that create colored segments within each bar (stacked horizontally).
+        Mutually exclusive with grouped_bar_levels.
+    expand_axis_levels : list of int
+        Column level indices that create groups of bars with two-level y-axis (bars + group labels).
+        Previously named 'expand_axis_levels'. Can be combined with either stack_levels or grouped_bar_levels.
     sub_levels : list of int, optional
         Column level indices that create separate subplots (default: [])
+    grouped_bar_levels : list of int or None, optional
+        Column level indices that create grouped bars side-by-side (like pandas grouped bars).
+        Each combination creates a separate bar at the same y-position with different colors.
+        Mutually exclusive with stack_levels (default: None).
     legend_position : str, optional
         Legend placement: 'all' shows legend on all subplots,
         'right' shows only on rightmost column (default: 'right').
@@ -504,17 +807,52 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
         to prevent overlap with adjacent subplots.
     subplots_per_row : int, optional
         Number of subplots per row (default: 3)
+    sum_levels : list of int, optional
+        Level indices to collapse by summing (default: [])
+    mean_levels : list of int, optional
+        Level indices to collapse by averaging (default: [])
+    xlabel : str, optional
+        Label for x-axis. Applied only to bottom-most subplots (default: None)
+    ylabel : str, optional
+        Label for y-axis. Applied only to leftmost subplots (default: None)
+    base_width_per_col : float, optional
+        Base width in inches for each subplot column (default: 6)
     """
+    # Apply aggregations and adjust level indices
+    (df, stack_levels, sub_levels, _, expand_axis_levels, grouped_bar_levels) = apply_aggregation_and_adjust_levels(
+        df, sum_levels, mean_levels,
+        stack_levels=stack_levels, sub_levels=sub_levels, line_levels=None,
+        expand_axis_levels=expand_axis_levels, grouped_bar_levels=grouped_bar_levels
+    )
+
     if key_name == 'unit_outputNode':
         pass
+
+    # Validate mutual exclusivity
+    if stack_levels and grouped_bar_levels:
+        raise ValueError(
+            "Cannot use both 'stack_levels' and 'grouped_bar_levels' simultaneously. "
+            "stack_levels creates horizontal stacks within each bar, while "
+            "grouped_bar_levels creates separate bars side-by-side. "
+            "Choose one approach or use neither for simple bars."
+        )
+
+    # Normalize None to empty list for consistent checking
+    if stack_levels is None:
+        stack_levels = []
+    if grouped_bar_levels is None:
+        grouped_bar_levels = []
+
     # Convert level indices to names for stability
     if isinstance(df.columns, pd.MultiIndex):
-        stack_level_names = [df.columns.names[i] for i in stack_levels]
-        group_level_names = [df.columns.names[i] for i in group_levels] if group_levels else []
+        stack_level_names = [df.columns.names[i] for i in stack_levels] if stack_levels else []
+        expand_axis_level_names = [df.columns.names[i] for i in expand_axis_levels] if expand_axis_levels else []
+        grouped_bar_level_names = [df.columns.names[i] for i in grouped_bar_levels] if grouped_bar_levels else []
     else:
         # Single level index - use indices directly for data access
         stack_level_names = stack_levels
-        group_level_names = [df.columns.name] if group_levels else []
+        expand_axis_level_names = [df.columns.name] if expand_axis_levels else []
+        grouped_bar_level_names = [df.columns.name] if grouped_bar_levels else []
 
     # Handle empty sub_levels (single plot, no subplotting)
     if not sub_levels:
@@ -543,20 +881,20 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
             df_sub_temp = df.xs(sub, level=sub_levels, axis=1)
 
         # Get unique group combinations from df_sub_temp
-        if not group_levels:
+        if not expand_axis_levels:
             groups_temp = [None]
-        elif len(group_level_names) == 1:
-            groups_temp = df_sub_temp.columns.get_level_values(group_level_names[0]).unique().tolist()
+        elif len(expand_axis_level_names) == 1:
+            groups_temp = df_sub_temp.columns.get_level_values(expand_axis_level_names[0]).unique().tolist()
         else:
             groups_temp = []
-            for group_level_name in group_level_names:
+            for group_level_name in expand_axis_level_names:
                 groups_temp.append(df_sub_temp.columns.get_level_values(group_level_name).tolist())
             groups_temp = list(zip(*groups_temp))
 
         periods_temp = df_sub_temp.index.tolist()
 
         # Calculate number of bars
-        if not group_levels:
+        if not expand_axis_levels:
             n_bars = len(periods_temp)
         else:
             n_bars = len(groups_temp) * len(periods_temp)
@@ -574,8 +912,8 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
 
     # Calculate legend width if needed
     legend_width = 0
-    if legend_position == 'all' and n_cols > 1 and stack_levels:
-        # Determine what the legend labels will be by analyzing stack levels
+    if legend_position == 'all' and n_cols > 1 and (stack_levels or grouped_bar_levels):
+        # Determine what the legend labels will be by analyzing stack or grouped bar levels
         max_legend_width = 0
 
         for sub in subs:
@@ -587,27 +925,42 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
             else:
                 df_sub_temp = df.xs(sub, level=sub_levels, axis=1)
 
-            # Get stack combinations
-            if len(stack_level_names) == 1:
-                stacks_temp = df_sub_temp.columns.get_level_values(stack_level_names[0]).unique().tolist()
+            # BRANCH: Get legend items based on mode
+            if grouped_bar_levels:
+                # Grouped bar legend items
+                if len(grouped_bar_level_names) == 1:
+                    items_temp = df_sub_temp.columns.get_level_values(grouped_bar_level_names[0]).unique().tolist()
+                else:
+                    item_df = df_sub_temp.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
+                    items_temp = [tuple(row) for row in item_df.values]
+
+                # Generate legend title
+                if isinstance(df_sub_temp.columns, pd.MultiIndex):
+                    legend_title = ' | '.join([str(n) for n in grouped_bar_level_names])
+                else:
+                    legend_title = str(df_sub_temp.columns.name) if df_sub_temp.columns.name else 'group'
             else:
-                stack_df = df_sub_temp.columns.to_frame()[stack_level_names].drop_duplicates()
-                stacks_temp = [tuple(row) for row in stack_df.values]
+                # Stack legend items
+                if len(stack_level_names) == 1:
+                    items_temp = df_sub_temp.columns.get_level_values(stack_level_names[0]).unique().tolist()
+                else:
+                    stack_df = df_sub_temp.columns.to_frame()[stack_level_names].drop_duplicates()
+                    items_temp = [tuple(row) for row in stack_df.values]
+
+                # Generate legend title
+                if isinstance(df_sub_temp.columns, pd.MultiIndex):
+                    legend_title = ' | '.join([str(n) for n in stack_level_names])
+                else:
+                    legend_title = str(df_sub_temp.columns.name) if df_sub_temp.columns.name else 'stack'
 
             # Format labels as they will appear in legend
             legend_labels = []
-            for stack in stacks_temp:
-                if isinstance(stack, (tuple, list)):
-                    label = ' | '.join(str(v) for v in stack)
+            for item in items_temp:
+                if isinstance(item, (tuple, list)):
+                    label = ' | '.join(str(v) for v in item)
                 else:
-                    label = str(stack)
+                    label = str(item)
                 legend_labels.append(label)
-
-            # Generate legend title
-            if isinstance(df_sub_temp.columns, pd.MultiIndex):
-                legend_title = ' | '.join([str(n) for n in stack_level_names])
-            else:
-                legend_title = str(df_sub_temp.columns.name) if df_sub_temp.columns.name else 'stack'
 
             # Estimate width for this subplot's legend
             width = estimate_legend_width(legend_labels, legend_title)
@@ -617,7 +970,7 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
 
     # Calculate left margin width needed for group labels
     left_margin_width = 0
-    if group_levels and n_cols > 1:
+    if expand_axis_levels and n_cols > 1:
         max_left_margin = 0
 
         for sub in subs:
@@ -630,11 +983,11 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
                 df_sub_temp = df.xs(sub, level=sub_levels, axis=1)
 
             # Get group combinations
-            if len(group_level_names) == 1:
-                groups_temp = df_sub_temp.columns.get_level_values(group_level_names[0]).unique().tolist()
+            if len(expand_axis_level_names) == 1:
+                groups_temp = df_sub_temp.columns.get_level_values(expand_axis_level_names[0]).unique().tolist()
             else:
                 groups_temp = []
-                for group_level_name in group_level_names:
+                for group_level_name in expand_axis_level_names:
                     groups_temp.append(df_sub_temp.columns.get_level_values(group_level_name).tolist())
                 groups_temp = list(zip(*groups_temp))
 
@@ -668,8 +1021,6 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
         left_margin_width = max_left_margin
 
     # Create figure and axes
-    BASE_WIDTH_PER_COL = 6  # inches
-
     if n_subs == 1:
         # Single plot - bbox_inches='tight' handles legend and margins automatically
         fig = None
@@ -679,7 +1030,7 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
         total_height = sum(row_heights)
 
         # Calculate width with legend and left margin accommodation
-        total_width = BASE_WIDTH_PER_COL * n_cols
+        total_width = base_width_per_col * n_cols
 
         # Add extra width for legends on non-rightmost columns
         if legend_width > 0 and n_cols > 1:
@@ -698,10 +1049,10 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
         wspace = 0.2  # Default matplotlib spacing
         if legend_width > 0 and n_cols > 1:
             # Add spacing for legends between non-rightmost columns
-            wspace = legend_width / BASE_WIDTH_PER_COL
+            wspace = legend_width / base_width_per_col
         if left_margin_width > 0 and n_cols > 1:
             # Add spacing for left margins (accumulated with legend spacing)
-            wspace += left_margin_width / BASE_WIDTH_PER_COL
+            wspace += left_margin_width / base_width_per_col
 
         # Calculate vertical spacing to prevent row overlap
         # Add space for ~1.5 rows of text (title + labels)
@@ -729,18 +1080,18 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
             df_sub = df.xs(sub, level=sub_levels, axis=1)
 
         # Get unique group combinations from df_sub
-        if not group_levels:
+        if not expand_axis_levels:
             groups = [None]
-        elif len(group_level_names) == 1:
-            groups = df_sub.columns.get_level_values(group_level_names[0]).unique().tolist()
+        elif len(expand_axis_level_names) == 1:
+            groups = df_sub.columns.get_level_values(expand_axis_level_names[0]).unique().tolist()
         else:
             groups = []
-            for group_level_name in group_level_names:
+            for group_level_name in expand_axis_level_names:
                 groups.append(df_sub.columns.get_level_values(group_level_name).tolist())
             groups = list(zip(*groups))
 
         # Reverse groups order
-        if group_levels:
+        if expand_axis_levels:
             groups = groups[::-1]
 
         # Get periods from row index and reverse
@@ -748,7 +1099,7 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
 
         # Build list of all bars (for y-axis positioning)
         all_bars = []
-        if not group_levels:
+        if not expand_axis_levels:
             # No groups - just one bar per period
             for period in periods:
                 all_bars.append([None, period])
@@ -765,140 +1116,246 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
         else:
             ax = axes[idx]
 
-        # Get stack combinations (for colors and legend)
-        if not stack_levels or len(stack_level_names) == 0:
-            # No stacking - treat all data as one stack
-            stacks = [None]
-        elif len(stack_level_names) == 1:
-            stacks = df_sub.columns.get_level_values(stack_level_names[0]).unique().tolist()
-        else:
-            stack_df = df_sub.columns.to_frame()[stack_level_names].drop_duplicates()
-            stacks = [tuple(row) for row in stack_df.values]
-
-        # Colors for stacking
-        n_stack = len(stacks)
-        colors = plt.colormaps['tab10'](np.linspace(0, 1, min(n_stack, 10)))
-        if n_stack > 10:
-            colors = plt.colormaps['tab20'](np.linspace(0, 1, n_stack))
-
-        # Track which stacks have been labeled (for legend)
-        labeled_stacks = set()
-
-        # Plot bars
-        for bar_idx, (group, period) in enumerate(all_bars):
-            # Get data for this group
-            if group is None:
-                # No groups - use full dataframe
-                df_bar = df_sub
-            elif len(group_level_names) == 1 and isinstance(df_sub.columns, pd.MultiIndex):
-                df_bar = df_sub.xs(group, level=group_level_names[0], axis=1)
-            elif len(group_level_names) == 1:
-                df_bar = df_sub[group]
+        # Determine plotting mode and execute appropriate logic
+        if grouped_bar_levels:
+            # ==================== NEW: GROUPED BARS MODE ====================
+            # Get grouped bar combinations
+            if len(grouped_bar_level_names) == 1:
+                grouped_bars = df_sub.columns.get_level_values(grouped_bar_level_names[0]).unique().tolist()
             else:
-                # For multiple group_levels, apply xs for all levels at once
-                df_bar = df_sub.xs(group, level=group_level_names, axis=1)
+                grouped_bar_df = df_sub.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
+                grouped_bars = [tuple(row) for row in grouped_bar_df.values]
 
-            # Collect all values for this bar
-            values = []
-            for stack_idx, stack in enumerate(stacks):
-                # Get value for this stack segment
-                if stack is None:
-                    # No stacking - sum all columns for this period
+            # Colors for grouped bars
+            n_grouped = len(grouped_bars)
+            colors = plt.colormaps['tab10'](np.linspace(0, 1, min(n_grouped, 10)))
+            if n_grouped > 10:
+                colors = plt.colormaps['tab20'](np.linspace(0, 1, n_grouped))
+
+            # Calculate bar width and offsets for side-by-side positioning
+            total_bar_width = 0.8
+            bar_width = total_bar_width / n_grouped
+            bar_offsets = np.linspace(-total_bar_width/2 + bar_width/2,
+                                      total_bar_width/2 - bar_width/2,
+                                      n_grouped)
+
+            # Track which grouped bars have been labeled
+            labeled_grouped_bars = set()
+
+            # Plot grouped bars
+            for bar_idx, (group, period) in enumerate(all_bars):
+                # Get data for this expand_axis group
+                if group is None:
+                    df_bar = df_sub
+                elif len(expand_axis_level_names) == 1 and isinstance(df_sub.columns, pd.MultiIndex):
+                    df_bar = df_sub.xs(group, level=expand_axis_level_names[0], axis=1)
+                elif len(expand_axis_level_names) == 1:
+                    df_bar = df_sub[group]
+                else:
+                    df_bar = df_sub.xs(group, level=expand_axis_level_names, axis=1)
+
+                # Plot each grouped bar at this position
+                for grouped_idx, grouped_bar in enumerate(grouped_bars):
+                    # Extract value for this grouped bar
                     if isinstance(df_bar, pd.Series):
                         value = df_bar.loc[period] if period in df_bar.index else 0
                     else:
-                        value = df_bar.loc[period].sum() if period in df_bar.index else 0
-                elif isinstance(df_bar, pd.Series):
-                    value = df_bar.loc[period] if period in df_bar.index else 0
-                else:
-                    if isinstance(df_bar.columns, pd.MultiIndex):
-                        if len(stack_level_names) == 1:
-                            try:
-                                df_stack = df_bar.xs(stack, level=stack_level_names[0], axis=1)
-                            except KeyError:
-                                value = 0
-                                df_stack = None
+                        if isinstance(df_bar.columns, pd.MultiIndex):
+                            if len(grouped_bar_level_names) == 1:
+                                try:
+                                    df_grouped = df_bar.xs(grouped_bar, level=grouped_bar_level_names[0], axis=1)
+                                except KeyError:
+                                    value = 0
+                                    df_grouped = None
+                            else:
+                                try:
+                                    df_grouped = df_bar.xs(grouped_bar, level=grouped_bar_level_names, axis=1)
+                                except KeyError:
+                                    value = 0
+                                    df_grouped = None
                         else:
-                            try:
-                                # For multiple stack_levels, apply xs for all levels at once
-                                df_stack = df_bar.xs(stack, level=stack_level_names, axis=1)
-                            except KeyError:
+                            if grouped_bar in df_bar.columns:
+                                df_grouped = df_bar[grouped_bar]
+                            else:
+                                value = 0
+                                df_grouped = None
+
+                        if df_grouped is not None:
+                            if isinstance(df_grouped, pd.DataFrame):
+                                df_grouped = df_grouped.sum(axis=1)
+                            value = df_grouped.loc[period] if period in df_grouped.index else 0
+
+                    # Create label (only once per grouped bar)
+                    if grouped_idx not in labeled_grouped_bars:
+                        if isinstance(grouped_bar, (tuple, list)):
+                            label = ' | '.join(str(v) for v in grouped_bar)
+                        else:
+                            label = str(grouped_bar)
+                        labeled_grouped_bars.add(grouped_idx)
+                    else:
+                        label = ''
+
+                    # Plot bar with offset
+                    y_position = bar_idx + bar_offsets[grouped_idx]
+                    ax.barh(y_position, value, height=bar_width,
+                           label=label,
+                           color=colors[grouped_idx % len(colors)])
+
+            # Add invisible bars for zero-value grouped bars (for legend completeness)
+            for grouped_idx in range(len(grouped_bars)):
+                if grouped_idx not in labeled_grouped_bars:
+                    grouped_bar = grouped_bars[grouped_idx]
+                    if isinstance(grouped_bar, (tuple, list)):
+                        label = ' | '.join(str(v) for v in grouped_bar)
+                    else:
+                        label = str(grouped_bar)
+                    ax.barh(0, 0, height=bar_width, left=0,
+                           label=label,
+                           color=colors[grouped_idx % len(colors)])
+
+        elif stack_levels:
+            # ==================== EXISTING: STACKED BARS MODE ====================
+            # Get stack combinations (for colors and legend)
+            if len(stack_level_names) == 1:
+                stacks = df_sub.columns.get_level_values(stack_level_names[0]).unique().tolist()
+            else:
+                stack_df = df_sub.columns.to_frame()[stack_level_names].drop_duplicates()
+                stacks = [tuple(row) for row in stack_df.values]
+
+            # Colors for stacking
+            n_stack = len(stacks)
+            colors = plt.colormaps['tab10'](np.linspace(0, 1, min(n_stack, 10)))
+            if n_stack > 10:
+                colors = plt.colormaps['tab20'](np.linspace(0, 1, n_stack))
+
+            # Track which stacks have been labeled (for legend)
+            labeled_stacks = set()
+
+            # Plot bars
+            for bar_idx, (group, period) in enumerate(all_bars):
+                # Get data for this group
+                if group is None:
+                    # No groups - use full dataframe
+                    df_bar = df_sub
+                elif len(expand_axis_level_names) == 1 and isinstance(df_sub.columns, pd.MultiIndex):
+                    df_bar = df_sub.xs(group, level=expand_axis_level_names[0], axis=1)
+                elif len(expand_axis_level_names) == 1:
+                    df_bar = df_sub[group]
+                else:
+                    # For multiple expand_axis_levels, apply xs for all levels at once
+                    df_bar = df_sub.xs(group, level=expand_axis_level_names, axis=1)
+
+                # Collect all values for this bar
+                values = []
+                for stack_idx, stack in enumerate(stacks):
+                    # Get value for this stack segment
+                    if isinstance(df_bar, pd.Series):
+                        value = df_bar.loc[period] if period in df_bar.index else 0
+                    else:
+                        if isinstance(df_bar.columns, pd.MultiIndex):
+                            if len(stack_level_names) == 1:
+                                try:
+                                    df_stack = df_bar.xs(stack, level=stack_level_names[0], axis=1)
+                                except KeyError:
+                                    value = 0
+                                    df_stack = None
+                            else:
+                                try:
+                                    # For multiple stack_levels, apply xs for all levels at once
+                                    df_stack = df_bar.xs(stack, level=stack_level_names, axis=1)
+                                except KeyError:
+                                    value = 0
+                                    df_stack = None
+                        else:
+                            # Single column remaining
+                            if stack in df_bar.columns:
+                                df_stack = df_bar[stack]
+                            else:
                                 value = 0
                                 df_stack = None
-                    else:
-                        # Single column remaining
-                        if stack in df_bar.columns:
-                            df_stack = df_bar[stack]
+
+                        if df_stack is not None:
+                            if isinstance(df_stack, pd.DataFrame):
+                                df_stack = df_stack.sum(axis=1)
+                            value = df_stack.loc[period] if period in df_stack.index else 0
                         else:
                             value = 0
-                            df_stack = None
 
-                    if df_stack is not None:
-                        if isinstance(df_stack, pd.DataFrame):
-                            df_stack = df_stack.sum(axis=1)
-                        value = df_stack.loc[period] if period in df_stack.index else 0
-                    else:
-                        value = 0
+                    values.append(value)
 
-                values.append(value)
-
-            # Stack positive values to the right from 0
-            left_pos = 0
-            for stack_idx, value in enumerate(values):
-                if value > 0:
-                    # Add label only if not yet labeled
-                    if stack_idx not in labeled_stacks:
-                        stack_value = stacks[stack_idx]
-                        if stack_value is None:
-                            label = ''
-                        elif isinstance(stack_value, (tuple, list)):
-                            label = ' | '.join(str(v) for v in stack_value)
+                # Stack positive values to the right from 0
+                left_pos = 0
+                for stack_idx, value in enumerate(values):
+                    if value > 0:
+                        # Add label only if not yet labeled
+                        if stack_idx not in labeled_stacks:
+                            stack_value = stacks[stack_idx]
+                            if isinstance(stack_value, (tuple, list)):
+                                label = ' | '.join(str(v) for v in stack_value)
+                            else:
+                                label = str(stack_value)
                         else:
-                            label = str(stack_value)
+                            label = ''
+                        if stack_idx not in labeled_stacks:
+                            labeled_stacks.add(stack_idx)
+                        ax.barh(bar_idx, value, left=left_pos,
+                               label=label,
+                               color=colors[stack_idx % len(colors)])
+                        left_pos += value
+
+                # Stack negative values to the left from 0
+                left_neg = 0
+                for stack_idx, value in enumerate(values):
+                    if value < 0:
+                        # Add label only if not yet labeled
+                        if stack_idx not in labeled_stacks:
+                            stack_value = stacks[stack_idx]
+                            if isinstance(stack_value, (tuple, list)):
+                                label = ' | '.join(str(v) for v in stack_value)
+                            else:
+                                label = str(stack_value)
+                        else:
+                            label = ''
+                        if stack_idx not in labeled_stacks:
+                            labeled_stacks.add(stack_idx)
+                        ax.barh(bar_idx, value, left=left_neg,
+                               label=label,
+                               color=colors[stack_idx % len(colors)])
+                        left_neg += value
+
+            # Add invisible bars for any stacks that were never labeled (all zero values)
+            for stack_idx in range(len(stacks)):
+                if stack_idx not in labeled_stacks:
+                    stack_value = stacks[stack_idx]
+                    if isinstance(stack_value, (tuple, list)):
+                        label = ' | '.join(str(v) for v in stack_value)
                     else:
-                        label = ''
-                    if stack_idx not in labeled_stacks:
-                        labeled_stacks.add(stack_idx)
-                    ax.barh(bar_idx, value, left=left_pos,
+                        label = str(stack_value)
+                    ax.barh(0, 0, left=0,
                            label=label,
                            color=colors[stack_idx % len(colors)])
-                    left_pos += value
 
-            # Stack negative values to the left from 0
-            left_neg = 0
-            for stack_idx, value in enumerate(values):
-                if value < 0:
-                    # Add label only if not yet labeled
-                    if stack_idx not in labeled_stacks:
-                        stack_value = stacks[stack_idx]
-                        if stack_value is None:
-                            label = ''
-                        elif isinstance(stack_value, (tuple, list)):
-                            label = ' | '.join(str(v) for v in stack_value)
-                        else:
-                            label = str(stack_value)
-                    else:
-                        label = ''
-                    if stack_idx not in labeled_stacks:
-                        labeled_stacks.add(stack_idx)
-                    ax.barh(bar_idx, value, left=left_neg,
-                           label=label,
-                           color=colors[stack_idx % len(colors)])
-                    left_neg += value
-
-        # Add invisible bars for any stacks that were never labeled (all zero values)
-        for stack_idx in range(len(stacks)):
-            if stack_idx not in labeled_stacks:
-                stack_value = stacks[stack_idx]
-                if stack_value is None:
-                    label = ''
-                elif isinstance(stack_value, (tuple, list)):
-                    label = ' | '.join(str(v) for v in stack_value)
+        else:
+            # ==================== SIMPLE BARS MODE (no stacking, no grouping) ====================
+            for bar_idx, (group, period) in enumerate(all_bars):
+                # Get data for this expand_axis group
+                if group is None:
+                    df_bar = df_sub
+                elif len(expand_axis_level_names) == 1 and isinstance(df_sub.columns, pd.MultiIndex):
+                    df_bar = df_sub.xs(group, level=expand_axis_level_names[0], axis=1)
+                elif len(expand_axis_level_names) == 1:
+                    df_bar = df_sub[group]
                 else:
-                    label = str(stack_value)
-                ax.barh(0, 0, left=0,
-                       label=label,
-                       color=colors[stack_idx % len(colors)])
+                    df_bar = df_sub.xs(group, level=expand_axis_level_names, axis=1)
+
+                # Sum all values for this period
+                if isinstance(df_bar, pd.Series):
+                    value = df_bar.loc[period] if period in df_bar.index else 0
+                else:
+                    value = df_bar.loc[period].sum() if period in df_bar.index else 0
+
+                # Plot single-color bar (no label, no legend)
+                ax.barh(bar_idx, value, color='steelblue')
 
         # Set up y-axis with groups and bars
         # Extract bar labels
@@ -914,7 +1371,7 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
         ax.set_ylim(-0.5, len(all_bars) - 0.5)
         ax.tick_params(labelsize=9)
 
-        if group_levels:
+        if expand_axis_levels:
             # Multiple groups - add two-level y-axis
             # Calculate group centers
             if isinstance(groups[0], tuple):
@@ -970,14 +1427,22 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
             ax.set_title(key_name)
 
         # Legend
-        if stack_levels:
+        if stack_levels or grouped_bar_levels:
             handles, labels_leg = ax.get_legend_handles_labels()
 
-            # Generate legend title - use actual names for single-level Index
-            if isinstance(df_sub.columns, pd.MultiIndex):
-                legend_title = ' | '.join([str(n) for n in stack_level_names])
+            # Generate legend title based on mode
+            if grouped_bar_levels:
+                # Legend for grouped bars
+                if isinstance(df_sub.columns, pd.MultiIndex):
+                    legend_title = ' | '.join([str(n) for n in grouped_bar_level_names])
+                else:
+                    legend_title = str(df_sub.columns.name) if df_sub.columns.name else 'group'
             else:
-                legend_title = str(df_sub.columns.name) if df_sub.columns.name else 'stack'
+                # Legend for stacked bars
+                if isinstance(df_sub.columns, pd.MultiIndex):
+                    legend_title = ' | '.join([str(n) for n in stack_level_names])
+                else:
+                    legend_title = str(df_sub.columns.name) if df_sub.columns.name else 'stack'
 
             # Determine if legend should be shown
             show_legend = False
@@ -995,8 +1460,16 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, group_lev
                 ax.legend(handles[::-1], labels_leg[::-1], title=legend_title,
                         bbox_to_anchor=(1.01, 1), loc='upper left')
 
-        # Labels
-        ax.set_xlabel('Value')
+        # Apply axis labels conditionally based on subplot position
+        row = idx // n_cols
+        col = idx % n_cols
+        if xlabel and row == n_rows - 1:
+            ax.set_xlabel(xlabel)
+        elif row == n_rows - 1:
+            # Default label for bottom row if no custom label provided
+            ax.set_xlabel('Value')
+        if ylabel and col == 0:
+            ax.set_ylabel(ylabel)
 
     # Hide unused subplots
     for idx in range(n_subs, len(axes)):

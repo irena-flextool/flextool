@@ -27,19 +27,20 @@ def read_outputs(output_dir):
 
     return p, s, v
 
-def generic(par, s, v, r):
-    results = []
-    df = pd.concat([par.discount_factor_operations_yearly, par.discount_factor_investment_yearly], axis=1)
-    df.columns = ["operations discount factor","investments discount factor"]
-    df.columns.name = "param"
-    results.append((df, 'discountFactors_d_p'))
+def generic(par, s, v, r, debug):
+    if debug:
+        results = []
+        df = pd.concat([par.discount_factor_operations_yearly, par.discount_factor_investment_yearly], axis=1)
+        df.columns = ["operations discount factor","investments discount factor"]
+        df.columns.name = "param"
+        results.append((df, 'discountFactors_d_p'))
 
-    df = par.entity_annuity
-    results.append((df, 'entity_annuity_d_p'))
+        df = par.entity_annuity
+        results.append((df, 'entity_annuity_d_p'))
 
-    return results
+        return results
 
-def unit_capacity(par, s, v, r):
+def unit_capacity(par, s, v, r, debug):
     """Unit capacity by period"""
     
     # Get all periods and filter to process_unit entities
@@ -79,7 +80,7 @@ def unit_capacity(par, s, v, r):
     return results, 'unit_capacity_ed_p'
 
 
-def connection_capacity(par, s, v, r):
+def connection_capacity(par, s, v, r, debug):
     """Connection capacity by period"""
     
     # Get all periods and filter to process_connection entities
@@ -121,7 +122,7 @@ def connection_capacity(par, s, v, r):
     return results, 'connection_capacity_ed_p'
 
 
-def node_capacity(par, s, v, r):
+def node_capacity(par, s, v, r, debug):
     """Node capacity by period"""
 
     # Get all periods and filter to node_state entities
@@ -167,7 +168,7 @@ def node_capacity(par, s, v, r):
     return results, 'node_capacity_ed_p'
 
 
-def nodeGroup_indicators(par, s, v, r):
+def nodeGroup_indicators(par, s, v, r, debug):
     """Node group indicator results by period and time"""
 
     results = []
@@ -199,40 +200,28 @@ def nodeGroup_indicators(par, s, v, r):
             group_inflow = pd.Series(0, index=dt_index)
 
         # 2. Sum of annualized inflows [MWh]
-        period_shares = group_inflow.index.get_level_values('period').map(
-            lambda p: par.complete_period_share_of_year[p]
-        )
-        annualized_inflow = -group_inflow / period_shares
+        annualized_inflow = group_inflow.div(par.complete_period_share_of_year)
 
         # 3. VRE share (actual flow)
-        vre_processes = s.process_VRE.get_level_values('process').unique()
-        if len(vre_processes) > 0:
-            vre_cols = r.flow_dt.columns[
-                r.flow_dt.columns.get_level_values('sink').isin(group_nodes) &
-                r.flow_dt.columns.get_level_values('process').isin(vre_processes) &
-                r.flow_dt.columns.isin(s.process_source_sink_alwaysProcess)
-            ]
-            if len(vre_cols) > 0:
-                vre_flow_sum = r.flow_dt[vre_cols].sum(axis=1)
-            else:
-                vre_flow_sum = pd.Series(0, index=dt_index)
-        else:
-            vre_flow_sum = pd.Series(0, index=dt_index)
+        vre_processes = s.process_VRE.get_level_values('process')
+        vre_cols = r.flow_dt.columns[
+            r.flow_dt.columns.get_level_values('sink').isin(group_nodes) &
+            r.flow_dt.columns.get_level_values('process').isin(vre_processes) &
+            r.flow_dt.columns.isin(s.process_source_sink_alwaysProcess)
+        ]
+        vre_flow_sum = r.flow_dt[vre_cols].sum(axis=1)
 
         # VRE share calculation (avoid division by zero)
-        vre_share = vre_flow_sum / -group_inflow.where(group_inflow != 0, pd.NA)
+        vre_share = vre_flow_sum / group_inflow.where(group_inflow != 0, pd.NA)
 
         # 4. Curtailed VRE share
         potential_cols = r.potentialVREgen_dt.columns[
             r.potentialVREgen_dt.columns.get_level_values(1).isin(group_nodes) &
             r.potentialVREgen_dt.columns.get_level_values(0).isin(vre_processes)
         ]
-        if len(potential_cols) > 0:
-            potential_sum = r.potentialVREgen_dt[potential_cols].sum(axis=1)
-        else:
-            potential_sum = pd.Series(0, index=dt_index)
-        curtailed_vre = (potential_sum - vre_flow_sum)
-        curtailed_vre_share = curtailed_vre / -group_inflow.where(group_inflow != 0, pd.NA)
+        potential_sum = r.potentialVREgen_dt[potential_cols].sum(axis=1)
+        curtailed_vre = (potential_sum - vre_flow_sum).clip(lower=0)
+        curtailed_vre_share = curtailed_vre / group_inflow.where(group_inflow != 0, pd.NA)
 
         # Filter balance nodes directly from the sets
         balance_nodes = s.node_balance.union(s.node_balance_period)
@@ -316,7 +305,7 @@ def nodeGroup_indicators(par, s, v, r):
     return results
 
 
-def nodeGroup_VRE_share(par, s, v, r):
+def nodeGroup_VRE_share(par, s, v, r, debug):
     """VRE share for node groups by period and time"""
 
     results = []
@@ -387,7 +376,7 @@ def nodeGroup_VRE_share(par, s, v, r):
     return results
 
 
-def CO2(par, s, v, r):
+def CO2(par, s, v, r, debug):
     """Annualized CO2 Mt for groups by period"""
     results = []
 
@@ -405,7 +394,7 @@ def CO2(par, s, v, r):
     results.append((r.group_co2_d, 'CO2_d_g'))
     return results
 
-def nodeGroup_total_inflow(par, s, v, r):
+def nodeGroup_total_inflow(par, s, v, r, debug):
     """Total inflow (inflow - outflow) to groups by period and time"""
 
     results = []
@@ -465,7 +454,7 @@ def nodeGroup_total_inflow(par, s, v, r):
     return results
 
 
-def unit_outputNode(par, s, v, r):
+def unit_outputNode(par, s, v, r, debug):
     """Unit output node flow for periods and time"""
 
     results = []
@@ -500,7 +489,7 @@ def unit_outputNode(par, s, v, r):
 
     return results
 
-def unit_inputNode(par, s, v, r):
+def unit_inputNode(par, s, v, r, debug):
     """Unit input node flow for periods and time"""
 
     results = []
@@ -536,7 +525,7 @@ def unit_inputNode(par, s, v, r):
     return results
 
 
-def connection(par, s, v, r):
+def connection(par, s, v, r, debug):
     """Connection flow for periods and time"""
 
     results = []
@@ -558,7 +547,7 @@ def connection(par, s, v, r):
     return results 
 
 
-def connection_wards(par, s, v, r):
+def connection_wards(par, s, v, r, debug):
     """Connection flow to right node and to left node for periods and time"""
 
     results = []
@@ -574,7 +563,7 @@ def connection_wards(par, s, v, r):
     return results
 
 
-def nodeGroup_flows(par, s, v, r):
+def nodeGroup_flows(par, s, v, r, debug):
     """Group output flows for periods and time"""
 
     results = []
@@ -689,7 +678,7 @@ def nodeGroup_flows(par, s, v, r):
 
     return results
 
-def connection_cf(par, s, v, r):
+def connection_cf(par, s, v, r, debug):
     """Connection capacity factors for periods"""
     if r.process_sink_flow_d.empty:
         results = pd.DataFrame(index=pd.Index([], name='period'))
@@ -703,7 +692,7 @@ def connection_cf(par, s, v, r):
     results.columns.names = ['connection']
     return results, 'connection_cf_d_e'
 
-def unit_cf_outputNode(par, s, v, r):
+def unit_cf_outputNode(par, s, v, r, debug):
     """Unit capacity factors by output node for periods"""
     if r.process_sink_flow_d.empty:
         results = pd.DataFrame(index=pd.Index([], name='period'))
@@ -717,7 +706,7 @@ def unit_cf_outputNode(par, s, v, r):
     results.columns.names = ['unit', 'sink']
     return results, 'unit_outputs_cf_d_ee'
 
-def unit_cf_inputNode(par, s, v, r):
+def unit_cf_inputNode(par, s, v, r, debug):
     """Unit capacity factors by input node for periods"""
     if r.process_source_flow_d.empty:
         results = pd.DataFrame(index=pd.Index([], name='period'))
@@ -732,7 +721,7 @@ def unit_cf_inputNode(par, s, v, r):
     return results, 'unit_inputs_cf_d_ee'
 
 
-def unit_VRE_curtailment_and_potential(par, s, v, r):
+def unit_VRE_curtailment_and_potential(par, s, v, r, debug):
     """Unit VRE curtailment and potential for both periods and timesteps"""
     
     results = []
@@ -768,7 +757,7 @@ def unit_VRE_curtailment_and_potential(par, s, v, r):
     
     return results
 
-def unit_ramps(par, s, v, r):
+def unit_ramps(par, s, v, r, debug):
     """Unit ramps by input and output nodes for timesteps"""
     results = []
     if r.ramp_dtt.empty:
@@ -792,7 +781,7 @@ def unit_ramps(par, s, v, r):
 
     return results
 
-def cost_summaries(par, s, v, r):
+def cost_summaries(par, s, v, r, debug):
     """Cost summaries for periods and timesteps"""
     
     results = []
@@ -806,7 +795,8 @@ def cost_summaries(par, s, v, r):
     # 1. Costs at timestep level (non-annualized)
     costs_dt = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
     costs_dt.columns.name = 'category'
-    costs_dt['commodity'] = r.cost_commodity_dt.sum(axis=1)
+    costs_dt['commodity_cost'] = r.cost_commodity_dt.sum(axis=1)
+    costs_dt['commodity_sales'] = r.sales_commodity_dt.sum(axis=1)
     costs_dt['co2'] = r.cost_co2_dt
     costs_dt['other operational'] = r.cost_process_other_operational_cost_dt.sum(axis=1)
     costs_dt['starts'] = r.cost_startup_dt.sum(axis=1)
@@ -871,7 +861,7 @@ def cost_summaries(par, s, v, r):
 
     return results
 
-def reserves(par, s, v, r):
+def reserves(par, s, v, r, debug):
     """Process reserves for timesteps and periods"""
     results = []
     
@@ -886,7 +876,7 @@ def reserves(par, s, v, r):
 
     return results
 
-def unit_online_and_startup(par, s, v, r):
+def unit_online_and_startup(par, s, v, r, debug):
     """Unit online status and startups for timesteps and periods"""
     results = []
     
@@ -905,22 +895,28 @@ def unit_online_and_startup(par, s, v, r):
     
     return results
 
-def node_summary(par, s, v, r):
+def node_summary(par, s, v, r, debug):
     """Node balance summaries for periods and timesteps"""
     results = []
 
     categories = ['inflow', 'from_units', 'from_connections', 'to_units', 'to_connections', 'self_discharge', 'upward_slack', 'downward_slack']
-    nodes_sink = s.node.copy()
+
+    balanced_nodes = s.node_balance.union(s.node_balance_period)
+    if debug:
+        nodes = s.node
+    else:
+        nodes = balanced_nodes.difference(s.node_state)
+    nodes_sink = s.node.copy().intersection(nodes)
     nodes_sink.name = 'sink'
-    nodes_source = s.node.copy()
+    nodes_source = s.node.copy().intersection(nodes)
     nodes_source.name = 'source'
-    
+
     # 1. Timestep-level node summary
-    node_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_product([s.node, categories], names=['node', 'category']), dtype=float)
+    node_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_product([nodes, categories], names=['node', 'category']), dtype=float)
     inflow_cols = node_dt.columns[
-                    node_dt.columns.get_level_values('node').isin(par.node_inflow.columns) 
+                    node_dt.columns.get_level_values('node').isin(par.node_inflow.columns.intersection(nodes)) 
                     & node_dt.columns.get_level_values('category').isin(['inflow'])]
-    node_dt[inflow_cols] = par.node_inflow
+    node_dt[inflow_cols] = par.node_inflow[nodes]
     
     from_units = r.flow_dt[s.process_unit.join(r.flow_dt.columns).join(nodes_sink, how='inner')].T.groupby('sink').sum().T
     from_units_cols = node_dt.columns[
@@ -950,15 +946,14 @@ def node_summary(par, s, v, r):
     node_dt[to_connections_cols] = to_connections
 
     # Self discharge
-    self_discharge = r.self_discharge_loss_dt[r.self_discharge_loss_dt.columns.intersection(s.node_self_discharge)]
+    self_discharge = r.self_discharge_loss_dt[r.self_discharge_loss_dt.columns.intersection(s.node_self_discharge.intersection(nodes))]
     self_discharge_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(self_discharge.columns)
                         & node_dt.columns.get_level_values('category').isin(['self_discharge'])]
     node_dt[self_discharge_cols] = self_discharge
 
     # Upward slack
-    balanced_nodes = s.node_balance.union(s.node_balance_period)
-    upward_slack_data = v.q_state_up.loc[:, v.q_state_up.columns.get_level_values('node').isin(balanced_nodes)]
+    upward_slack_data = v.q_state_up.loc[:, v.q_state_up.columns.get_level_values('node').isin(balanced_nodes.intersection(nodes))]
     upward_slack_data = upward_slack_data.mul(par.node_capacity_for_scaling[upward_slack_data.columns], axis=1)
     upward_slack_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(upward_slack_data.columns.get_level_values('node'))
@@ -966,7 +961,7 @@ def node_summary(par, s, v, r):
     node_dt[upward_slack_cols] = upward_slack_data
 
     # Downward slack (negative)
-    downward_slack_data = -v.q_state_down.loc[:, v.q_state_down.columns.get_level_values('node').isin(balanced_nodes)]
+    downward_slack_data = -v.q_state_down.loc[:, v.q_state_down.columns.get_level_values('node').isin(balanced_nodes.intersection(nodes))]
     downward_slack_data = downward_slack_data.mul(par.node_capacity_for_scaling[downward_slack_data.columns], axis=1)
     downward_slack_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(downward_slack_data.columns.get_level_values('node'))
@@ -974,7 +969,7 @@ def node_summary(par, s, v, r):
     node_dt[downward_slack_cols] = downward_slack_data
 
     # Fill any remaining NaN values with 0
-    node_dt = node_dt.fillna(0)
+    node_dt = node_dt.fillna(0.0)
     
     results.append((node_dt, 'node_dt_ep'))
         
@@ -985,12 +980,12 @@ def node_summary(par, s, v, r):
     
     return results
 
-def node_additional_results(par, s, v, r):
+def node_additional_results(par, s, v, r, debug):
     """Additional node results: prices, state, and slacks"""
     results = []
-    
+
     # 1. Nodal prices
-    results.append((v.dual_node_balance, 'node_prices_dt_e'))
+    results.append((v.dual_node_balance[s.node_balance.difference(s.node_state)], 'node_prices_dt_e'))
     
     # 2. Node state
     node_state = v.state.mul(par.entity_unitsize[s.node_state], level="node")
@@ -1006,7 +1001,7 @@ def node_additional_results(par, s, v, r):
     
     return results
 
-def investment_duals(par, s, v, r):
+def investment_duals(par, s, v, r, debug):
     """Additional node results: prices, state, and slacks"""
     results = []
     
@@ -1024,102 +1019,113 @@ def investment_duals(par, s, v, r):
 
     return results
 
-def inertia_results(par, s, v, r):
+def inertia_results(par, s, v, r, debug):
     """Inertia results for groups and individual entities"""
-    
+
     results = []
-    
-    # Helper to get inertia constant
-    def get_inertia_constant(p, node, direction):
-        if direction == 'source':
-            return par.process_source[p, node]['inertia_constant'] if 'inertia_constant' in par.process_source.index else 0.0
-        else:  # sink
-            return par.process_sink[p, node]['inertia_constant'] if 'inertia_constant' in par.process_sink.index else 0.0
-    
-    # Helper to get flow/online value
-    def get_flow_or_online(p, source, sink, df_index):
-        unitsize = par.entity_unitsize[p]
-        if p in s.process_online and p in r.process_online_dt.columns:
-            return r.process_online_dt[p] * unitsize
-        elif (p, source, sink) in v.flow.columns:
-            return v.flow[(p, source, sink)] * unitsize
-        else:
-            return pd.Series(0, index=df_index)
-    
-    # 1. Group inertia totals
-    group_inertia = pd.DataFrame(index=s.dt_realize_dispatch, columns=s.groupInertia, dtype=float)
-    
+
+    # 1. Calculate unit_inertia for all (process, node) without groups
+    unit_inertia = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['process', 'node']), dtype=float)
+
+    # === SOURCE-BASED INERTIA ===
+    process_source_with_inertia = par.process_source.loc['inertia_constant'][par.process_source.loc['inertia_constant'] > 0]
+    pss_source = s.process_source_sink_alwaysProcess[
+        s.process_source_sink_alwaysProcess.droplevel('sink').isin(process_source_with_inertia.index)
+    ]
+    process_source_with_inertia.index.names = ['process', 'node']
+
+    # Online processes - group by (process, source) since online_dt is indexed by process only
+    pss_source_online = pss_source[pss_source.get_level_values('process').isin(s.process_online)]
+    process_online = pss_source_online.droplevel('sink').unique()
+    process_online.names = ['process', 'node']
+    online_procs = process_online.get_level_values('process').unique()
+
+    unit_inertia[process_online] = ( r.process_online_dt[online_procs]
+        .mul(par.entity_unitsize[online_procs], axis=1, level=0)
+        .mul(process_source_with_inertia[process_online]) )
+
+    # Flow processes
+    pss_source_flow = pss_source[~pss_source.get_level_values('process').isin(s.process_online)]
+    flow_cols = pss_source_flow.intersection(r.flow_dt.columns)
+    process_flow = flow_cols.droplevel('sink').unique()
+    flows_weighted_source = (
+        r.flow_dt[flow_cols]
+        .mul(process_source_with_inertia[process_flow], axis=1) )
+
+    # Sum across sinks for each (process, source)
+    unit_inertia_source_flow = flows_weighted_source.T.groupby(level=['process', 'source']).sum().T
+    unit_inertia_source_flow.columns.names = ['process', 'node']
+    unit_inertia[unit_inertia_source_flow.columns] = unit_inertia_source_flow
+
+    # === SINK-BASED INERTIA ===
+    process_sink_with_inertia = par.process_sink.loc['inertia_constant'][par.process_sink.loc['inertia_constant'] > 0]
+    pss_sink = s.process_source_sink_alwaysProcess[
+        s.process_source_sink_alwaysProcess.droplevel('source').isin(process_sink_with_inertia.index) ]
+
+    process_sink_with_inertia.index.names = ['process', 'node']
+
+    # Online processes
+    pss_sink_online = pss_sink[pss_sink.get_level_values('process').isin(s.process_online)]
+    process_online = pss_sink_online.droplevel('source').unique()
+    process_online.names = ['process', 'node']
+    online_procs = process_online.get_level_values('process').unique()
+
+    unit_inertia[process_online] = ( r.process_online_dt[online_procs]
+        .mul(process_sink_with_inertia[process_online]) )
+
+    # Flow processes
+    pss_sink_flow = pss_sink[~pss_sink.get_level_values('process').isin(s.process_online)]
+    flow_cols = pss_sink_flow.intersection(r.flow_dt.columns)
+    process_flow = flow_cols.droplevel('source').unique()
+    flows_weighted_sink = (
+        r.flow_dt[flow_cols]
+        .mul(par.entity_unitsize[process_flow.droplevel('sink').unique()], axis=1, level='process')
+        .mul(process_sink_with_inertia[process_flow], axis=1)
+    )
+    # Sum across sources for each (process, sink)
+    unit_inertia_sink_flow = flows_weighted_sink.T.groupby(level=['process', 'sink']).sum().T
+    unit_inertia_sink_flow.columns.names = ['process', 'node']
+    unit_inertia[unit_inertia_sink_flow.columns] = unit_inertia_sink_flow
+
+    # 2. Add group dimension by joining with group_node
+    group_unit_inertia = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['group', 'process', 'node']), dtype=float)
+
     for g in s.groupInertia:
-        total_inertia = pd.Series(0, index=s.dt_realize_dispatch, dtype=float)
-        
-        # Inertia from sources
-        s.group_node_inertia = s.group_node[s.group_node.get_level_values('group').isin([g])]
-        s.process_source_inertia = s.process_source[s.process_source.get_level_values(1).isin(s.group_node_inertia.get_level_values('node'))]
-        s.pss_inertia = s.process_source_sink_alwaysProcess[s.process_source_sink_alwaysProcess.droplevel(2).isin(s.process_source_inertia)]
-        for (p, source, sink) in s.pss_inertia:
-            inertia_const = get_inertia_constant(p, source, 'source')
-            if inertia_const:
-                flow_online = get_flow_or_online(p, source, sink, s.dt_realize_dispatch)
-                total_inertia += (flow_online * inertia_const).squeeze()
-        
-        # Inertia from sinks
-        s.process_sink_inertia = s.process_sink[s.process_sink.get_level_values(1).isin(s.group_node_inertia.get_level_values('node'))]
-        s.pss_inertia = s.process_source_sink_alwaysProcess[s.process_source_sink_alwaysProcess.droplevel(1).isin(s.process_sink_inertia)]
-        for (p, source, sink) in s.pss_inertia:
-            inertia_const = get_inertia_constant(p, sink, 'sink')
-            if inertia_const:
-                flow_online = get_flow_or_online(p, source, sink, s.dt_realize_dispatch)
-                total_inertia += (flow_online * inertia_const).squeeze()
-        
-        group_inertia[g] = total_inertia
-    
+        # Get (process, node) pairs for this group
+        group_pn = s.group_node[s.group_node.get_level_values('group') == g].droplevel('group')
+        # Filter unit_inertia to these columns
+        cols = unit_inertia.columns.intersection(group_pn)
+        # Add group level to columns
+        group_cols = pd.MultiIndex.from_arrays(
+            [[g] * len(cols), cols.get_level_values(0), cols.get_level_values(1)],
+            names=['group', 'process', 'node']
+        )
+        group_unit_inertia[group_cols] = unit_inertia[cols].values
+
+    results.append((group_unit_inertia, 'nodeGroup_unit_node_inertia_dt_gee'))
+
+    # 3. Group inertia - sum by group
+    group_inertia = group_unit_inertia.T.groupby(level='group').sum().T
     results.append((group_inertia, 'nodeGroup_inertia_dt_g'))
-    
-    # 2. Individual entity inertia
-    unit_inertia = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['group', 'process', 'node']), dtype=float)
-    
-    for g in s.groupInertia:
-        # From sources
-        for (p, source, sink) in s.process_source_sink_alwaysProcess:
-            if (p, source) in s.process_source and (g, source) in s.group_node:
-                inertia_const = get_inertia_constant(p, source, 'source')
-                if inertia_const:
-                    flow_online = get_flow_or_online(p, source, sink, s.dt_realize_dispatch)
-                    unit_inertia[g, p, source] = flow_online * inertia_const
-        
-        # From sinks
-        for (p, source, sink) in s.process_source_sink_alwaysProcess:
-            if (p, sink) in s.process_sink and (g, sink) in s.group_node:
-                inertia_const = get_inertia_constant(p, sink, 'sink')
-                if inertia_const:
-                    flow_online = get_flow_or_online(p, source, sink, s.dt_realize_dispatch)
-                    unit_inertia[g, p, sink] = flow_online * inertia_const
-    
-    results.append((unit_inertia, 'nodeGroup_unit_node_inertia_dt_gee'))
-    
-    # 3. Largest flow per group (for inertia constraint)
+
+    # 4. Largest flow per group
     largest_flow = pd.DataFrame(index=s.dt_realize_dispatch, dtype=float)
-    
+
     for g in s.groupInertia:
-        max_flows = []
-        # This is poor processing and probably not working correctly.
-        for (p, source, sink) in s.process_source_sink_alwaysProcess:
-            if (p, sink) in s.process_sink and (g, sink) in s.group_node:
-                unitsize = par.entity_unitsize[p]
-                if (p, source, sink) in v.flow.columns:
-                    max_flows.append(v.flow[(p, source, sink)] * unitsize)
-        
-        if max_flows:
-            # Take maximum across all processes
-            largest_flow[g] = pd.concat(max_flows, axis=1).max(axis=1)
-        else:
-            largest_flow[g] = 0
-    
+        group_nodes = s.group_node[s.group_node.get_level_values('group') == g].get_level_values('node')
+        process_sink_in_group = s.process_sink[s.process_sink.get_level_values('sink').isin(group_nodes)]
+        pss_sink = s.process_source_sink_alwaysProcess[
+            s.process_source_sink_alwaysProcess.droplevel('source').isin(process_sink_in_group)
+        ]
+
+        flow_cols = pss_sink.intersection(r.flow_dt.columns)
+        largest_flow[g] = r.flow_dt[flow_cols].max(axis=1)
+
     results.append((largest_flow, 'nodeGroup_inertia_largest_flow_dt_g'))
-    
+
     return results
 
-def slack_variables(par, s, v, r):
+def slack_variables(par, s, v, r, debug):
     """Slack variables for reserves, non-synchronous, inertia, and capacity margin"""
     
     results = []
@@ -1319,7 +1325,7 @@ def write_summary_csv(par, s, v, r, csv_dir):
                     f.write(f'CapMargin, {group}, {period}, {r.q_capacity_margin_d_not_annualized.loc[period, group]:.5g}\n')
         
         # Reserve slack
-        for group in r.q_non_synchronous_d_not_annualized.columns:
+        for group in r.q_reserves_d_not_annualized.columns:
             for period in d_realized_period:
                 if period in r.q_reserves_d_not_annualized.index and r.q_reserves_d_not_annualized.loc[period, group] > 0:
                     f.write(f'Reserve, {group}, {period}, {r.q_reserves_d_not_annualized.loc[period, group]:.5g}\n')
@@ -1415,79 +1421,58 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
         plot_dir = 'output_plots'
 
 
-    # Handle single_result mode with special data reading logic
-    if single_result:
-        key = single_result[0]
-        csv_name = settings[key][0]  # Already parsed above
+    # Read and process data
+    start = time.perf_counter()
+
+    # If results already exist as parquet files, read them (filtered by settings)
+    if read_parquet_dir:
         results = {}
-
-        start = time.perf_counter()
-
-        if read_parquet_dir:
-            # Read single parquet file
-            parquet_path = os.path.join(read_parquet_dir, f'{key}.parquet')
-            if not os.path.exists(parquet_path):
-                raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
-            results[key] = pd.read_parquet(parquet_path)
-            print(f"--- Read single parquet file ({key}): {time.perf_counter() - start:.4f} seconds")
-        else:
-            # Read single CSV file
-            if not csv_name:
-                raise ValueError(f"CSV name is required for key '{key}' when not reading from parquet")
-
-            csv_path = os.path.join(csv_dir, csv_name)
-            if not os.path.exists(csv_path):
-                raise FileNotFoundError(f"CSV file not found: {csv_path}")
-
-            # Read CSV with multi-level index/header inference
-            df = pd.read_csv(csv_path, header=0, index_col=0)
-            results[key] = df
-            print(f"--- Read single CSV file ({csv_name}): {time.perf_counter() - start:.4f} seconds")
-
-        start = time.perf_counter()
-    # Otherwise, use normal data reading pipeline
-    else:
-        start = time.perf_counter()
-        # If results already exist as parquet files, just read them without processing
-        if read_parquet_dir:
-            results = {}
-            for filename in os.listdir(read_parquet_dir):
-                if filename.endswith('.parquet'):
-                    key = filename[:-8]  # Remove '.parquet' extension
+        keys_to_read = set(settings.keys())
+        for filename in os.listdir(read_parquet_dir):
+            if filename.endswith('.parquet'):
+                key = filename[:-8]  # Remove '.parquet' extension
+                # Only read if this key is in settings (optimization for single_result)
+                if key in keys_to_read:
                     filepath = os.path.join(read_parquet_dir, filename)
-                    results[key] = pd.read_parquet(filepath)
-            print(f"--- Read parquet files: {time.perf_counter() - start:.4f} seconds")
-            start = time.perf_counter()
+                    results[key] = pd.read_parquet(filepath).droplevel('scenario', axis=1)
+        print(f"--- Read parquet files: {time.perf_counter() - start:.4f} seconds")
+        start = time.perf_counter()
 
-        # Read original raw outputs from FlexTool
-        else:
-            par, s, v = read_outputs('output_raw')
-            print(f"--- Read flextool outputs: {time.perf_counter() - start:.4f} seconds")
-            start = time.perf_counter()
+    # Read original raw outputs from FlexTool
+    else:
+        par, s, v = read_outputs('output_raw')
+        print(f"--- Read flextool outputs: {time.perf_counter() - start:.4f} seconds")
+        start = time.perf_counter()
 
-            # Pre-process results to be closer to what needed for output writing
-            r = post_process_results(par, s, v)
-            print(f"--- Post processed outputs: {time.perf_counter() - start:.4f} seconds")
-            start = time.perf_counter()
+        # Pre-process results to be closer to what needed for output writing
+        r = post_process_results(par, s, v)
+        print(f"--- Post processed outputs: {time.perf_counter() - start:.4f} seconds")
+        start = time.perf_counter()
 
-            # Call the final processing functions for each category of outputs
-            # and make a dict of dataframes to hold final results
-            output_funcs = output_funcs or ALL_OUTPUTS
+        # Call the final processing functions for each category of outputs
+        # and make a dict of dataframes to hold final results
+        output_funcs = output_funcs or ALL_OUTPUTS
 
-            results = {}
-            for func in output_funcs:
-                func_results = func(par, s, v, r)
+        all_results = {}
+        for func in output_funcs:
+            func_results = func(par, s, v, r, debug)
+            if not func_results:
+                continue
 
-                # Handle both single result (wrapped in list) and multiple results
-                if not isinstance(func_results, list):
-                    func_results = [func_results]
+            # Handle both single result (wrapped in list) and multiple results
+            if not isinstance(func_results, list):
+                func_results = [func_results]
 
-                for result_df, table_name in func_results:
-                    # Use excel_sheet as the key to allow multiple outputs per function
-                    results[table_name] = result_df
+            for result_df, table_name in func_results:
+                # Use excel_sheet as the key to allow multiple outputs per function
+                all_results[table_name] = result_df
 
-            print(f"--- Formatted for output: {time.perf_counter() - start:.4f} seconds")
-            start = time.perf_counter()
+        # Filter results to only include keys in settings (for single_result optimization)
+        keys_to_keep = set(settings.keys())
+        results = {k: v for k, v in all_results.items() if k in keys_to_keep}
+
+        print(f"--- Formatted for output: {time.perf_counter() - start:.4f} seconds")
+        start = time.perf_counter()
 
     # Write files for debugging purposes
     if debug:
@@ -1523,11 +1508,19 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
 
     # Write to csv
     if 'csv' in methods:
-        if single_result and read_parquet_dir:
-            # Simplified CSV writing for single result from parquet
-            if not os.path.exists(csv_dir):
-                os.makedirs(csv_dir)
+        if not os.path.exists(csv_dir):
+            os.makedirs(csv_dir)
 
+        # Only empty csv dir when not processing single result
+        if not single_result:
+            for filename in os.listdir(csv_dir):
+                file_path = os.path.join(csv_dir, filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+
+        # Different CSV writing logic depending on data source
+        if read_parquet_dir:
+            # Simplified CSV writing from parquet (no par,s,v,r available)
             for table_name, attributes in settings.items():
                 if table_name and table_name in results and attributes[0]:
                     csv_filename = attributes[0]
@@ -1536,19 +1529,8 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
                     df_copy = df.reset_index()
                     df_copy.columns.names = [None] * df_copy.columns.nlevels
                     df_copy.to_csv(csv_path, index=False, float_format='%.8g')
-
-            print(f"--- Wrote to CSV: {time.perf_counter() - start:.4f} seconds")
-            start = time.perf_counter()
-        elif not (single_result and read_parquet_dir):
-            # Original CSV writing logic with full processing
-            if not os.path.exists(csv_dir):
-                os.makedirs(csv_dir)
-            # Empty csv dir
-            for filename in os.listdir(csv_dir):
-                file_path = os.path.join(csv_dir, filename)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-
+        else:
+            # Full CSV writing from output_raw (par,s,v,r available)
             write_summary_csv(par, s, v, r, csv_dir)
 
             for table_name, attributes in settings.items():
@@ -1573,8 +1555,8 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
                     df.columns.names = [None] * df.columns.nlevels
                     df.to_csv(csv_path, index=False, float_format='%.8g')
 
-            print(f"Wrote to CSV: {time.perf_counter() - start:.4f} seconds")
-            start = time.perf_counter()
+        print(f"--- Wrote to CSV: {time.perf_counter() - start:.4f} seconds")
+        start = time.perf_counter()
 
     # Write to excel
     if 'excel' in methods:
@@ -1597,7 +1579,7 @@ if __name__ == "__main__":
                         help='Subdirectory for outputs (default: current directory)')
     parser.add_argument('--read-parquet-dir', type=str, default=False,
                         help='Directory to read existing parquet files from (default: False, reads from raw CSV files)')
-    parser.add_argument('--methods', type=str, nargs='+', default=['plot', 'parquet', 'csv'],
+    parser.add_argument('--methods', type=str, nargs='+', default=['plot', 'parquet', 'csv', 'excel'],
                         choices=['plot', 'parquet', 'excel', 'db', 'csv'],
                         help='Output methods to use (default: plot parquet csv)')
     parser.add_argument('--plot-rows', type=int, nargs=2, default=[0, 167],
@@ -1611,8 +1593,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     write_outputs(
-        args.scenario_name,
-        args.config,
+        scenario_name=args.scenario_name,
+        output_config_path=args.config,
         output_funcs=None,
         subdir=args.subdir,
         read_parquet_dir=args.read_parquet_dir,
