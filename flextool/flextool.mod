@@ -1927,6 +1927,9 @@ check {p in process_delayed} sum{(p, m) in process_method : m in method_1way} 1 
 
 param setup := gmtime() - datetime0;
 display setup;
+param solve_progress symbolic := 'output/solve_progress.csv';
+printf ',%s', setup >> solve_progress;
+
 printf("Constraint generation:\n");
 
 minimize total_cost:
@@ -2063,8 +2066,9 @@ minimize total_cost:
 	  * p_discount_factor_operations_yearly[d]
 ) * scale_the_objective
 ;
-param w_total_cost := gmtime() - datetime0 - setup;
-display w_total_cost;
+param total_obj_cost := gmtime() - datetime0 - setup;
+display total_obj_cost;
+printf ',%s', total_obj_cost >> solve_progress;
 
 # Energy balance in each node
 s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
@@ -2146,8 +2150,9 @@ s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in peri
   + sum {(d, t) in dt} vq_state_up[n, d, t] * node_capacity_for_scaling[n, d]
   - sum {(d, t) in dt} vq_state_down[n, d, t] * node_capacity_for_scaling[n, d]
 ;
-param balance := gmtime() - datetime0 - setup - w_total_cost;
+param balance := gmtime() - datetime0 - setup - total_obj_cost;
 display balance;
+printf ',%s', balance >> solve_progress;
 
 s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__method_timeseries, (d, t) in dt} :
   + sum {(p, r, ud, n) in process_reserve_upDown_node_active
@@ -2274,8 +2279,9 @@ s.t. reserveBalance_down_n_1_eq{(r, 'down', ng, r_m) in reserve__upDown__group__
 	    * p_process_reserve_upDown_node[p_n_1, r, 'down', n, 'large_failure_ratio']
 	    * pdtProcess_slope[p_n_1, d, t]
 ;
-param reserves := gmtime() - datetime0 - setup - w_total_cost - balance;
+param reserves := gmtime() - datetime0 - setup - total_obj_cost - balance;
 display reserves;
+printf ',%s', reserves >> solve_progress;
 
 # Indirect efficiency conversion - there is more than one variable. Direct conversion does not have an equation - it's directly in the nodeBalance_eq.
 s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t) in dt} :
@@ -2301,8 +2307,6 @@ s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t) in dt} :
 			)
             * pdtProcess_section[p, d, t] * p_entity_unitsize[p])
 ;
-param indirect := gmtime() - datetime0 - setup - w_total_cost - balance - reserves;
-display indirect;
 
 s.t. profile_flow_upper_limit {(p, source, sink, f, 'upper_limit') in process__source__sink__profile__profile_method, (d, t) in dt} :
   + ( + v_flow[p, source, sink, d, t]
@@ -3411,16 +3415,17 @@ s.t. non_anticipativity_reserve{(p, r, ud, n) in process_reserve_upDown_node_act
   =
   + v_reserve[p, r, ud, n, b, t]
 ;
-param rest := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect;
+param rest := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves;
 display rest;
-param constraints := gmtime() - datetime0 - setup - w_total_cost;
+param constraints := gmtime() - datetime0 - setup - total_obj_cost;
 display constraints;
-
+printf ',%s,%s', rest, constraints >> solve_progress;
 
 solve;
 
-param w_solve := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest;
-display w_solve;
+param r_solution := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest;
+display r_solution;
+printf ',%s', r_solution>> solve_progress;
 
 printf("\nOutputs:\n");
 
@@ -4736,8 +4741,9 @@ for {s in solve_current, (d, t) in dt_fix_storage_timesteps} {
     printf "%s,%s,%s\n", s, d, t >> "output_raw/set_dt_fix_storage_timesteps.csv";
 }
 
-param w_raw := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest;
+param w_raw := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution;
 display w_raw;
+printf ',%s', w_raw >> solve_progress;
 
 param hours_in_realized_period{d in d_realized_period} := sum {(d, t) in dt_realize_dispatch} (step_duration[d, t]);
 param realized_period_share_of_year{d in d_realized_period}:= hours_in_realized_period[d] / 8760;
@@ -5269,8 +5275,9 @@ for {s in solve_current, e in nodeState, d in d_realize_dispatch_or_invest: 'yes
 	 >> fn_node_capacity;
   }
 
-param w_capacity := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_raw;
+param w_capacity := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_raw;
 display w_capacity;
+printf ',%s', w_capacity >> solve_progress;
 
 printf 'Write summary results...\n';
 param fn_summary symbolic := "output/summary_solve.csv";
@@ -5361,8 +5368,9 @@ for {g in groupCapacityMargin}
 	  }
   }
 
-param w_summary := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_raw;
+param w_summary := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_raw;
 display w_summary;
+printf ',%s', w_summary >> solve_progress;
 
 
 printf 'Write group results for nodes for realized periods...\n';
@@ -5526,8 +5534,9 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
 	  }
   }
 
-param w_group := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_summary - w_raw;
+param w_group := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_summary - w_raw;
 display w_group;
+printf ',%s', w_group >> solve_progress;
 
 printf 'Write discount rates for realized periods...\n';
 param fn_discount symbolic := "output/discount_factors__period.csv";
@@ -5690,8 +5699,9 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
 	>> fn_annual_dispatch_summary_cost;
   }
 
-param w_costs_period := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_raw;
+param w_costs_period := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_raw;
 display w_costs_period;
+printf ',%s', w_costs_period >> solve_progress;
 
 printf 'Write cost for realized periods and t...\n';
 param fn_summary_cost_dt symbolic := "output/costs__period__t.csv";
@@ -5718,8 +5728,9 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
 	>> fn_summary_cost_dt;
   }
 
-param w_costs_time := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_raw;
+param w_costs_time := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_costs_period - w_raw;
 display w_costs_time;
+printf ',%s', w_costs_time >> solve_progress;
 
 printf 'Write unit__outputNode flow for periods...\n';
 param fn_unit__sinkNode__d symbolic := "output/unit__outputNode__period.csv";
@@ -6033,8 +6044,9 @@ for {s in solve_current, d in d_realized_period}
       }
   }
 
-param w_flow := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_raw;
+param w_flow := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_costs_period - w_costs_time - w_raw;
 display w_flow;
+printf ',%s', w_flow >> solve_progress;
 
 printf 'Write unit__outputNode capacity factors for periods...\n';
 param fn_unit__sinkNode__d_cf symbolic := "output/unit_cf__outputNode__period.csv";
@@ -6093,8 +6105,9 @@ for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_ou
 										    else 0 ) >> fn_connection_cf__d; }
   }
 
-param w_cf := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_raw;
+param w_cf := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_raw;
 display w_cf;
+printf ',%s', w_cf >> solve_progress;
 
 printf 'Write unit__outputNode curtailment share of VRE units for periods...\n';
 param fn_unit__sinkNode__d_curtailment symbolic := "output/unit_curtailment_share__outputNode__period.csv";
@@ -6158,8 +6171,9 @@ for {s in solve_current : 'yes' not in exclude_entity_outputs}
       { printf ',%.6f', potentialVREgen_dt[u, sink, d, t] - r_process__source__sink_Flow__dt[u, source, sink, d, t] >> fn_unit__sinkNode__dt_curtailment; }
   }}
 
-param w_curtailment := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_raw;
+param w_curtailment := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_raw;
 display w_curtailment;
+printf ',%s', w_curtailment >> solve_progress;
 
 printf 'Write ramps from units over time...\n';
 param fn_unit_ramp__sinkNode__dt symbolic := "output/unit_ramp__outputNode__dt.csv";
@@ -6192,8 +6206,9 @@ for {s in solve_current: 'output_unit__node_ramp_t' in enable_optional_outputs &
       { printf ',%.8g', r_process_source_sink_ramp_dtt[u, source, sink, d, t, t_previous] >> fn_unit_ramp__sourceNode__dt; }
   }}
 
-param w_ramps := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_raw;
+param w_ramps := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_raw;
 display w_ramps;
+printf ',%s', w_ramps >> solve_progress;
 
 printf 'Write reserve from processes over time...\n';
 param fn_process__reserve__upDown__node__dt symbolic := "output/process__reserve__upDown__node__period__t.csv";
@@ -6241,8 +6256,9 @@ for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_ou
 	  { printf ',%.8g', sum{(d, t) in dt_realize_dispatch} (v_reserve[p, r, ud, n, d, t].val * p_entity_unitsize[p] * step_duration[d, t]) / complete_hours_in_period[d] >> fn_process__reserve__upDown__node__d; }
   }
 
-param w_reserves := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_raw;
+param w_reserves := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_raw;
 display w_reserves;
+printf ',%s', w_reserves >> solve_progress;
 
 printf 'Write online status of units over time...\n';
 param fn_unit_online__dt symbolic := "output/unit_online__period__t.csv";
@@ -6292,8 +6308,9 @@ for {s in solve_current, d in d_realized_period : 'yes' not in exclude_entity_ou
 	  }
   }
 
-param w_online := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_raw;
+param w_online := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_raw;
 display w_online;
+printf ',%s', w_online >> solve_progress;
 
 printf 'Write node results for periods...\n';
 param fn_node__d symbolic := "output/node__period.csv";
@@ -6439,8 +6456,9 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
       }
   }
 
-param w_node := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_raw;
+param w_node := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_raw;
 display w_node;
+printf ',%s', w_node >> solve_progress;
 
 printf 'Write marginal value for investment entities...\n';
 param fn_unit_invested_marginal symbolic := "output/unit_invest_marginal__period.csv";
@@ -6485,8 +6503,9 @@ for {s in solve_current, d in d_realize_invest : 'yes' not in exclude_entity_out
       }
   }
 
-param w_marginal_inv := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_raw;
+param w_marginal_inv := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_raw;
 display w_marginal_inv;
+printf ',%s', w_marginal_inv >> solve_progress;
 
 param r_node_ramproom_units_up_dtt{n in nodeBalance, (d, t, t_previous) in dtt: 'output_ramp_envelope' in enable_optional_outputs} :=
           + sum{(u, source, n) in process_source_sink_alwaysProcess : u in process_unit && u not in process_VRE} (
@@ -6630,8 +6649,9 @@ for {s in solve_current: 'output_ramp_envelope' in enable_optional_outputs && 'y
       >> fn_node_ramp__dtt;
   }}
 
-param w_ramp_room := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv - w_raw;
+param w_ramp_room := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv - w_raw;
 display w_ramp_room;
+printf ',%s', w_ramp_room >> solve_progress;
 
 printf 'Write group inertia over time...\n';
 param fn_group_inertia__dt symbolic := "output/group_inertia__period__t.csv";
@@ -6724,8 +6744,9 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
 	  }
   }
 
-param w_inertia := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv - w_ramp_room - w_raw;
+param w_inertia := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv - w_ramp_room - w_raw;
 display w_inertia;
+printf ',%s', w_inertia >> solve_progress;
 
 printf 'Write reserve slack variables over time...\n';
 param fn_group_reserve_slack__dt symbolic := "output/slack__reserve__upDown__group__period__t.csv";
@@ -6801,8 +6822,9 @@ for {s in solve_current, d in d_realize_invest}
       }
   }
 
-param w_slacks := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_solve - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv - w_ramp_room - w_inertia - w_raw;
+param w_slacks := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - r_solution - w_capacity - w_group - w_costs_period - w_costs_time - w_flow - w_cf - w_curtailment - w_ramps - w_reserves - w_online - w_node - w_marginal_inv - w_ramp_room - w_inertia - w_raw;
 display w_slacks;
+printf ',%s', w_slacks >> solve_progress;
 
 ### UNIT TESTS ###
 param unitTestFile symbolic := "tests/unitTests.txt";
@@ -6852,11 +6874,14 @@ for {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} {
 
 printf (if sum{d in debug} 1 then '\n\n' else '') >> unitTestFile;
 
-param write_results := gmtime() - datetime0 - setup - w_total_cost - balance - reserves - indirect - rest - w_raw;
+param write_results := gmtime() - datetime0 - setup - total_obj_cost - balance - reserves - rest - w_raw;
 display write_results;
+printf ',%s', write_results >> solve_progress;
 
 param w_full := gmtime()-datetime0;
 display w_full;
+printf ',%s\n', w_full >> solve_progress;
+
 #display period_first;
 #display period;
 #display period__time_first;

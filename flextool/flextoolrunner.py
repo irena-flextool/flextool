@@ -56,12 +56,14 @@ class FlexToolRunner:
         with (DatabaseMapping(input_db_url) as db):
             if scenario_name:
                 api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
-            scen_names = db.get_scenario_items()
-            self.logger.info(" Work dir: " + str(self.root_dir) + "\nDB URL: " + str(db.sa_url) + "\nScenario name: " + scen_names[0]['name'])
-            if len(scen_names) == 0:
-                self.logger.error("No scenario found")
-                sys.exit(-1)
-            if len(db.get_scenario_alternative_items(scenario_name=scen_names[0]['name'])) == 0:
+            else:
+                scen_names = db.get_scenario_items()
+                if len(scen_names) == 0:
+                    self.logger.error("No scenario found")
+                    sys.exit(-1)
+                scenario_name=scen_names[0]['name']
+            self.logger.info(" Work dir: " + str(self.root_dir) + "\nDB URL: " + str(db.sa_url) + "\nScenario name: " + scenario_name)
+            if len(db.get_scenario_alternative_items(scenario_name=scenario_name)) == 0:
                 self.logger.error("No alternatives in the scenario, i.e. empty scenario.")
                 sys.exit(-1)
             
@@ -2222,12 +2224,20 @@ class FlexToolRunner:
                     self.logger.error("The years_represented is defined, but not to all of the periods in the solve")
                     sys.exit(-1)
 
-        print(f"Pre-processing of data: {time.perf_counter() - timer:.4f} seconds")
-        timer = time.perf_counter()
+        timing = time.perf_counter() - timer
+        print(f"--- Pre-processing of data: {timing:.4f} seconds ---")
+        with open("output/solve_progress.csv", "a") as solve_progress:
+            solve_progress.write(',,solve,python_solve_pre_process,setup,total_obj_cost,balance,reserves,rest,constraints,' \
+                'setup2,total_obj_cost2,balance2,reserves2,rest2,constraints2,r_solution,w_raw,w_capacity,' \
+                'w_summary,w_group,w_costs_period,w_costs_time,w_flow,w_cf,w_curtailment,w_ramps,w_reserves,' \
+                'w_online,w_node,w_marginal_inv,w_ramp_room,w_inertia,w_slacks,write_results,w_full\n')
+        timer = timer + timing
 
         first = True
         previous_complete_solve = None
         for i, solve in enumerate(all_solves):
+            timer_in_solve = time.perf_counter()
+
             self.logger.info("Creating timelines for solve " + solve + " (" + str(i) + ")")
             complete_active_time_lists = self.get_active_time(complete_solve[solve], self.timesets_used_by_solves, self.timeset_durations, self.timelines, self.timesets__timeline)
             self.write_full_timelines(self.stochastic_timesteps[solve], self.timesets_used_by_solves[complete_solve[solve]], self.timesets__timeline, self.timelines, 'solve_data/steps_in_timeline.csv')
@@ -2303,6 +2313,9 @@ class FlexToolRunner:
                 self.write_headers_for_empty_output_files('solve_data/period_capacity.csv', 'period')
             self.logger.info("Starting model creation")
 
+            with open("output/solve_progress.csv", "a") as solve_progress:
+                solve_progress.write(',,' + solve + ',' + str(round(time.perf_counter() - timer_in_solve,4)))
+            
             exit_status = self.model_run(complete_solve[solve])
             if exit_status == 0:
                 self.logger.info('Success!')
@@ -2316,9 +2329,6 @@ class FlexToolRunner:
                 shutil.copy("solve_data/fix_storage_quantity.csv","solve_data/fix_storage_quantity_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_price.csv", "solve_data/fix_storage_price_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_usage.csv","solve_data/fix_storage_usage_"+ complete_solve[solve]+".csv")
-
-        print(f"Solve loop: {time.perf_counter() - timer:.4f} seconds")
-        timer = time.perf_counter()
 
         #produce periodic data as post-process for rolling window solves
         results_post_processed = False
@@ -2366,9 +2376,6 @@ class FlexToolRunner:
         os.remove("output/annualized_investment_costs__period.csv")
         os.remove("output/group_node__period__t.csv")
         os.remove("output/unit_curtailment_share__outputNode__period__t.csv")
-
-        print(f"flextoolrunner post process: {time.perf_counter() - timer:.4f} seconds")
-        timer = time.perf_counter()
 
         if len(self.model_solve) > 1:
             self.logger.error(

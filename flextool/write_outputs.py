@@ -1442,11 +1442,15 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
     else:
         par, s, v = read_outputs('output_raw')
         print(f"--- Read flextool outputs: {time.perf_counter() - start:.4f} seconds")
+        with open("output/solve_progress.csv", "a") as solve_progress:
+            solve_progress.write('Read Flextool outputs,' + str(round(time.perf_counter() - start,4)) + '\n')
         start = time.perf_counter()
 
         # Pre-process results to be closer to what needed for output writing
         r = post_process_results(par, s, v)
         print(f"--- Post processed outputs: {time.perf_counter() - start:.4f} seconds")
+        with open("output/solve_progress.csv", "a") as solve_progress:
+            solve_progress.write('Post-processed outputs,' + str(round(time.perf_counter() - start,4)) + '\n')
         start = time.perf_counter()
 
         # Call the final processing functions for each category of outputs
@@ -1472,6 +1476,8 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
         results = {k: v for k, v in all_results.items() if k in keys_to_keep}
 
         print(f"--- Formatted for output: {time.perf_counter() - start:.4f} seconds")
+        with open("output/solve_progress.csv", "a") as solve_progress:
+            solve_progress.write('Formatted for output,' + str(round(time.perf_counter() - start,4)) + '\n')
         start = time.perf_counter()
 
     # Write files for debugging purposes
@@ -1493,6 +1499,8 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
             df.to_parquet(f'{parquet_dir}/{name}.parquet')
 
         print(f"--- Wrote to parquet: {time.perf_counter() - start:.4f} seconds")
+        with open("output/solve_progress.csv", "a") as solve_progress:
+            solve_progress.write('Wrote to parquet,' + str(round(time.perf_counter() - start,4)) + '\n')
         start = time.perf_counter()
 
     # Plot results
@@ -1504,6 +1512,8 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
         plot_dict_of_dataframes(results, plot_dir, settings, plot_rows=plot_rows, delete_existing_plots=delete_plots)
 
         print(f"--- Plotted figures: {time.perf_counter() - start:.4f} seconds")
+        with open("output/solve_progress.csv", "a") as solve_progress:
+            solve_progress.write('Plotted figures,' + str(round(time.perf_counter() - start,4)) + '\n')
         start = time.perf_counter()
 
     # Write to csv
@@ -1556,6 +1566,8 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
                     df.to_csv(csv_path, index=False, float_format='%.8g')
 
         print(f"--- Wrote to CSV: {time.perf_counter() - start:.4f} seconds")
+        with open("output/solve_progress.csv", "a") as solve_progress:
+            solve_progress.write('Wrote to csv,' + str(round(time.perf_counter() - start,4)) + '\n')
         start = time.perf_counter()
 
     # Write to excel
@@ -1566,6 +1578,8 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
                     df.to_excel(writer, sheet_name=name)
 
         print(f"Wrote to Excel: {time.perf_counter() - start:.4f} seconds")
+        with open("output/solve_progress.csv", "a") as solve_progress:
+            solve_progress.write('Wrote to Excel,' + str(round(time.perf_counter() - start,4)) + '\n')
         start = time.perf_counter()
 
 if __name__ == "__main__":

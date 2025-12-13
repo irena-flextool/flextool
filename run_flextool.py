@@ -66,22 +66,35 @@ def main():
         runner = flextoolrunner.FlexToolRunner(input_db_url, scenario_name)
         timer.insert(0, time.perf_counter())
         print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
+        with open("output/solve_progress.csv", "w") as solve_progress:
+            solve_progress.write('scenario,' + scenario_name + '\n')
+            solve_progress.write('Init time,' + str(round(timer[0] - timer[1],4)) + '\n')
         runner.write_input(input_db_url, scenario_name)
         timer.insert(0, time.perf_counter())
-        print("--- write time %.4s seconds ---" % (timer[0] - timer[1]))
+        print("--- Write time %.4s seconds ---" % (timer[0] - timer[1]))
+        with open("output/solve_progress.csv", "a") as solve_progress:
+            solve_progress.write('Write input time,' + str(round(timer[0] - timer[1],4)) + '\n')
+
     else:
         runner = flextoolrunner.FlexToolRunner(input_db_url)
         timer.insert(0, time.perf_counter())
         print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
+        with open("output/solve_progress.csv", "a") as solve_progress:
+            solve_progress.write('scenario,unknown\n')
+            solve_progress.write('Init time,' + str(round(timer[0] - timer[1],4)) + '\n')
         runner.write_input(input_db_url)
         timer.insert(0, time.perf_counter())
-        print("--- write time %.4s seconds ---" % (timer[0] - timer[1]))
+        print("--- Write time %.4s seconds ---" % (timer[0] - timer[1]))
+        with open("output/solve_progress.csv", "a") as solve_progress:
+            solve_progress.write('Write input time,' + str(round(timer[0] - timer[1],4)) + '\n')
         db_map = DatabaseMapping(input_db_url)
         scenario_name = name_from_dict(db_map.get_filter_configs()[0])
     try:
         return_code = runner.run_model()
         timer.insert(0, time.perf_counter())
-        print("--- run_model time %.4s seconds ---" % (timer[0] - timer[1]))
+        print("--- All Flextool solves time %.4s seconds ---" % (timer[0] - timer[1]))
+        with open("output/solve_progress.csv", "a") as solve_progress:
+            solve_progress.write('All Flextool solves,' + str(round(timer[0] - timer[1],4)) + '\n')
     except Exception as e:
         logging.error(f"Model run failed: {str(e)}\nTraceback:\n{traceback.format_exc()}")
         sys.exit(1)
@@ -89,12 +102,13 @@ def main():
     # If successful write outputs
     if return_code == 0:
         write_outputs(scenario_name=scenario_name, output_config_path='templates/default_plots.yaml')
-
         timer.insert(0, time.perf_counter())
         ## print("--- write outputs time %s seconds ---" % (timer[0] - timer[1]))
-    print(__file__)
-    print("--- full time %.4s seconds ---------------------------------------" % (timer[0] - timer[-1]))
-    print("--------------------------------------------------------------------------\n\n")
+    
+    print("\n--- Full execution time %.4s seconds ---------------------------------------" % (timer[0] - timer[-1]))
+    print("--------------------------------------------------------------------------\n")
+    with open("output/solve_progress.csv", "a") as solve_progress:
+        solve_progress.write('Full execution time,' + str(round(timer[0] - timer[-1],4)) + '\n')
 
     # Write scenario information to output database if provided
     if args.output_db_url:
