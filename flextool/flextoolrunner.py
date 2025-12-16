@@ -764,16 +764,7 @@ class FlexToolRunner:
                 continue
             
             # Take not if Generating has been followed by Display statement
-            if line.startswith('Display statement'):
-                if previous == 'generate':
-                    previous = 'generate_display'
-                else:
-                    previous = False
-                continue
-
-            # Remove line-end from time statement
-            if previous == 'generate_display':
-                previous = 'generate'
+            if line.startswith('Timer - '):
                 if already_stripped_end_of_line:
                     print(line.rstrip(), end='  ')
                 else:
@@ -2230,7 +2221,7 @@ class FlexToolRunner:
             solve_progress.write(',,solve,python_solve_pre_process,setup,total_obj_cost,balance,reserves,rest,constraints,' \
                 'setup2,total_obj_cost2,balance2,reserves2,rest2,constraints2,r_solution,w_raw,w_capacity,' \
                 'w_summary,w_group,w_costs_period,w_costs_time,w_flow,w_cf,w_curtailment,w_ramps,w_reserves,' \
-                'w_online,w_node,w_marginal_inv,w_ramp_room,w_inertia,w_slacks,write_results,w_full\n')
+                'w_online,w_node,w_marginal_inv,w_ramp_room,w_inertia,w_slacks,write_old_results,w_full\n')
         timer = timer + timing
 
         first = True

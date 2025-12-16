@@ -27,6 +27,13 @@ def read_outputs(output_dir):
 
     return p, s, v
 
+def log_time(log_string, start):
+    print(f"---{log_string}: {time.perf_counter() - start:.4f} seconds")
+    with open("output/solve_progress.csv", "a") as solve_progress:
+        solve_progress.write(log_string + ',' + str(round(time.perf_counter() - start,4)) + '\n')
+    return(time.perf_counter())
+
+
 def generic(par, s, v, r, debug):
     if debug:
         results = []
@@ -1131,24 +1138,16 @@ def slack_variables(par, s, v, r, debug):
     results = []
     
     # 1. Reserve slack variables
-    reserve_slack = v.q_reserve * par.reserve_upDown_group_reservation
-    # pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['reserve', 'updown', 'node_group']), dtype=float)
-    # for col in v.q_reserve.columns:
-    #     if col in par.reserve_upDown_group_reservation.columns:
-    #         reserve_slack[col] = v.q_reserve[col] * par.reserve_upDown_group_reservation[col]
-    results.append((reserve_slack, 'nodeGroup_slack_reserve_dt_eeg'))
+    results.append((r.q_reserves_dt, 'nodeGroup_slack_reserve_dt_eeg'))
     
     # 2. Non-synchronous slack variables
-    nonsync_slack = v.q_non_synchronous * par.group_capacity_for_scaling[v.q_non_synchronous.columns]
-    results.append((nonsync_slack, 'nodeGroup_slack_nonsync_dt_g'))
+    results.append((r.q_non_synchronous_dt, 'nodeGroup_slack_nonsync_dt_g'))
     
     # 3. Inertia slack variables
-    inertia_slack = v.q_inertia * par.group_inertia_limit
-    results.append((inertia_slack, 'nodeGroup_slack_inertia_dt_g'))
+    results.append((r.q_inertia_dt, 'nodeGroup_slack_inertia_dt_g'))
     
     # 4. Capacity margin slack variables (for investment periods only)
-    capmargin_slack = v.q_capacity_margin * par.group_capacity_for_scaling[s.groupCapacityMargin]
-    results.append((capmargin_slack, 'nodeGroup_slack_capacity_margin_d_g'))
+    results.append((r.q_capacity_margin_d_not_annualized, 'nodeGroup_slack_capacity_margin_d_g'))
     
     return results
 
@@ -1363,13 +1362,14 @@ ALL_OUTPUTS = [
 
 
 # writer.py - handles the actual writing
-def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=None, read_parquet_dir=False, methods=['plot', 'parquet', 'excel', 'db', 'csv'], plot_rows=(0, 167), debug=False, single_result=None):
+def write_outputs(scenario_name, output_config_path, active_configs=['default'], output_funcs=None, subdir=None, read_parquet_dir=False, methods=['plot', 'parquet', 'csv'], plot_rows=(0, 167), debug=False, single_result=None):
     """
     Write FlexTool outputs to various formats.
 
     Args:
         scenario_name: Name of the scenario
         output_config_path: Path to YAML configuration file defining outputs
+        active_configs: output_config yaml can contain multiple plot configurations for same data, choose which ones to use. Defaults to 'default' only.
         output_funcs: list of functions to run, or None for ALL_OUTPUTS
         subdir: Subdirectory for outputs
         read_parquet_dir: Directory to read existing parquet files from
@@ -1380,6 +1380,7 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
                        for processing a single result. Overrides config file.
     """
     warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
+    start = time.perf_counter()
 
     # Load output configuration from YAML or create from single_result
     if single_result:
@@ -1404,7 +1405,12 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
 
         # Create single-entry settings dict
         settings = {
-            key: [csv_name, plot_name, plot_type, subplots_per_row, legend_position]
+            "plots": {
+                key: [plot_name, plot_type, subplots_per_row, legend_position]
+            },
+            "filenames": {
+                key: csv_name   
+            }
         }
     else:
         # Load output configuration from YAML
@@ -1422,12 +1428,12 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
 
 
     # Read and process data
-    start = time.perf_counter()
+    start = log_time("Read configuration files", start)
 
     # If results already exist as parquet files, read them (filtered by settings)
     if read_parquet_dir:
         results = {}
-        keys_to_read = set(settings.keys())
+        keys_to_read = set(settings['filenames'].keys())
         for filename in os.listdir(read_parquet_dir):
             if filename.endswith('.parquet'):
                 key = filename[:-8]  # Remove '.parquet' extension
@@ -1435,23 +1441,16 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
                 if key in keys_to_read:
                     filepath = os.path.join(read_parquet_dir, filename)
                     results[key] = pd.read_parquet(filepath).droplevel('scenario', axis=1)
-        print(f"--- Read parquet files: {time.perf_counter() - start:.4f} seconds")
-        start = time.perf_counter()
+        start = log_time("Read parquet files", start)
 
     # Read original raw outputs from FlexTool
     else:
         par, s, v = read_outputs('output_raw')
-        print(f"--- Read flextool outputs: {time.perf_counter() - start:.4f} seconds")
-        with open("output/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write('Read Flextool outputs,' + str(round(time.perf_counter() - start,4)) + '\n')
-        start = time.perf_counter()
+        start = log_time("Read flextool outputs", start)
 
         # Pre-process results to be closer to what needed for output writing
         r = post_process_results(par, s, v)
-        print(f"--- Post processed outputs: {time.perf_counter() - start:.4f} seconds")
-        with open("output/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write('Post-processed outputs,' + str(round(time.perf_counter() - start,4)) + '\n')
-        start = time.perf_counter()
+        start = log_time("Post-processed outputs", start)
 
         # Call the final processing functions for each category of outputs
         # and make a dict of dataframes to hold final results
@@ -1472,13 +1471,9 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
                 all_results[table_name] = result_df
 
         # Filter results to only include keys in settings (for single_result optimization)
-        keys_to_keep = set(settings.keys())
+        keys_to_keep = set(settings['plots'].keys())
         results = {k: v for k, v in all_results.items() if k in keys_to_keep}
-
-        print(f"--- Formatted for output: {time.perf_counter() - start:.4f} seconds")
-        with open("output/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write('Formatted for output,' + str(round(time.perf_counter() - start,4)) + '\n')
-        start = time.perf_counter()
+        start = log_time("Formatted for output", start)
 
     # Write files for debugging purposes
     if debug:
@@ -1487,8 +1482,7 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
         print_namespace_structure(s, 's')
         print_namespace_structure(v, 'v')
         print_namespace_structure(par, 'par')
-        print(f"--- Debug outputs: {time.perf_counter() - start:.4f} seconds")
-        start = time.perf_counter()
+        start = log_time("Wrote debugging files", start)
 
     # Write to parquet
     if 'parquet' in methods and not read_parquet_dir:
@@ -1498,10 +1492,7 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
             df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
             df.to_parquet(f'{parquet_dir}/{name}.parquet')
 
-        print(f"--- Wrote to parquet: {time.perf_counter() - start:.4f} seconds")
-        with open("output/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write('Wrote to parquet,' + str(round(time.perf_counter() - start,4)) + '\n')
-        start = time.perf_counter()
+        start = log_time("Wrote to parquet", start)
 
     # Plot results
     if 'plot' in methods:
@@ -1509,12 +1500,9 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
             os.makedirs(plot_dir)
         # Don't delete existing plots when processing single result
         delete_plots = not bool(single_result)
-        plot_dict_of_dataframes(results, plot_dir, settings, plot_rows=plot_rows, delete_existing_plots=delete_plots)
+        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots)
 
-        print(f"--- Plotted figures: {time.perf_counter() - start:.4f} seconds")
-        with open("output/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write('Plotted figures,' + str(round(time.perf_counter() - start,4)) + '\n')
-        start = time.perf_counter()
+        start = log_time('Plotted figures', start)
 
     # Write to csv
     if 'csv' in methods:
@@ -1531,9 +1519,9 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
         # Different CSV writing logic depending on data source
         if read_parquet_dir:
             # Simplified CSV writing from parquet (no par,s,v,r available)
-            for table_name, attributes in settings.items():
+            for table_name, attributes in settings['filenames'].items():
                 if table_name and table_name in results and attributes[0]:
-                    csv_filename = attributes[0]
+                    csv_filename = attributes[0] + '.csv'
                     df = results[table_name]
                     csv_path = os.path.join(csv_dir, csv_filename)
                     df_copy = df.reset_index()
@@ -1543,9 +1531,9 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
             # Full CSV writing from output_raw (par,s,v,r available)
             write_summary_csv(par, s, v, r, csv_dir)
 
-            for table_name, attributes in settings.items():
+            for table_name, attributes in settings['filenames'].items():
                 if table_name and table_name in results and attributes[0]:
-                    csv_filename = attributes[0]
+                    csv_filename = attributes[0] + '.csv'
                     df = results[table_name]
                     if 'solve' not in df.index.names and 'period' in df.index.names: # and csv_filename not in ['costs_discounted.csv']
                         df.index = df.index.join(s.solve_period)
@@ -1565,10 +1553,7 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
                     df.columns.names = [None] * df.columns.nlevels
                     df.to_csv(csv_path, index=False, float_format='%.8g')
 
-        print(f"--- Wrote to CSV: {time.perf_counter() - start:.4f} seconds")
-        with open("output/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write('Wrote to csv,' + str(round(time.perf_counter() - start,4)) + '\n')
-        start = time.perf_counter()
+        start = log_time('Wrote to csv', start)
 
     # Write to excel
     if 'excel' in methods:
@@ -1577,23 +1562,22 @@ def write_outputs(scenario_name, output_config_path, output_funcs=None, subdir=N
                 if (not df.empty) & (len(df) > 0):
                     df.to_excel(writer, sheet_name=name)
 
-        print(f"Wrote to Excel: {time.perf_counter() - start:.4f} seconds")
-        with open("output/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write('Wrote to Excel,' + str(round(time.perf_counter() - start,4)) + '\n')
-        start = time.perf_counter()
+        start = log_time('Wrote to Excel', start)
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description='Write FlexTool outputs to various formats')
     parser.add_argument('scenario_name', type=str, help='Name of the scenario')
-    parser.add_argument('--config', type=str, default='templates/default_plots.yaml',
+    parser.add_argument('--config_path', type=str, default='templates/default_plots.yaml',
                         help='Path to output configuration YAML file (default: templates/default_plots.yaml)')
+    parser.add_argument('--active_configs', type=str, default='default',
+                        help='Which plot configurations from config_path yaml to use. Defaults to default')
     parser.add_argument('--subdir', type=str, default=None,
                         help='Subdirectory for outputs (default: current directory)')
     parser.add_argument('--read-parquet-dir', type=str, default=False,
                         help='Directory to read existing parquet files from (default: False, reads from raw CSV files)')
-    parser.add_argument('--methods', type=str, nargs='+', default=['plot', 'parquet', 'csv', 'excel'],
+    parser.add_argument('--methods', type=str, nargs='+', default=['plot', 'parquet', 'csv'],
                         choices=['plot', 'parquet', 'excel', 'db', 'csv'],
                         help='Output methods to use (default: plot parquet csv)')
     parser.add_argument('--plot-rows', type=int, nargs=2, default=[0, 167],
@@ -1608,7 +1592,8 @@ if __name__ == "__main__":
 
     write_outputs(
         scenario_name=args.scenario_name,
-        output_config_path=args.config,
+        output_config_path=args.config_path,
+        active_configs=args.active_configs,
         output_funcs=None,
         subdir=args.subdir,
         read_parquet_dir=args.read_parquet_dir,

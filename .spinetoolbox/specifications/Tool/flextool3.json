@@ -32,7 +32,9 @@
     "inputfiles": [],
     "inputfiles_opt": [],
     "outputfiles": [
-        "output/*.csv"
+        "output/*.csv",
+        "output_parquet/*.parquet",
+        "output_raw/*.csv"
     ],
     "cmdline_args": [],
     "includes_main_path": "../../.."
