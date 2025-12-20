@@ -101,6 +101,12 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
             base_length = 4
             if setting[5]:
                 base_length = setting[5]
+            xlabel = None
+            if setting[6]:
+                xlabel = setting[6]
+            ylabel = None
+            if setting[7]:
+                ylabel = setting[7]
 
             split_key = key.split('_')
             if 'dt' in split_key[-2]:
@@ -150,14 +156,45 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
 
             # Remove m from rules (but add a placeholder z if needed, since there will always be a dimension)
             rules = rules.replace('m', '')
-            # if chart_type == 'bar':
-            #     if 'b' not in rules:
-            #         rules = 'b' + rules
             if len(sum_row_levels) == nr_row_levels:
                 rules = 'z' + rules
             if len(sum_column_levels) == nr_column_levels:
                 rules = rules + 'z'
-            
+
+            # Update number of row and column levels after sums may have removed levels
+            nr_row_levels = df.index.nlevels
+            nr_column_levels = df.columns.nlevels
+
+            # Average mean_levels for row index
+            mean_row_levels = [i for i, char in enumerate(rules[:nr_row_levels]) if char == 'a']
+            keep_levels = [i for i in range(nr_row_levels) if i not in mean_row_levels]
+            if len(keep_levels) == nr_row_levels:
+                pass
+            elif len(keep_levels) > 1:
+                df = df.groupby(level=keep_levels).mean()
+            else:
+                df = df.mean(axis=0).to_frame().T
+                df.index = ['mean']
+                df.index.name = 'mean'
+
+            # Average mean_levels for column index
+            mean_column_levels = [i for i, char in enumerate(rules[nr_row_levels:]) if char == 'm']
+            keep_levels = [i for i in range(nr_column_levels) if i not in mean_column_levels]
+            if len(keep_levels) == nr_column_levels:
+                pass
+            elif len(keep_levels) > 1:
+                df = df.T.groupby(level=keep_levels).mean().T
+            else:
+                df = df.mean(axis=1).to_frame()
+                df.columns = ['mean']
+                df.columns.name = 'mean'
+
+            # Remove m from rules (but add a placeholder z if needed, since there will always be a dimension)
+            rules = rules.replace('a', '')
+            if len(mean_row_levels) == nr_row_levels:
+                rules = 'z' + rules
+            if len(mean_column_levels) == nr_column_levels:
+                rules = rules + 'z'
 
             # Decide how to plot
             if (not df.empty) & (len(df) > 0):
@@ -196,29 +233,27 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 subplot_levels = [i for i, char in enumerate(rules) if char == 'u']
                 line_levels = [i for i, char in enumerate(rules) if char == 'l']
                 if chart_type == 'time':
-                    if 'nodeGroup' == key_name:
-                        # nodeGroup_gdt_p
-                        with time_block(f"{key} - plot"):
-                            plot_dt_sub_lines(df, plot_name, plot_dir, [0], [1], legend_position=legend_position)
-                        # no others yet
-                    elif stack_levels:
+                    if stack_levels:
                         with time_block(f"{key} - plot"):
                             plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, subplot_levels, 
                             rows=plot_rows, legend_position=legend_position,
+                            xlabel=xlabel, ylabel=ylabel,
                             base_width_per_col=6, subplot_height=base_length)
                     else:  # Plot lines if not stacked
                         with time_block(f"{key} - plot"):
                             plot_dt_sub_lines(df, plot_name, plot_dir, subplot_levels, line_levels, 
                             rows=plot_rows, legend_position=legend_position,
+                            xlabel=xlabel, ylabel=ylabel,
                             base_width_per_col=6, subplot_height=base_length)
                 elif chart_type == 'bar':
                     with time_block(f"{key} - plot"):
                         plot_rowbars_stack_groupbars(df, plot_name, plot_dir, 
                             stack_levels, expand_axis_levels, subplot_levels, grouped_bar_levels, 
-                            subplots_per_row=subplots_per_row, legend_position=legend_position, 
+                            subplots_per_row=subplots_per_row, legend_position=legend_position,
+                            xlabel=xlabel, ylabel=ylabel, 
                             bar_orientation=bar_orientation, base_bar_length=base_length)
                 else:
-                    print(f'Could not interpret plot rule for {key}')
+                    raise ValueError(f'Could not interpret plot rule for {key}')
 
             plt.close('all')  # Clean up
 
@@ -255,332 +290,6 @@ def estimate_legend_width(labels, title='', base_width=1.5):
     estimated_width = max(label_width, title_width, base_width) + 0.8
 
     return estimated_width
-
-
-def apply_aggregation(df, sum_levels=[], mean_levels=[]):
-    """
-    Apply sum/mean aggregations.
-
-    Args:
-        df: DataFrame to aggregate
-        sum_levels: List of level indices to collapse by summing (negative for row index)
-        mean_levels: List of level indices to collapse by averaging (negative for row index)
-
-    Returns:
-        tuple: (aggregated_df)
-    """
-    # Validate no overlap between sum_levels and mean_levels
-    overlap = set(sum_levels) & set(mean_levels)
-    if overlap:
-        raise ValueError(f"sum_levels and mean_levels cannot contain the same levels. Overlapping levels: {overlap}")
-
-    # Separate row (negative) and column (non-negative) operations
-    sum_levels_row = [lvl for lvl in sum_levels if lvl < 0]
-    sum_levels_col = sorted([lvl for lvl in sum_levels if lvl >= 0], reverse=True)
-    mean_levels_row = [lvl for lvl in mean_levels if lvl < 0]
-    mean_levels_col = sorted([lvl for lvl in mean_levels if lvl >= 0], reverse=True)
-
-    # Convert negative row indices to positive indices BEFORE any operations
-    # This ensures they refer to the same actual levels even after stacking
-    n_row_levels_original = df.index.nlevels if isinstance(df.index, pd.MultiIndex) else 1
-
-    sum_levels_row_positive = []
-    for lvl in sum_levels_row:
-        pos_level = lvl % n_row_levels_original
-        if pos_level >= n_row_levels_original:
-            raise ValueError(f"Row level {lvl} (absolute: {pos_level}) out of range (max: {n_row_levels_original-1})")
-        sum_levels_row_positive.append(pos_level)
-
-    mean_levels_row_positive = []
-    for lvl in mean_levels_row:
-        pos_level = lvl % n_row_levels_original
-        if pos_level >= n_row_levels_original:
-            raise ValueError(f"Row level {lvl} (absolute: {pos_level}) out of range (max: {n_row_levels_original-1})")
-        mean_levels_row_positive.append(pos_level)
-
-    # Check if we need to rescue the row index before row aggregations
-    # (move a level from expand_axis_levels to row index to keep at least one row level)
-    if sum_levels_row_positive or mean_levels_row_positive:
-        # Determine which row levels would be removed
-        all_row_agg_positive = sorted(set(sum_levels_row_positive + mean_levels_row_positive), reverse=True)
-
-    # Apply row aggregations (axis=0)
-    # Process in reverse order to avoid index shifting issues
-    # Use positive indices that were converted earlier
-    removed_row_levels = []
-    if sum_levels_row_positive or mean_levels_row_positive:
-        n_row_levels = df.index.nlevels if isinstance(df.index, pd.MultiIndex) else 1
-
-        # Process in reverse order (highest index first)
-        for pos_level in all_row_agg_positive:
-            # pos_level is already a positive index
-            if pos_level >= n_row_levels:
-                raise ValueError(f"Row level {pos_level} out of range (max: {n_row_levels-1})")
-
-            # Keep all levels except the one being aggregated
-            keep_levels = [i for i in range(n_row_levels) if i != pos_level]
-            if not keep_levels:
-                raise ValueError(
-                    "Internal error: Cannot remove all row index levels. "
-                    "This should have been caught by the rescue logic."
-                )
-
-            try:
-                if pos_level in sum_levels_row_positive:
-                    df = df.groupby(level=keep_levels).sum()
-                else:  # mean
-                    df = df.groupby(level=keep_levels).mean()
-            except Exception as e:
-                raise ValueError(f"Error aggregating row level {pos_level}: {str(e)}")
-
-            removed_row_levels.append(pos_level)
-            n_row_levels -= 1
-
-    # Apply column aggregations (axis=1) - non-negative indices
-    # Process in reverse order to avoid index shifting issues
-    removed_col_levels = []
-    if sum_levels_col or mean_levels_col:
-        n_col_levels = df.columns.nlevels
-
-        all_col_agg = sorted(set(sum_levels_col + mean_levels_col), reverse=True)
-        for agg_level in all_col_agg:
-            if agg_level >= n_col_levels:
-                raise ValueError(f"Column level {agg_level} out of range (max: {n_col_levels-1})")
-
-            # Keep all levels except the one being aggregated
-            keep_levels = [i for i in range(n_col_levels) if i != agg_level]
-            try:
-                if agg_level in sum_levels_col:
-                    if keep_levels:
-                        df = df.T.groupby(level=keep_levels).sum().T
-                    else:
-                        df = df.sum(axis=1).to_frame()
-                        df.columns = ['sum']
-                        df.columns.name = 'sum'
-                else:  # mean
-                    if keep_levels:
-                        df = df.T.groupby(level=keep_levels).mean().T
-                    else:
-                        df = df.mean(axis=1).to_frame()
-                        df.columns = ['mean']
-                        df.columns.name = 'mean'
-            except Exception as e:
-                raise ValueError(f"Error aggregating column level {agg_level}: {str(e)}")
-
-            removed_col_levels.append(agg_level)
-            n_col_levels -= 1
-
-    return df
-
-
-def apply_aggregation_and_adjust_levels(df, sum_levels=[], mean_levels=[],
-                                       stack_levels=None, sub_levels=None,
-                                       line_levels=None, expand_axis_levels=None,
-                                       grouped_bar_levels=None):
-    """
-    Apply sum/mean aggregations and adjust level indices accordingly.
-
-    Args:
-        df: DataFrame to aggregate
-        sum_levels: List of level indices to collapse by summing (negative for row index)
-        mean_levels: List of level indices to collapse by averaging (negative for row index)
-        stack_levels, sub_levels, line_levels, expand_axis_levels, grouped_bar_levels:
-            Level index lists that need to be adjusted after aggregation
-
-    Returns:
-        tuple: (aggregated_df, adjusted_stack_levels, adjusted_sub_levels,
-                adjusted_line_levels, adjusted_expand_axis_levels, adjusted_grouped_bar_levels)
-    """
-    # Validate no overlap between sum_levels and mean_levels
-    overlap = set(sum_levels) & set(mean_levels)
-    if overlap:
-        raise ValueError(f"sum_levels and mean_levels cannot contain the same levels. Overlapping levels: {overlap}")
-
-    # Separate row (negative) and column (non-negative) operations
-    sum_levels_row = [lvl for lvl in sum_levels if lvl < 0]
-    sum_levels_col = sorted([lvl for lvl in sum_levels if lvl >= 0], reverse=True)
-    mean_levels_row = [lvl for lvl in mean_levels if lvl < 0]
-    mean_levels_col = sorted([lvl for lvl in mean_levels if lvl >= 0], reverse=True)
-
-    # Convert negative row indices to positive indices BEFORE any operations
-    # This ensures they refer to the same actual levels even after stacking
-    n_row_levels_original = df.index.nlevels if isinstance(df.index, pd.MultiIndex) else 1
-
-    sum_levels_row_positive = []
-    for lvl in sum_levels_row:
-        pos_level = lvl % n_row_levels_original
-        if pos_level >= n_row_levels_original:
-            raise ValueError(f"Row level {lvl} (absolute: {pos_level}) out of range (max: {n_row_levels_original-1})")
-        sum_levels_row_positive.append(pos_level)
-
-    mean_levels_row_positive = []
-    for lvl in mean_levels_row:
-        pos_level = lvl % n_row_levels_original
-        if pos_level >= n_row_levels_original:
-            raise ValueError(f"Row level {lvl} (absolute: {pos_level}) out of range (max: {n_row_levels_original-1})")
-        mean_levels_row_positive.append(pos_level)
-
-    # Check if we need to rescue the row index before row aggregations
-    # (move a level from expand_axis_levels to row index to keep at least one row level)
-    if sum_levels_row_positive or mean_levels_row_positive:
-        # Determine which row levels would be removed
-        all_row_agg_positive = sorted(set(sum_levels_row_positive + mean_levels_row_positive), reverse=True)
-        levels_to_remove = set(all_row_agg_positive)
-
-        remaining_row_levels = n_row_levels_original - len(levels_to_remove)
-
-        # If we would remove all row levels, rescue from expand_axis_levels
-        if remaining_row_levels == 0:
-            if not expand_axis_levels:
-                raise ValueError(
-                    "Cannot remove all row index levels: no expand_axis_levels available to rescue. "
-                    "At least one row index level must remain after aggregation."
-                )
-
-            # Find first available level in expand_axis_levels
-            # (not marked for column aggregation)
-            rescued_level = None
-            rescued_level_idx_in_expand = None
-            for level_idx, level in enumerate(expand_axis_levels):
-                if level not in sum_levels_col and level not in mean_levels_col:
-                    rescued_level = level
-                    rescued_level_idx_in_expand = level_idx
-                    break
-
-            if rescued_level is None:
-                raise ValueError(
-                    "Cannot remove all row index levels: all expand_axis_levels are also marked for "
-                    "aggregation. At least one level must remain available to move to row index."
-                )
-
-            # Move this column level to row index using stack
-            if not isinstance(df.columns, pd.MultiIndex):
-                raise ValueError("Cannot rescue row index: columns are not a MultiIndex")
-
-            df = df.stack(level=rescued_level)
-
-            # Update expand_axis_levels - remove the rescued level (by position)
-            expand_axis_levels = [lvl for i, lvl in enumerate(expand_axis_levels) if i != rescued_level_idx_in_expand]
-
-            # Adjust column level indices for all levels
-            # The rescued level is removed from columns, so levels above it shift down
-            def adjust_for_rescue(lvl):
-                if lvl > rescued_level:
-                    return lvl - 1
-                elif lvl == rescued_level:
-                    raise ValueError(f"Column level {lvl} was moved to row index but is still referenced")
-                return lvl
-
-            def adjust_levels_for_rescue(levels):
-                if levels is None or not levels:
-                    return levels
-                return [adjust_for_rescue(lvl) for lvl in levels]
-
-            # Adjust all level lists
-            expand_axis_levels = adjust_levels_for_rescue(expand_axis_levels)
-            stack_levels = adjust_levels_for_rescue(stack_levels)
-            sub_levels = adjust_levels_for_rescue(sub_levels)
-            line_levels = adjust_levels_for_rescue(line_levels)
-            grouped_bar_levels = adjust_levels_for_rescue(grouped_bar_levels)
-
-            # Adjust column aggregation level indices
-            sum_levels_col = [adjust_for_rescue(lvl) for lvl in sum_levels_col]
-            mean_levels_col = [adjust_for_rescue(lvl) for lvl in mean_levels_col]
-
-    # Apply row aggregations (axis=0)
-    # Process in reverse order to avoid index shifting issues
-    # Use positive indices that were converted earlier
-    removed_row_levels = []
-    if sum_levels_row_positive or mean_levels_row_positive:
-        n_row_levels = df.index.nlevels if isinstance(df.index, pd.MultiIndex) else 1
-
-        # Process in reverse order (highest index first)
-        for pos_level in all_row_agg_positive:
-            # pos_level is already a positive index
-            if pos_level >= n_row_levels:
-                raise ValueError(f"Row level {pos_level} out of range (max: {n_row_levels-1})")
-
-            # Keep all levels except the one being aggregated
-            keep_levels = [i for i in range(n_row_levels) if i != pos_level]
-            if not keep_levels:
-                raise ValueError(
-                    "Internal error: Cannot remove all row index levels. "
-                    "This should have been caught by the rescue logic."
-                )
-
-            try:
-                if pos_level in sum_levels_row_positive:
-                    df = df.groupby(level=keep_levels).sum()
-                else:  # mean
-                    df = df.groupby(level=keep_levels).mean()
-            except Exception as e:
-                raise ValueError(f"Error aggregating row level {pos_level}: {str(e)}")
-
-            removed_row_levels.append(pos_level)
-            n_row_levels -= 1
-
-    # Apply column aggregations (axis=1) - non-negative indices
-    # Process in reverse order to avoid index shifting issues
-    removed_col_levels = []
-    if sum_levels_col or mean_levels_col:
-        n_col_levels = df.columns.nlevels
-
-        all_col_agg = sorted(set(sum_levels_col + mean_levels_col), reverse=True)
-        for agg_level in all_col_agg:
-            if agg_level >= n_col_levels:
-                raise ValueError(f"Column level {agg_level} out of range (max: {n_col_levels-1})")
-
-            # Keep all levels except the one being aggregated
-            keep_levels = [i for i in range(n_col_levels) if i != agg_level]
-            try:
-                if agg_level in sum_levels_col:
-                    if keep_levels:
-                        df = df.T.groupby(level=keep_levels).sum().T
-                    else:
-                        df = df.sum(axis=1).to_frame()
-                        df.columns = ['sum']
-                        df.columns.name = 'sum'
-                else:  # mean
-                    if keep_levels:
-                        df = df.T.groupby(level=keep_levels).mean().T
-                    else:
-                        df = df.mean(axis=1).to_frame()
-                        df.columns = ['mean']
-                        df.columns.name = 'mean'
-            except Exception as e:
-                raise ValueError(f"Error aggregating column level {agg_level}: {str(e)}")
-
-            removed_col_levels.append(agg_level)
-            n_col_levels -= 1
-
-    # Adjust column level indices
-    # For each level index in the various *_levels parameters,
-    # we need to adjust it based on how many levels were removed before it
-    removed_col_levels_sorted = sorted(removed_col_levels)
-
-    def adjust_col_level(lvl):
-        """Adjust a column level index after aggregations."""
-        if lvl in removed_col_levels:
-            raise ValueError(f"Column level {lvl} was removed by aggregation but is still referenced")
-        # Count how many removed levels are below this level
-        adjustment = sum(1 for r in removed_col_levels_sorted if r < lvl)
-        return lvl - adjustment
-
-    def adjust_col_levels(levels):
-        """Adjust a list of column level indices."""
-        if levels is None:
-            return None
-        return [adjust_col_level(lvl) for lvl in levels]
-
-    # Adjust all the level parameters
-    adjusted_stack_levels = adjust_col_levels(stack_levels) if stack_levels else stack_levels
-    adjusted_sub_levels = adjust_col_levels(sub_levels) if sub_levels else sub_levels
-    adjusted_line_levels = adjust_col_levels(line_levels) if line_levels else line_levels
-    adjusted_expand_axis_levels = adjust_col_levels(expand_axis_levels) if expand_axis_levels else expand_axis_levels
-    adjusted_grouped_bar_levels = adjust_col_levels(grouped_bar_levels) if grouped_bar_levels else grouped_bar_levels
-
-    return (df, adjusted_stack_levels, adjusted_sub_levels, adjusted_line_levels,
-            adjusted_expand_axis_levels, adjusted_grouped_bar_levels)
 
 
 def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels, 
@@ -1748,11 +1457,8 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
         # Apply axis labels conditionally based on subplot position
         row = idx // n_cols
         col = idx % n_cols
-        if xlabel and row == n_rows - 1:
+        if xlabel and (idx * row + col >= len(subs) - n_cols):
             ax.set_xlabel(xlabel)
-        elif row == n_rows - 1:
-            # Default label for bottom row if no custom label provided
-            ax.set_xlabel('Value')
         if ylabel and col == 0:
             ax.set_ylabel(ylabel)
 

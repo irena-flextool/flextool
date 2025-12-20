@@ -8,6 +8,8 @@ description = "IRENA FlexTool is an energy and power systems model for understan
 requires-python = ">=3.8,<3.13"
 dependencies = [
     "pandas",
+    "openpyxl",
+    "odfpy",
     "spinedb-api",
 ]
 
