@@ -583,93 +583,118 @@ def nodeGroup_flows(par, s, v, r, debug):
 
     # Assign simple mappings for all groups at once (before group loop)
     # Slack upward
-    temp = r.group_node_up_slack__dt
-    temp.columns = pd.MultiIndex.from_tuples([(g, 'slack', 'upward') for g in temp.columns], names=['group', 'type', 'item'])
-    result_multi_dt[temp.columns] = temp
+    r.group_node_up_slack__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_node_up_slack__dt.columns,
+        ['slack'] * len(r.group_node_up_slack__dt.columns),
+        ['upward'] * len(r.group_node_up_slack__dt.columns)
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_node_up_slack__dt.columns] = r.group_node_up_slack__dt
 
-    # Process each group
-    for g in s.groupOutputNodeFlows:
-        # Unit aggregates (aggregateUnits to group)
-        unit_to_group_cols = r.group_output__group_aggregate_Unit_to_group__dt.columns[
-            r.group_output__group_aggregate_Unit_to_group__dt.columns.get_level_values('group') == g
-        ]
-        for ga in unit_to_group_cols.droplevel('group').unique():
-            result_multi_dt[g, 'from_unitGroup', ga] = r.group_output__group_aggregate_Unit_to_group__dt[g, ga]
+    # Unit aggregates (aggregateUnits to group)
+    r.group_output__group_aggregate_Unit_to_group__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_output__group_aggregate_Unit_to_group__dt.columns.get_level_values('group'),
+        ['from_unitGroup'] * len(r.group_output__group_aggregate_Unit_to_group__dt.columns),
+        r.group_output__group_aggregate_Unit_to_group__dt.columns.get_level_values(1)
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_output__group_aggregate_Unit_to_group__dt.columns] = r.group_output__group_aggregate_Unit_to_group__dt
 
-        # Units not in aggregate (unit to group) - sum across nodes
-        unit_to_node_cols = r.group_output__unit_to_node_not_in_aggregate__dt.columns[
-            r.group_output__unit_to_node_not_in_aggregate__dt.columns.get_level_values('group') == g
-        ]
-        for process, node in unit_to_node_cols.droplevel(['group']).unique():
-            result_multi_dt[g, 'from_unit', process] = r.group_output__unit_to_node_not_in_aggregate__dt[process, node, g]
+    # Units not in aggregate (unit to group) - sum across nodes
+    r.group_output__unit_to_node_not_in_aggregate__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_output__unit_to_node_not_in_aggregate__dt.columns.get_level_values('group'),
+        ['from_unit'] * len(r.group_output__unit_to_node_not_in_aggregate__dt.columns),
+        r.group_output__unit_to_node_not_in_aggregate__dt.columns.get_level_values('process')
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_output__unit_to_node_not_in_aggregate__dt.columns] = r.group_output__unit_to_node_not_in_aggregate__dt
 
-        # Connection aggregates (from connections to group) - sum across nodes
-        from_conn_agg_cols = r.group_output__from_connection_aggregate__dt.columns[
-            r.group_output__from_connection_aggregate__dt.columns.get_level_values('group') == g
-        ]
-        for ga in from_conn_agg_cols.droplevel(['group', 'node']).unique():
-            result_multi_dt[g, 'from_connection_aggregate', ga] = r.group_output__from_connection_aggregate__dt[g, ga].sum(axis=1)
+    # Connection aggregates (from connections to group) - sum across nodes
+    r.group_output__from_connection_aggregate__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_output__from_connection_aggregate__dt.columns.get_level_values('group'),
+        ['from_connectionGroup'] * len(r.group_output__from_connection_aggregate__dt.columns),
+        r.group_output__from_connection_aggregate__dt.columns.get_level_values(1)
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_output__from_connection_aggregate__dt.columns] = r.group_output__from_connection_aggregate__dt
 
-        # Connections not in aggregate (from connections)
-        from_conn_not_agg_cols = r.group_output__from_connection_not_in_aggregate__dt.columns[
-            r.group_output__from_connection_not_in_aggregate__dt.columns.get_level_values('group') == g
-        ]
-        for process, node in from_conn_not_agg_cols.droplevel('group').unique():
-            result_multi_dt[g, 'from_connection', process] = r.group_output__from_connection_not_in_aggregate__dt[process, node, g]
+    # Connections not in aggregate (from connections)
+    r.group_output__from_connection_not_in_aggregate__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_output__from_connection_not_in_aggregate__dt.columns.get_level_values('group'),
+        ['from_connection'] * len(r.group_output__from_connection_not_in_aggregate__dt.columns),
+        r.group_output__from_connection_not_in_aggregate__dt.columns.get_level_values('process')
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_output__from_connection_not_in_aggregate__dt.columns] = r.group_output__from_connection_not_in_aggregate__dt
 
-        # Connections not in aggregate (to connections)
-        to_conn_not_agg_cols = r.group_output__to_connection_not_in_aggregate__dt.columns[
-            r.group_output__to_connection_not_in_aggregate__dt.columns.get_level_values('group') == g
-        ]
-        for process, node in to_conn_not_agg_cols.droplevel('group').unique():
-            result_multi_dt[g, 'to_connection', process] = -r.group_output__to_connection_not_in_aggregate__dt[process, node, g]
+    # Connections not in aggregate (to connections)
+    r.group_output__to_connection_not_in_aggregate__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_output__to_connection_not_in_aggregate__dt.columns.get_level_values('group'),
+        ['to_connection'] * len(r.group_output__to_connection_not_in_aggregate__dt.columns),
+        r.group_output__to_connection_not_in_aggregate__dt.columns.get_level_values('process')
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_output__to_connection_not_in_aggregate__dt.columns] = -r.group_output__to_connection_not_in_aggregate__dt
 
-        # Connection aggregates (to connections) - sum across nodes
-        to_conn_agg_cols = r.group_output__to_connection_aggregate__dt.columns[
-            r.group_output__to_connection_aggregate__dt.columns.get_level_values('group') == g
-        ]
-        for ga in to_conn_agg_cols.droplevel(['group', 'node']).unique():
-            result_multi_dt[g, 'to_connection_aggregate', ga] = -r.group_output__to_connection_aggregate__dt[g, ga]
+    # Connection aggregates (to connections) - sum across nodes
+    r.group_output__to_connection_aggregate__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_output__to_connection_aggregate__dt.columns.get_level_values('group'),
+        ['to_connectionGroup'] * len(r.group_output__to_connection_aggregate__dt.columns),
+        r.group_output__to_connection_aggregate__dt.columns.get_level_values(1)
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_output__to_connection_aggregate__dt.columns] = -r.group_output__to_connection_aggregate__dt
 
-        # Group to unit aggregates (negative)
-        group_to_unit_cols = r.group_output__group_aggregate_Group_to_unit__dt.columns[
-            r.group_output__group_aggregate_Group_to_unit__dt.columns.get_level_values('group') == g
-        ]
-        for ga in group_to_unit_cols.droplevel('group').unique():
-            result_multi_dt[g, 'unit_aggregate', ga] = -r.group_output__group_aggregate_Group_to_unit__dt[g, ga]
+    # Group to unit aggregates (negative)
+    r.group_output__group_aggregate_Group_to_unit__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_output__group_aggregate_Group_to_unit__dt.columns.get_level_values('group'),
+        ['to_unitGroup'] * len(r.group_output__group_aggregate_Group_to_unit__dt.columns),
+        r.group_output__group_aggregate_Group_to_unit__dt.columns.get_level_values(1)
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_output__group_aggregate_Group_to_unit__dt.columns] = -r.group_output__group_aggregate_Group_to_unit__dt
 
-        # Node to unit not in aggregate (negative)
-        node_to_unit_cols = r.group_output__node_to_unit_not_in_aggregate__dt.columns[
-            r.group_output__node_to_unit_not_in_aggregate__dt.columns.get_level_values('group') == g
-        ]
-        for process, node in node_to_unit_cols.droplevel('group').unique():
-            result_multi_dt[g, 'to_unit', process] = -r.group_output__node_to_unit_not_in_aggregate__dt[process, node, g]
+    # Node to unit not in aggregate (negative)
+    r.group_output__node_to_unit_not_in_aggregate__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_output__node_to_unit_not_in_aggregate__dt.columns.get_level_values('group'),
+        ['to_unit'] * len(r.group_output__node_to_unit_not_in_aggregate__dt.columns),
+        r.group_output__node_to_unit_not_in_aggregate__dt.columns.get_level_values('process')
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_output__node_to_unit_not_in_aggregate__dt.columns] = -r.group_output__node_to_unit_not_in_aggregate__dt
 
     # Inflow
-    temp = r.group_node_inflow_dt
-    temp.columns = pd.MultiIndex.from_tuples([(g, 'inflow', g) for g in temp.columns], names=['group', 'type', 'item'])
-    result_multi_dt[temp.columns] = temp
+    r.group_node_inflow_dt.columns = pd.MultiIndex.from_arrays([
+        r.group_node_inflow_dt.columns,
+        ['inflow'] * len(r.group_node_inflow_dt.columns),
+        r.group_node_inflow_dt.columns
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_node_inflow_dt.columns] = r.group_node_inflow_dt
 
     # Internal losses - connections (sum across processes, negate)
-    temp = r.group_output_Internal_connection_losses__dt.T.groupby('group').sum().T
-    temp.columns = pd.MultiIndex.from_tuples([(g, 'internal_losses', 'connections') for g in temp.columns], names=['group', 'type', 'item'])
-    result_multi_dt[temp.columns] = temp
+    r.group_output_Internal_connection_losses__dt = r.group_output_Internal_connection_losses__dt.T.groupby('group').sum().T
+    r.group_output_Internal_connection_losses__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_output_Internal_connection_losses__dt.columns,
+        ['internal_losses'] * len(r.group_output_Internal_connection_losses__dt.columns),
+        ['connections'] * len(r.group_output_Internal_connection_losses__dt.columns)
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_output_Internal_connection_losses__dt.columns] = r.group_output_Internal_connection_losses__dt
 
     # Internal losses - units (sum across processes, negate)
-    temp = r.group_output_Internal_unit_losses__dt.T.groupby('group').sum().T
-    temp.columns = pd.MultiIndex.from_tuples([(g, 'internal_losses', 'units') for g in temp.columns], names=['group', 'type', 'item'])
-    result_multi_dt[temp.columns] = temp
+    r.group_output_Internal_unit_losses__dt = r.group_output_Internal_unit_losses__dt.T.groupby('group').sum().T
+    r.group_output_Internal_unit_losses__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_output_Internal_unit_losses__dt.columns,
+        ['internal_losses'] * len(r.group_output_Internal_unit_losses__dt.columns),
+        ['units'] * len(r.group_output_Internal_unit_losses__dt.columns)
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_output_Internal_unit_losses__dt.columns] = r.group_output_Internal_unit_losses__dt
 
     # Internal losses - storages (negate)
-    temp = r.group_node_state_losses__dt
-    temp.columns = pd.MultiIndex.from_tuples([(g, 'internal_losses', 'storages') for g in temp.columns], names=['group', 'type', 'item'])
-    result_multi_dt[temp.columns] = temp
+    r.group_node_state_losses__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_node_state_losses__dt.columns,
+        ['internal_losses'] * len(r.group_node_state_losses__dt.columns),
+        ['storages'] * len(r.group_node_state_losses__dt.columns)
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_node_state_losses__dt.columns] = r.group_node_state_losses__dt
 
     # Slack downward
-    temp = r.group_node_down_slack__dt
-    temp.columns = pd.MultiIndex.from_tuples([(g, 'slack', 'downward') for g in temp.columns], names=['group', 'type', 'item'])
-    result_multi_dt[temp.columns] = temp
-
+    r.group_node_down_slack__dt.columns = pd.MultiIndex.from_arrays([
+        r.group_node_down_slack__dt.columns,
+        ['slack'] * len(r.group_node_down_slack__dt.columns),
+        ['downward'] * len(r.group_node_down_slack__dt.columns)
+    ], names=['group', 'type', 'item'])
+    result_multi_dt[r.group_node_down_slack__dt.columns] = r.group_node_down_slack__dt
 
     result_multi_dt.columns.names = ['group', 'type', 'item']
     result_multi_dt = result_multi_dt.sort_index(axis=1, level='group', sort_remaining=False)

@@ -616,6 +616,9 @@ class FlexToolRunner:
         run the model executable once
         :return the output of glpsol:
         """
+
+        timer_in_model_run = time.perf_counter()
+
         try:
             solver = self.solvers[current_solve]
         except KeyError:
@@ -662,6 +665,12 @@ class FlexToolRunner:
                     self.logger.error(f"The model is infeasible. Check the constraints.")
                     sys.exit(1)
 
+            timing = time.perf_counter() - timer_in_model_run
+            print(f"--- Solve with GLPSOL: {timing:.4f} seconds ---")
+            with open("output/solve_progress.csv", "a") as solve_progress:
+                solve_progress.write(',,' + str(round(timing,4)) + ',')
+            timer_in_model_run = timer_in_model_run + timing
+
         elif solver == "highs" or solver == "cplex":
             highs_step1 = [glpsol_file, '--check', '--model', flextool_model_file, '-d', flextool_base_data_file,
                            '--wfreemps', mps_file] + sys.argv[4:]
@@ -675,6 +684,12 @@ class FlexToolRunner:
                 if 'Columns:    0' in mps_content:
                     self.logger.error(f"The problem has no columns. Check that the model has nodes with entity alternative: true")
                     sys.exit(-1)
+
+            timing = time.perf_counter() - timer_in_model_run
+            print(f"--- GLPSOL created sol file: {timing:.4f} seconds ---\n")
+            with open("output/solve_progress.csv", "a") as solve_progress:
+                solve_progress.write(',' + str(round(timing,4)))
+            timer_in_model_run = timer_in_model_run + timing
 
             if solver == "highs":
                 highs_step2 = [highs_file, mps_file, f"--options_file={highs_option_file}"] + \
@@ -694,6 +709,12 @@ class FlexToolRunner:
                         self.logger.error(f"The model is infeasible. Check the constraints.")
                         sys.exit(1)
             
+                timing = time.perf_counter() - timer_in_model_run
+                print(f"--- Solver (HiGHS): {timing:.4f} seconds ---\n")
+                with open("output/solve_progress.csv", "a") as solve_progress:
+                    solve_progress.write(',' + str(round(timing,4)))
+                timer_in_model_run = timer_in_model_run + timing
+
             elif solver == "cplex": #or gurobi
                 if current_solve not in self.solver_precommand.keys():
                     if solver == "cplex":
@@ -729,14 +750,24 @@ class FlexToolRunner:
                         
                         completed = self.cplex_to_glpsol(cplex_sol_file, flextool_sol_file)
 
+                timing = time.perf_counter() - timer_in_model_run
+                print(f"--- Solver (CPLEX or Gurobi): {timing:.4f} seconds ---\n")
+                with open("output/solve_progress.csv", "a") as solve_progress:
+                    solve_progress.write(',' + str(round(timing,4)))
+                timer_in_model_run = timer_in_model_run + timing
 
             highs_step3 = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '-r',
                         flextool_sol_file] + sys.argv[4:]
             returncode = self.run_glpsol(highs_step3)
+
+            timing = time.perf_counter() - timer_in_model_run
+            print(f"\n--- GLPSOL wrote outputs: {timing:.4f} seconds ---\n")
+            with open("output/solve_progress.csv", "a") as solve_progress:
+                solve_progress.write(',' + str(round(timing,4)) + '\n')
+            timer_in_model_run = timer_in_model_run + timing
+
             if returncode != 0:
                 sys.exit(returncode)
-            if returncode == 0:
-                print("GLPSOL wrote the results into csv files\n")
         else:
             self.logger.error(f"Unknown solver '{solver}'. Currently supported options: highs, glpsol, cplex.")
             sys.exit(-1)
@@ -2218,10 +2249,8 @@ class FlexToolRunner:
         timing = time.perf_counter() - timer
         print(f"--- Pre-processing of data: {timing:.4f} seconds ---")
         with open("output/solve_progress.csv", "a") as solve_progress:
-            solve_progress.write(',,solve,python_solve_pre_process,setup,total_obj_cost,balance,reserves,rest,constraints,' \
-                'setup2,total_obj_cost2,balance2,reserves2,rest2,constraints2,r_solution,w_raw,w_capacity,' \
-                'w_summary,w_group,w_costs_period,w_costs_time,w_flow,w_cf,w_curtailment,w_ramps,w_reserves,' \
-                'w_online,w_node,w_marginal_inv,w_ramp_room,w_inertia,w_slacks,write_old_results,w_full\n')
+            solve_progress.write(',,solve,write_solve_input,setup,total_obj_cost,balance,reserves,rest,constraints,glpsol_input,solver,' \
+                'setup2,total_obj_cost2,balance2,reserves2,rest2,constraints2,r_solution,w_raw,w_capacity,glpsol_output,\n')
         timer = timer + timing
 
         first = True
@@ -2363,10 +2392,6 @@ class FlexToolRunner:
             self.divide_column("output/group_node__period.csv",div_col_ind = 3, to_cols_ind=[5,6,7,8], remove = True)
             self.divide_group_with_another("output/unit_curtailment_share__outputNode__period.csv", row_start_ind= 2, from_col_ind = 3 ,remove_cols_ind = [0], remove = True)
             os.remove("output/annualized_dispatch_costs__period.csv")
-        os.remove("output/annualized_dispatch_costs__period__t.csv")
-        os.remove("output/annualized_investment_costs__period.csv")
-        os.remove("output/group_node__period__t.csv")
-        os.remove("output/unit_curtailment_share__outputNode__period__t.csv")
 
         if len(self.model_solve) > 1:
             self.logger.error(

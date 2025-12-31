@@ -372,7 +372,7 @@ def read_sets(output_dir):
     s.group_output__group_aggregate__process__connection__to_node = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__connection__to_node.csv').set_index(['group', 'group_aggregate', 'connection', 'source', 'sink']).index
     s.group_output__group_aggregate__process__connection__to_node.names = ['group', 'group_aggregate', 'process', 'connection', 'node']
     s.group_output__group_aggregate__process__node__to_connection = pd.read_csv(output_path / 'set_group_output__group_aggregate__process__node__to_connection.csv').set_index(['group', 'group_aggregate', 'connection', 'source', 'sink']).index
-    s.group_output__group_aggregate__process__node__to_connection.names = ['group', 'group_aggregate', 'process', 'connection', 'node']
+    s.group_output__group_aggregate__process__node__to_connection.names = ['group', 'group_aggregate', 'process', 'node', 'connection']
     s.group_output__process_fully_inside = pd.read_csv(output_path / 'set_group_output__process_fully_inside.csv').set_index(['group', 'process']).index
     s.group_node = pd.read_csv(output_path / 'set_group_node.csv').set_index(['group', 'node']).index
     s.group_process = pd.read_csv(output_path / 'set_group_process.csv').set_index(['group', 'process']).index

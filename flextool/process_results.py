@@ -160,7 +160,7 @@ def post_process_results(par, s, v):
     to_conn_selected.columns = group_sets
     r.group_output__to_connection_not_in_aggregate__dt = to_conn_selected
 
-    # Daily aggregations
+    # Period aggregations
     r.group_output__from_connection_not_in_aggregate__d = r.group_output__from_connection_not_in_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
     r.group_output__to_connection_not_in_aggregate__d = r.group_output__to_connection_not_in_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
 
@@ -169,14 +169,14 @@ def post_process_results(par, s, v):
     group_agg_sets = from_conn.columns.join(from_conn_agg_set, how='inner')
     from_conn_agg_selected = from_conn[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     from_conn_agg_selected.columns = group_agg_sets
-    r.group_output__from_connection_aggregate__dt = from_conn_agg_selected.T.groupby(level=['group', 'group_aggregate', 'node']).sum().T
+    r.group_output__from_connection_aggregate__dt = from_conn_agg_selected.T.groupby(level=['group', 'group_aggregate']).sum().T
 
     # r_group_output__to_connection_aggregate__dt
     to_conn_agg_set = s.group_output__group_aggregate__process__node__to_connection.droplevel('connection')
-    group_agg_sets = to_conn.columns.join(to_conn_agg_set, how='inner')
+    group_agg_sets = to_conn_agg_set.join(to_conn.columns)
     to_conn_agg_selected = to_conn[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     to_conn_agg_selected.columns = group_agg_sets
-    r.group_output__to_connection_aggregate__dt = to_conn_agg_selected.T.groupby(level=['group', 'group_aggregate', 'node']).sum().T
+    r.group_output__to_connection_aggregate__dt = to_conn_agg_selected.T.groupby(level=['group', 'group_aggregate']).sum().T
 
     # Daily aggregations
     r.group_output__from_connection_aggregate__d = r.group_output__from_connection_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
