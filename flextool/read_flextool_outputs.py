@@ -138,7 +138,7 @@ def read_parameters(output_dir):
     p.step_duration = pd.read_csv(output_path / 'p_step_duration.csv', index_col=[0, 1, 2])['value'].astype(float)
     p.flow_min = pd.read_csv(output_path / 'p_flow_min.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
     p.flow_max = pd.read_csv(output_path / 'p_flow_max.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
-    p.process_source = pd.read_csv(output_path / 'p_process_source.csv', header=[0, 1], index_col=0).astype(float)
+    p.process_source = pd.read_csv(output_path / 'p_process_source.csv', header=[0, 1], index_col=[0]).astype(float)
     p.process_sink = pd.read_csv(output_path / 'p_process_sink.csv', header=[0, 1], index_col=0).astype(float)
     p.process_slope = pd.read_csv(output_path / 'pdtProcess_slope.csv', index_col=[0, 1, 2]).astype(float)
     p.process_section = pd.read_csv(output_path / 'pdtProcess_section.csv', index_col=[0, 1, 2]).astype(float)
@@ -185,6 +185,10 @@ def read_parameters(output_dir):
     p.reserve_upDown_group_reservation.index.names = ['solve', 'period', 'time']
 
     # Create multi-index for data with more than one header row (will be missing when there is no data)
+    if p.process_source.empty:
+        p.process_source.columns = pd.MultiIndex.from_arrays([[],[]], names = list(pd.read_csv(output_path / 'p_process_source.csv', nrows=2, header=None)[0]))
+    if p.process_sink.empty:
+        p.process_sink.columns = pd.MultiIndex.from_arrays([[],[]], names = list(pd.read_csv(output_path / 'p_process_sink.csv', nrows=2, header=None)[0]))
     p.process_source_sink_varCost.columns = pd.MultiIndex.from_tuples(
         [(col[0], col[1], col[2]) for col in p.process_source_sink_varCost.columns],
         names=['process', 'source', 'sink']

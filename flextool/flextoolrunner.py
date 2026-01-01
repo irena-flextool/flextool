@@ -2351,47 +2351,47 @@ class FlexToolRunner:
                 shutil.copy("solve_data/fix_storage_usage.csv","solve_data/fix_storage_usage_"+ complete_solve[solve]+".csv")
 
         #produce periodic data as post-process for rolling window solves
-        results_post_processed = False
-        for solve in complete_solve.keys():
-            if self.solve_modes[complete_solve[solve]] == "rolling_window":
-                results_post_processed = True
-        if results_post_processed:
-            #[[group by], relation dimensions]
-            #sums the solves with same period
-            period_only = {
-            "group__process__node__period": [[],1],
-            "node__period": [["node"],1],
-            "unit__inputNode__period": [[],2],
-            "unit__outputNode__period": [[],2],
-            "connection_to_first_node__period": [[],3],
-            "connection_to_second_node__period": [[],3],
-            "connection__period": [[],3],
-            "unit_cf__inputNode__period": [[],2],
-            "unit_cf__outputNode__period": [[],2],
-            "connection_cf__period":[[],3],
-            "process__period_co2": [["class","process"],1],
-            "unit_startup__period": [[],1],
-            }
-            #sums the timesteps of all solves in the period
-            #used when some other calculation is needed
-            timewise_groupby = {
-            "annualized_dispatch_costs__period": [[],1],
-            "group_node__period": [["group"],1],
-            "unit_curtailment_share__outputNode__period": [["type"],2]
-            }
-            #average of all timesteps of all solves in the period
-            timewise_average_groupby = {
-            "process__reserve__upDown__node__period": [[],6],
-            "unit_online__period": [[],1],
-            }
+        # results_post_processed = False
+        # for solve in complete_solve.keys():
+        #     if self.solve_modes[complete_solve[solve]] == "rolling_window":
+        #         results_post_processed = True
+        # if results_post_processed:
+        #     #[[group by], relation dimensions]
+        #     #sums the solves with same period
+        #     period_only = {
+        #     "group__process__node__period": [[],1],
+        #     "node__period": [["node"],1],
+        #     "unit__inputNode__period": [[],2],
+        #     "unit__outputNode__period": [[],2],
+        #     "connection_to_first_node__period": [[],3],
+        #     "connection_to_second_node__period": [[],3],
+        #     "connection__period": [[],3],
+        #     "unit_cf__inputNode__period": [[],2],
+        #     "unit_cf__outputNode__period": [[],2],
+        #     "connection_cf__period":[[],3],
+        #     "process__period_co2": [["class","process"],1],
+        #     "unit_startup__period": [[],1],
+        #     }
+        #     #sums the timesteps of all solves in the period
+        #     #used when some other calculation is needed
+        #     timewise_groupby = {
+        #     "annualized_dispatch_costs__period": [[],1],
+        #     "group_node__period": [["group"],1],
+        #     "unit_curtailment_share__outputNode__period": [["type"],2]
+        #     }
+        #     #average of all timesteps of all solves in the period
+        #     timewise_average_groupby = {
+        #     "process__reserve__upDown__node__period": [[],6],
+        #     "unit_online__period": [[],1],
+        #     }
 
-            self.periodic_postprocess(period_only, method = "periodic", arithmetic= "sum")
-            self.periodic_postprocess(timewise_groupby, method = "timewise", arithmetic= "sum")
-            self.periodic_postprocess(timewise_average_groupby, method = "timewise", arithmetic= "average")
-            self.combine_result_tables("output/annualized_investment_costs__period.csv","output/annualized_dispatch_costs__period.csv", "output/annualized_costs__period.csv")
-            self.divide_column("output/group_node__period.csv",div_col_ind = 3, to_cols_ind=[5,6,7,8], remove = True)
-            self.divide_group_with_another("output/unit_curtailment_share__outputNode__period.csv", row_start_ind= 2, from_col_ind = 3 ,remove_cols_ind = [0], remove = True)
-            os.remove("output/annualized_dispatch_costs__period.csv")
+        #     self.periodic_postprocess(period_only, method = "periodic", arithmetic= "sum")
+        #     self.periodic_postprocess(timewise_groupby, method = "timewise", arithmetic= "sum")
+        #     self.periodic_postprocess(timewise_average_groupby, method = "timewise", arithmetic= "average")
+            #self.combine_result_tables("output/annualized_investment_costs__period.csv","output/annualized_dispatch_costs__period.csv", "output/annualized_costs__period.csv")
+            #self.divide_column("output/group_node__period.csv",div_col_ind = 3, to_cols_ind=[5,6,7,8], remove = True)
+            #self.divide_group_with_another("output/unit_curtailment_share__outputNode__period.csv", row_start_ind= 2, from_col_ind = 3 ,remove_cols_ind = [0], remove = True)
+            #os.remove("output/annualized_dispatch_costs__period.csv")
 
         if len(self.model_solve) > 1:
             self.logger.error(

@@ -717,6 +717,8 @@ def drop_levels(par, s, v):
     par.entity_max_units = par.entity_max_units[~par.entity_max_units.index.duplicated(keep='first')]
     par.entity_all_existing = par.entity_all_existing.droplevel('solve')
     par.entity_all_existing = par.entity_all_existing[~par.entity_all_existing.index.duplicated(keep='first')]
+    par.entity_pre_existing = par.entity_pre_existing.droplevel('solve')
+    par.entity_pre_existing = par.entity_pre_existing[~par.entity_pre_existing.index.duplicated(keep='first')]
     par.process_startup_cost = par.process_startup_cost.droplevel('solve')
     par.process_startup_cost = par.process_startup_cost[~par.process_startup_cost.index.duplicated(keep='first')]
     par.entity_fixed_cost = par.entity_fixed_cost.droplevel('solve')

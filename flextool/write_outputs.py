@@ -55,10 +55,7 @@ def unit_capacity(par, s, v, r, debug):
     processes = list(s.process_unit)
     
     # Create base dataframe with all combinations (period, unit order)
-    if processes:
-        index = pd.MultiIndex.from_product([processes, periods], names=['unit', 'period'])
-    else:
-        index = pd.Index(periods, name='period')
+    index = pd.MultiIndex.from_product([processes, periods], names=['unit', 'period'])
     results = pd.DataFrame(index=index)
     results.columns.name = 'parameter'
 
@@ -95,10 +92,7 @@ def connection_capacity(par, s, v, r, debug):
     connections = list(s.process_connection)
     
     # Create base dataframe with all combinations (period, connection order)
-    if connections:
-        index = pd.MultiIndex.from_product([connections, periods], names=['connection', 'period'])
-    else:
-        index = pd.Index(periods, name='period')
+    index = pd.MultiIndex.from_product([connections, periods], names=['connection', 'period'])
     results = pd.DataFrame(index=index)
     results.columns.name = 'parameter'
     
@@ -137,10 +131,7 @@ def node_capacity(par, s, v, r, debug):
     nodes = list(s.node_state)
 
     # Create base dataframe with all combinations (period, node order)
-    if nodes:
-        index = pd.MultiIndex.from_product([nodes, periods], names=['node', 'period'])
-    else:
-        index = pd.Index(periods, name='period')
+    index = pd.MultiIndex.from_product([nodes, periods], names=['node', 'period'])
     results = pd.DataFrame(index=index)
     results.columns.name = 'parameter'
 
@@ -712,10 +703,6 @@ def nodeGroup_flows(par, s, v, r, debug):
 
 def connection_cf(par, s, v, r, debug):
     """Connection capacity factors for periods"""
-    if r.process_sink_flow_d.empty:
-        results = pd.DataFrame(index=pd.Index([], name='period'))
-        return results, 'connection_cf_d_e'
-
     complete_hours = par.complete_period_share_of_year * 8760
     connection_cols = r.process_sink_flow_d.columns[r.process_sink_flow_d.columns.get_level_values(0).isin(s.process_connection)]
     connection_capacity = r.entity_all_capacity[connection_cols.droplevel(1).unique()].rename_axis('process', axis=1)
@@ -726,10 +713,6 @@ def connection_cf(par, s, v, r, debug):
 
 def unit_cf_outputNode(par, s, v, r, debug):
     """Unit capacity factors by output node for periods"""
-    if r.process_sink_flow_d.empty:
-        results = pd.DataFrame(index=pd.Index([], name='period'))
-        return results, 'unit_outputs_cf_d_ee'
-
     complete_hours = par.complete_period_share_of_year * 8760
     unit_cols = r.process_sink_flow_d.columns[r.process_sink_flow_d.columns.get_level_values(0).isin(s.process_unit)]
     unit_capacity = r.entity_all_capacity[unit_cols.droplevel(1).unique()].rename_axis('process', axis=1)
@@ -740,9 +723,6 @@ def unit_cf_outputNode(par, s, v, r, debug):
 
 def unit_cf_inputNode(par, s, v, r, debug):
     """Unit capacity factors by input node for periods"""
-    if r.process_source_flow_d.empty:
-        results = pd.DataFrame(index=pd.Index([], name='period'))
-        return results, 'unit_inputs_cf_d_ee'
     # !!! This should account for efficiency losses in direct conversion units (but it does not)
     complete_hours = par.complete_period_share_of_year * 8760
     unit_source = r.process_source_flow_d.columns[r.process_source_flow_d.columns.get_level_values(0).isin(s.process_unit)]
@@ -1060,29 +1040,29 @@ def inertia_results(par, s, v, r, debug):
     unit_inertia = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['process', 'node']), dtype=float)
 
     # === SOURCE-BASED INERTIA ===
-    process_source_with_inertia = par.process_source.loc['inertia_constant'][par.process_source.loc['inertia_constant'] > 0]
-    pss_source = s.process_source_sink_alwaysProcess[
-        s.process_source_sink_alwaysProcess.droplevel('sink').isin(process_source_with_inertia.index)
+    s.process_source_with_inertia = par.process_source.where(par.process_source.loc['inertia_constant'] > 0).columns
+    pss_source_inertia = s.process_source_sink_alwaysProcess[
+        s.process_source_sink_alwaysProcess.droplevel('sink').isin(s.process_source_with_inertia)
     ]
-    process_source_with_inertia.index.names = ['process', 'node']
+    s.process_source_with_inertia.names = ['process', 'node']
 
     # Online processes - group by (process, source) since online_dt is indexed by process only
-    pss_source_online = pss_source[pss_source.get_level_values('process').isin(s.process_online)]
-    process_online = pss_source_online.droplevel('sink').unique()
-    process_online.names = ['process', 'node']
-    online_procs = process_online.get_level_values('process').unique()
+    pss_source_online_inertia = pss_source_inertia[pss_source_inertia.get_level_values('process').isin(s.process_online)]
+    process_online_inertia = pss_source_online_inertia.droplevel('sink').unique()
+    process_online_inertia.names = ['process', 'node']
+    online_inertia_procs = process_online_inertia.get_level_values('process').unique()
 
-    unit_inertia[process_online] = ( r.process_online_dt[online_procs]
-        .mul(par.entity_unitsize[online_procs], axis=1, level=0)
-        .mul(process_source_with_inertia[process_online]) )
+    unit_inertia[process_online_inertia] = ( r.process_online_dt[online_inertia_procs]
+        .mul(par.entity_unitsize[online_inertia_procs], axis=1, level=0)
+        .mul(par.process_source.loc['inertia_constant'][process_online_inertia]) )
 
     # Flow processes
-    pss_source_flow = pss_source[~pss_source.get_level_values('process').isin(s.process_online)]
-    flow_cols = pss_source_flow.intersection(r.flow_dt.columns)
-    process_flow = flow_cols.droplevel('sink').unique()
+    pss_source_flow_inertia = pss_source_inertia[~pss_source_inertia.get_level_values('process').isin(s.process_online)]
+    flow_inertia_cols = pss_source_flow_inertia.intersection(r.flow_dt.columns)
+    process_flow = flow_inertia_cols.droplevel('sink').unique()
     flows_weighted_source = (
-        r.flow_dt[flow_cols]
-        .mul(process_source_with_inertia[process_flow], axis=1) )
+        r.flow_dt[flow_inertia_cols]
+        .mul(par.process_source.loc['inertia_constant'][process_flow], axis=1) )
 
     # Sum across sinks for each (process, source)
     unit_inertia_source_flow = flows_weighted_source.T.groupby(level=['process', 'source']).sum().T
@@ -1090,30 +1070,30 @@ def inertia_results(par, s, v, r, debug):
     unit_inertia[unit_inertia_source_flow.columns] = unit_inertia_source_flow
 
     # === SINK-BASED INERTIA ===
-    process_sink_with_inertia = par.process_sink.loc['inertia_constant'][par.process_sink.loc['inertia_constant'] > 0]
-    pss_sink = s.process_source_sink_alwaysProcess[
-        s.process_source_sink_alwaysProcess.droplevel('source').isin(process_sink_with_inertia.index) ]
+    s.process_sink_with_inertia = par.process_sink.where(par.process_sink.loc['inertia_constant'] > 0).columns
+    pss_sink_inertia = s.process_source_sink_alwaysProcess[
+        s.process_source_sink_alwaysProcess.droplevel('source').isin(s.process_sink_with_inertia)
+    ]
+    s.process_sink_with_inertia.names = ['process', 'node']
 
-    process_sink_with_inertia.index.names = ['process', 'node']
+    # Online processes - group by (process, sink) since online_dt is indexed by process only
+    pss_sink_online_inertia = pss_sink_inertia[pss_sink_inertia.get_level_values('process').isin(s.process_online)]
+    process_online_inertia = pss_sink_online_inertia.droplevel('source').unique()
+    process_online_inertia.names = ['process', 'node']
+    online_inertia_procs = process_online_inertia.get_level_values('process').unique()
 
-    # Online processes
-    pss_sink_online = pss_sink[pss_sink.get_level_values('process').isin(s.process_online)]
-    process_online = pss_sink_online.droplevel('source').unique()
-    process_online.names = ['process', 'node']
-    online_procs = process_online.get_level_values('process').unique()
-
-    unit_inertia[process_online] = ( r.process_online_dt[online_procs]
-        .mul(process_sink_with_inertia[process_online]) )
+    unit_inertia[process_online_inertia] = ( r.process_online_dt[online_inertia_procs]
+        .mul(par.entity_unitsize[online_inertia_procs], axis=1, level=0)
+        .mul(par.process_sink.loc['inertia_constant'][process_online_inertia]) )
 
     # Flow processes
-    pss_sink_flow = pss_sink[~pss_sink.get_level_values('process').isin(s.process_online)]
-    flow_cols = pss_sink_flow.intersection(r.flow_dt.columns)
-    process_flow = flow_cols.droplevel('source').unique()
+    pss_sink_flow_inertia = pss_sink_inertia[~pss_sink_inertia.get_level_values('process').isin(s.process_online)]
+    flow_inertia_cols = pss_sink_flow_inertia.intersection(r.flow_dt.columns)
+    process_flow = flow_inertia_cols.droplevel('source').unique()
     flows_weighted_sink = (
-        r.flow_dt[flow_cols]
-        .mul(par.entity_unitsize[process_flow.droplevel('sink').unique()], axis=1, level='process')
-        .mul(process_sink_with_inertia[process_flow], axis=1)
-    )
+        r.flow_dt[flow_inertia_cols]
+        .mul(par.process_sink.loc['inertia_constant'][process_flow], axis=1) )
+
     # Sum across sources for each (process, sink)
     unit_inertia_sink_flow = flows_weighted_sink.T.groupby(level=['process', 'sink']).sum().T
     unit_inertia_sink_flow.columns.names = ['process', 'node']
