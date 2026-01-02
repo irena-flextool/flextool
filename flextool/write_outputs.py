@@ -1040,7 +1040,7 @@ def inertia_results(par, s, v, r, debug):
     unit_inertia = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['process', 'node']), dtype=float)
 
     # === SOURCE-BASED INERTIA ===
-    s.process_source_with_inertia = par.process_source.where(par.process_source.loc['inertia_constant'] > 0).columns
+    s.process_source_with_inertia = par.process_source.columns[list(par.process_source.loc['inertia_constant'] > 0)]
     pss_source_inertia = s.process_source_sink_alwaysProcess[
         s.process_source_sink_alwaysProcess.droplevel('sink').isin(s.process_source_with_inertia)
     ]
@@ -1060,9 +1060,11 @@ def inertia_results(par, s, v, r, debug):
     pss_source_flow_inertia = pss_source_inertia[~pss_source_inertia.get_level_values('process').isin(s.process_online)]
     flow_inertia_cols = pss_source_flow_inertia.intersection(r.flow_dt.columns)
     process_flow = flow_inertia_cols.droplevel('sink').unique()
+    par_process_source_inertia = par.process_source[process_flow].loc['inertia_constant']
+    par_process_source_inertia.index = flow_inertia_cols.join(par_process_source_inertia.index)
     flows_weighted_source = (
         r.flow_dt[flow_inertia_cols]
-        .mul(par.process_source.loc['inertia_constant'][process_flow], axis=1) )
+        .mul(par_process_source_inertia) )
 
     # Sum across sinks for each (process, source)
     unit_inertia_source_flow = flows_weighted_source.T.groupby(level=['process', 'source']).sum().T
@@ -1070,7 +1072,7 @@ def inertia_results(par, s, v, r, debug):
     unit_inertia[unit_inertia_source_flow.columns] = unit_inertia_source_flow
 
     # === SINK-BASED INERTIA ===
-    s.process_sink_with_inertia = par.process_sink.where(par.process_sink.loc['inertia_constant'] > 0).columns
+    s.process_sink_with_inertia = par.process_sink.columns[list(par.process_sink.loc['inertia_constant'] > 0)]
     pss_sink_inertia = s.process_source_sink_alwaysProcess[
         s.process_source_sink_alwaysProcess.droplevel('source').isin(s.process_sink_with_inertia)
     ]
@@ -1090,9 +1092,11 @@ def inertia_results(par, s, v, r, debug):
     pss_sink_flow_inertia = pss_sink_inertia[~pss_sink_inertia.get_level_values('process').isin(s.process_online)]
     flow_inertia_cols = pss_sink_flow_inertia.intersection(r.flow_dt.columns)
     process_flow = flow_inertia_cols.droplevel('source').unique()
+    par_process_sink_inertia = par.process_sink[process_flow].loc['inertia_constant']
+    par_process_sink_inertia.index = flow_inertia_cols.join(par_process_sink_inertia.index)
     flows_weighted_sink = (
         r.flow_dt[flow_inertia_cols]
-        .mul(par.process_sink.loc['inertia_constant'][process_flow], axis=1) )
+        .mul(par_process_sink_inertia) )
 
     # Sum across sources for each (process, sink)
     unit_inertia_sink_flow = flows_weighted_sink.T.groupby(level=['process', 'sink']).sum().T

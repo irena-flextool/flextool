@@ -1,16 +1,15 @@
 import json
 import os
 import argparse
-import validators
 from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError, to_database
 
 
 def migrate_database(database_path):
 
-    if validators.url(database_path):
+    if database_path.startswith('sqlite://'):
         mapping_name = database_path
     elif os.path.exists(database_path) and database_path.endswith(".sqlite"):
-            mapping_name = 'sqlite:///' + database_path
+        mapping_name = 'sqlite:///' + database_path
     else:
         print("No sqlite file at " + database_path)
         exit(-1)
