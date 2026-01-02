@@ -629,7 +629,7 @@ def nodeGroup_flows(par, s, v, r, debug):
     ], names=['group', 'type', 'item'])
     result_multi_dt[r.group_output__to_connection_aggregate__dt.columns] = -r.group_output__to_connection_aggregate__dt
 
-    # Group to unit aggregates (negative)
+    # Group to aggregate units (negative)
     r.group_output__group_aggregate_Group_to_unit__dt.columns = pd.MultiIndex.from_arrays([
         r.group_output__group_aggregate_Group_to_unit__dt.columns.get_level_values('group'),
         ['to_unitGroup'] * len(r.group_output__group_aggregate_Group_to_unit__dt.columns),

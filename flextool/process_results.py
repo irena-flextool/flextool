@@ -106,7 +106,7 @@ def post_process_results(par, s, v):
     r_node_ramp_dt = flows_out.add(flows_in, fill_value=0).reindex(columns=s.node_balance, fill_value=0.0)
 
     # Filter just connection flows
-    conn_flows = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values('process').isin(s.process_connection)]]
+    conn_flows = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values('process').isin(s.process_connection)]].clip(lower=0.0)
 
     # Divide into the four flows present in one connection
     conn_to_left = conn_flows[conn_flows.columns[conn_flows.columns.droplevel('source').isin(s.process_source)]]
@@ -562,20 +562,32 @@ def post_process_results(par, s, v):
     group_agg_sets = unit_to_node.columns.join(unit_to_group_set, how='inner')
     unit_to_group_selected = unit_to_node[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     unit_to_group_selected.columns = group_agg_sets
-    r.group_output__group_aggregate_Unit_to_group__dt = unit_to_group_selected.T.groupby(level=['group', 'group_aggregate']).sum().T
-
-    # r_group_output__group_aggregate_Unit_to_group__d
-    r.group_output__group_aggregate_Unit_to_group__d = r.group_output__group_aggregate_Unit_to_group__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    negatives = (par.entity_unitsize[unit_to_group_selected.columns.get_level_values('process')] < 0).values
+    unit_to_group_selected_negative = unit_to_group_selected[unit_to_group_selected.columns[negatives]]
+    unit_to_group_selected_positive = unit_to_group_selected[unit_to_group_selected.columns[~negatives]]
+    r.group_output__group_aggregate_Unit_to_group_positive__dt = unit_to_group_selected_positive.T.groupby(level=['group', 'group_aggregate']).sum().T
+    r.group_output__group_aggregate_Unit_to_group_negative__dt = unit_to_group_selected_negative.T.groupby(level=['group', 'group_aggregate']).sum().T
 
     # r_group_output__group_aggregate_Group_to_unit__dt (negative)
     group_to_unit_set = s.group_output__group_aggregate__process__node__to_unit.droplevel('unit')
     group_agg_sets = node_to_unit.columns.join(group_to_unit_set, how='inner')
     group_to_unit_selected = node_to_unit[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     group_to_unit_selected.columns = group_agg_sets
-    r.group_output__group_aggregate_Group_to_unit__dt = -group_to_unit_selected.T.groupby(level=['group', 'group_aggregate']).sum().T
+    negatives = (par.entity_unitsize[group_to_unit_selected.columns.get_level_values('process')] < 0).values
+    group_to_unit_selected_negative = group_to_unit_selected[group_to_unit_selected.columns[negatives]]
+    group_to_unit_selected_positive = group_to_unit_selected[group_to_unit_selected.columns[~negatives]]
+    r.group_output__group_aggregate_Group_to_unit_positive__dt = group_to_unit_selected_positive.T.groupby(level=['group', 'group_aggregate']).sum().T
+    r.group_output__group_aggregate_Group_to_unit_negative__dt = group_to_unit_selected_negative.T.groupby(level=['group', 'group_aggregate']).sum().T
 
-    # r_group_output__group_aggregate_Group_to_unit__d
+    # Swap negatives to the other side
+    r.group_output__group_aggregate_Unit_to_group__dt = r.group_output__group_aggregate_Unit_to_group_positive__dt.sub(
+        r.group_output__group_aggregate_Group_to_unit_negative__dt, fill_value=0.0)
+    r.group_output__group_aggregate_Group_to_unit__dt = r.group_output__group_aggregate_Group_to_unit_positive__dt.sub(
+        r.group_output__group_aggregate_Unit_to_group_negative__dt, fill_value=0.0)
+
+    # Aggregate for period
     r.group_output__group_aggregate_Group_to_unit__d = r.group_output__group_aggregate_Group_to_unit__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    r.group_output__group_aggregate_Unit_to_group__d = r.group_output__group_aggregate_Unit_to_group__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
 
     # r_group_output_Internal_unit_losses__dt
     # Filter to only units that are fully inside groups first
