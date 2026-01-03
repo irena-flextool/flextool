@@ -790,53 +790,53 @@ class FlexToolRunner:
         counter = 0
         already_stripped_end_of_line = False
         
-        for line in process.stdout:
-            if line.startswith('Reading data...'):
-                continue
+        # for line in process.stdout:
+        #     if line.startswith('Reading data...'):
+        #         continue
             
-            # Take not if Generating has been followed by Display statement
-            if line.startswith('Timer - '):
-                if already_stripped_end_of_line:
-                    print(line.rstrip(), end='  ')
-                else:
-                    print('\n' + line.rstrip(), end='  ')
-                counter = 0
-                continue
+        #     # Take not if Generating has been followed by Display statement
+        #     if line.startswith('Timer - '):
+        #         if already_stripped_end_of_line:
+        #             print(line.rstrip(), end='  ')
+        #         else:
+        #             print('\n' + line.rstrip(), end='  ')
+        #         counter = 0
+        #         continue
 
-            if line.startswith('Generating ') or line.startswith('Write '):
-                previous = 'generate'
-                counter += 1
-                already_stripped_end_of_line = False
-                if line.startswith('Generating '):
-                    if command_args[5] == '-r':
-                        continue
-                    line = line.replace('Generating ', '  ').rstrip()
-                elif line.startswith('Write '):
-                    line = line.replace('Write ', '  ').rstrip()
-                if counter == 3:
-                    line = line + '\n'
-                    counter = 0
-                    already_stripped_end_of_line = True
-                print(line, end='')
-                continue
+        #     if line.startswith('Generating ') or line.startswith('Write '):
+        #         previous = 'generate'
+        #         counter += 1
+        #         already_stripped_end_of_line = False
+        #         if line.startswith('Generating '):
+        #             if command_args[5] == '-r':
+        #                 continue
+        #             line = line.replace('Generating ', '  ').rstrip()
+        #         elif line.startswith('Write '):
+        #             line = line.replace('Write ', '  ').rstrip()
+        #         if counter == 3:
+        #             line = line + '\n'
+        #             counter = 0
+        #             already_stripped_end_of_line = True
+        #         print(line, end='')
+        #         continue
 
-            if line.startswith('Checking'):
-                if line.startswith('Checking:'):
-                    previous = 'check'
-                    buffer = [line]
-            elif previous == 'check':
-                buffer.append(line)
-                if 'error' in line.lower() or 'failed' in line.lower() or 'assertion' in line.lower():
-                    output = '\n' + ''.join(buffer)
-                    output = output.replace('Checking (line', ' (flextool/flextool.mod line')
-                    print(output)
-                    buffer = []
-                    previous = False
-                elif line.strip() == '' or (not line.startswith(' ') and not line.startswith('Created')):
-                    buffer = []
-                    previous = False
-            else:
-                print(line, end='')
+        #     if line.startswith('Checking'):
+        #         if line.startswith('Checking:'):
+        #             previous = 'check'
+        #             buffer = [line]
+        #     elif previous == 'check':
+        #         buffer.append(line)
+        #         if 'error' in line.lower() or 'failed' in line.lower() or 'assertion' in line.lower():
+        #             output = '\n' + ''.join(buffer)
+        #             output = output.replace('Checking (line', ' (flextool/flextool.mod line')
+        #             print(output)
+        #             buffer = []
+        #             previous = False
+        #         elif line.strip() == '' or (not line.startswith(' ') and not line.startswith('Created')):
+        #             buffer = []
+        #             previous = False
+        #     else:
+        #         print(line, end='')
         
         process.wait()
         

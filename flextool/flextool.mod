@@ -4878,14 +4878,13 @@ for {n in nodeState, (d, t) in realized_period__time_last}
   }
 for {n in nodeState, (d, t) in realized_period__time_last}
   {
-    printf '%s,%.8g\n', n, v_state[n, d, t].val* p_entity_unitsize[n]  >> fn_p_roll_continue_state;
+    printf '%s,%.8g\n', n, v_state[n, d, t].val * p_entity_unitsize[n]  >> fn_p_roll_continue_state;
   }
 
 param fn_period_capacity symbolic := "solve_data/period_capacity.csv";
 printf 'period\n' > fn_period_capacity;
 for {d in period_capacity union d_realize_dispatch_or_invest}
   { printf '%s\n', d >> fn_period_capacity; }
-
 
 
 #### Write out results
