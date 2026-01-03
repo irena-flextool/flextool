@@ -672,6 +672,9 @@ class FlexToolRunner:
             timer_in_model_run = timer_in_model_run + timing
 
         elif solver == "highs" or solver == "cplex":
+            with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
+                p_model_file.write("phase\nread\n")
+
             highs_step1 = [glpsol_file, '--check', '--model', flextool_model_file, '-d', flextool_base_data_file,
                            '--wfreemps', mps_file] + sys.argv[4:]
             returncode = self.run_glpsol(highs_step1)
@@ -756,6 +759,9 @@ class FlexToolRunner:
                     solve_progress.write(',' + str(round(timing,4)))
                 timer_in_model_run = timer_in_model_run + timing
 
+            with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
+                p_model_file.write("phase\nwrite\n")
+
             highs_step3 = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '-r',
                         flextool_sol_file] + sys.argv[4:]
             returncode = self.run_glpsol(highs_step3)
@@ -788,55 +794,55 @@ class FlexToolRunner:
         buffer = []
         previous = False
         counter = 0
-        already_stripped_end_of_line = False
+        already_stripped_end_of_line = True
         
-        # for line in process.stdout:
-        #     if line.startswith('Reading data...'):
-        #         continue
+        for line in process.stdout:
+            if line.startswith('Reading data...'):
+                continue
             
-        #     # Take not if Generating has been followed by Display statement
-        #     if line.startswith('Timer - '):
-        #         if already_stripped_end_of_line:
-        #             print(line.rstrip(), end='  ')
-        #         else:
-        #             print('\n' + line.rstrip(), end='  ')
-        #         counter = 0
-        #         continue
+            # Take not if Generating has been followed by Display statement
+            if line.startswith('Timer - '):
+                if already_stripped_end_of_line:
+                    print(line.rstrip(), end='  ')
+                else:
+                    print('\n' + line.rstrip(), end='  ')
+                counter = 0
+                continue
 
-        #     if line.startswith('Generating ') or line.startswith('Write '):
-        #         previous = 'generate'
-        #         counter += 1
-        #         already_stripped_end_of_line = False
-        #         if line.startswith('Generating '):
-        #             if command_args[5] == '-r':
-        #                 continue
-        #             line = line.replace('Generating ', '  ').rstrip()
-        #         elif line.startswith('Write '):
-        #             line = line.replace('Write ', '  ').rstrip()
-        #         if counter == 3:
-        #             line = line + '\n'
-        #             counter = 0
-        #             already_stripped_end_of_line = True
-        #         print(line, end='')
-        #         continue
+            if line.startswith('Generating ') or line.startswith('Write '):
+                previous = 'generate'
+                counter += 1
+                already_stripped_end_of_line = False
+                if line.startswith('Generating '):
+                    if command_args[5] == '-r':
+                        continue
+                    line = line.replace('Generating ', '  ').rstrip()
+                elif line.startswith('Write '):
+                    line = line.replace('Write ', '  ').rstrip()
+                if counter == 3:
+                    line = line + '\n'
+                    counter = 0
+                    already_stripped_end_of_line = True
+                print(line, end='')
+                continue
 
-        #     if line.startswith('Checking'):
-        #         if line.startswith('Checking:'):
-        #             previous = 'check'
-        #             buffer = [line]
-        #     elif previous == 'check':
-        #         buffer.append(line)
-        #         if 'error' in line.lower() or 'failed' in line.lower() or 'assertion' in line.lower():
-        #             output = '\n' + ''.join(buffer)
-        #             output = output.replace('Checking (line', ' (flextool/flextool.mod line')
-        #             print(output)
-        #             buffer = []
-        #             previous = False
-        #         elif line.strip() == '' or (not line.startswith(' ') and not line.startswith('Created')):
-        #             buffer = []
-        #             previous = False
-        #     else:
-        #         print(line, end='')
+            if line.startswith('Checking'):
+                if line.startswith('Checking:'):
+                    previous = 'check'
+                    buffer = [line]
+            elif previous == 'check':
+                buffer.append(line)
+                if 'error' in line.lower() or 'failed' in line.lower() or 'assertion' in line.lower():
+                    output = '\n' + ''.join(buffer)
+                    output = output.replace('Checking (line', ' (flextool/flextool.mod line')
+                    print(output)
+                    buffer = []
+                    previous = False
+                elif line.strip() == '' or (not line.startswith(' ') and not line.startswith('Created')):
+                    buffer = []
+                    previous = False
+            else:
+                print(line, end='')
         
         process.wait()
         

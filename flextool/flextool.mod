@@ -426,10 +426,13 @@ param model_co2 {param_co2} default 0;
 
 set class_paramName_default dimen 2;
 param default_value {class_paramName_default};
+set phase;
 
 #########################
 # Read data
 #table data IN 'CSV' '.csv' :  <- [];
+table data IN 'CSV' 'solve_data/glpsol_phase.csv' : phase <- [phase];
+
 # Domain sets
 table data IN 'CSV' 'input/commodity.csv' : commodity <- [commodity];
 table data IN 'CSV' 'input/constraint__sense.csv' : constraint <- [constraint];
@@ -567,7 +570,7 @@ table data IN 'CSV' 'solve_data/invest_periods_of_current_solve.csv' : period_in
 table data IN 'CSV' 'input/p_model.csv' : [modelParam], p_model;
 
 # Clear some files in the first solve
-if p_model["solveFirst"] == 1 then {
+if p_model["solveFirst"] == 1 and 'read' in phase then {
   printf "entity,p_entity_invested\n" > "solve_data/p_entity_invested.csv";
   printf "entity,p_entity_divested\n" > "solve_data/p_entity_divested.csv";
   printf "entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n" > "solve_data/p_entity_period_existing_capacity.csv";
@@ -1786,146 +1789,150 @@ var vq_state_up_group {g in group_loss_share, (d,t) in dt} >= 0;
 
 #########################
 ## Data checks
-printf 'Checking: Eff. data for 1 variable conversions directly from source to sink (and possibly back).';
-printf' Efficiency should always be !=0 \n';
-check {(p, m) in process_method, (d,t) in dt : m in method_1var && not (p, 'none') in process__ct_method } pdtProcess[p, 'efficiency', d, t] != 0 ;
+if p_model["solveFirst"] == 1 && 'read' in phase then {
+  printf "!!! Data checks\n";
+  printf 'Checking: Eff. data for 1 variable conversions directly from source to sink (and possibly back).';
+  printf' Efficiency should always be !=0 \n';
+  check {(p, m) in process_method, (d,t) in dt : m in method_1var && not (p, 'none') in process__ct_method } pdtProcess[p, 'efficiency', d, t] != 0 ;
 
-printf 'Checking: Efficiency data for 1-way conversions with an online variable.';
-printf 'Efficiency should always be !=0\n';
-check {(p, m) in process_method, (d,t) in dt : m in method_1way_on} pdtProcess[p, 'efficiency', d, t] != 0;
+  printf 'Checking: Efficiency data for 1-way conversions with an online variable.';
+  printf 'Efficiency should always be !=0\n';
+  check {(p, m) in process_method, (d,t) in dt : m in method_1way_on} pdtProcess[p, 'efficiency', d, t] != 0;
 
-printf 'Checking: Efficiency data for 2-way linear conversions without online variables.';
-printf 'Efficiency should always be !=0\n';
-check {(p, m) in process_method, (d,t) in dt : m in method_2way_off} pdtProcess[p, 'efficiency', d, t] != 0;
+  printf 'Checking: Efficiency data for 2-way linear conversions without online variables.';
+  printf 'Efficiency should always be !=0\n';
+  check {(p, m) in process_method, (d,t) in dt : m in method_2way_off} pdtProcess[p, 'efficiency', d, t] != 0;
 
-printf 'Checking: Min load efficiency should be greater than zero\n';
-check {p in process_minload, (d,t) in dt} pdtProcess[p, 'efficiency_at_min_load', d, t] > 0;
+  printf 'Checking: Min load efficiency should be greater than zero\n';
+  check {p in process_minload, (d,t) in dt} pdtProcess[p, 'efficiency_at_min_load', d, t] > 0;
 
-printf 'Checking: Min load should be less than 1\n';
-check {p in process_minload, (d,t) in dt} pdtProcess[p, 'min_load', d, t] < 1.0;
+  printf 'Checking: Min load should be less than 1\n';
+  check {p in process_minload, (d,t) in dt} pdtProcess[p, 'min_load', d, t] < 1.0;
 
-printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
-check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
+  printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
+  check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
 
-printf 'Checking: Is there a timeline connected to a timeset\n';
-check sum{(tb, tl) in timeset__timeline} 1 > 0;
+  printf 'Checking: Is there a timeline connected to a timeset\n';
+  check sum{(tb, tl) in timeset__timeline} 1 > 0;
 
-printf 'Checking: Are discount factors set in models with investments and multiple periods\n';
-check {d in period_in_use : d not in period_first && (sum{(e, d) in ed_invest} 1 || sum{(e, d) in ed_divest} 1)} : p_discount_years[d] != 0;
+  printf 'Checking: Are discount factors set in models with investments and multiple periods\n';
+  check {d in period_in_use : d not in period_first && (sum{(e, d) in ed_invest} 1 || sum{(e, d) in ed_divest} 1)} : p_discount_years[d] != 0;
 
-printf 'Checking: Does a node with has_storage also have has_balance set to yes\n';
-check {n in nodeState} : n in nodeBalance;
+  printf 'Checking: Does a node with has_storage also have has_balance set to yes\n';
+  check {n in nodeState} : n in nodeBalance;
 
-printf 'Checking: The nodes with scaling methods should have the inflow parameter set\n';
-check {n in node, d in period_in_use: (n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method ||
-        (n, 'scale_to_annual_and_peak_flow') in node__inflow_method}:
-  sum{(d, t) in dt_complete} ptNode_inflow[n, t] != 0;
+  printf 'Checking: The nodes with scaling methods should have the inflow parameter set\n';
+  check {n in node, d in period_in_use: (n, 'scale_to_annual_flow') in node__inflow_method || (n, 'scale_to_annual_and_peak_flow') in node__inflow_method ||
+          (n, 'scale_to_annual_and_peak_flow') in node__inflow_method}:
+    sum{(d, t) in dt_complete} ptNode_inflow[n, t] != 0;
 
-printf 'Checking: Availability conflicts with storage constraints\n';
-check {n in nodeState, (d,t) in period__time_first: (n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method}:
-  p_node[n,'storage_state_start'] <= pdtNode[n, 'availability', d, t];
-check {n in nodeState, (d,t) in period__time_last: (n, 'fix_end') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method}:
-  p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t];
+  printf 'Checking: Availability conflicts with storage constraints\n';
+  check {n in nodeState, (d,t) in period__time_first: (n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method}:
+    p_node[n,'storage_state_start'] <= pdtNode[n, 'availability', d, t];
+  check {n in nodeState, (d,t) in period__time_last: (n, 'fix_end') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method}:
+    p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t];
 
-check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
-&& ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
-  p_node[n,'storage_state_start'] <= pdtNode[n, 'availability', d, t];
-check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
-&& ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
-  p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t];
+  check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
+  && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
+    p_node[n,'storage_state_start'] <= pdtNode[n, 'availability', d, t];
+  check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
+  && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
+    p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t];
 
-check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt:
-((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
-&& (n, 'bind_within_timeset') in node__storage_binding_method
-&& dt_jump[d,t] != 1}:
-  p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t] && p_node[n,'storage_state_end'] <= pdtNode[n,'availability', d, t_previous];
+  check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt:
+  ((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
+  && (n, 'bind_within_timeset') in node__storage_binding_method
+  && dt_jump[d,t] != 1}:
+    p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t] && p_node[n,'storage_state_end'] <= pdtNode[n,'availability', d, t_previous];
 
-check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt:
-((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
-&& (n, 'bind_within_timeset') in node__storage_binding_method
-&& dt_jump[d,t] != 1}:
-  (p_node[n,'storage_state_start'] <= pdtNode[n, 'availability', d, t] && p_node[n,'storage_state_start'] <= pdtNode[n,'availability', d, t_previous]);
+  check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt:
+  ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
+  && (n, 'bind_within_timeset') in node__storage_binding_method
+  && dt_jump[d,t] != 1}:
+    (p_node[n,'storage_state_start'] <= pdtNode[n, 'availability', d, t] && p_node[n,'storage_state_start'] <= pdtNode[n,'availability', d, t_previous]);
 
-check {n in nodeState, (d,t) in period__time_last:
-  (n, 'use_reference_value') in node__storage_solve_horizon_method
-   && (n, 'fix_end') not in node__storage_start_end_method
-   && (n, 'fix_start_end') not in node__storage_start_end_method
-   && (n, 'bind_within_solve') not in node__storage_binding_method
-   && (n, 'bind_within_period') not in node__storage_binding_method
-   && (n, 'bind_within_timeset') not in node__storage_binding_method}:
-  pdtNode[n,'storage_state_reference_value', d, t] <= pdtNode[n, 'availability', d, t];
+  check {n in nodeState, (d,t) in period__time_last:
+    (n, 'use_reference_value') in node__storage_solve_horizon_method
+    && (n, 'fix_end') not in node__storage_start_end_method
+    && (n, 'fix_start_end') not in node__storage_start_end_method
+    && (n, 'bind_within_solve') not in node__storage_binding_method
+    && (n, 'bind_within_period') not in node__storage_binding_method
+    && (n, 'bind_within_timeset') not in node__storage_binding_method}:
+    pdtNode[n,'storage_state_reference_value', d, t] <= pdtNode[n, 'availability', d, t];
 
-printf 'Checking: transfer_method no_losses_no_variable_cost ';
-printf 'is not allowed to a group with non-synchronous constraint\n';
-check {g in groupNonSync, (p,source,sink) in process_source_sink:
-  (((p,source) in process_source && (g,source) in group_node)
-  || ((p,sink) in process_sink && (g,sink) in group_node))
-  && (p,g) not in process__group_inside_group_nonSync}:
-    sum{(p, m) in process_method : m in method_2way_1var} 1 < 1;
+  # VERY SLOW, therefore commented out for now
+  # printf 'Checking: transfer_method no_losses_no_variable_cost ';
+  # printf 'is not allowed to a group with non-synchronous constraint\n';
+  # check {g in groupNonSync, (p,source,sink) in process_source_sink:
+  #   (((p,source) in process_source && (g,source) in group_node)
+  #   || ((p,sink) in process_sink && (g,sink) in group_node))
+  #   && (p,g) not in process__group_inside_group_nonSync}:
+  #     sum{(p, m) in process_method : m in method_2way_1var} 1 < 1;
 
-printf 'Checking: transfer_method no_losses_no_variable_cost ';
-printf 'is not allowed to have other_operational_cost\n';
-check {(p,m) in process_method, (d,t) in dt: m in method_2way_1var}:
-  pdtProcess[p, 'other_operational_cost', d, t] = 0;
+  printf 'Checking: transfer_method no_losses_no_variable_cost ';
+  printf 'is not allowed to have other_operational_cost\n';
+  check {(p,m) in process_method, (d,t) in dt: m in method_2way_1var}:
+    pdtProcess[p, 'other_operational_cost', d, t] = 0;
 
-printf 'Checking: node not in more than one loss of load sharing group\n';
-check {n in node}:
-  sum{(g,n) in group_node: g in group_loss_share} 1 < 2;
+  printf 'Checking: node not in more than one loss of load sharing group\n';
+  check {n in node}:
+    sum{(g,n) in group_node: g in group_loss_share} 1 < 2;
 
-printf 'Checking: Groups with investment constraints have entities that can be invested in\n';
-check {g in group_invest, d in period_invest}:
-  sum{(g,e) in group_entity: e in entityInvest } 1 > 0;
+  printf 'Checking: Groups with investment constraints have entities that can be invested in\n';
+  check {g in group_invest, d in period_invest}:
+    sum{(g,e) in group_entity: e in entityInvest } 1 > 0;
 
-printf'Checking: If stochastic timeseries data given, ';
-printf'the realized branch is set for the period in stochastic_branches ';
-printf'and the period start time is a branch start time is the timeseries ';
-printf'for process timeseries \n';
-check {(d,t) in period__time_first: exists{(p, param, tb, ts, t2) in process__param__branch__time} 1}:
-  exists{(p, param, tb, t, t) in process__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
-printf'Checking: If stochastic timeseries data given, ';
-printf'the realized branch is set for the period in stochastic_branches ';
-printf'and the period start time is a branch start time is the timeseries ';
-printf'for process_inputNode timeseries\n';
-check {(d,t) in period__time_first: exists{(p, source, param, tb, ts, t2) in process__source__param__branch__time} 1}:
-  exists{(p, source, param, tb, t, t) in process__source__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
-printf'Checking: If stochastic timeseries data given, ';
-printf'the realized branch is set for the period in stochastic_branches ';
-printf'and the period start time is a branch start time is the timeseries ';
-printf'for process_outputNode timeseries\n';
-check {(d,t) in period__time_first: exists{(p, sink, param, tb, ts, t2) in process__sink__param__branch__time} 1}:
-  exists{(p, sink, param, tb, t, t) in process__sink__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
-printf'Checking: If stochastic timeseries data given, ';
-printf'the realized branch is set for the period in stochastic_branches ';
-printf'and the period start time is a branch start time is the timeseries ';
-printf'for Node inflow timeseries\n';
-check{(d,t) in period__time_first: exists{(n, tb, ts, t2) in node__branch__time_inflow} 1 }:
-  exists{(n, tb, t, t) in node__branch__time_inflow, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
-printf'Checking: If stochastic timeseries data given, ';
-printf'the realized branch is set for the period in stochastic_branches ';
-printf'and the period start time is a branch start time is the timeseries ';
-printf'for Node timeseries\n';
-check {(d,t) in period__time_first: exists{(n, param, tb, ts, t2) in node__param__branch__time} 1}:
-  exists{(n, param, tb, t, t) in node__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
-printf'Checking: If stochastic timeseries data given, ';
-printf'the realized branch is set for the period in stochastic_branches ';
-printf'and the period start time is a branch start time is the timeseries ';
-printf'for profile timeseries\n';
-check {(d,t) in period__time_first: exists{(p, tb, ts, t2) in profile__branch__time} 1}:
-  exists{(p, tb, t, t) in profile__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
-printf'Checking: If stochastic timeseries data given, ';
-printf'the realized branch is set for the period in stochastic_branches ';
-printf'and the period start time is a branch start time is the timeseries ';
-printf'for reserve timeseries\n';
-check {(d,t) in period__time_first: exists{(r, ud, g, param, tb, ts, t2) in reserve__upDown__group__reserveParam__branch__time} 1}:
-  exists{(r, ud, g, param, tb, t, t) in reserve__upDown__group__reserveParam__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
-printf'Checking: Existing capacity is less than cumulative_max_capacity\n';
-check {(e, d) in ed_invest_cumulative}:
-  p_entity_all_existing[e, d] <= ed_cumulative_max_capacity[e, d];
-printf 'Checking: Delayed flows must be one-way:  ';
-check {p in process_delayed} sum{(p, m) in process_method : m in method_1way} 1 > 0;
+  printf'Checking: If stochastic timeseries data given, ';
+  printf'the realized branch is set for the period in stochastic_branches ';
+  printf'and the period start time is a branch start time is the timeseries ';
+  printf'for process timeseries \n';
+  check {(d,t) in period__time_first: exists{(p, param, tb, ts, t2) in process__param__branch__time} 1}:
+    exists{(p, param, tb, t, t) in process__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+  printf'Checking: If stochastic timeseries data given, ';
+  printf'the realized branch is set for the period in stochastic_branches ';
+  printf'and the period start time is a branch start time is the timeseries ';
+  printf'for process_inputNode timeseries\n';
+  check {(d,t) in period__time_first: exists{(p, source, param, tb, ts, t2) in process__source__param__branch__time} 1}:
+    exists{(p, source, param, tb, t, t) in process__source__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+  printf'Checking: If stochastic timeseries data given, ';
+  printf'the realized branch is set for the period in stochastic_branches ';
+  printf'and the period start time is a branch start time is the timeseries ';
+  printf'for process_outputNode timeseries\n';
+  check {(d,t) in period__time_first: exists{(p, sink, param, tb, ts, t2) in process__sink__param__branch__time} 1}:
+    exists{(p, sink, param, tb, t, t) in process__sink__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+  printf'Checking: If stochastic timeseries data given, ';
+  printf'the realized branch is set for the period in stochastic_branches ';
+  printf'and the period start time is a branch start time is the timeseries ';
+  printf'for Node inflow timeseries\n';
+  check{(d,t) in period__time_first: exists{(n, tb, ts, t2) in node__branch__time_inflow} 1 }:
+    exists{(n, tb, t, t) in node__branch__time_inflow, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+  printf'Checking: If stochastic timeseries data given, ';
+  printf'the realized branch is set for the period in stochastic_branches ';
+  printf'and the period start time is a branch start time is the timeseries ';
+  printf'for Node timeseries\n';
+  check {(d,t) in period__time_first: exists{(n, param, tb, ts, t2) in node__param__branch__time} 1}:
+    exists{(n, param, tb, t, t) in node__param__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+  printf'Checking: If stochastic timeseries data given, ';
+  printf'the realized branch is set for the period in stochastic_branches ';
+  printf'and the period start time is a branch start time is the timeseries ';
+  printf'for profile timeseries\n';
+  check {(d,t) in period__time_first: exists{(p, tb, ts, t2) in profile__branch__time} 1}:
+    exists{(p, tb, t, t) in profile__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+  printf'Checking: If stochastic timeseries data given, ';
+  printf'the realized branch is set for the period in stochastic_branches ';
+  printf'and the period start time is a branch start time is the timeseries ';
+  printf'for reserve timeseries\n';
+  check {(d,t) in period__time_first: exists{(r, ud, g, param, tb, ts, t2) in reserve__upDown__group__reserveParam__branch__time} 1}:
+    exists{(r, ud, g, param, tb, t, t) in reserve__upDown__group__reserveParam__branch__time, (d2,tb) in solve_branch__time_branch: (d2,d) in period__branch} 1;
+  printf'Checking: Existing capacity is less than cumulative_max_capacity\n';
+  check {(e, d) in ed_invest_cumulative}:
+    p_entity_all_existing[e, d] <= ed_cumulative_max_capacity[e, d];
+  printf 'Checking: Delayed flows must be one-way:  ';
+  check {p in process_delayed} sum{(p, m) in process_method : m in method_1way} 1 > 0;
+}
 
 param setup := gmtime();
-printf 'Timer - setup: %ss\n', setup - datetime0;
+printf 'Timer - Setup: %ss\n', setup - datetime0;
 param solve_progress symbolic := 'output/solve_progress.csv';
 printf ',%s', setup - datetime0 >> solve_progress;
 
