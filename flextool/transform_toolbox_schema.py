@@ -63,7 +63,22 @@ def convert_schema(input_data: Dict[str, Any]) -> Dict[str, Any]:
             for mapping_name, mapping_content in mapping_dict.items():
                 # Extract the mapping array from the nested structure
                 mapping_array = mapping_content.get("mapping", [])
-                table_config["mappings"][mapping_name] = mapping_array
+                # Elevate skip_columns and read_start_row to mapping level
+                skip_columns = None
+                read_start_row = None
+                for map in mapping_array:
+                    if 'skip_columns' in map:
+                        skip_columns = map['skip_columns']
+                        del map['skip_columns']
+                    if 'read_start_row' in map:
+                        read_start_row = map['read_start_row']
+                        del map['read_start_row']
+                table_config["mappings"][mapping_name] = {}
+                if read_start_row:
+                    table_config["mappings"][mapping_name]['read_start_row'] = read_start_row
+                if skip_columns:
+                    table_config["mappings"][mapping_name]['skip_columns'] = skip_columns
+                table_config["mappings"][mapping_name]['rules'] = mapping_array
         
         output_data["tables"][table_name] = table_config
     
