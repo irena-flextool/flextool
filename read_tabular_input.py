@@ -16,7 +16,7 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
 
     This function reads sheets/files one at a time to minimize memory usage.
     """
-    if target_db_url.startswith('sqlite://'):
+    if target_db_url.startswith('sqlite://') or target_db_url.startswith('http://'):
         db_url = target_db_url
     elif os.path.exists(target_db_url) and target_db_url.endswith(".sqlite"):
         db_url = 'sqlite:///' + target_db_url

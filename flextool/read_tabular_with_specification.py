@@ -313,6 +313,9 @@ class TabularReader:
         Returns a DataFrame with multi-index columns: (entity_class, parameter_definition, alternative, entity)
         Rows contain parameter values, with multi-index for map/array parameters.
         """
+        # Convenience
+        rulez = mapping_info['rules']
+
         # optional return sets (entities and entity_alternatives to be added)
         ent_zip_list = []
         ent_alt_zip = None
@@ -327,7 +330,7 @@ class TabularReader:
         max_header_row = -1
 
         filters = {}
-        for map_type, config in mapping_info['rules'].items():
+        for map_type, config in rulez.items():
             # Handle list of configs (Element, Dimension)
             if isinstance(config, list):
                 positions = []
@@ -370,6 +373,11 @@ class TabularReader:
         # Data rows start AFTER all header rows
         data_start_row = max(max_header_row + 1, mapping_info['read_start_row'])
 
+        ent_alt_col = set()
+        # Treat EntityAlternativeActivity separately
+        if 'EntityAlternativeActivity' in row_level_positions:
+            ent_alt_col = set([row_level_positions.pop('EntityAlternativeActivity')])
+
         # Identify which columns are label columns (to skip when extracting data)
         label_column_indices = set()
         for pos in row_level_positions.values():
@@ -384,7 +392,7 @@ class TabularReader:
             df_work = df_work.iloc[1:,:]
         skip_cols = set(mapping_info['skip_columns'])
 
-        # Step 1a: Apply filters
+        # Step 1a: Find columns based on regex filter that will be later removed (but not yet, to keep the column order)
         for map_type, rules in filters.items():
             position = rules[1]
             if not isinstance(position, int):
@@ -399,18 +407,12 @@ class TabularReader:
                     skip_cols = skip_cols.union(filter_cols)
 
         # Sidetrack 1b: Get scenarios and scenario_alternatives (if defined in the mapping)
-        if 'Scenario' in mapping_info['rules']:
-            # Clean up dataframe based on the mapping rules (remove columns)
-            cols_to_drop_sorted = sorted(skip_cols, reverse=True)
-            for col_idx in cols_to_drop_sorted:
-                if col_idx < len(df_work.columns):
-                    df_work = df_work.drop(df_work.columns[col_idx], axis=1)
-
-            scen_rule = mapping_info['rules']['Scenario']
+        if 'Scenario' in rulez:
+            scen_rule = rulez['Scenario']
 
             if scen_rule['position'] >= 0:
                 scen_array = df_work.iloc[:,scen_rule['position']]
-                if 'ScenarioAlternative' in mapping_info['rules']:
+                if 'ScenarioAlternative' in rulez:
                     df_work.index = df_work.iloc[:,0]
                     df_work = df_work.iloc[:,1:]
                     return(None, None, None, None, df_work)
@@ -419,7 +421,7 @@ class TabularReader:
                     
             if scen_rule['position'] < 0:
                 scen_array = df_work.iloc[-scen_rule['position']-1]
-                if 'ScenarioAlternative' in mapping_info['rules']:
+                if 'ScenarioAlternative' in rulez:
                     df_work.columns = df_work.iloc[0]
                     df_work = df_work.iloc[1:]
                     return(None, None, None, None, df_work)
@@ -446,9 +448,11 @@ class TabularReader:
         # Step 3: Drop header rows (data starts at data_start_row)
         df_work = df_work.iloc[data_start_row:, :].reset_index(drop=True)
 
+        # Sidetrack 3a: Make EntityAlternatives
+
         # Sidetrack 3b: Add entities from elements if required
-        if mapping_info['rules'].get('Element') is not None:
-            for i, element_map in enumerate(mapping_info['rules'].get('Element')):
+        if rulez.get('Element') is not None:
+            for i, element_map in enumerate(rulez.get('Element')):
                 if element_map['import_entities']:
                     if element_map['position'] >= 0:
                         ent_array = df_work.iloc[:,element_map['position']].to_list()
@@ -456,7 +460,7 @@ class TabularReader:
                         ent_array = df_work.iloc[element_map['position'] + 1,:].to_list()
                     # Add entity_class name for the dimension
                     ent_array = [(x,) for x in ent_array]
-                    ent_zip_list.append(zip([mapping_info['rules']['Dimension'][i]['value']]*len(ent_array), ent_array))
+                    ent_zip_list.append(zip([rulez['Dimension'][i]['value']]*len(ent_array), ent_array))
 
         # Step 4: Build row multi-index from 'header' columns
         row_index_names = []
@@ -496,23 +500,6 @@ class TabularReader:
                 else:
                     continue
 
-        # Step 6a: Drop label columns and skip_columns (in reverse order to preserve indices)
-        #          Also drop metadata levels (both from columns and rows)
-        # Combine label columns and skip columns
-        cols_to_drop = label_column_indices.union(skip_cols)
-        for map_type in ['EntityMetadata', 'ParameterValueMetadata']:
-            if map_type in mapping_info['rules']:
-                pos = mapping_info['rules'][map_type]['position']
-                if isinstance(pos, int) and pos >= 0:
-                    cols_to_drop.add(pos)
-                    df_work.index = df_work.index.droplevel(map_type)
-                elif isinstance(pos, int) and pos < 0:
-                    df_work.columns = df_work.columns.droplevel(map_type)
-        cols_to_drop_sorted = sorted(cols_to_drop, reverse=True)
-        for col_idx in cols_to_drop_sorted:
-            if col_idx < len(df_work.columns):
-                df_work = df_work.drop(df_work.columns[col_idx], axis=1)
-
         # Step 6b: combine element names to entity_byname
         row_entity_levels = []
         col_entity_levels = []
@@ -533,25 +520,26 @@ class TabularReader:
             joined.columns = ['Entity_byname']
             df_work.columns = joined.set_index('Entity_byname', append=True).index
             df_work.columns = df_work.columns.droplevel(col_entity_levels)
-        elif mapping_info['rules'].get('Entity') and mapping_info['rules']['Entity']['position'] == 'hidden' and mapping_info['rules']['Entity']['value']:
+        elif rulez.get('Entity') and rulez['Entity']['position'] == 'hidden' and rulez['Entity']['value']:
             df_work = df_work.drop(columns=df_work.columns)
-            if mapping_info['rules'].get('ExpandedValue'):
+            if rulez.get('ExpandedValue'):
                 df_work = df_work.reset_index(level='ExpandedValue')
-                df_work = df_work.set_index(pd.Index(data=range(len(df_work)), name=mapping_info['rules']['IndexName']['value']), append=True)
-            elif mapping_info['rules'].get('ParameterValue'):
+                df_work = df_work.set_index(pd.Index(data=range(len(df_work)), name=rulez['IndexName']['value']), append=True)
+            elif rulez.get('ParameterValue'):
                 df_work = df_work.reset_index(level='ParameterValue')
             else:
                 raise(f'No Entity nor Elements and also no ExpandedValue or Parametervalue for {mapping_info["rules"]}')
-            columns_array = [[(mapping_info['rules']['Entity']['value'],)]]
+            columns_array = [[(rulez['Entity']['value'],)]]
             df_work.columns = pd.MultiIndex.from_arrays(columns_array, names=['Entity_byname'])
         else:
             raise RuntimeError(f'The import definition for {mapping_info} does not include Entity nor Dimension')
             return (None, ent_zip_list, None, None, None)
 
         # Sidetrack 6c: EntityAlternative or Entity definition (now that df_work has been sufficiently cleaned up)
-        if 'EntityAlternativeActivity' in mapping_info['rules']:
-            df_ent_alt = df_work.reset_index(level='EntityAlternativeActivity')
-            df_ent_alt = df_ent_alt.drop(df_ent_alt.columns[1:], axis=1)
+        if 'EntityAlternativeActivity' in rulez:
+            df_ent_alt = df_work.iloc[:,rulez['EntityAlternativeActivity']['position']].dropna()
+            if isinstance(df_ent_alt, pd.Series):
+                df_ent_alt = df_ent_alt.to_frame()
             if 'Alternative' in df_ent_alt.columns:
                 df_ent_alt = df_ent_alt.stack('Alternative')
             if 'Entity_byname' in df_ent_alt.columns:
@@ -561,15 +549,32 @@ class TabularReader:
                 df_ent_alt.index.get_level_values('Entity_byname').tolist(), 
                 df_ent_alt.index.get_level_values('Alternative').tolist(), 
                 df_ent_alt.squeeze(axis=1).values)
-        elif 'ParameterDefinition' not in mapping_info['rules']:
+        elif 'ParameterDefinition' not in rulez:
             entity_array = df_work.drop(df_work.columns, axis=1).index.unique().to_list()
             if 'EntityClass' in hidden_mappings:
                 entity_class_array = [hidden_mappings['EntityClass']]*len(entity_array) 
             ent_zip_list.append(zip(entity_class_array, entity_array))
             return None, ent_zip_list, None, None, None
 
+        # Step 6a: Drop label columns and skip_columns (in reverse order to preserve indices)
+        #          Also drop metadata levels (both from columns and rows)
+        # Combine label columns and skip columns and possible entityAlternative columns
+        cols_to_drop = label_column_indices.union(skip_cols).union(ent_alt_col)
+        for map_type in ['EntityMetadata', 'ParameterValueMetadata']:
+            if map_type in rulez:
+                pos = rulez[map_type]['position']
+                if isinstance(pos, int) and pos >= 0:
+                    cols_to_drop.add(pos)
+                    df_work.index = df_work.index.droplevel(map_type)
+                elif isinstance(pos, int) and pos < 0:
+                    df_work.columns = df_work.columns.droplevel(map_type)
+        cols_to_drop_sorted = sorted(cols_to_drop, reverse=True)
+        for col_idx in cols_to_drop_sorted:
+            if col_idx < len(df_work.columns):
+                df_work = df_work.drop(df_work.columns[col_idx], axis=1)
+
         # Special case 6d: Data in ExpandedValue column:
-        exp_value_rules = mapping_info['rules'].get('ExpandedValue')
+        exp_value_rules = rulez.get('ExpandedValue')
         if exp_value_rules:
             exp_value_position = exp_value_rules.get('position')
         if row_entity_levels and not col_entity_levels and exp_value_rules and exp_value_position and isinstance(exp_value_position, int):
