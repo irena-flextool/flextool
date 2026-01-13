@@ -174,7 +174,10 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    tabular_reader = TabularReader("flextool/import_excel_input.json")
+    # Get the path to import_excel_input.json relative to this script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    json_path = os.path.join(script_dir, "flextool", "import_excel_input.json")
+    tabular_reader = TabularReader(json_path)
 
     if args.tabular_file_path:
         input_path = args.tabular_file_path

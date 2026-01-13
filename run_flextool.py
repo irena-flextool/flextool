@@ -7,7 +7,7 @@ from typing import Callable
 from functools import wraps
 import time
 import os
-from flextool.write_outputs import write_outputs
+from write_outputs import write_outputs
 from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import DatabaseMapping, to_database
 from spinedb_api.exception import NothingToCommit
@@ -48,7 +48,12 @@ def main():
     parser.add_argument('scenario_name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
-    
+    parser.add_argument('--write-outputs', action='store_true',
+                        help='Automatically write outputs after successful run')
+    parser.add_argument('--output-config', metavar='PATH',
+                        default='templates/default_plots.yaml',
+                        help='Path to output configuration file (default: templates/default_plots.yaml)')
+
 
     args = parser.parse_args()
     input_db_url = args.input_db_url
@@ -100,9 +105,9 @@ def main():
         logging.error(f"Model run failed: {str(e)}\nTraceback:\n{traceback.format_exc()}")
         sys.exit(1)
     
-    # If successful write outputs
-    if return_code == 0:
-        write_outputs(scenario_name=scenario_name, output_config_path='templates/default_plots.yaml')
+    # If successful and requested, write outputs
+    if return_code == 0 and args.write_outputs:
+        write_outputs(scenario_name=scenario_name, output_config_path=args.output_config)
         timer.insert(0, time.perf_counter())
         ## print("--- write outputs time %s seconds ---" % (timer[0] - timer[1]))
     

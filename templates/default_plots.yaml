@@ -108,8 +108,6 @@ filenames:
     dual_invest_node_d_e: node_invest_marginal__d
     dual_invest_unit_d_e: unit_invest_marginal__d
     entity_annuity_d_p: entity_annuity
-    total_inflow_d_g: group__process__node__d
-    total_inflow_dt_g: group__process__node__dt
     nodeGroup_unit_node_inertia_dt_gee: group__unit__node_inertia__dt
     nodeGroup_flows_d_gpe: group_flows__d
     nodeGroup_flows_dt_gpe: group_flows__dt

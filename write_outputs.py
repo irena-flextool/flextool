@@ -437,7 +437,7 @@ def nodeGroup_total_inflow(par, s, v, r, debug):
 
 
     # Return timestep results
-    results.append((result_multi_dt, 'total_inflow_dt_g'))
+    results.append((result_multi_dt, 'nodeGroup_flows_dt_g'))
 
     # Aggregate to period level
     result_multi_d = result_multi_dt.groupby(level='period').sum()
@@ -447,7 +447,7 @@ def nodeGroup_total_inflow(par, s, v, r, debug):
     result_multi_d.columns.name = 'group'
 
     # Return period results
-    results.append((result_multi_d, 'total_inflow_d_g'))
+    results.append((result_multi_d, 'nodeGroup_flows_d_g'))
 
     return results
 
@@ -1428,11 +1428,11 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
 
     if subdir:
         parquet_dir = os.path.join('output_parquet', subdir)
-        csv_dir = os.path.join('output_csv', subdir)
+        csv_dir = os.path.join('output', subdir)
         plot_dir = os.path.join('output_plots', subdir)  # Fixed: was os.path.join(subdir, ' output_plots')
     else:
         parquet_dir = 'output_parquet'
-        csv_dir = 'output_csv'
+        csv_dir = 'output'
         plot_dir = 'output_plots'
 
 
@@ -1480,7 +1480,7 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
                 all_results[table_name] = result_df
 
         # Filter results to only include keys in settings (for single_result optimization)
-        keys_to_keep = set(settings['plots'].keys())
+        keys_to_keep = set(settings['filenames'].keys())
         results = {k: v for k, v in all_results.items() if k in keys_to_keep}
         start = log_time("Formatted for output", start)
 
