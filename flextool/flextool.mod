@@ -1215,19 +1215,16 @@ param pdtNodeInflow {n in node, (d, t) in dt : (n, 'no_inflow') not in node__inf
                then
 			       sum{(p,tb) in solve_branch__time_branch, (d,ts) in period__time_first: (p,d) in period__branch} pbt_node_inflow[n, tb, ts, t]
                else
-				   + (if n in nodeBalancePeriod
-		               then + pdNode[n, 'annual_flow', d] * period_share_of_year[d] / hours_in_period[d])
-			       + (if n in nodeBalance && (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]
+			       + (if n in nodeBalance union nodeBalancePeriod && (n, 'scale_to_annual_flow') in node__inflow_method && pdNode[n, 'annual_flow', d]
 				       then + period_flow_annual_multiplier[n, d] * ptNode_inflow[n, t])
-			       + (if n in nodeBalance && (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d]
+			       + (if n in nodeBalance union nodeBalancePeriod && (n, 'scale_in_proportion') in node__inflow_method && pdNode[n, 'annual_flow', d]
 					   then + period_flow_proportional_multiplier[n, d] * ptNode_inflow[n, t])
-				   + (if n in nodeBalance && (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]
+				   + (if n in nodeBalance union nodeBalancePeriod && (n, 'scale_to_annual_and_peak_flow') in node__inflow_method && pdNode[n, 'annual_flow', d] && pdNode[n, 'peak_inflow', d]
 					   then + new_old_slope[n, d] * ptNode_inflow[n, t]
 			                - new_old_section[n, d])
-				   + (if n in nodeBalance && (n, 'use_original') in node__inflow_method
+				   + (if n in nodeBalance union nodeBalancePeriod && (n, 'use_original') in node__inflow_method
 		               then + ptNode_inflow[n, t])
 		  );
-
 param node_capacity_for_scaling{n in node, d in period_in_use} := 1;
 param group_capacity_for_scaling{g in group, d in period_in_use} := 1;
 #param node_capacity_for_scaling{n in node, d in period_in_use} := ( if   sum{(p,source,n) in process_source_sink} p_entity_unitsize[p] + sum{(p, n, sink) in process_source_sink} p_entity_unitsize[p]
@@ -2152,7 +2149,7 @@ s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in peri
   - sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt}
     ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
     ) * step_duration[d, t]
-  + pdNode[n, 'annual_flow', d] * period_share_of_year[d]
+  + (if (n, 'no_inflow') not in node__inflow_method then sum{(d, t) in dt} pdtNodeInflow[n, d, t])
   + sum {(d, t) in dt} vq_state_up[n, d, t] * node_capacity_for_scaling[n, d]
   - sum {(d, t) in dt} vq_state_down[n, d, t] * node_capacity_for_scaling[n, d]
 ;
