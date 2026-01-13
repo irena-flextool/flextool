@@ -926,43 +926,43 @@ def node_summary(par, s, v, r, debug):
     # 1. Timestep-level node summary
     node_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_product([nodes, categories], names=['node', 'category']), dtype=float)
     inflow_cols = node_dt.columns[
-                    node_dt.columns.get_level_values('node').isin(par.node_inflow.columns.intersection(nodes)) 
+                    node_dt.columns.get_level_values('node').isin(par.node_inflow.columns.intersection(nodes))
                     & node_dt.columns.get_level_values('category').isin(['inflow'])]
-    node_dt[inflow_cols] = par.node_inflow[nodes]
-    
+    node_dt[inflow_cols] = par.node_inflow[inflow_cols.get_level_values('node')]
+
     from_units = r.flow_dt[s.process_unit.join(r.flow_dt.columns).join(nodes_sink, how='inner')].T.groupby('sink').sum().T
     from_units_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(from_units.columns)
                         & node_dt.columns.get_level_values('category').isin(['from_units'])]
-    node_dt[from_units_cols] = from_units
+    node_dt[from_units_cols] = from_units[from_units_cols.get_level_values('node')]
 
     # From connections
     from_connections = r.flow_dt[s.process_connection.join(r.flow_dt.columns).join(nodes_sink, how='inner')].T.groupby('sink').sum().T
     from_connections_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(from_connections.columns)
                         & node_dt.columns.get_level_values('category').isin(['from_connections'])]
-    node_dt[from_connections_cols] = from_connections
+    node_dt[from_connections_cols] = from_connections[from_connections_cols.get_level_values('node')]
 
     # To units (negative)
     to_units = -r.flow_dt[s.process_unit.join(r.flow_dt.columns).join(nodes_source, how='inner')].T.groupby('source').sum().T
     to_units_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(to_units.columns)
                         & node_dt.columns.get_level_values('category').isin(['to_units'])]
-    node_dt[to_units_cols] = to_units
+    node_dt[to_units_cols] = to_units[to_units_cols.get_level_values('node')]
 
     # To connections (negative)
     to_connections = -r.flow_dt[s.process_connection.join(r.flow_dt.columns).join(nodes_source, how='inner')].T.groupby('source').sum().T
     to_connections_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(to_connections.columns)
                         & node_dt.columns.get_level_values('category').isin(['to_connections'])]
-    node_dt[to_connections_cols] = to_connections
+    node_dt[to_connections_cols] = to_connections[to_connections_cols.get_level_values('node')]
 
     # Self discharge
     self_discharge = r.self_discharge_loss_dt[r.self_discharge_loss_dt.columns.intersection(s.node_self_discharge.intersection(nodes))]
     self_discharge_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(self_discharge.columns)
                         & node_dt.columns.get_level_values('category').isin(['self_discharge'])]
-    node_dt[self_discharge_cols] = self_discharge
+    node_dt[self_discharge_cols] = self_discharge[self_discharge_cols.get_level_values('node')]
 
     # Upward slack
     upward_slack_data = v.q_state_up.loc[:, v.q_state_up.columns.get_level_values('node').isin(balanced_nodes.intersection(nodes))]
@@ -970,7 +970,7 @@ def node_summary(par, s, v, r, debug):
     upward_slack_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(upward_slack_data.columns.get_level_values('node'))
                         & node_dt.columns.get_level_values('category').isin(['upward_slack'])]
-    node_dt[upward_slack_cols] = upward_slack_data
+    node_dt[upward_slack_cols] = upward_slack_data[upward_slack_cols.get_level_values('node')]
 
     # Downward slack (negative)
     downward_slack_data = -v.q_state_down.loc[:, v.q_state_down.columns.get_level_values('node').isin(balanced_nodes.intersection(nodes))]
@@ -978,7 +978,7 @@ def node_summary(par, s, v, r, debug):
     downward_slack_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(downward_slack_data.columns.get_level_values('node'))
                         & node_dt.columns.get_level_values('category').isin(['downward_slack'])]
-    node_dt[downward_slack_cols] = downward_slack_data
+    node_dt[downward_slack_cols] = downward_slack_data[downward_slack_cols.get_level_values('node')]
 
     # Fill any remaining NaN values with 0
     node_dt = node_dt.fillna(0.0)
@@ -1529,8 +1529,8 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
         if read_parquet_dir:
             # Simplified CSV writing from parquet (no par,s,v,r available)
             for table_name, attributes in settings['filenames'].items():
-                if table_name and table_name in results and attributes[0]:
-                    csv_filename = attributes[0] + '.csv'
+                if table_name and table_name in results and attributes:
+                    csv_filename = attributes + '.csv'
                     df = results[table_name]
                     csv_path = os.path.join(csv_dir, csv_filename)
                     df_copy = df.reset_index()
@@ -1541,8 +1541,8 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
             write_summary_csv(par, s, v, r, csv_dir)
 
             for table_name, attributes in settings['filenames'].items():
-                if table_name and table_name in results and attributes[0]:
-                    csv_filename = attributes[0] + '.csv'
+                if table_name and table_name in results and attributes:
+                    csv_filename = attributes + '.csv'
                     df = results[table_name]
                     if 'solve' not in df.index.names and 'period' in df.index.names: # and csv_filename not in ['costs_discounted.csv']
                         df.index = df.index.join(s.solve_period)

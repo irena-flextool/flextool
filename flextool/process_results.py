@@ -650,7 +650,7 @@ def post_process_results(par, s, v):
     r.group_node_up_slack__dt = pd.DataFrame(index=s.dt_realize_dispatch)
     r.group_node_down_slack__dt = pd.DataFrame(index=s.dt_realize_dispatch)
     for g in s.groupOutputNodeFlows:
-        g_node = s.group_node[s.group_node.get_level_values('group').isin([g])].get_level_values('node')
+        g_node = s.group_node[s.group_node.get_level_values('node').isin(s.node_balance) & s.group_node.get_level_values('group').isin([g])].get_level_values('node')
         r.group_node_up_slack__dt[g] = r.upward_node_slack_dt[g_node].sum(axis=1)
         r.group_node_down_slack__dt[g] = r.downward_node_slack_dt[g_node].sum(axis=1)
 
