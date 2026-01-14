@@ -1,6 +1,7 @@
 import argparse
 import os
 from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError, to_database, Asterisk
+from spinedb_api.exception import NothingToCommit
 from flextool.read_tabular_with_specification import TabularReader
 
 flextool_db_version = 25
@@ -99,15 +100,21 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
                     continue
 
                 # Read data and process the dataframe
-                try:
-                    (data_df, ent_zip, ent_act_zip, scen_array, scen_alt_df) = tabular_reader._extract_data(raw_df, mapping_info, table_options, column_types)
-                except Exception as e:
-                    print(f"  Error processing mapping '{mapping_name}': {e}")
-                    raise
+                # try:
+                (data_df, ent_zip_list, ent_act_zip, scen_array, scen_alt_df) = tabular_reader._extract_data(raw_df, mapping_info, table_options, column_types)
+                # except Exception as e:
+                    # print(f"  Error processing mapping '{mapping_name}': {e}")
+                    # raise
                     #continue  # Continue to next mapping on processing error
                 
-                if ent_zip is not None:
-                    tabular_reader._add_entities(ent_zip, db, mapping_name)
+                if ent_zip_list:
+                    tabular_reader._add_entities(ent_zip_list, db, table_name, mapping_name)
+
+                # Add alternatives to the database
+                if data_df is not None:
+                    alt_array = data_df.columns.get_level_values('Alternative').unique().to_list()
+                    tabular_reader._add_alternatives(alt_array, db, table_name, mapping_name)
+
                 # Write re-organised dataframe to database
                 if data_df is not None:
                 #try:
@@ -117,48 +124,32 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
                         value_type = value_type['value']
                     else:
                         value_type = 'constant'
-                    tabular_reader._write_items_to_db(data_df, db, mapping_name, value_type)
+                    tabular_reader._add_parameters(data_df, db, table_name, mapping_name, value_type)
+
                 # Write entity_activities to the database
                 if ent_act_zip is not None:
-                    tabular_reader._add_entity_alternatives(ent_act_zip, db, mapping_name)
+                    tabular_reader._add_entity_alternatives(ent_act_zip, db, table_name, mapping_name)
+
+                # Add scenarios to the database
                 if scen_array is not None:
                     for scen in scen_array:
                         try:
                             db.add_scenario(name=scen)
                         except Exception as e:
                             raise SpineDBAPIError(f'Could not add scenario {scen} to the database: {e}')
+                
+                # Add scenario_alternatives to the database
                 if scen_alt_df is not None:
-                    # First, add any missing alternatives
-                    alternatives = scen_alt_df.stack().unique()
-                    for alt_name in alternatives:
-                        if alt_name not in tabular_reader.alternatives_added:
-                            try:
-                                db.add_alternative(name=alt_name)
-                            except Exception as e:
-                                raise SpineDBAPIError(f"Failed to add alternative '{alt_name}': {e}")
-                            tabular_reader.alternatives_added.add(str(alt_name))
-                    # Add scenario alternatives
-                    for (scen, alts) in scen_alt_df.items():
-                        alts_list = alts.dropna().to_list()
-                        counter = len(alts_list)
-                        for alt in alts_list:
-                            try:
-                                db.add_scenario_alternative(scenario_name=scen,
-                                    alternative_name=alt,
-                                    rank=counter)
-                            except Exception as e:
-                                raise SpineDBAPIError(f'Could not add scenario {scen} - alternative {alt} to the database: {e}')
-                            counter -= 1
-                    # Commit the changes
-                    try:
-                        db.commit_session(f"Imported data from mapping '{mapping_name}'")
-                        tabular_reader.logger.info("Successfully added scenario alternatives")
-                    except Exception as e:
-                        raise SpineDBAPIError(f"Could not add scenario alternatives based on {mapping_name}: {e}")
+                    tabular_reader._add_scenario_alternatives(scen_alt_df, db, table_name, mapping_name)
 
-                #except Exception as e:
-                #    print(f"  Error trying to write mapping data to db '{mapping_name}': {e}")
-                # Write entities to the database
+                # Commit the changes
+                try:
+                    db.commit_session(f"Imported data from mapping '{mapping_name}'")
+                    tabular_reader.logger.info(f"Successfully committed data and items from mapping {mapping_name}")
+                except NothingToCommit:
+                    pass
+                except Exception as e:
+                    raise SpineDBAPIError(f"Could not commit data and items based on {mapping_name}: {e}")
 
     print("\nAll data processed successfully!    (* = No data found for the mapping)")
 

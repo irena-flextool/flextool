@@ -1062,7 +1062,7 @@ param pProcess_source_sink {(p, source, sink, param) in process__source__sink__p
 		  else if (p, sink, param) in process__sink__param
 		  then p_process_sink[p, sink, param]
 		  else 0;
-display setup1;
+
 set process_source_sourceSinkTimeParam_in_use :=
   {(p, source) in process_source, param in sourceSinkTimeParam:
     param in sourceSinkTimeParamRequired ||

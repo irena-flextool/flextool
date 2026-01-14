@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import json
+from python_calamine import load_workbook
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple, Set
 import logging
@@ -92,7 +93,9 @@ class TabularReader:
         return table_key in selected_tables
 
 
-    def _add_entities(self, ent_zip_list, db_map, mapping_name):
+    # ==================== Add to database methods ====================
+
+    def _add_entities(self, ent_zip_list, db_map, table_name, mapping_name):
         for ent_zip in ent_zip_list:
             for ent_class, ent in ent_zip:
                 key = (ent_class, ent)
@@ -105,42 +108,18 @@ class TabularReader:
                         db_map.add_entity(entity_class_name=ent_class,
                             entity_byname=ent)
                     except Exception as e:
-                        raise SpineDBAPIError(f'Could not add entity {ent} from class {ent_class} to the database: {e}')
+                        raise SpineDBAPIError(f'Could not add entity {ent} from class {ent_class} based on table.mapping {table_name}.{mapping_name} to the database: {e}')
 
-        # Commit the changes
-        try:
-            db_map.commit_session(f"Imported entities from {mapping_name}")
-            self.logger.info(f"Successfully committed entities '{mapping_name}'")
-        except NothingToCommit:
-            pass
-        except Exception as e:
-            raise SpineDBAPIError(f"Failed to commit session: {e}")
+    def _add_alternatives(self, alt_array, db_map, table_name, mapping_name):
+        for alt in alt_array:
+            if alt not in self.alternatives_added:
+                self.alternatives_added.add(alt)
+                try:
+                    db_map.add_alternative(name=alt)
+                except Exception as e:
+                    raise SpineDBAPIError(f'Could not add alternative {alt} based on table.mapping {table_name}.{mapping_name} to the database: {e}')
 
-    def _add_alternatives(self, ent_zip_list, db_map, mapping_name):
-        for ent_zip in ent_zip_list:
-            for ent_class, ent in ent_zip:
-                key = (ent_class, ent)
-                if key not in self.entities_added:
-                    self.entities_added[key] = {
-                        'entity_class_name': ent_class,
-                        'entity_byname': ent
-                    }
-                    try:
-                        db_map.add_entity(entity_class_name=ent_class,
-                            entity_byname=ent)
-                    except Exception as e:
-                        raise SpineDBAPIError(f'Could not add entity {ent} from class {ent_class} to the database: {e}')
-
-        # Commit the changes
-        try:
-            db_map.commit_session(f"Imported entities from {mapping_name}")
-            self.logger.info(f"Successfully committed entities '{mapping_name}'")
-        except NothingToCommit:
-            pass
-        except Exception as e:
-            raise SpineDBAPIError(f"Failed to commit session: {e}")
-
-    def _add_entity_alternatives(self, ent_act_zip, db_map, mapping_name):
+    def _add_entity_alternatives(self, ent_act_zip, db_map, table_name, mapping_name):
         for ent_class, ent, alt, value in ent_act_zip:
             key = (ent_class, ent, alt)
             if key not in self.entity_alternatives_added:
@@ -155,16 +134,109 @@ class TabularReader:
                         alternative_name=alt,
                         active=bool(value)),
                 except Exception as e:
-                    raise SpineDBAPIError(f'Could not add entity_alternative {ent}, {alt} from class {ent_class} to the database: {e}')
+                    raise SpineDBAPIError(f'Could not add entity_alternative {ent}, {alt} from class {ent_class} based on table.mapping {table_name}.{mapping_name} to the database: {e}')
 
-        # Commit the changes
-        try:
-            db_map.commit_session(f"Imported entity_alternatives from {mapping_name}")
-            self.logger.info(f"Successfully committed entity_alternatives '{mapping_name}'")
-        except NothingToCommit:
-            pass
-        except Exception as e:
-            raise SpineDBAPIError(f"Failed to commit session: {e}")
+    def _add_scenario_alternatives(self, scen_alt_df, db_map, table_name, mapping_name):
+        # First, add any missing alternatives
+        alternatives = scen_alt_df.stack().unique()
+        self._add_alternatives(alternatives, db_map, table_name, mapping_name)
+        # Add scenario alternatives
+        for (scen, alts) in scen_alt_df.items():
+            alts_list = alts.dropna().to_list()
+            counter = len(alts_list)
+            for alt in alts_list:
+                try:
+                    db_map.add_scenario_alternative(scenario_name=scen,
+                        alternative_name=alt,
+                        rank=counter)
+                except Exception as e:
+                    raise SpineDBAPIError(f'Could not add scenario {scen} - alternative {alt} to the database: {e}')
+                counter -= 1
+
+
+    def _add_parameters(self, data_df: pd.DataFrame, db_map, table_name, mapping_name: str, value_type: str) -> None:
+        """Add extracted parameter data to the Spine database.
+
+        Args:
+            data_df: DataFrame with multi-index columns (entity_class, parameter_definition, alternative, entity)
+            db_map: DatabaseMapping instance
+            mapping_name: Name of the mapping being processed
+        """
+        # Make the output look nice
+        if data_df.empty:
+            print("*", end='')  # Mark mappings with no data
+            return
+        else:
+            print(' ', end='')
+
+        errors = []
+        
+        # Order the dataframe column levels to be reliable
+        data_df.columns = data_df.columns.reorder_levels(['EntityClass', 'ParameterDefinition', 'Alternative', 'Entity_byname'])
+
+        # Add parameter values based on value_type by iterating through columns
+        if value_type == 'constant':
+            # Scalar
+            for col_name, col_data in data_df.items():
+                value, type_ = to_database(col_data.iloc[0])
+        
+                # Add parameter value
+                try:
+                    db_map.add_parameter_value(
+                        entity_class_name=col_name[0],
+                        parameter_definition_name=col_name[1],
+                        alternative_name=col_name[2],
+                        entity_byname=col_name[3],
+                        value=value,
+                        type=type_
+                    )
+                except Exception as e:
+                    errors.append(f"Failed to add a constant for (class, parameter, alternative, entity): {col_name[0]}, {col_name[1]}, {col_name[2]}, {col_name[3]} based on table.mapping {table_name}.{mapping_name}.\n    {e}")
+
+        elif value_type == 'array':
+            # Array
+            for col_name, col_data in data_df.items():
+                array_obj = Array(values=col_data.dropna().to_list(), index_name=col_data.index.name)
+                value, type_ = to_database(array_obj)
+
+                # Add parameter value
+                try:
+                    db_map.add_parameter_value(
+                        entity_class_name=col_name[0],
+                        parameter_definition_name=col_name[1],
+                        alternative_name=col_name[2],
+                        entity_byname=col_name[3],
+                        value=value,
+                        type=type_
+                    )
+                except Exception as e:
+                    errors.append(f"Failed to add an array for (class, parameter, alternative, entity): {col_name[0]}, {col_name[1]}, {col_name[2]}, {col_name[3]} based on table.mapping {table_name}.{mapping_name}.\n    {e}")
+
+        elif value_type == 'map':
+            # Map
+            for col_name, col_data in data_df.items():
+                df_col = data_df[col_name].dropna()
+                map_obj = Map(indexes=df_col.index.to_list(), values=df_col.values.tolist(), index_name='')
+                value, type_ = to_database(map_obj)
+
+                # Add parameter value
+                try:
+                    db_map.add_parameter_value(
+                        entity_class_name=col_name[0],
+                        parameter_definition_name=col_name[1],
+                        alternative_name=col_name[2],
+                        entity_byname=col_name[3],
+                        value=value,
+                        type=type_
+                    )
+                except Exception as e:
+                    errors.append(f"Failed to add a map for (class, parameter, alternative, entity): {col_name[0]}, {col_name[1]}, {col_name[2]}, {col_name[3]} based on table.mapping {table_name}.{mapping_name}.\n    {e}")
+
+        # Raise errors if any occurred
+        if errors:
+            error_msg = f"\nErrors occurred while processing mapping '{mapping_name}':\n"
+            error_msg += "\n".join(f"  - {err}" for err in errors)
+            raise SpineDBAPIError(error_msg)
 
 
     # ==================== Reading Methods ====================
@@ -198,21 +270,14 @@ class TabularReader:
         table_column_types = self.get_table_column_types(sheet_name.lower())
         default_column_type = self.specifications['tables']['node_c']['default_column_type']
 
-        # Auto-detect engine based on file extension
-        file_extension = file_path.suffix.lower()
-        if file_extension == '.ods':
-            engine = 'odf'
-        elif file_extension in ['.xlsx', '.xlsm', '.xltx', '.xltm']:
-            engine = 'openpyxl'
-        else:
-            # Default to openpyxl for backward compatibility
-            engine = 'openpyxl'
-            self.logger.warning(f"Unknown file extension '{file_extension}', defaulting to openpyxl engine")
-
-        # Always read without headers - the mapping will extract headers from specific positions
-        # This ensures all position references in the mapping are correct
-        raw_df = pd.read_excel(file_path, sheet_name=sheet_name,
-                              header=None, engine=engine, na_filter=True)
+        try:
+            raw_df = pd.read_excel(excel_file_path, sheet_name=sheet_name, engine='openpyxl', header=None, na_filter=True)
+        except Exception as e1:
+            try:
+                print(f"The fast Calamine engine could not read sheet {sheet_name}, trying OpenPyxl.")
+                raw_df = pd.read_excel(excel_file_path, sheet_name=sheet_name, engine='calamine', header=None, na_filter=True)
+            except Exception as e2:
+                raise ValueError(f"Both calamine and openpyxl engines failed for sheet {sheet_name}") from e2
 
         # Note: Column type conversions are applied after dataframe processing
         # in the extraction methods, not here on the raw dataframe
@@ -420,18 +485,24 @@ class TabularReader:
                     return(None, None, None, scen_array, None)
                     
             if scen_rule['position'] < 0:
+                examine_cols = list(set(range(len(df_work.columns))) - skip_cols)
+                df_work = df_work.iloc[:, examine_cols]
                 scen_array = df_work.iloc[-scen_rule['position']-1]
                 if 'ScenarioAlternative' in rulez:
-                    df_work.columns = df_work.iloc[0]
-                    df_work = df_work.iloc[1:]
+                    df_work.columns = df_work.iloc[-scen_rule['position']-1]
+                    df_work = df_work.iloc[-scen_rule['position']-1:]
                     return(None, None, None, None, df_work)
                 else:
                     return(None, None, None, scen_array, None)
 
         # Step 2: Build column multi-index from 'header' rows
+        skip_cols = label_column_indices.union(skip_cols).union(ent_alt_col)
+        examine_cols = list(set(range(len(df_work.columns))) - skip_cols)
+
         col_index_names = []
         if col_level_positions:
             col_index_arrays = []
+            nan_positions = set()
 
             for map_type, pos in col_level_positions.items():
                 if isinstance(pos, list):
@@ -442,13 +513,13 @@ class TabularReader:
                 else:
                     col_index_arrays.append(df_work.iloc[pos, :].values)
                     col_index_names.append(map_type)
+                    nan_positions.update(df_work.iloc[pos, examine_cols][df_work.iloc[pos, examine_cols].isna()].index.tolist())
 
             df_work.columns = pd.MultiIndex.from_arrays(col_index_arrays, names=col_index_names)
+            skip_cols = skip_cols.union(nan_positions)
 
-        # Step 3: Drop header rows (data starts at data_start_row)
+        # Step 3a: Drop header rows (data starts at data_start_row)
         df_work = df_work.iloc[data_start_row:, :].reset_index(drop=True)
-
-        # Sidetrack 3a: Make EntityAlternatives
 
         # Sidetrack 3b: Add entities from elements if required
         if rulez.get('Element') is not None:
@@ -500,7 +571,7 @@ class TabularReader:
                 else:
                     continue
 
-        # Step 6b: combine element names to entity_byname
+        # Step 6a: combine element names to entity_byname
         row_entity_levels = []
         col_entity_levels = []
         for row_index_name in row_index_names:
@@ -515,11 +586,13 @@ class TabularReader:
             joined.name = 'Entity_byname'
             df_work = df_work.set_index(joined, append=True)
             df_work.index = df_work.index.droplevel(row_entity_levels)
+            # entity_array = df_work.index.get_level_values('Entity_byname').unique().tolist()
         elif col_entity_levels:
             joined = df_work.columns.to_frame()[col_entity_levels].apply(tuple, axis=1).to_frame()
             joined.columns = ['Entity_byname']
             df_work.columns = joined.set_index('Entity_byname', append=True).index
             df_work.columns = df_work.columns.droplevel(col_entity_levels)
+            # entity_array = df_work.columns.get_level_values('Entity_byname').unique().tolist()
         elif rulez.get('Entity') and rulez['Entity']['position'] == 'hidden' and rulez['Entity']['value']:
             df_work = df_work.drop(columns=df_work.columns)
             if rulez.get('ExpandedValue'):
@@ -531,9 +604,18 @@ class TabularReader:
                 raise(f'No Entity nor Elements and also no ExpandedValue or Parametervalue for {mapping_info["rules"]}')
             columns_array = [[(rulez['Entity']['value'],)]]
             df_work.columns = pd.MultiIndex.from_arrays(columns_array, names=['Entity_byname'])
+            skip_cols = set()
         else:
             raise RuntimeError(f'The import definition for {mapping_info} does not include Entity nor Dimension')
-            return (None, ent_zip_list, None, None, None)
+
+        # Sidetrack 6b: Add entities to the list
+        # if rulez['EntityClass']['position'] == 'hidden':
+        #     entity_class_array = [hidden_mappings['EntityClass']]*len(entity_array) 
+        # elif rulez['EntityClass']['position'] >= 0:
+        #     entity_class_array = df_work.index.get_level_values('EntityClass').tolist()
+        # elif rulez['EntityClass']['position'] < 0:
+        #     entity_class_array = df_work.columns.get_level_values('EntityClass').tolist()
+        # ent_zip_list.append(zip(entity_class_array, entity_array))
 
         # Sidetrack 6c: EntityAlternative or Entity definition (now that df_work has been sufficiently cleaned up)
         if 'EntityAlternativeActivity' in rulez:
@@ -549,31 +631,27 @@ class TabularReader:
                 df_ent_alt.index.get_level_values('Entity_byname').tolist(), 
                 df_ent_alt.index.get_level_values('Alternative').tolist(), 
                 df_ent_alt.squeeze(axis=1).values)
-        elif 'ParameterDefinition' not in rulez:
-            entity_array = df_work.drop(df_work.columns, axis=1).index.unique().to_list()
-            if 'EntityClass' in hidden_mappings:
-                entity_class_array = [hidden_mappings['EntityClass']]*len(entity_array) 
-            ent_zip_list.append(zip(entity_class_array, entity_array))
-            return None, ent_zip_list, None, None, None
 
-        # Step 6a: Drop label columns and skip_columns (in reverse order to preserve indices)
+        # Shortcut 6d:
+        # If there are no parameter values to be taken, cut short:
+        if 'ParameterDefinition' not in rulez:
+            return None, ent_zip_list, ent_alt_zip, None, None
+
+        # Step 6e: Drop label columns and skip_columns (in reverse order to preserve indices)
         #          Also drop metadata levels (both from columns and rows)
         # Combine label columns and skip columns and possible entityAlternative columns
-        cols_to_drop = label_column_indices.union(skip_cols).union(ent_alt_col)
         for map_type in ['EntityMetadata', 'ParameterValueMetadata']:
             if map_type in rulez:
                 pos = rulez[map_type]['position']
                 if isinstance(pos, int) and pos >= 0:
-                    cols_to_drop.add(pos)
+                    skip_cols.add(pos)
                     df_work.index = df_work.index.droplevel(map_type)
                 elif isinstance(pos, int) and pos < 0:
                     df_work.columns = df_work.columns.droplevel(map_type)
-        cols_to_drop_sorted = sorted(cols_to_drop, reverse=True)
-        for col_idx in cols_to_drop_sorted:
-            if col_idx < len(df_work.columns):
-                df_work = df_work.drop(df_work.columns[col_idx], axis=1)
+        cols_to_keep = list(set(range(len(df_work.columns))) - skip_cols)
+        df_work = df_work.iloc[:, cols_to_keep]
 
-        # Special case 6d: Data in ExpandedValue column:
+        # Special case 6f: Data in ExpandedValue column:
         exp_value_rules = rulez.get('ExpandedValue')
         if exp_value_rules:
             exp_value_position = exp_value_rules.get('position')
@@ -585,7 +663,7 @@ class TabularReader:
         column_relevant_types = ['EntityClass', 'ParameterDefinition', 'Alternative', 'Entity_byname'] # , 'Element', 'Dimension'
         row_relevant_types = ['ParameterValueIndex']
 
-        # Add hidden column levels
+        # Step 7a: Add hidden column levels
         for map_type in column_relevant_types:
             if map_type in hidden_mappings:
                 value = hidden_mappings[map_type]
@@ -601,7 +679,7 @@ class TabularReader:
                         names=[df_work.columns.name, map_type]
                     )
 
-        # Add hidden row levels
+        # Step 7b: Add hidden row levels
         for map_type in row_relevant_types:
             if map_type in hidden_mappings:
                 value = hidden_mappings[map_type]
@@ -650,6 +728,8 @@ class TabularReader:
                 df_work.index = pd.Index([0] * len(df_work))
 
         # Step 11: Drop all empty or NaN columns (now, after data has been organised into Spine db format):
+        class_ent_multiindex = df_work.columns.droplevel(['ParameterDefinition', 'Alternative']).unique()
+        ent_zip_list.append(zip(class_ent_multiindex.get_level_values('EntityClass').to_list(), class_ent_multiindex.get_level_values('Entity_byname').to_list()))
         df_work = df_work.dropna(axis=1, how='all')
 
         # Step 12: Clean possible None level from the column level multi-index
@@ -735,290 +815,6 @@ class TabularReader:
             )
 
         return df
-
-    def _extract_linear_data(self, df: pd.DataFrame, mapping_info: Dict, table_options: Dict) -> pd.DataFrame:
-        """Extract data from linear (column or row based) format.
-
-        In linear data, ParameterValue/ExpandedValue has an integer position indicating
-        where the actual data is located (either a column or row).
-
-        Returns a DataFrame with multi-index columns: (entity_class, parameter_definition, alternative, entity)
-        Rows contain parameter values, with multi-index for map/array parameters.
-        """
-        # Determine if data is in columns or rows
-        pv_pos = mapping_info.get('ParameterValue', {}).get('position')
-        if not pv_pos or pv_pos == 'hidden':
-            pv_pos = mapping_info.get('ExpandedValue', {}).get('position')
-
-        is_column_data = isinstance(pv_pos, int) and pv_pos >= 0
-
-        # Collect hidden values
-        hidden_mappings = {}
-        for map_type, config in mapping_info.items():
-            if not isinstance(config, list) and config['position'] == 'hidden' and config.get('value') is not None:
-                hidden_mappings[map_type] = config['value']
-
-        pv_type = hidden_mappings.get('ParameterValueType', 'float')
-
-        # Build data structure: dict of column_key -> {row_index -> value}
-        column_data = {}
-
-        # Iterate through rows (for column data) or columns (for row data)
-        if is_column_data:
-            # Data is organized in columns
-            for row_idx in range(len(df)):
-                item = {**hidden_mappings}
-                skip_row = False
-
-                # Extract values from each mapped position
-                for map_type, config in mapping_info.items():
-                    # Handle list of configs (Element, Dimension)
-                    if isinstance(config, list):
-                        # For Element, collect all values in order
-                        if map_type == 'Element':
-                            for i, cfg in enumerate(config):
-                                pos = cfg['position']
-                                if isinstance(pos, int) and pos >= 0 and pos < len(df.columns):
-                                    value = df.iloc[row_idx, pos]
-                                    item[f'Element_{i}'] = value
-                        elif map_type == 'Dimension':
-                            for i, cfg in enumerate(config):
-                                if cfg.get('value') is not None:
-                                    item[f'Dimension_{i}'] = cfg['value']
-                    else:
-                        pos = config['position']
-                        if isinstance(pos, int):
-                            if pos >= 0 and pos < len(df.columns):
-                                value = df.iloc[row_idx, pos]
-
-                                # Apply filter if specified
-                                filter_re = config.get('filter_re')
-                                if filter_re:
-                                    if pd.isna(value) or not re.match(filter_re, str(value)):
-                                        skip_row = True
-                                        break
-
-                                item[map_type] = value
-                            elif pos < 0:
-                                # Negative position means row header
-                                # Convert to 0-based column index
-                                header_row = abs(pos) - 1
-                                # This would need to be extracted from a header row
-                                # For now, we'll use the column name
-                                if header_row == 0 and hasattr(df.columns[0], '__iter__'):
-                                    item[map_type] = df.columns[0][header_row]
-
-                if skip_row:
-                    continue
-
-                # Get value
-                if 'ParameterValue' in item and pd.isna(item.get('ParameterValue')):
-                    continue
-                if 'ExpandedValue' in item and pd.isna(item.get('ExpandedValue')):
-                    continue
-
-                # Build column key and row index
-                col_key = self._build_column_key(item)
-                row_key = self._build_row_index(item, pv_type)
-
-                # Get the value
-                if 'ExpandedValue' in item:
-                    cell_value = item['ExpandedValue']
-                elif 'ParameterValue' in item:
-                    cell_value = item['ParameterValue']
-                else:
-                    continue
-
-                # Store the value
-                if col_key not in column_data:
-                    column_data[col_key] = {}
-                column_data[col_key][row_key] = cell_value
-
-        else:
-            # Data is organized in rows (less common)
-            for col_idx in range(len(df.columns)):
-                item = {**hidden_mappings}
-                skip_col = False
-
-                for map_type, config in mapping_info.items():
-                    if not isinstance(config, list):
-                        pos = config['position']
-                        if isinstance(pos, int):
-                            if pos < 0:
-                                # Negative position is row index (0-based after conversion)
-                                row_idx = abs(pos) - 1
-                                if row_idx < len(df):
-                                    value = df.iloc[row_idx, col_idx]
-
-                                    # Apply filter if specified
-                                    filter_re = config.get('filter_re')
-                                    if filter_re:
-                                        if pd.isna(value) or not re.match(filter_re, str(value)):
-                                            skip_col = True
-                                            break
-
-                                    item[map_type] = value
-
-                if skip_col:
-                    continue
-
-                # Get value
-                if 'ParameterValue' in item and pd.isna(item.get('ParameterValue')):
-                    continue
-                if 'ExpandedValue' in item and pd.isna(item.get('ExpandedValue')):
-                    continue
-
-                # Build column key and row index
-                col_key = self._build_column_key(item)
-                row_key = self._build_row_index(item, pv_type)
-
-                # Get the value
-                if 'ExpandedValue' in item:
-                    cell_value = item['ExpandedValue']
-                elif 'ParameterValue' in item:
-                    cell_value = item['ParameterValue']
-                else:
-                    continue
-
-                # Store the value
-                if col_key not in column_data:
-                    column_data[col_key] = {}
-                column_data[col_key][row_key] = cell_value
-
-        # Convert to DataFrame with multi-index columns
-        return self._build_dataframe_from_column_data(column_data)
-
-    def _write_items_to_db(self, data_df: pd.DataFrame, db_map, mapping_name: str, value_type: str) -> None:
-        """Write extracted data DataFrame to Spine database.
-
-        This method:
-        1. Collects unique alternatives and entities from DataFrame columns
-        2. Adds alternatives and entities first
-        3. Adds parameter values by iterating through DataFrame columns
-
-        Args:
-            data_df: DataFrame with multi-index columns (entity_class, parameter_definition, alternative, entity)
-            db_map: DatabaseMapping instance
-            mapping_name: Name of the mapping being processed
-        """
-        if data_df.empty:
-            self.logger.warning("*")
-            return
-        else:
-            print(' ', end='')
-
-        errors = []
-
-        # Track unique alternatives and entities to add
-        alternatives_to_add = set()
-        entities_to_add = {}  # (entity_class, entity_byname) -> entity info
-        
-        # Order the dataframe column levels to be reliable
-        data_df.columns = data_df.columns.reorder_levels(['EntityClass', 'ParameterDefinition', 'Alternative', 'Entity_byname'])
-
-
-        # First pass: collect alternatives and entities from column multi-index
-        for col in data_df.columns:
-            entity_class, parameter_definition, alternative, entity_byname = col
-
-            # Collect alternatives
-            if alternative and pd.notna(alternative):
-                if alternative not in self.alternatives_added:
-                    alternatives_to_add.add(str(alternative))
-                    self.alternatives_added.add(str(alternative))
-
-            key = (entity_class, entity_byname)
-            if key not in self.entities_added:
-                entities_to_add[key] = {
-                    'entity_class_name': entity_class,
-                    'entity_byname': entity_byname
-                }
-                self.entities_added[key] = {
-                    'entity_class_name': entity_class,
-                    'entity_byname': entity_byname
-                }
-
-        # Add alternatives
-        for alt_name in alternatives_to_add:
-            try:
-                db_map.add_alternative(name=alt_name)
-            except Exception as e:
-                raise SpineDBAPIError(f"Failed to add alternative '{alt_name}': {e}")
-
-        # Add entities
-        for entity_info in entities_to_add.values():
-            try:
-                db_map.add_entity(entity_class_name=entity_info['entity_class_name'],
-                    entity_byname=entity_info['entity_byname'])
-            except Exception as e:
-                raise SpineDBAPIError(f"Failed to add entity {entity_info}: {e}")
-                #errors.append(f"Failed to add entity {entity_info}: {e}")
-
-        # Second pass: add parameter values by iterating through columns
-        # Determine value type based on series length and index
-        if value_type == 'constant':
-            # Scalar
-            for col_name, col_data in data_df.items():
-                value, type_ = to_database(col_data.iloc[0])
-        
-                # Add parameter value
-                try:
-                    db_map.add_parameter_value(
-                        entity_class_name=col_name[0],
-                        parameter_definition_name=col_name[1],
-                        alternative_name=col_name[2],
-                        entity_byname=col_name[3],
-                        value=value,
-                        type=type_
-                    )
-                except Exception as e:
-                    raise SpineDBAPIError(f"Failed to add parameter value {col_name}: {e}")
-
-        elif value_type == 'array':
-            # Array
-            for col_name, col_data in data_df.items():
-                array_obj = Array(values=col_data.dropna().to_list(), index_name=col_data.index.name)
-                value, type_ = to_database(array_obj)
-
-                # Add parameter value
-                db_map.add_parameter_value(
-                    entity_class_name=col_name[0],
-                    parameter_definition_name=col_name[1],
-                    alternative_name=col_name[2],
-                    entity_byname=col_name[3],
-                    value=value,
-                    type=type_
-                )
-
-        elif value_type == 'map':
-            # Map
-            for col_name, col_data in data_df.items():
-                df_col = data_df[col_name].dropna()
-                map_obj = Map(indexes=df_col.index.to_list(), values=df_col.values.tolist(), index_name='')
-                value, type_ = to_database(map_obj)
-
-                # Add parameter value
-                db_map.add_parameter_value(
-                    entity_class_name=col_name[0],
-                    parameter_definition_name=col_name[1],
-                    alternative_name=col_name[2],
-                    entity_byname=col_name[3],
-                    value=value,
-                    type=type_
-                )
-
-        # Commit the changes
-        try:
-            db_map.commit_session(f"Imported data from mapping '{mapping_name}'")
-            self.logger.info(f"Successfully committed {len(data_df.columns)} columns for mapping '{mapping_name}'")
-        except Exception as e:
-            errors.append(f"Failed to commit session: {e}")
-
-        # Raise errors if any occurred
-        if errors:
-            error_msg = f"\nErrors occurred while processing mapping '{mapping_name}':\n"
-            error_msg += "\n".join(f"  - {err}" for err in errors)
-            raise RuntimeError(error_msg)
 
 
 if __name__ == "__main__":
