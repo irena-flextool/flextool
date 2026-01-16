@@ -2,6 +2,7 @@ import argparse
 import os
 from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError, to_database, Asterisk
 from spinedb_api.exception import NothingToCommit
+from spinedb_api.dataframes import to_dataframe
 from flextool.read_tabular_with_specification import TabularReader
 
 flextool_db_version = 25
@@ -142,14 +143,25 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
                 if scen_alt_df is not None:
                     tabular_reader._add_scenario_alternatives(scen_alt_df, db, table_name, mapping_name)
 
-                # Commit the changes
-                try:
-                    db.commit_session(f"Imported data from mapping '{mapping_name}'")
-                    tabular_reader.logger.info(f"Successfully committed data and items from mapping {mapping_name}")
-                except NothingToCommit:
-                    pass
-                except Exception as e:
-                    raise SpineDBAPIError(f"Could not commit data and items based on {mapping_name}: {e}")
+        # Commit the changes
+        try:
+            db.commit_session(f"Imported data from mapping '{mapping_name}'")
+            tabular_reader.logger.info(f"Successfully committed data and items from mapping {mapping_name}")
+        except NothingToCommit:
+            pass
+        except Exception as e:
+            raise SpineDBAPIError(f"Could not commit data and items based on {mapping_name}: {e}")
+
+        # value_item = db.find_parameter_value_item(
+        #     entity_class_name="profile",
+        #     parameter_definition_name="profile",
+        #     alternative_name="Base",
+        #     entity_byname=("PV_Tracking_MP",),
+        # )
+        # df = to_dataframe(value_item)
+        
+        # df.add_or_update_from(data_df.unstack().droplevel(-1).reset_index(), db)
+
 
     print("\nAll data processed successfully!    (* = No data found for the mapping)")
 

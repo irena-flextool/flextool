@@ -109,6 +109,10 @@ def compare_files(file1_path: str, file2_path: str) -> Tuple[
     data1 = file1_lines[len(headers1):]
     data2 = file2_lines[len(headers2):]
 
+    # Sort data lines alphabetically to ignore ordering differences
+    data1 = sorted(data1)
+    data2 = sorted(data2)
+
     differences = []
     for i in range(max(len(data1), len(data2))):
         line1 = data1[i] if i < len(data1) else ""

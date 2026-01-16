@@ -7,7 +7,7 @@ from typing import Dict, List, Any, Optional, Tuple, Set
 import logging
 import argparse
 import re
-from spinedb_api import to_database, Map, Array, SpineDBAPIError
+from spinedb_api import to_database, Map, Array, SpineDBAPIError, dataframes
 from spinedb_api.exception import NothingToCommit
 
 
@@ -92,12 +92,24 @@ class TabularReader:
             return True  # If no selection specified, all tables are selected
         return table_key in selected_tables
 
+    def _add_hidden_map_type_to_index(self, map_type, value, df_index) -> pd.Index:
+                if isinstance(df_index, pd.MultiIndex):
+                    # Get all arrays from existing multi-index
+                    arrays = [df_index.get_level_values(i).to_list() for i in range(df_index.nlevels)]
+                    arrays.append([value] * len(df_index))
+                    names = list(df_index.names) + [map_type]
+                    return pd.MultiIndex.from_arrays(arrays, names=names)
+                else:
+                    return pd.MultiIndex.from_arrays(
+                        [df_index.values, [value] * len(df_index)],
+                        names=[df_index.name, map_type]
+                    )
 
     # ==================== Add to database methods ====================
 
-    def _add_entities(self, ent_zip_list, db_map, table_name, mapping_name):
-        for ent_zip in ent_zip_list:
-            for ent_class, ent in ent_zip:
+    def _add_entities(self, ent_set_list, db_map, table_name, mapping_name):
+        for ent_set in ent_set_list:
+            for ent_class, ent in ent_set:
                 key = (ent_class, ent)
                 if key not in self.entities_added:
                     self.entities_added[key] = {
@@ -143,16 +155,13 @@ class TabularReader:
         # Add scenario alternatives
         for (scen, alts) in scen_alt_df.items():
             alts_list = alts.dropna().to_list()
-            counter = len(alts_list)
-            for alt in alts_list:
+            for i, alt in enumerate(alts_list):
                 try:
                     db_map.add_scenario_alternative(scenario_name=scen,
                         alternative_name=alt,
-                        rank=counter)
+                        rank=i)
                 except Exception as e:
                     raise SpineDBAPIError(f'Could not add scenario {scen} - alternative {alt} to the database: {e}')
-                counter -= 1
-
 
     def _add_parameters(self, data_df: pd.DataFrame, db_map, table_name, mapping_name: str, value_type: str) -> None:
         """Add extracted parameter data to the Spine database.
@@ -173,6 +182,11 @@ class TabularReader:
         
         # Order the dataframe column levels to be reliable
         data_df.columns = data_df.columns.reorder_levels(['EntityClass', 'ParameterDefinition', 'Alternative', 'Entity_byname'])
+        data_df.columns.names = ['entity_class_name', 'parameter_definition_name', 'alternative_name', 'entity_byname']
+
+        if isinstance(data_df.index, pd.MultiIndex):
+            data_df.index = data_df.index.get_level_values(0)
+
 
         # Add parameter values based on value_type by iterating through columns
         if value_type == 'constant':
@@ -216,7 +230,7 @@ class TabularReader:
             # Map
             for col_name, col_data in data_df.items():
                 df_col = data_df[col_name].dropna()
-                map_obj = Map(indexes=df_col.index.to_list(), values=df_col.values.tolist(), index_name='')
+                map_obj = Map(indexes=df_col.index.to_list(), values=df_col.values.tolist(), index_name=df_col.index.name)
                 value, type_ = to_database(map_obj)
 
                 # Add parameter value
@@ -352,7 +366,7 @@ class TabularReader:
                 'import_entities': item.get('import_entities')
             }
             # Handle multiple instances of same map_type (Element, Dimension, etc.)
-            if map_type in ['Element', 'Dimension']:
+            if map_type in ['Element', 'Dimension', 'IndexName', 'ParameterValueIndex']:
                 if map_type not in parsed['rules']:
                     parsed['rules'][map_type] = []
                 parsed['rules'][map_type].append(config)
@@ -382,7 +396,7 @@ class TabularReader:
         rulez = mapping_info['rules']
 
         # optional return sets (entities and entity_alternatives to be added)
-        ent_zip_list = []
+        ent_set_list = []
         ent_alt_zip = None
 
         # Separate header row and label column mappings
@@ -409,15 +423,27 @@ class TabularReader:
                         counter =+ counter
                 # Store as list
                 if positions:
-                    # Check if negative (header rows) or positive (label columns)
-                    if positions[0] < 0:
-                        # Header rows
-                        header_rows = [abs(p) - 1 for p in positions]
-                        col_level_positions[map_type] = header_rows
-                        max_header_row = max(max_header_row, max(header_rows))
-                    else:
-                        # Label columns
-                        row_level_positions[map_type] = positions
+                    row_level_flag = False
+                    col_level_flag = False
+                    row_level_positions[map_type] = []
+                    for i, pos in enumerate(positions):
+                        # Check if negative (header rows) or positive (label columns)
+                        if pos < 0:
+                            # Header rows
+                            col_pos = abs(pos) - 1
+                            if col_level_flag is False:
+                                col_level_positions[map_type] = [col_pos]
+                                col_level_flag = True
+                            else:
+                                col_level_positions[map_type].append(col_pos)
+                            max_header_row = max(max_header_row, col_pos)
+                        else:
+                            # Label columns
+                            if row_level_flag is False:
+                                row_level_positions[map_type] = [pos]    
+                                row_level_flag = True
+                            else:
+                                row_level_positions[map_type].append(pos)
             else:
                 pos = config['position']
                 if pos == 'hidden':
@@ -426,9 +452,9 @@ class TabularReader:
                 elif isinstance(pos, int):
                     if pos < 0:
                         # Header row - convert to 0-based row index
-                        header_row_idx = abs(pos) - 1
-                        col_level_positions[map_type] = header_row_idx
-                        max_header_row = max(max_header_row, header_row_idx)
+                        col_positions = abs(pos) - 1
+                        col_level_positions[map_type] = col_positions
+                        max_header_row = max(max_header_row, col_positions)
                     else:
                         # Label column
                         row_level_positions[map_type] = pos
@@ -478,8 +504,8 @@ class TabularReader:
             if scen_rule['position'] >= 0:
                 scen_array = df_work.iloc[:,scen_rule['position']]
                 if 'ScenarioAlternative' in rulez:
-                    df_work.index = df_work.iloc[:,0]
-                    df_work = df_work.iloc[:,1:]
+                    df_work.index = df_work.iloc[:,scen_rule['position']]
+                    df_work = df_work.iloc[:,scen_rule['position'] + 1:]
                     return(None, None, None, None, df_work)
                 else:
                     return(None, None, None, scen_array, None)
@@ -490,7 +516,7 @@ class TabularReader:
                 scen_array = df_work.iloc[-scen_rule['position']-1]
                 if 'ScenarioAlternative' in rulez:
                     df_work.columns = df_work.iloc[-scen_rule['position']-1]
-                    df_work = df_work.iloc[-scen_rule['position']-1:]
+                    df_work = df_work.iloc[-scen_rule['position']:]
                     return(None, None, None, None, df_work)
                 else:
                     return(None, None, None, scen_array, None)
@@ -531,7 +557,7 @@ class TabularReader:
                         ent_array = df_work.iloc[element_map['position'] + 1,:].to_list()
                     # Add entity_class name for the dimension
                     ent_array = [(x,) for x in ent_array]
-                    ent_zip_list.append(zip([rulez['Dimension'][i]['value']]*len(ent_array), ent_array))
+                    ent_set_list.append(zip([rulez['Dimension'][i]['value']]*len(ent_array), ent_array))
 
         # Step 4: Build row multi-index from 'header' columns
         row_index_names = []
@@ -586,6 +612,8 @@ class TabularReader:
             joined.name = 'Entity_byname'
             df_work = df_work.set_index(joined, append=True)
             df_work.index = df_work.index.droplevel(row_entity_levels)
+            if not isinstance(df_work.index, pd.MultiIndex):
+                df_work.index = pd.MultiIndex.from_arrays([df_work.index], names=[df_work.index.name])
             # entity_array = df_work.index.get_level_values('Entity_byname').unique().tolist()
         elif col_entity_levels:
             joined = df_work.columns.to_frame()[col_entity_levels].apply(tuple, axis=1).to_frame()
@@ -597,7 +625,7 @@ class TabularReader:
             df_work = df_work.drop(columns=df_work.columns)
             if rulez.get('ExpandedValue'):
                 df_work = df_work.reset_index(level='ExpandedValue')
-                df_work = df_work.set_index(pd.Index(data=range(len(df_work)), name=rulez['IndexName']['value']), append=True)
+                df_work = df_work.set_index(pd.Index(data=range(len(df_work))), append=True)
             elif rulez.get('ParameterValue'):
                 df_work = df_work.reset_index(level='ParameterValue')
             else:
@@ -632,11 +660,6 @@ class TabularReader:
                 df_ent_alt.index.get_level_values('Alternative').tolist(), 
                 df_ent_alt.squeeze(axis=1).values)
 
-        # Shortcut 6d:
-        # If there are no parameter values to be taken, cut short:
-        if 'ParameterDefinition' not in rulez:
-            return None, ent_zip_list, ent_alt_zip, None, None
-
         # Step 6e: Drop label columns and skip_columns (in reverse order to preserve indices)
         #          Also drop metadata levels (both from columns and rows)
         # Combine label columns and skip columns and possible entityAlternative columns
@@ -659,56 +682,60 @@ class TabularReader:
             df_work = df_work.drop(columns=df_work.columns)
             df_work = df_work.reset_index(level='ExpandedValue')
 
+        if 'Entity_byname' in df_work.index.names \
+            and not any(x.startswith('ParameterValueIndex') for x in df_work.index.names) \
+            and 'ParameterDefinition' not in df_work.columns.names:
+            df_work = df_work.T
+
         # Step 7: Add hidden values as constant levels
         column_relevant_types = ['EntityClass', 'ParameterDefinition', 'Alternative', 'Entity_byname'] # , 'Element', 'Dimension'
         row_relevant_types = ['ParameterValueIndex']
+        preferred_types = {'EntityClass': 'Entity_byname', 'Entity_byname': 'EntityClass', 'ParameterDefinition': 'Alternative', 'Alternative': 'ParameterDefinition'}
 
         # Step 7a: Add hidden column levels
         for map_type in column_relevant_types:
             if map_type in hidden_mappings:
-                value = hidden_mappings[map_type]
-                if isinstance(df_work.columns, pd.MultiIndex):
-                    # Get all arrays from existing multi-index
-                    arrays = [df_work.columns.get_level_values(i) for i in range(df_work.columns.nlevels)]
-                    arrays.append([value] * len(df_work.columns))
-                    names = list(df_work.columns.names) + [map_type]
-                    df_work.columns = pd.MultiIndex.from_arrays(arrays, names=names)
+                if preferred_types[map_type] in df_work.index.names:
+                    df_work.index = self._add_hidden_map_type_to_index(map_type, hidden_mappings[map_type], df_work.index) 
                 else:
-                    df_work.columns = pd.MultiIndex.from_arrays(
-                        [df_work.columns.values, [value] * len(df_work.columns)],
-                        names=[df_work.columns.name, map_type]
-                    )
+                    df_work.columns = self._add_hidden_map_type_to_index(map_type, hidden_mappings[map_type], df_work.columns) 
 
         # Step 7b: Add hidden row levels
         for map_type in row_relevant_types:
             if map_type in hidden_mappings:
-                value = hidden_mappings[map_type]
-                if isinstance(df_work.index, pd.MultiIndex):
-                    arrays = [df_work.index.get_level_values(i) for i in range(df_work.index.nlevels)]
-                    arrays.append([value] * len(df_work.index))
-                    names = list(df_work.index.names) + [map_type]
-                    df_work.index = pd.MultiIndex.from_arrays(arrays, names=names)
+                if preferred_types[map_type] in df_work.columns.names:
+                    df_work.columns = self._add_hidden_map_type_to_index(map_type, hidden_mappings[map_type], df_work.columns) 
                 else:
-                    df_work.index = pd.MultiIndex.from_arrays(
-                        [df_work.index.values, [value] * len(df_work.index)],
-                        names=[df_work.index.name, map_type]
-                    )
+                    df_work.index = self._add_hidden_map_type_to_index(map_type, hidden_mappings[map_type], df_work.index) 
+
+        # Step 7c: Make zipped arrays to add entities (before any of them are dropped by stack/unstack operations when no data)
+        if 'Entity_byname' in df_work.columns.names:
+            ent_class = df_work.columns.get_level_values('EntityClass')
+            ent = df_work.columns.get_level_values('Entity_byname')
+        elif 'Entity_byname' in df_work.index.names:
+            ent_class = df_work.index.get_level_values('EntityClass')
+            ent = df_work.index.get_level_values('Entity_byname')
+        ent_set_list.append(set(zip(ent_class, ent)))
+
+        # Shortcut 7d:
+        # If there are no parameter values to be imported, cut short:
+        if 'ParameterDefinition' not in rulez:
+            return None, ent_set_list, ent_alt_zip, None, None
 
         # Step 8: Stack column levels that belong in rows (IndexName, ParameterValueIndex)
         if isinstance(df_work.columns, pd.MultiIndex):
-            levels_to_stack = [name for name in df_work.columns.names
-                              if name in ['IndexName', 'ParameterValueIndex']]
+            levels_to_stack = [name for name in list(df_work.columns.names)
+                              if name and name.startswith(('IndexName', 'ParameterValueIndex'))]
             if levels_to_stack:
                 df_work = df_work.stack(levels_to_stack, future_stack=True)
                 # Ensure result is a DataFrame (stack can return Series with single column)
                 if isinstance(df_work, pd.Series):
                     df_work = df_work.to_frame().replace('', np.nan).dropna()
 
-        # Step 9: Stack and unstack to reorganize indices
-        # Unstack row levels that belong in columns (EntityClass, ParameterDefinition, Alternative, Entity_byname)
+        # Step 9: Unstack row levels that belong in columns (EntityClass, ParameterDefinition, Alternative, Entity_byname)
         if isinstance(df_work.index, pd.MultiIndex):
-            levels_to_unstack = [name for name in df_work.index.names
-                                if name in ['EntityClass', 'ParameterDefinition', 'Alternative', 'Entity_byname']]
+            levels_to_unstack = [name for name in list(df_work.index.names)
+                                if name and name.startswith(('EntityClass', 'ParameterDefinition', 'Alternative', 'Entity_byname'))]
             if levels_to_unstack:
                 if df_work.index.duplicated().any():
                     df_work = df_work.set_index(pd.Index(data=range(len(df_work))), append=True)
@@ -717,19 +744,20 @@ class TabularReader:
                 if isinstance(df_work, pd.Series):
                     df_work = df_work.to_frame().replace('', np.nan).dropna().T
 
-        # Step 10: Build final row index from ParameterValueIndex or IndexName
-        if isinstance(df_work.index, pd.MultiIndex):
-            # Combine Element dimensions into tuples for parameter value index
-            df_work.index = df_work.index.map(lambda x: '-'.join(map(str, x)))
-        else:
-            # Single index - might need to convert to 0 for scalars
-            # Check if all values are empty/NaN
-            if df_work.index.isna().all() or (df_work.index == '').all():
-                df_work.index = pd.Index([0] * len(df_work))
+        # Step 10: Add index names
+        if rulez.get('IndexName') and not isinstance(rulez['IndexName'][0]['position'], int):
+            if isinstance(df_work.index, pd.MultiIndex):
+                for i, index_name in enumerate(rulez['IndexName']):
+                    df_work.index = df_work.index.rename(index_name['value'], level=i)
+            else:
+                df_work.index.name = rulez['IndexName'][0]['value']
+
+        # Might need to convert to 0 for scalars
+        # Check if all values are empty/NaN
+        # if df_work.index.isna().all() or (df_work.index == '').all():
+        #     df_work.index = pd.Index([0] * len(df_work))
 
         # Step 11: Drop all empty or NaN columns (now, after data has been organised into Spine db format):
-        class_ent_multiindex = df_work.columns.droplevel(['ParameterDefinition', 'Alternative']).unique()
-        ent_zip_list.append(zip(class_ent_multiindex.get_level_values('EntityClass').to_list(), class_ent_multiindex.get_level_values('Entity_byname').to_list()))
         df_work = df_work.dropna(axis=1, how='all')
 
         # Step 12: Clean possible None level from the column level multi-index
@@ -737,7 +765,7 @@ class TabularReader:
             none_level_pos = df_work.columns.names.index(None)
             df_work.columns = df_work.columns.droplevel(none_level_pos)
 
-        return df_work, ent_zip_list, ent_alt_zip, None, None
+        return df_work, ent_set_list, ent_alt_zip, None, None
 
     def _build_column_key(self, item: Dict) -> Tuple:
         """Build column key tuple: (entity_class, parameter_definition, alternative, entity).

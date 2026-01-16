@@ -4,6 +4,69 @@
     "item_type": "Importer",
     "source_type": "ExcelReader",
     "tables": {
+        "timeset_blocks": {
+            "options": {},
+            "column_types": {
+                "0": "string",
+                "1": "string",
+                "2": "string",
+                "3": "float"
+            },
+            "row_types": {
+                "0": "string",
+                "1": "string"
+            },
+            "mappings": {
+                "Mapping 1": {
+                    "read_start_row": 2,
+                    "rules": [
+                        {
+                            "map_type": "EntityClass",
+                            "position": "hidden",
+                            "value": "timeset"
+                        },
+                        {
+                            "map_type": "Entity",
+                            "position": 1
+                        },
+                        {
+                            "map_type": "EntityMetadata",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "ParameterDefinition",
+                            "position": "hidden",
+                            "value": "timeset_duration"
+                        },
+                        {
+                            "map_type": "Alternative",
+                            "position": 0
+                        },
+                        {
+                            "map_type": "ParameterValueMetadata",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "ParameterValueType",
+                            "position": "hidden",
+                            "value": "map"
+                        },
+                        {
+                            "map_type": "IndexName",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "ParameterValueIndex",
+                            "position": 2
+                        },
+                        {
+                            "map_type": "ExpandedValue",
+                            "position": 3
+                        }
+                    ]
+                }
+            }
+        },
         "solve_sequence": {
             "options": {
                 "read_until_col": false,
@@ -226,7 +289,10 @@
                 "30": "float",
                 "31": "float",
                 "32": "float",
-                "33": "float"
+                "33": "float",
+                "34": "float",
+                "35": "float",
+                "36": "float"
             },
             "default_column_type": "float",
             "row_types": {
@@ -364,7 +430,36 @@
                 "7": "float",
                 "8": "float",
                 "9": "float",
-                "10": "float"
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float",
+                "19": "float",
+                "20": "float",
+                "21": "float",
+                "22": "float",
+                "23": "float",
+                "24": "float",
+                "25": "float",
+                "26": "float",
+                "27": "float",
+                "28": "float",
+                "29": "float",
+                "30": "float",
+                "31": "float",
+                "32": "float",
+                "33": "float",
+                "34": "float",
+                "35": "float",
+                "36": "float",
+                "37": "float",
+                "38": "float",
+                "39": "float"
             },
             "default_column_type": "float",
             "row_types": {
@@ -754,7 +849,50 @@
                 "2": "float",
                 "3": "float",
                 "4": "float",
-                "5": "float"
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float",
+                "17": "float",
+                "18": "float",
+                "19": "float",
+                "20": "float",
+                "21": "float",
+                "22": "float",
+                "23": "float",
+                "24": "float",
+                "25": "float",
+                "26": "float",
+                "27": "float",
+                "28": "float",
+                "29": "float",
+                "30": "float",
+                "31": "float",
+                "32": "float",
+                "33": "float",
+                "34": "float",
+                "35": "float",
+                "36": "float",
+                "37": "float",
+                "38": "float",
+                "39": "float",
+                "40": "float",
+                "41": "float",
+                "42": "float",
+                "43": "float",
+                "44": "float",
+                "45": "float",
+                "46": "float",
+                "47": "float",
+                "48": "float"
             },
             "default_column_type": "float",
             "row_types": {
@@ -842,7 +980,13 @@
                 "22": "float",
                 "23": "float",
                 "24": "float",
-                "25": "float"
+                "25": "float",
+                "26": "float",
+                "27": "float",
+                "28": "float",
+                "29": "float",
+                "30": "float",
+                "31": "float"
             },
             "default_column_type": "float",
             "row_types": {
@@ -1044,14 +1188,7 @@
                 "1": "string",
                 "2": "string",
                 "3": "string",
-                "4": "string",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float"
+                "4": "float"
             },
             "default_column_type": "float",
             "row_types": {
@@ -1059,7 +1196,6 @@
             },
             "mappings": {
                 "Mapping 1": {
-                    "read_start_row": 2,
                     "rules": [
                         {
                             "map_type": "EntityClass",
@@ -1092,7 +1228,7 @@
                         },
                         {
                             "map_type": "ParameterValue",
-                            "position": 4
+                            "position": "hidden"
                         }
                     ]
                 }
@@ -1175,16 +1311,7 @@
             },
             "column_types": {
                 "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "string",
-                "4": "string",
-                "5": "string",
-                "6": "string",
-                "7": "string",
-                "8": "string",
-                "9": "string",
-                "10": "string"
+                "1": "string"
             },
             "mappings": {
                 "Mapping 1": {
@@ -2419,12 +2546,7 @@
                 "8": "string",
                 "9": "float",
                 "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float"
+                "11": "float"
             },
             "default_column_type": "float",
             "row_types": {
@@ -3789,69 +3911,6 @@
                 }
             }
         },
-        "timeset_blocks": {
-            "options": {},
-            "column_types": {
-                "0": "string",
-                "1": "string",
-                "2": "string",
-                "3": "float"
-            },
-            "row_types": {
-                "0": "string",
-                "1": "string"
-            },
-            "mappings": {
-                "Mapping 1": {
-                    "read_start_row": 2,
-                    "rules": [
-                        {
-                            "map_type": "EntityClass",
-                            "position": "hidden",
-                            "value": "timeset"
-                        },
-                        {
-                            "map_type": "Entity",
-                            "position": 1
-                        },
-                        {
-                            "map_type": "EntityMetadata",
-                            "position": "hidden"
-                        },
-                        {
-                            "map_type": "ParameterDefinition",
-                            "position": "hidden",
-                            "value": "timeset_duration"
-                        },
-                        {
-                            "map_type": "Alternative",
-                            "position": 0
-                        },
-                        {
-                            "map_type": "ParameterValueMetadata",
-                            "position": "hidden"
-                        },
-                        {
-                            "map_type": "ParameterValueType",
-                            "position": "hidden",
-                            "value": "map"
-                        },
-                        {
-                            "map_type": "IndexName",
-                            "position": "hidden"
-                        },
-                        {
-                            "map_type": "ParameterValueIndex",
-                            "position": 2
-                        },
-                        {
-                            "map_type": "ExpandedValue",
-                            "position": 3
-                        }
-                    ]
-                }
-            }
-        },
         "timeset_timeline": {
             "options": {
                 "row": 0,
@@ -3897,6 +3956,153 @@
                         },
                         {
                             "map_type": "ParameterValue",
+                            "position": "hidden"
+                        }
+                    ]
+                }
+            }
+        },
+        "Checklist": {
+            "options": {},
+            "mappings": {
+                "Mapping 1": {
+                    "rules": [
+                        {
+                            "map_type": "EntityClass",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "Entity",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "EntityMetadata",
+                            "position": "hidden"
+                        }
+                    ]
+                }
+            }
+        },
+        "Remarks": {
+            "options": {},
+            "mappings": {
+                "Mapping 1": {
+                    "rules": [
+                        {
+                            "map_type": "EntityClass",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "Entity",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "EntityMetadata",
+                            "position": "hidden"
+                        }
+                    ]
+                }
+            }
+        },
+        "Sheet1": {
+            "options": {},
+            "mappings": {
+                "Mapping 1": {
+                    "rules": [
+                        {
+                            "map_type": "EntityClass",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "Entity",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "EntityMetadata",
+                            "position": "hidden"
+                        }
+                    ]
+                }
+            }
+        },
+        "Sheet2": {
+            "options": {},
+            "mappings": {
+                "Mapping 1": {
+                    "rules": [
+                        {
+                            "map_type": "EntityClass",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "Entity",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "EntityMetadata",
+                            "position": "hidden"
+                        }
+                    ]
+                }
+            }
+        },
+        "scenario_archives": {
+            "options": {},
+            "mappings": {
+                "Mapping 1": {
+                    "rules": [
+                        {
+                            "map_type": "EntityClass",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "Entity",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "EntityMetadata",
+                            "position": "hidden"
+                        }
+                    ]
+                }
+            }
+        },
+        "unit_c_old": {
+            "options": {},
+            "mappings": {
+                "Mapping 1": {
+                    "rules": [
+                        {
+                            "map_type": "EntityClass",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "Entity",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "EntityMetadata",
+                            "position": "hidden"
+                        }
+                    ]
+                }
+            }
+        },
+        "unit_node_c_old": {
+            "options": {},
+            "mappings": {
+                "Mapping 1": {
+                    "rules": [
+                        {
+                            "map_type": "EntityClass",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "Entity",
+                            "position": "hidden"
+                        },
+                        {
+                            "map_type": "EntityMetadata",
                             "position": "hidden"
                         }
                     ]
