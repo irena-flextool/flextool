@@ -1464,7 +1464,7 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
 
     # Read original raw outputs from FlexTool
     else:
-        par, s, v = read_outputs(os.path.join(folder, 'output_raw'))
+        par, s, v = read_outputs('output_raw')
         start = log_time("Read flextool outputs", start)
 
         # Pre-process results to be closer to what needed for output writing
@@ -1510,6 +1510,7 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
                 os.makedirs(parquet_dir)
             df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
             df.to_parquet(f'{parquet_dir}/{name}.parquet')
+            print(f'{parquet_dir}/{name}')
 
         start = log_time("Wrote to parquet", start)
 

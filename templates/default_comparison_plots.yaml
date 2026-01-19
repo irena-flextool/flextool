@@ -20,7 +20,7 @@ plots:
     CO2__: [co2, _, m_bm, null, null, null, null, null, null]
     CO2_d_g: [group_CO2, d_sg, m_bx, null, null, null, null, null, null]
     annualized_costs_d_p:
-        default: [annualized_costs, d_sp, a_gb, null, null, null, 10, null, 'Currency']
+        default: [annualized_costs, d_sp, a_bx, null, null, null, 10, null, 'Currency']
         sum_periods: [annualized_costs, d_sp, m_gb, null, null, null, 10, null, null]
     connection_capacity_ed_p: [connection_capacity, ed_sp, bu_gu, 4, null, null, 3, null, null]
     connection_cf_d_e: [connection_cf, d_se, b_gx, null, null, null, null, null, null]
@@ -35,8 +35,8 @@ plots:
     costs_discounted_d_p: [costs_discounted, d_sp, b_xs, null, null, vertical, 6, null, null]
     costs_discounted_p_: [costs_discounted, null, null, null, null, null, null, null, null]
     costs_dt_p:
-        default: [costs, dt_sp, tt_um, null, null, null, null, null, null]
-        lines: [costs, dt_sp, tt_ul, null, null, null, null, null, null]
+        default: [costs, dt_sp, tt_us, null, null, null, null, null, null]
+        lines: [costs, dt_sp, tt_lm, null, null, null, null, null, null]
     discountFactors_d_p: [discount_factors, null, null, null, null, null, null, null, null]
     dual_invest_connection_d_e: [connection_invest_marginal, d_se, g_ub, null, null, null, null, null, null]
     dual_invest_node_d_e: [node_invest_marginal, d_se, g_ub, null, null, null, null, null, null]
@@ -46,7 +46,7 @@ plots:
     nodeGroup_VRE_share_dt_g: [nodeGroup_VRE_share__dt, dt_sg, tt_lu, null, null, null, null, null, null]
     nodeGroup_flows_d_gpe: [nodeGroup_flows, d_sgpe, m_xusm, null, all, vertical, 6, null, null]
     nodeGroup_flows_dt_gpe: [nodeGroup_flows, null, null, null, all, null, null, null, null]
-    nodeGroup_gd_p: [nodeGroup, gd_sp, bg_xu, 2, null, null, null, null, null]
+    nodeGroup_gd_p: [nodeGroup, gd_sp, ug_bu, 2, null, null, null, null, null]
     nodeGroup_gdt_p: [nodeGroup, null, null, null, null, null, null, null, null]
     nodeGroup_inertia_dt_g: [nodeGroup_inertia, dt_sg, tt_lu, null, null, null, null, null, null]
     nodeGroup_inertia_largest_flow_dt_g: [nodeGroup_inertia_largest_flow, null, null, null, null, null, null, null, null]
