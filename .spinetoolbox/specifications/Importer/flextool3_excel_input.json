@@ -756,7 +756,8 @@
                             {
                                 "map_type": "EntityClass",
                                 "position": "hidden",
-                                "value": "constraint"
+                                "value": "constraint",
+                                "read_start_row": 2
                             },
                             {
                                 "map_type": "Entity",
@@ -784,7 +785,7 @@
                             },
                             {
                                 "map_type": "ParameterValue",
-                                "position": "hidden"
+                                "position": 4
                             }
                         ]
                     }
@@ -3079,146 +3080,6 @@
                         ]
                     }
                 }
-            ],
-            "Checklist": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "EntityClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Entity",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "EntityMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "Remarks": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "EntityClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Entity",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "EntityMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "Sheet1": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "EntityClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Entity",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "EntityMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "Sheet2": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "EntityClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Entity",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "EntityMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "scenario_archives": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "EntityClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Entity",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "EntityMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "unit_c_old": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "EntityClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Entity",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "EntityMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
-            ],
-            "unit_node_c_old": [
-                {
-                    "Mapping 1": {
-                        "mapping": [
-                            {
-                                "map_type": "EntityClass",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "Entity",
-                                "position": "hidden"
-                            },
-                            {
-                                "map_type": "EntityMetadata",
-                                "position": "hidden"
-                            }
-                        ]
-                    }
-                }
             ]
         },
         "selected_tables": [
@@ -3339,14 +3200,7 @@
             "timeset_timeline": {
                 "row": 0,
                 "header": false
-            },
-            "Checklist": {},
-            "Remarks": {},
-            "Sheet1": {},
-            "Sheet2": {},
-            "scenario_archives": {},
-            "unit_c_old": {},
-            "unit_node_c_old": {}
+            }
         },
         "table_types": {
             "solve_sequence": {
@@ -3403,10 +3257,7 @@
                 "30": "float",
                 "31": "float",
                 "32": "float",
-                "33": "float",
-                "34": "float",
-                "35": "float",
-                "36": "float"
+                "33": "float"
             },
             "node_p": {
                 "0": "string",
@@ -3441,36 +3292,7 @@
                 "7": "float",
                 "8": "float",
                 "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "float",
-                "21": "float",
-                "22": "float",
-                "23": "float",
-                "24": "float",
-                "25": "float",
-                "26": "float",
-                "27": "float",
-                "28": "float",
-                "29": "float",
-                "30": "float",
-                "31": "float",
-                "32": "float",
-                "33": "float",
-                "34": "float",
-                "35": "float",
-                "36": "float",
-                "37": "float",
-                "38": "float",
-                "39": "float"
+                "10": "float"
             },
             "commodity_c": {
                 "0": "string",
@@ -3541,50 +3363,7 @@
                 "2": "float",
                 "3": "float",
                 "4": "float",
-                "5": "float",
-                "6": "float",
-                "7": "float",
-                "8": "float",
-                "9": "float",
-                "10": "float",
-                "11": "float",
-                "12": "float",
-                "13": "float",
-                "14": "float",
-                "15": "float",
-                "16": "float",
-                "17": "float",
-                "18": "float",
-                "19": "float",
-                "20": "float",
-                "21": "float",
-                "22": "float",
-                "23": "float",
-                "24": "float",
-                "25": "float",
-                "26": "float",
-                "27": "float",
-                "28": "float",
-                "29": "float",
-                "30": "float",
-                "31": "float",
-                "32": "float",
-                "33": "float",
-                "34": "float",
-                "35": "float",
-                "36": "float",
-                "37": "float",
-                "38": "float",
-                "39": "float",
-                "40": "float",
-                "41": "float",
-                "42": "float",
-                "43": "float",
-                "44": "float",
-                "45": "float",
-                "46": "float",
-                "47": "float",
-                "48": "float"
+                "5": "float"
             },
             "unit_c": {
                 "0": "string",
@@ -3612,13 +3391,7 @@
                 "22": "float",
                 "23": "float",
                 "24": "float",
-                "25": "float",
-                "26": "float",
-                "27": "float",
-                "28": "float",
-                "29": "float",
-                "30": "float",
-                "31": "float"
+                "25": "float"
             },
             "unit_p": {
                 "0": "string",
@@ -3656,7 +3429,14 @@
                 "1": "string",
                 "2": "string",
                 "3": "string",
-                "4": "float"
+                "4": "string",
+                "5": "float",
+                "6": "float",
+                "7": "float",
+                "8": "float",
+                "9": "float",
+                "10": "float",
+                "11": "float"
             },
             "group_c": {
                 "0": "string",
@@ -3689,7 +3469,16 @@
             },
             "group_connection": {
                 "0": "string",
-                "1": "string"
+                "1": "string",
+                "2": "string",
+                "3": "string",
+                "4": "string",
+                "5": "string",
+                "6": "string",
+                "7": "string",
+                "8": "string",
+                "9": "string",
+                "10": "string"
             },
             "group_connection_node": {
                 "0": "string",
@@ -3862,7 +3651,12 @@
                 "8": "string",
                 "9": "float",
                 "10": "float",
-                "11": "float"
+                "11": "float",
+                "12": "float",
+                "13": "float",
+                "14": "float",
+                "15": "float",
+                "16": "float"
             },
             "unit_node_t": {
                 "0": "string",

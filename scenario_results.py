@@ -1,12 +1,15 @@
 import pandas as pd
 import os
 import math
+import yaml
 from pathlib import Path
 from spinedb_api import DatabaseMapping
+from spinedb_api.filters.alternative_filter import alternative_filter_config
+from spinedb_api.filters.tools import append_filter_config
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from flextool.plot_functions import plot_rowbars_stack_groupbars
+from flextool.plot_functions import plot_dict_of_dataframes
 
 
 def plot_horizontal_bar(df, filename=None, title=None, figsize=(10, 6), show_plot=False, subplot=None, stacked=None, sum_index_level=None, n_subplot_cols=1, xlabel=None, ylabel=None):    
@@ -347,15 +350,16 @@ def read_scenario_folders(db_url):
     """
     scenario_folders = {}
 
-    with DatabaseMapping(db_url) as db:
-        # Get all scenario entities
-        scenarios = db.get_entity_items(entity_class_name="scenario")
+    with DatabaseMapping(db_url) as db_map:
+        filter_configs = db_map.get_filter_configs()
+        if filter_configs:
+            alternative_names = filter_configs[0]['alternatives']
+            scenarios = alternative_names
 
-        for scenario in scenarios:
-            scenario_name = scenario["name"]
+        for scenario_name in scenarios:
 
             # Get the folder parameter value for this scenario
-            param_values = db.get_parameter_value_items(
+            param_values = db_map.get_parameter_value_items(
                 entity_class_name="scenario",
                 entity_name=scenario_name,
                 parameter_definition_name="folder"
@@ -366,10 +370,10 @@ def read_scenario_folders(db_url):
                 folder_path = param_values[0]["parsed_value"]
                 scenario_folders[scenario_name] = folder_path
 
-    return scenario_folders
+    return scenarios, scenario_folders
 
 
-def collect_parquet_files(scenario_folders, output_subdir="output_parquet"):
+def collect_parquet_files(scenario_folders, scenarios, output_subdir="output_parquet"):
     """
     Collect all parquet files from all scenario folders.
 
@@ -388,14 +392,14 @@ def collect_parquet_files(scenario_folders, output_subdir="output_parquet"):
     files_by_name = {}
 
     for scenario_name, folder_path in scenario_folders.items():
-        parquet_dir = Path(folder_path) / output_subdir
+        parquet_dir = Path(folder_path) / output_subdir / scenario_name
 
         if not parquet_dir.exists():
             print(f"Warning: {parquet_dir} does not exist for scenario {scenario_name}")
             continue
 
         # Get all parquet files in this directory
-        for parquet_file in parquet_dir.glob("*.parquet"):
+        for parquet_file in sorted(parquet_dir.glob("*.parquet")):
             filename = parquet_file.name
 
             if filename not in files_by_name:
@@ -453,12 +457,12 @@ def combine_parquet_files(files_by_name):
 def get_scenario_results(db_url, parquet_subdir='output_parquet'):
     # Read scenario folders from database
     print(f"Reading scenario information from {db_url}...")
-    scenario_folders = read_scenario_folders(db_url)
+    scenarios, scenario_folders = read_scenario_folders(db_url)
     print(f"Found {len(scenario_folders)} scenarios: {list(scenario_folders.keys())}")
 
     # Collect all parquet files
     print(f"\nCollecting parquet files from {parquet_subdir} subdirectories...")
-    files_by_name = collect_parquet_files(scenario_folders, parquet_subdir)
+    files_by_name = collect_parquet_files(scenario_folders, scenarios, parquet_subdir)
     print(f"Found {len(files_by_name)} unique result variables")
 
     # Combine parquet files
@@ -468,31 +472,54 @@ def get_scenario_results(db_url, parquet_subdir='output_parquet'):
     print(f"\nDone! Combined {len(combined_dfs)} result variables.")
 
     # Return the combined dataframes for use in interactive mode
-    return scenario_folders, combined_dfs
+    return scenarios, scenario_folders, combined_dfs
 
 
 if __name__ == '__main__':
     import argparse
     matplotlib.use('Agg')
     parser = argparse.ArgumentParser(
-        description='Read and combine scenario results from multiple folders based on database information'
-    )
+        description='Read and combine scenario results from multiple folders based on database information')
     parser.add_argument(
         'db_url',
-        help='Database URL containing scenario information (e.g., sqlite:///scenarios.db)'
-    )
+        help='Database URL containing scenario information (e.g., sqlite:///scenarios.db)')
     parser.add_argument(
         '--parquet-subdir',
         default='output_parquet',
-        help='Subdirectory containing parquet files (default: output_parquet)'
+        help='Subdirectory containing parquet files (default: output_parquet)')
+    parser.add_argument(
+        '--output_config_path', default='templates/default_comparison_plots.yaml'
+    )
+    parser.add_argument('--active_configs', type=str, default='default',
+                        help='Which plot configurations from config_path yaml to use. Defaults to default')
+    parser.add_argument('--plot-rows', type=int, nargs=2, default=[0, 167],
+                        help='First and last row to plot in time series (default: 0 167)')
+    parser.add_argument(
+        '--alternatives', metavar='S', type=str, nargs='+',
+        help='Add alternative names manually')
+    parser.add_argument(
+        '--plot_dir', default='output_plot_comparisons', 
+        help='Directory to plot scenario comparison plots'
     )
 
     args = parser.parse_args()
+    db_url = args.db_url
+    alternatives = args.alternatives
+    plot_dir = args.plot_dir
+    active_configs = args.active_configs
+    plot_rows = args.plot_rows
 
-    scenario_names, combined_dfs = get_scenario_results(db_url=args.db_url, parquet_subdir=args.parquet_subdir)
+    if alternatives:
+        alternative_filter = alternative_filter_config(alternatives)
+        db_url = append_filter_config(db_url, alternative_filter)
 
-    foo = combined_dfs['nodeGroup_gd_p'].T.groupby('scenario').sum().T
-    plot_horizontal_bar(foo, filename='foo.svg', figsize=(10, 6), sum_index_level=0, n_subplot_cols=2)
-    plot_horizontal_bar(combined_dfs['nodeGroup_gd_p'], filename='output_scen_comp/hor_bar.svg', figsize=(10, 6), subplot=1, sum_index_level=0, n_subplot_cols=2)
-    plot_rowbars_stack_groupbars(combined_dfs['nodeGroup_gd_p'].unstack('group'), key_name='nodeGroup', plot_dir='output_scen_comp',
-        sum_levels=[-1], stack_levels=[], expand_axis_levels=[2], grouped_bar_levels=[0], sub_levels=[1], legend_position='right', subplots_per_row=2)
+    with open(args.output_config_path, 'r') as f:
+        settings = yaml.safe_load(f)
+
+    scenarios, scenario_folders, combined_dfs = get_scenario_results(db_url=db_url, parquet_subdir=args.parquet_subdir)
+
+    if not os.path.exists(plot_dir):
+        os.makedirs(plot_dir)
+    
+    plot_dict_of_dataframes(combined_dfs, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=True)
+

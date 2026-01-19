@@ -23,11 +23,8 @@ def time_block(name, verbose=False):
     finally:
         elapsed = time.perf_counter() - start
         if name not in PERF_STATS:
-            PERF_STATS[name] = {'count': 0, 'total': 0, 'min': float('inf'), 'max': 0}
-        PERF_STATS[name]['count'] += 1
+            PERF_STATS[name] = {'total': 0}
         PERF_STATS[name]['total'] += elapsed
-        PERF_STATS[name]['min'] = min(PERF_STATS[name]['min'], elapsed)
-        PERF_STATS[name]['max'] = max(PERF_STATS[name]['max'], elapsed)
         if verbose:
             print(f"  [{name}] {elapsed:.4f}s")
 
@@ -39,12 +36,11 @@ def print_perf_summary():
     print("\n" + "="*80)
     print("PERFORMANCE SUMMARY")
     print("="*80)
-    print(f"{'Operation':<40} {'Count':>8} {'Total':>10} {'Avg':>10} {'Min':>10} {'Max':>10}")
+    print(f"{'Operation':<50}{'Total':>10}")
     print("-"*80)
 
     for name, stats in sorted(PERF_STATS.items(), key=lambda x: x[1]['total'], reverse=True):
-        avg = stats['total'] / stats['count']
-        print(f"{name:<40} {stats['count']:>8} {stats['total']:>10.4f}s {avg:>10.4f}s {stats['min']:>10.4f}s {stats['max']:>10.4f}s")
+        print(f"{name:<50} {stats['total']:>10.4f}s")
 
     print("="*80 + "\n")
 
@@ -80,86 +76,84 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         elif 'default' in active_settings:
                 chosen_settings.append(plot_settings[key])
 
+        print(f"Plot: {plot_dir} {key}", end='')
+
         # Loop through all active settings for this dataframe        
         for setting in chosen_settings:
-            rules = setting[1]
+            rules = setting[2]
             if not rules:
+                print('   ...no plot rule')
                 continue
+            rules = rules.replace('_', '')
+
+            if len(setting[1].split('_')) == 2:
+                df_index_levels, df_columns_levels = setting[1].split('_')
+            elif setting[1] is None:
+                continue
+            else:
+                raise(f'plot setting {key} should contain a string of characters as second list member that includes one underscore to separate row and column index indicators')
+            
 
             # Extract settings and apply defaults if needed
             key_name = setting[0]
             plot_name = key_name + '_' + rules
             subplots_per_row = 3
-            if setting[2]:
-                subplots_per_row = setting[2]
-            legend_position = 'right'
             if setting[3]:
-                legend_position = setting[3]
-            bar_orientation = 'horizontal'
+                subplots_per_row = setting[3]
+            legend_position = 'right'
             if setting[4]:
-                bar_orientation = setting[4]
-            base_length = 4
+                legend_position = setting[4]
+            bar_orientation = 'horizontal'
             if setting[5]:
-                base_length = setting[5]
-            xlabel = None
+                bar_orientation = setting[5]
+            base_length = 4
             if setting[6]:
-                xlabel = setting[6]
-            ylabel = None
+                base_length = setting[6]
+            xlabel = None
             if setting[7]:
-                ylabel = setting[7]
+                xlabel = setting[7]
+            ylabel = None
+            if setting[8]:
+                ylabel = setting[8]
 
-            split_key = key.split('_')
-            if 'dt' in split_key[-2]:
-                extra_dims = len(split_key[-2])
-                if extra_dims > 2:
-                    # Move other dimensions than dt from index to columns
-                    df = df_orig.unstack(list(range(extra_dims-2)))
-                    df = df.iloc[plot_rows[0]:plot_rows[1]].copy()
-                else:
-                    df = df_orig.iloc[plot_rows[0]:plot_rows[1]].copy()
+            if 't' in rules:
                 chart_type = 'time'
-            elif 't' in split_key[-2]:
-                raise ValueError(f"Plotting rules with t but without dt are not handled. {key_name}")
+                df = df_orig.iloc[plot_rows[0]:plot_rows[1]].copy()
             else:
                 chart_type = 'bar'
                 df = df_orig.copy()
             
             # Check the df dimensions match the number of row and column levels
             nr_row_levels = df.index.nlevels
-            nr_column_levels = df.columns.nlevels
-            if len(rules) != nr_row_levels + nr_column_levels:
+            if len(rules) != nr_row_levels + df.columns.nlevels:
                 raise ValueError(f"Number of plot_type rules different from the number of index + column levels in the dataframe. {key_name}")
             
             # Sum sum_levels for row index
             sum_row_levels = [i for i, char in enumerate(rules[:nr_row_levels]) if char == 'm']
-            keep_levels = [i for i in range(nr_row_levels) if i not in sum_row_levels]
-            if len(keep_levels) == nr_row_levels:
-                pass
-            elif len(keep_levels) > 1:
-                df = df.groupby(level=keep_levels).sum()
-            else:
-                df = df.sum(axis=0).to_frame().T
-                df.index = ['sum']
-                df.index.name = 'sum'
+            if sum_row_levels:
+                keep_levels = [i for i in range(nr_row_levels) if i not in sum_row_levels]
+                if len(keep_levels) > 0:
+                    df = df.groupby(level=keep_levels).sum()
+                    for i in sum_row_levels:
+                        rules = rules[:i] + rules[i + 1:]
+                else:
+                    df = df.sum(axis=0).to_frame().T
+                    df.index = ['sum']
+                    df.index.name = 'sum'
 
             # Sum sum_levels for column index
-            sum_column_levels = [i for i, char in enumerate(rules[nr_row_levels:]) if char == 'm']
-            keep_levels = [i for i in range(nr_column_levels) if i not in sum_column_levels]
-            if len(keep_levels) == nr_column_levels:
-                pass
-            elif len(keep_levels) > 1:
-                df = df.T.groupby(level=keep_levels).sum().T
-            else:
-                df = df.sum(axis=1).to_frame()
-                df.columns = ['sum']
-                df.columns.name = 'sum'
-
-            # Remove m from rules (but add a placeholder z if needed, since there will always be a dimension)
-            rules = rules.replace('m', '')
-            if len(sum_row_levels) == nr_row_levels:
-                rules = 'z' + rules
-            if len(sum_column_levels) == nr_column_levels:
-                rules = rules + 'z'
+            nr_column_levels = df.columns.nlevels
+            sum_column_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'm']
+            if sum_column_levels:
+                keep_levels = [i for i in range(nr_column_levels) if i not in sum_column_levels]
+                if len(keep_levels) > 0:
+                    df = df.T.groupby(level=keep_levels).sum().T
+                    for i in sum_column_levels:
+                        rules = rules[:i + df.index.nlevels] + rules[i + 1 + df.index.nlevels:]
+                else:
+                    df = df.sum(axis=1).to_frame()
+                    df.columns = ['sum']
+                    df.columns.name = 'sum'
 
             # Update number of row and column levels after sums may have removed levels
             nr_row_levels = df.index.nlevels
@@ -167,86 +161,77 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
 
             # Average mean_levels for row index
             mean_row_levels = [i for i, char in enumerate(rules[:nr_row_levels]) if char == 'a']
-            keep_levels = [i for i in range(nr_row_levels) if i not in mean_row_levels]
-            if len(keep_levels) == nr_row_levels:
-                pass
-            elif len(keep_levels) > 1:
-                df = df.groupby(level=keep_levels).mean()
-            else:
-                df = df.mean(axis=0).to_frame().T
-                df.index = ['mean']
-                df.index.name = 'mean'
+            if mean_row_levels:
+                keep_levels = [i for i in range(nr_row_levels) if i not in mean_row_levels]
+                if len(keep_levels) > 1:
+                    df = df.groupby(level=keep_levels).mean()
+                    for i in mean_row_levels:
+                        rules = rules[:i] + rules[i + 1:]
+                else:
+                    df = df.mean(axis=0).to_frame().T
+                    df.index = ['mean']
+                    df.index.name = 'mean'
 
             # Average mean_levels for column index
-            mean_column_levels = [i for i, char in enumerate(rules[nr_row_levels:]) if char == 'm']
-            keep_levels = [i for i in range(nr_column_levels) if i not in mean_column_levels]
-            if len(keep_levels) == nr_column_levels:
-                pass
-            elif len(keep_levels) > 1:
-                df = df.T.groupby(level=keep_levels).mean().T
-            else:
-                df = df.mean(axis=1).to_frame()
-                df.columns = ['mean']
-                df.columns.name = 'mean'
+            mean_column_levels = [i for i, char in enumerate(rules[nr_row_levels:]) if char == 'a']
+            if mean_column_levels:
+                keep_levels = [i for i in range(nr_column_levels) if i not in mean_column_levels]
+                if len(keep_levels) > 1:
+                    df = df.T.groupby(level=keep_levels).mean().T
+                    for i in mean_column_levels:
+                        rules = rules[:i + df.index.nlevels] + rules[i + 1 + df.index.nlevels:]
+                else:
+                    df = df.mean(axis=1).to_frame()
+                    df.columns = ['mean']
+                    df.columns.name = 'mean'
 
-            # Remove m from rules (but add a placeholder z if needed, since there will always be a dimension)
-            rules = rules.replace('a', '')
-            if len(mean_row_levels) == nr_row_levels:
-                rules = 'z' + rules
-            if len(mean_column_levels) == nr_column_levels:
-                rules = rules + 'z'
+            # if key_name == 'unit_startup':
+            #     pass
 
             # Decide how to plot
             if (not df.empty) & (len(df) > 0):
-                if chart_type == 'bar':
-                    bar_levels = [i for i, c in enumerate(rules) if c == "b"]
-                    if bar_levels:
-                        # Move bar_levels from columns to index (not including period (0), which is there already)
-                        if (len(bar_levels) > 1 and rules[bar_levels[0]] == 'b') or bar_levels[0] > 0:
-                            for i, bar_level in enumerate(bar_levels):
-                                if bar_level > 0:
-                                    bar_levels[i] -= 1
-                            df = df.stack(bar_levels)
-                        # If first character rules is not b (bar), then period is to be moved to columns
-                        if len(split_key[-2]) == 1 and rules[bar_levels[0]] != 'b':
-                            df = df.unstack(0)
-                            df = df.iloc[::, ::-1]
-                        # Original df has extra dimensions in the index - leave only 'b' dimensions there
-                        if len(split_key[-2]) > 1:
-                            for i, level_char in enumerate(reversed(list(rules[:len(split_key[-2])]))):
-                                if level_char == 'b':
-                                    df = df.unstack(i)
-                            levels = list(range(len(df.columns.names)))
-                            levels = levels[1:] + [levels[0]]
-                            df = df.reorder_levels(levels, axis=1)
-                            df = df.iloc[::, ::-1]
-                    rules = rules.replace('b', '')
-                    rules = rules.replace('z', '')
-                elif chart_type == 'time':
-                    rules = rules.replace('t', '')
-                else:
-                    print(f'Plot chart type not defined for {key}')
+                print('')
+                bar_levels = [i for i, c in enumerate(rules) if c == "b" or c == 't']
+                for i, bar_level in enumerate(reversed(bar_levels)):
+                    # Move bar_levels from columns to index (not including period (0), which is there already)
+                    if bar_level >= df.index.nlevels:
+                        df = df.stack(bar_level - df.index.nlevels, future_stack=True)
+                        if isinstance(df, pd.Series):
+                            df = df.to_frame()
+
+                sum_mean_row_levels = [i for i, char in enumerate(rules[:df.index.nlevels]) if char == 'm' or char == 'a']
+                if df.index.nlevels - len(sum_mean_row_levels) > 0:
+                    for i in reversed(sum_mean_row_levels):
+                        df = df.droplevel(i)
+                        rules = rules[:i] + rules[i + 1:]
+                
+                sum_mean_column_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'm' or char == 'a']
+                if df.columns.nlevels - len(sum_mean_column_levels) > 0:
+                    for i in reversed(sum_mean_column_levels):
+                        df = df.droplevel(i, axis=1)
+                        rules = rules[:i + df.index.nlevels] + rules[i + 1 + df.index.nlevels:]
+                
                 # Get level locations for different types of operations
-                grouped_bar_levels = [i for i, char in enumerate(rules) if char == 'g']
-                stack_levels = [i for i, char in enumerate(rules) if char == 's']
-                expand_axis_levels = [i for i, char in enumerate(rules) if char == 'x']
-                subplot_levels = [i for i, char in enumerate(rules) if char == 'u']
-                line_levels = [i for i, char in enumerate(rules) if char == 'l']
+                grouped_bar_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'g']
+                stack_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 's']
+                expand_axis_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'x']
+                subplot_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'u']
+                line_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'l']
                 if chart_type == 'time':
                     if stack_levels:
-                        with time_block(f"{key} - plot"):
+                        #with time_block(f"{key} - plot"):
                             plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, subplot_levels, 
                             rows=plot_rows, legend_position=legend_position,
                             xlabel=xlabel, ylabel=ylabel,
                             base_width_per_col=6, subplot_height=base_length)
                     else:  # Plot lines if not stacked
-                        with time_block(f"{key} - plot"):
+                        #with time_block(f"{key} - plot"):
                             plot_dt_sub_lines(df, plot_name, plot_dir, subplot_levels, line_levels, 
                             rows=plot_rows, legend_position=legend_position,
                             xlabel=xlabel, ylabel=ylabel,
                             base_width_per_col=6, subplot_height=base_length)
                 elif chart_type == 'bar':
-                    with time_block(f"{key} - plot"):
+                    #with time_block(f"{key} - plot"):
                         plot_rowbars_stack_groupbars(df, plot_name, plot_dir, 
                             stack_levels, expand_axis_levels, subplot_levels, grouped_bar_levels, 
                             subplots_per_row=subplots_per_row, legend_position=legend_position,
@@ -254,6 +239,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             bar_orientation=bar_orientation, base_bar_length=base_length)
                 else:
                     raise ValueError(f'Could not interpret plot rule for {key}')
+            else: 
+                print('   ...no data')
 
             plt.close('all')  # Clean up
 

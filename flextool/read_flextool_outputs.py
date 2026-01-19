@@ -176,7 +176,6 @@ def read_parameters(output_dir):
     p.group_capacity_for_scaling = pd.read_csv(output_path / 'group_capacity_for_scaling.csv', index_col=[0, 1]).astype(float)
     p.complete_period_share_of_year = pd.read_csv(output_path / 'complete_period_share_of_year.csv', index_col=[0, 1])['value'].astype(float)
     p.nested_model = pd.read_csv(output_path / 'p_nested_model.csv', dtype={'param': str, 'value': float}).set_index('param')
-    p.roll_continue_state = pd.read_csv('solve_data/p_roll_continue_state.csv', dtype={'node': str, 'value': float}).set_index('node')
 
     # Parameters with multiple row and header indexes (read_csv does not interpret these when there are multiple header rows)
     p.flow_min.index.names = ['solve', 'period', 'time']

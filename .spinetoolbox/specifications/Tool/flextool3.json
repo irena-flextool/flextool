@@ -24,9 +24,9 @@
         "bin/glpsol",
         "flextool/read_flextool_outputs.py",
         "flextool/process_results.py",
-        "flextool/write_outputs.py",
         "templates/default_plots.yaml",
-        "flextool/plot_functions.py"
+        "flextool/plot_functions.py",
+        "write_outputs.py"
     ],
     "description": "",
     "inputfiles": [],

@@ -5,6 +5,7 @@ import traceback
 import importlib.util
 from typing import Callable
 from functools import wraps
+from pathlib import Path
 import time
 import os
 from write_outputs import write_outputs
@@ -53,12 +54,14 @@ def main():
     parser.add_argument('--output-config', metavar='PATH',
                         default='templates/default_plots.yaml',
                         help='Path to output configuration file (default: templates/default_plots.yaml)')
-
+    parser.add_argument('--flextool-location', default='template/flextool_location.txt',
+                        help='When running in Spine Toolbox, this argument provides the location of FlexTool so outputs can be directed there (instead of work directories).')
 
     args = parser.parse_args()
     input_db_url = args.input_db_url
     scenario_name = args.scenario_name
     DEBUG = args.debug
+    output_path = Path(args.flextool_location).resolve().parent.parent
 
     logging.basicConfig(
         level=logging.DEBUG if DEBUG else logging.INFO,
@@ -68,7 +71,7 @@ def main():
     timer = [] 
     timer.append(time.perf_counter())
     if scenario_name:
-        runner = flextoolrunner.FlexToolRunner(input_db_url, scenario_name)
+        runner = flextoolrunner.FlexToolRunner(input_db_url, output_path, scenario_name)
         timer.insert(0, time.perf_counter())
         print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
         with open("output/solve_progress.csv", "w") as solve_progress:
@@ -81,7 +84,7 @@ def main():
             solve_progress.write('Write input time,' + str(round(timer[0] - timer[1],4)) + '\n')
 
     else:
-        runner = flextoolrunner.FlexToolRunner(input_db_url)
+        runner = flextoolrunner.FlexToolRunner(input_db_url, output_path)
         timer.insert(0, time.perf_counter())
         print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
         with open("output/solve_progress.csv", "a") as solve_progress:
@@ -107,7 +110,7 @@ def main():
     
     # If successful and requested, write outputs
     if return_code == 0 and args.write_outputs:
-        write_outputs(scenario_name=scenario_name, output_config_path=args.output_config)
+        write_outputs(scenario_name=scenario_name, folder=output_path, subdir=scenario_name, output_config_path=args.output_config)
         timer.insert(0, time.perf_counter())
         ## print("--- write outputs time %s seconds ---" % (timer[0] - timer[1]))
     
@@ -122,9 +125,6 @@ def main():
         db_exists = os.path.exists(args.output_db_url.replace('sqlite:///', ''))
 
         with DatabaseMapping(args.output_db_url, create=not db_exists) as output_db:
-            # Get the full path to the current working directory
-            folder_path = os.getcwd()
-
             # Create/update scenario class if it doesn't exist
             output_db.add_or_update_entity_class(name="scenario")
 
@@ -141,15 +141,17 @@ def main():
                 name=scenario_name
             )
 
+            output_db.add_or_update_alternative(name=scenario_name)        
+
             # Convert folder path to database representation
-            value, type_ = to_database(folder_path)
+            value, type_ = to_database(str(output_path))
 
             # Add/update parameter value for folder
             output_db.add_or_update_parameter_value(
                 entity_class_name="scenario",
                 entity_byname=(scenario_name,),
                 parameter_definition_name="folder",
-                alternative_name="Base",
+                alternative_name=scenario_name,
                 value=value,
                 type=type_
             )

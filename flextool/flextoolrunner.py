@@ -28,7 +28,7 @@ class FlexToolRunner:
     Define Class to run the model and read and recreate the required config files:
     """
 
-    def __init__(self, input_db_url=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None):
+    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None):
         self.logger = logging.getLogger(__name__)
 #        logger.basicConfig(
 #            stream=sys.stderr,
@@ -49,6 +49,10 @@ class FlexToolRunner:
             self.bin_dir = Path(__file__).parent.parent / "bin"
         if root_dir is None:
             self.root_dir = Path(__file__).parent.parent
+        if output_path is None:
+            self.output_path = Path(__file__).parent.parent
+        else:
+            self.output_path = output_path
         # read the data in
         # open connection to input db
         if scenario_name:
@@ -62,7 +66,7 @@ class FlexToolRunner:
                     self.logger.error("No scenario found")
                     sys.exit(-1)
                 scenario_name=scen_names[0]['name']
-            self.logger.info(" Work dir: " + str(self.root_dir) + "\nDB URL: " + str(db.sa_url) + "\nScenario name: " + scenario_name)
+            self.logger.info(" Work dir: " + str(self.root_dir) + "\nDB URL: " + str(db.sa_url) + "\nScenario name: " + scenario_name + "\nOutput path: " + str(self.output_path))
             if len(db.get_scenario_alternative_items(scenario_name=scenario_name)) == 0:
                 self.logger.error("No alternatives in the scenario, i.e. empty scenario.")
                 sys.exit(-1)

@@ -1,10 +1,10 @@
 {
-    "name": "scenario comparison",
+    "name": "Read tabular data",
     "tooltype": "python",
     "includes": [
-        "scenario_results.py",
-        "flextool/plot_functions.py",
-        "templates/default_comparison_plots.yaml"
+        "read_tabular_input.py",
+        "flextool/import_excel_input.json",
+        "flextool/read_tabular_with_specification.py"
     ],
     "description": "",
     "inputfiles": [],

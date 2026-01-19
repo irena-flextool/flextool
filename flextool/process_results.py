@@ -99,9 +99,9 @@ def post_process_results(par, s, v):
     nodes_sink.name = 'sink'
 
     # Flows out of nodes (source == n, positive)
-    flows_out = ramp_dt_dropped[nodes_source.join(ramp_dt_dropped.columns).join(nodes_source, how='inner')].T.groupby('source').sum().T
+    flows_out = ramp_dt_dropped[nodes_source.join(ramp_dt_dropped.columns)].T.groupby('source').sum().T
     # Flows into nodes (sink == n, negative)
-    flows_in = -ramp_dt_dropped[nodes_sink.join(ramp_dt_dropped.columns).join(nodes_sink, how='inner')].T.groupby('sink').sum().T
+    flows_in = -ramp_dt_dropped[nodes_sink.join(ramp_dt_dropped.columns)].T.groupby('sink').sum().T
     # Combine
     r_node_ramp_dt = flows_out.add(flows_in, fill_value=0).reindex(columns=s.node_balance, fill_value=0.0)
 
@@ -517,9 +517,12 @@ def post_process_results(par, s, v):
     vre_node_profile = vre_with_sink.join(s.process__node__profile__profile_method)
     vre_node_profile_upper = vre_node_profile[vre_node_profile.get_level_values('profile_method').isin(['upper_limit'])]
     vre_profiles_in_use = par.profile[vre_node_profile_upper.get_level_values('profile').unique()]
+    # Expand vre_profiles_in_use to vre_processes_in_use using assignment 
+    profile_level_of_vre_node_profile_upper = vre_node_profile_upper.get_level_values('profile')
+    vre_processes_in_use = vre_profiles_in_use[profile_level_of_vre_node_profile_upper]
+    vre_processes_in_use.columns = vre_node_profile_upper
     # Add process, node and profile_method levels to the profiles in use
-    vre_profiles_in_use.columns = vre_profiles_in_use.columns.join(vre_node_profile_upper)
-    r.potentialVREgen_dt = vre_profiles_in_use.mul(par.process_availability).mul(r.entity_all_capacity, axis=1, level=0).droplevel(axis=1, level=['profile', 'profile_method'])
+    r.potentialVREgen_dt = vre_processes_in_use.mul(par.process_availability).mul(r.entity_all_capacity, axis=1, level=0).droplevel(axis=1, level=['profile', 'profile_method'])
 
     # potentialVREgen - aggregate by period
     r.potentialVREgen_d = r.potentialVREgen_dt.groupby('period').sum()

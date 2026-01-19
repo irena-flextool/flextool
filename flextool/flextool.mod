@@ -4045,11 +4045,11 @@ for {s in solve_current, d in d_realize_dispatch_or_invest} {
 # Write pdProcess (startup_cost, fixed_cost)
 if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/pdProcess_startup_cost.csv";
-  for {p in process_online: sum{d in d_realized_period} pdProcess[p, 'startup_cost', d]} {printf ",%s", p >> "output_raw/pdProcess_startup_cost.csv";}
+  for {p in process_online} {printf ",%s", p >> "output_raw/pdProcess_startup_cost.csv";}
 }
 for {s in solve_current, d in d_realized_period} {
     printf "\n%s,%s", s, d >> "output_raw/pdProcess_startup_cost.csv";
-    for {p in process_online: pdProcess[p, 'startup_cost', d]} {
+    for {p in process_online} {
         printf ",%.8g", pdProcess[p, 'startup_cost', d] >> "output_raw/pdProcess_startup_cost.csv";
     }
 }

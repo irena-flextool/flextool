@@ -51,6 +51,16 @@
                     "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Tool/scenario_comparison.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/read_tabular_data.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/process_outputs.json"
                 }
             ]
         },
@@ -230,48 +240,6 @@
                 }
             },
             {
-                "name": "from Results to Plot_results",
-                "from": [
-                    "Results",
-                    "right"
-                ],
-                "to": [
-                    "Plot_results",
-                    "left"
-                ],
-                "filter_settings": {
-                    "known_filters": {
-                        "db_url@Results": {
-                            "scenario_filter": {}
-                        }
-                    },
-                    "auto_online": false,
-                    "enabled_filter_types": {
-                        "alternative_filter": true,
-                        "scenario_filter": false
-                    }
-                }
-            },
-            {
-                "name": "from Plot_settings to Plot_results",
-                "from": [
-                    "Plot_settings",
-                    "right"
-                ],
-                "to": [
-                    "Plot_results",
-                    "bottom"
-                ],
-                "filter_settings": {
-                    "known_filters": {},
-                    "auto_online": true,
-                    "enabled_filter_types": {
-                        "alternative_filter": false,
-                        "scenario_filter": true
-                    }
-                }
-            },
-            {
                 "name": "from Input_data to FlexTool",
                 "from": [
                     "Input_data",
@@ -285,109 +253,8 @@
                     "known_filters": {
                         "db_url@Input_data": {
                             "scenario_filter": {
-                                "5weeks_invest_fullYear_dispatch_coal_wind": false,
-                                "aggregate_outputs_network_coal_wind_chp": false,
-                                "all": false,
-                                "base": false,
-                                "capacity_margin": false,
-                                "coal": false,
-                                "coal_chp": false,
-                                "coal_co2": false,
-                                "coal_min_load": false,
-                                "coal_min_load_MIP_wind": false,
-                                "coal_min_load_wind": false,
-                                "coal_ramp_limit": false,
-                                "coal_retire": false,
-                                "coal_unit_size_MIP_wind": false,
-                                "coal_wind_ev": false,
-                                "coal_wind_inertia": false,
-                                "dr_decrease_demand": false,
-                                "dr_increase_demand": false,
-                                "dr_shift_demand": false,
-                                "fullYear": false,
-                                "fusion": false,
-                                "multi_fullYear_battery": false,
-                                "multi_fullYear_battery_nested_24h_invest_one_solve": false,
-                                "multi_fullYear_battery_nested_multi_invest": false,
-                                "multi_fullYear_battery_nested_sample_invest_one_solve": false,
-                                "multi_year": false,
-                                "multi_year_one_solve": false,
-                                "multi_year_one_solve_battery": false,
-                                "multi_year_one_solve_co2_limit": false,
-                                "network_all_tech": false,
-                                "network_coal_wind": false,
-                                "network_coal_wind_battery_co2_fullYear_availability": false,
-                                "network_coal_wind_battery_invest_cumulative": false,
-                                "network_coal_wind_capacity_margin": false,
-                                "network_coal_wind_reserve": false,
-                                "network_coal_wind_reserve_co2_capacity_margin": false,
-                                "network_coal_wind_reserve_n_1": false,
-                                "network_wind_coal_battery_fullYear_invest": false,
-                                "scale_to_peak_flow": false,
-                                "test_a_lot": false,
-                                "water_pump": false,
-                                "water_pump_delayed": false,
-                                "wind": false,
-                                "wind_battery": false,
-                                "wind_battery_invest": false,
-                                "wind_battery_invest_lifetime_choice": false,
-                                "wind_battery_invest_lifetime_renew": false,
-                                "wind_battery_invest_lifetime_renew_4solve": false,
-                                "y2020_2029_1x10y": false,
-                                "y2020_2029_2x5y": true
                             },
                             "alternative_filter": {
-                                "1x10y": false,
-                                "2x5y": false,
-                                "5weeks": false,
-                                "5weeks_only_invest": false,
-                                "aggregate_outputs": false,
-                                "availability": false,
-                                "battery": false,
-                                "battery_invest": false,
-                                "capacity_margin": false,
-                                "co2_limit": false,
-                                "co2_price": false,
-                                "coal": false,
-                                "coal_chp": false,
-                                "coal_invest": false,
-                                "coal_min_load": false,
-                                "coal_min_load_MIP": false,
-                                "coal_ramp": false,
-                                "coal_unit_size": false,
-                                "cumulative_investment": false,
-                                "dr_decrease_demand": false,
-                                "dr_increase_demand": false,
-                                "dr_shift_demand": false,
-                                "ev": false,
-                                "fullYear": false,
-                                "fullYear_invest_24h": false,
-                                "fullYear_invest_sample": false,
-                                "fullYear_multi_invest": false,
-                                "fullYear_roll": false,
-                                "fullYear_storage_6h": false,
-                                "fusion": false,
-                                "group_wind_coal_max_invest": false,
-                                "heat": false,
-                                "inertia": false,
-                                "init": false,
-                                "lifetime_choice": false,
-                                "lifetime_renew": false,
-                                "multi_fullYear_one_solve": false,
-                                "multi_year": false,
-                                "multi_year_one_solve": false,
-                                "nested_solve_storage": false,
-                                "network": false,
-                                "reserve": false,
-                                "reserve_n_1": false,
-                                "retire": false,
-                                "scale_to_peak_flow": false,
-                                "unlimited_investment": false,
-                                "water_pump": false,
-                                "water_pump_delayed": false,
-                                "west": false,
-                                "wind": false,
-                                "wind_invest": false
                             }
                         }
                     },
@@ -421,7 +288,7 @@
                 "name": "from Results to To_Excel",
                 "from": [
                     "Results",
-                    "bottom"
+                    "right"
                 ],
                 "to": [
                     "To_Excel",
@@ -432,15 +299,6 @@
                         "db_url@Results": {
                             "scenario_filter": {},
                             "alternative_filter": {
-                                "Base": true,
-                                "multi_year__Import_results@2025-09-07T09:12:24": true,
-                                "multi_year__Import_results@2025-09-07T09:33:49": true,
-                                "multi_year__Import_results@2025-09-07T09:36:46": true,
-                                "multi_year__Import_results@2025-09-07T09:45:22": true,
-                                "multi_year__Import_results@2025-09-08T11:50:37": true,
-                                "multi_year_one_solve__Import_results@2025-09-07T09:06:02": true,
-                                "multi_year_one_solve__Import_results@2025-09-07T09:36:46": true,
-                                "multi_year_one_solve__Import_results@2025-09-07T09:45:22": true
                             }
                         }
                     },
@@ -504,10 +362,91 @@
                         "db_url@scenario info": {
                             "scenario_filter": {},
                             "alternative_filter": {
-                                "Base": true
                             }
                         }
                     },
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": true,
+                        "scenario_filter": false
+                    }
+                }
+            },
+            {
+                "name": "from Excel input to Read input spreadsheet",
+                "from": [
+                    "Excel input",
+                    "right"
+                ],
+                "to": [
+                    "Read input spreadsheet",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Read input spreadsheet to Input_data",
+                "from": [
+                    "Read input spreadsheet",
+                    "right"
+                ],
+                "to": [
+                    "Input_data",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from scenario info to Re-create results",
+                "from": [
+                    "scenario info",
+                    "right"
+                ],
+                "to": [
+                    "Re-create results",
+                    "right"
+                ],
+                "filter_settings": {
+                    "known_filters": {
+                        "db_url@scenario info": {
+                            "scenario_filter": {},
+                            "alternative_filter": {
+                            }
+                        }
+                    },
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": true,
+                        "scenario_filter": false
+                    }
+                }
+            },
+            {
+                "name": "from flextool location to FlexTool",
+                "from": [
+                    "flextool location",
+                    "right"
+                ],
+                "to": [
+                    "FlexTool",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": false,
@@ -516,14 +455,32 @@
                 }
             }
         ],
-        "jumps": []
+        "jumps": [
+            {
+                "name": "from Re-create results to scenario info",
+                "from": [
+                    "Re-create results",
+                    "left"
+                ],
+                "to": [
+                    "scenario info",
+                    "left"
+                ],
+                "condition": {
+                    "type": "python-script",
+                    "script": "exit(1)",
+                    "specification": ""
+                },
+                "cmd_line_args": []
+            }
+        ]
     },
     "items": {
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -145.76374479069105,
-            "y": -46.900291730497685,
+            "x": -144.75849788616992,
+            "y": -47.914620947913825,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -531,7 +488,7 @@
                 "database": {
                     "type": "path",
                     "relative": true,
-                    "path": "input_data_save.sqlite"
+                    "path": "input_data.sqlite"
                 },
                 "schema": ""
             }
@@ -539,8 +496,8 @@
         "Import_results": {
             "type": "Importer",
             "description": "",
-            "x": 108.50590261907608,
-            "y": -42.10275330778297,
+            "x": 135.8927914893119,
+            "y": 12.761718773261329,
             "specification": "Import_flex3",
             "cancel_on_error": false,
             "on_conflict": "replace",
@@ -548,14 +505,18 @@
                 [
                     "datapackage@FlexTool",
                     true
+                ],
+                [
+                    "output_parquet/*.parquet",
+                    false
                 ]
             ]
         },
         "Results": {
             "type": "Data Store",
             "description": "",
-            "x": 225.10611984388646,
-            "y": -40.76962957599243,
+            "x": 270.75093462761276,
+            "y": 11.975489729646874,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -571,8 +532,8 @@
         "To_Excel": {
             "type": "Exporter",
             "description": "",
-            "x": 275.70803758741147,
-            "y": 83.32236507720708,
+            "x": 389.3129099380192,
+            "y": 12.319319858077264,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -583,47 +544,11 @@
             ],
             "specification": "Results_to_Excel"
         },
-        "Plot_results": {
-            "type": "Tool",
-            "description": "",
-            "x": 432.26998365732896,
-            "y": -43.32314533047682,
-            "specification": "Plot",
-            "execute_in_work": false,
-            "cmd_line_args": [
-                {
-                    "type": "resource",
-                    "arg": "db_url@Results"
-                },
-                {
-                    "type": "resource",
-                    "arg": "<project>/plot_settings/single_dataset/default_result_plots.json"
-                }
-            ],
-            "kill_completed_processes": false,
-            "log_process_output": false
-        },
-        "Plot_settings": {
-            "type": "Data Connection",
-            "description": "",
-            "x": 378.18635880632525,
-            "y": 83.55066131784864,
-            "file_references": [
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "plot_settings/single_dataset/default_result_plots.json"
-                }
-            ],
-            "file_patterns": [],
-            "directory_references": [],
-            "db_references": []
-        },
         "Open_summary": {
             "type": "Tool",
             "description": "",
-            "x": 38.583527951390245,
-            "y": 79.84271845081682,
+            "x": 39.59785716880638,
+            "y": 91.00033984239435,
             "specification": "open_summary",
             "execute_in_work": true,
             "cmd_line_args": [],
@@ -666,8 +591,8 @@
         "Replace with Excel input": {
             "type": "Importer",
             "description": "",
-            "x": -330.6666295368962,
-            "y": -46.57010666993769,
+            "x": -325.5949834498154,
+            "y": -46.42159694812737,
             "specification": "FlexTool3_Excel_input",
             "cancel_on_error": false,
             "on_conflict": "replace",
@@ -688,10 +613,10 @@
         "FlexTool": {
             "type": "Tool",
             "description": "",
-            "x": -27.852879317823724,
-            "y": -46.11733246959109,
+            "x": -5.389126812858366,
+            "y": -51.489828427713256,
             "specification": "FlexTool3",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": [
                 {
                     "type": "resource",
@@ -700,6 +625,18 @@
                 {
                     "type": "resource",
                     "arg": "db_url@scenario info"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--write-outputs"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--flextool-location"
+                },
+                {
+                    "type": "resource",
+                    "arg": "<project>/templates/flextool_location.txt"
                 }
             ],
             "kill_completed_processes": false,
@@ -724,8 +661,8 @@
         "scenario info": {
             "type": "Data Store",
             "description": "",
-            "x": 105.05162890233694,
-            "y": -154.02957719633324,
+            "x": 163.84801244650532,
+            "y": -104.30350711758898,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -741,10 +678,10 @@
         "scenario comparison": {
             "type": "Tool",
             "description": "",
-            "x": 250.25749506688786,
-            "y": -154.02957719633332,
+            "x": 324.20633695355644,
+            "y": -105.30706369439088,
             "specification": "scenario comparison",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": [
                 {
                     "type": "resource",
@@ -753,6 +690,66 @@
             ],
             "kill_completed_processes": false,
             "log_process_output": false
+        },
+        "Read input spreadsheet": {
+            "type": "Tool",
+            "description": "",
+            "x": -327.62833722541336,
+            "y": -165.3356624388308,
+            "specification": "Read tabular data",
+            "execute_in_work": false,
+            "cmd_line_args": [
+                {
+                    "type": "resource",
+                    "arg": "db_url@Input_data"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--tabular-file-path"
+                },
+                {
+                    "type": "resource",
+                    "arg": "<project>/example_input.xlsx"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "Re-create results": {
+            "type": "Tool",
+            "description": "",
+            "x": 161.72688441130828,
+            "y": -216.82000395868312,
+            "specification": "scenario comparison",
+            "execute_in_work": false,
+            "cmd_line_args": [
+                {
+                    "type": "literal",
+                    "arg": "--output_locations_db_url"
+                },
+                {
+                    "type": "resource",
+                    "arg": "db_url@scenario info"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "flextool location": {
+            "type": "Data Connection",
+            "description": "",
+            "x": -158.1460957347966,
+            "y": -154.65757891711723,
+            "file_references": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "templates/flextool_location.txt"
+                }
+            ],
+            "file_patterns": [],
+            "directory_references": [],
+            "db_references": []
         }
     }
 }

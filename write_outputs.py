@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from flextool.read_flextool_outputs import read_variables, read_parameters, read_sets
 from flextool.process_results import post_process_results
 from flextool.plot_functions import plot_dict_of_dataframes
+from spinedb_api import DatabaseMapping
+from spinedb_api.filters.tools import name_from_dict
 import warnings
 
 
@@ -29,6 +31,7 @@ def read_outputs(output_dir):
 
 def log_time(log_string, start):
     print(f"---{log_string}: {time.perf_counter() - start:.4f} seconds")
+    os.makedirs('output', exist_ok=True)
     with open("output/solve_progress.csv", "a") as solve_progress:
         solve_progress.write(log_string + ',' + str(round(time.perf_counter() - start,4)) + '\n')
     return(time.perf_counter())
@@ -1371,7 +1374,7 @@ ALL_OUTPUTS = [
 
 
 # writer.py - handles the actual writing
-def write_outputs(scenario_name, output_config_path, active_configs=['default'], output_funcs=None, subdir=None, read_parquet_dir=False, methods=['plot', 'parquet', 'csv'], plot_rows=(0, 167), debug=False, single_result=None):
+def write_outputs(scenario_name, output_config_path, active_configs=['default'], output_funcs=None, folder=None, subdir=None, read_parquet_dir=False, methods=['plot', 'parquet', 'csv'], plot_rows=(0, 167), debug=False, single_result=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -1427,14 +1430,17 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
             settings = yaml.safe_load(f)
 
     if subdir:
-        parquet_dir = os.path.join('output_parquet', subdir)
-        csv_dir = os.path.join('output', subdir)
-        plot_dir = os.path.join('output_plots', subdir)  # Fixed: was os.path.join(subdir, ' output_plots')
+        parquet_dir = os.path.join(folder, 'output_parquet', subdir)
+        csv_dir = os.path.join(folder, 'output', subdir)
+        plot_dir = os.path.join(folder, 'output_plots', subdir)  # Fixed: was os.path.join(subdir, ' output_plots')
     else:
-        parquet_dir = 'output_parquet'
-        csv_dir = 'output'
-        plot_dir = 'output_plots'
+        parquet_dir = os.path.join(folder, 'output_parquet')
+        csv_dir = os.path.join(folder, 'output')
+        plot_dir = os.path.join(folder, 'output_plots')
 
+    os.makedirs(parquet_dir, exist_ok=True)
+    os.makedirs(csv_dir, exist_ok=True)
+    os.makedirs(plot_dir, exist_ok=True)
 
     # Read and process data
     start = log_time("Read configuration files", start)
@@ -1443,18 +1449,22 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
     if read_parquet_dir:
         results = {}
         keys_to_read = set(settings['filenames'].keys())
-        for filename in os.listdir(read_parquet_dir):
+        for filename in os.listdir(parquet_dir):
             if filename.endswith('.parquet'):
                 key = filename[:-8]  # Remove '.parquet' extension
                 # Only read if this key is in settings (optimization for single_result)
                 if key in keys_to_read:
-                    filepath = os.path.join(read_parquet_dir, filename)
-                    results[key] = pd.read_parquet(filepath).droplevel('scenario', axis=1)
+                    filepath = os.path.join(parquet_dir, filename)
+                    results[key] = pd.read_parquet(filepath)
+                    if len(results[key].columns.names) == 1:
+                        results[key] = results[key].squeeze()
+                    else:
+                        results[key] = results[key].droplevel('scenario', axis=1)
         start = log_time("Read parquet files", start)
 
     # Read original raw outputs from FlexTool
     else:
-        par, s, v = read_outputs('output_raw')
+        par, s, v = read_outputs(os.path.join(folder, 'output_raw'))
         start = log_time("Read flextool outputs", start)
 
         # Pre-process results to be closer to what needed for output writing
@@ -1577,13 +1587,17 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description='Write FlexTool outputs to various formats')
-    parser.add_argument('scenario_name', type=str, help='Name of the scenario')
+    parser.add_argument('--scenario_name', type=str, help='Name of the scenario')
+    parser.add_argument('--output_locations_db_url', type=str, help='URL of the database that holds the locations of scenario run outputs')
+    parser.add_argument('--input_db_url', type=str, help='URL of the input database')
     parser.add_argument('--config_path', type=str, default='templates/default_plots.yaml',
                         help='Path to output configuration YAML file (default: templates/default_plots.yaml)')
     parser.add_argument('--active_configs', type=str, default='default',
                         help='Which plot configurations from config_path yaml to use. Defaults to default')
+    parser.add_argument('--folder', type=str, default='',
+                        help='Directory for the root for input and output folders (default: flextool root)')
     parser.add_argument('--subdir', type=str, default=None,
-                        help='Subdirectory for outputs (default: current directory)')
+                        help='Subdirectory for outputs (default: scenario name)')
     parser.add_argument('--read-parquet-dir', type=str, default=False,
                         help='Directory to read existing parquet files from (default: False, reads from raw CSV files)')
     parser.add_argument('--methods', type=str, nargs='+', default=['plot', 'parquet', 'csv'],
@@ -1598,16 +1612,51 @@ if __name__ == "__main__":
                         help='Process a single result (overrides --config): key csv_name plot_name plot_type subplots_per_row legend_position. Use "null" for None values.')
 
     args = parser.parse_args()
+    input_db_url = args.input_db_url
+    output_locations_db_url = args.output_locations_db_url
+    scenario_names = [args.scenario_name]
+    if args.subdir:
+        subdir = args.subdir
+    else:
+        subdir = scenario_names[0]
+    read_parquet_dir=args.read_parquet_dir
+    folder = args.folder
 
-    write_outputs(
-        scenario_name=args.scenario_name,
-        output_config_path=args.config_path,
-        active_configs=args.active_configs,
-        output_funcs=None,
-        subdir=args.subdir,
-        read_parquet_dir=args.read_parquet_dir,
-        methods=args.methods,
-        plot_rows=tuple(args.plot_rows),
-        debug=args.debug,
-        single_result=tuple(args.single_result) if args.single_result else None
-    )
+    if input_db_url:
+        db_map = DatabaseMapping(input_db_url)
+        scenario_names = [name_from_dict(db_map.get_filter_configs()[0])]
+    elif output_locations_db_url:
+        db_map = DatabaseMapping(output_locations_db_url)
+        filter_configs = db_map.get_filter_configs()
+        if filter_configs:
+            alternative_names = filter_configs[0]['alternatives']
+            scenario_names = alternative_names
+        read_parquet_dir = True
+
+    for i, scenario_name in enumerate(scenario_names):
+        if not input_db_url and output_locations_db_url:
+            param_value = db_map.get_parameter_value_item(
+                entity_class_name='scenario',
+                entity_byname=(scenario_name,),
+                parameter_definition_name='folder',
+                alternative_name=scenario_name
+            )
+            if param_value:
+                folder = param_value['parsed_value']
+            else:
+                raise FileNotFoundError(f"Could not find output data folder for scenario {scenario_name} from db {output_locations_db_url}.")
+            subdir = scenario_name
+        
+        write_outputs(
+            scenario_name=scenario_name,
+            output_config_path=args.config_path,
+            active_configs=args.active_configs,
+            output_funcs=None,
+            folder=folder,
+            subdir=subdir,
+            read_parquet_dir=read_parquet_dir,
+            methods=args.methods,
+            plot_rows=tuple(args.plot_rows),
+            debug=args.debug,
+            single_result=tuple(args.single_result) if args.single_result else None
+        )
