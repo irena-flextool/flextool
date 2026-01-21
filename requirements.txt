@@ -4,3 +4,5 @@ pandas
 openpyxl
 odfpy
 spinetoolbox
+python-calamine
+xlsxwriter
