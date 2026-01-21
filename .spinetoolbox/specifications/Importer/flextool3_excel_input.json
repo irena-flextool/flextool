@@ -3463,9 +3463,7 @@
                 "21": "float",
                 "22": "float",
                 "23": "float",
-                "24": "float",
-                "25": "float",
-                "26": "string"
+                "24": "string"
             },
             "group_connection": {
                 "0": "string",

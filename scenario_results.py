@@ -362,7 +362,7 @@ def read_scenario_folders(db_url):
             param_values = db_map.get_parameter_value_items(
                 entity_class_name="scenario",
                 entity_name=scenario_name,
-                parameter_definition_name="folder"
+                parameter_definition_name="output_location"
             )
 
             if param_values:
@@ -370,10 +370,10 @@ def read_scenario_folders(db_url):
                 folder_path = param_values[0]["parsed_value"]
                 scenario_folders[scenario_name] = folder_path
 
-    return scenarios, scenario_folders
+    return scenario_folders
 
 
-def collect_parquet_files(scenario_folders, scenarios, output_subdir="output_parquet"):
+def collect_parquet_files(scenario_folders, output_subdir="output_parquet"):
     """
     Collect all parquet files from all scenario folders.
 
@@ -457,22 +457,22 @@ def combine_parquet_files(files_by_name):
 def get_scenario_results(db_url, parquet_subdir='output_parquet'):
     # Read scenario folders from database
     print(f"Reading scenario information from {db_url}...")
-    scenarios, scenario_folders = read_scenario_folders(db_url)
+    scenario_folders = read_scenario_folders(db_url)
     print(f"Found {len(scenario_folders)} scenarios: {list(scenario_folders.keys())}")
 
     # Collect all parquet files
     print(f"\nCollecting parquet files from {parquet_subdir} subdirectories...")
-    files_by_name = collect_parquet_files(scenario_folders, scenarios, parquet_subdir)
+    files_by_name = collect_parquet_files(scenario_folders, parquet_subdir)
     print(f"Found {len(files_by_name)} unique result variables")
 
     # Combine parquet files
     print("\nCombining parquet files...")
     combined_dfs = combine_parquet_files(files_by_name)
 
-    print(f"\nDone! Combined {len(combined_dfs)} result variables.")
+    print(f"Combined {len(combined_dfs)} result variables.")
 
     # Return the combined dataframes for use in interactive mode
-    return scenarios, scenario_folders, combined_dfs
+    return scenario_folders, combined_dfs
 
 
 if __name__ == '__main__':
@@ -488,17 +488,19 @@ if __name__ == '__main__':
         default='output_parquet',
         help='Subdirectory containing parquet files (default: output_parquet)')
     parser.add_argument(
-        '--output_config_path', default='templates/default_comparison_plots.yaml'
+        '--output-config-path', default='templates/default_comparison_plots.yaml'
     )
     parser.add_argument('--active_configs', type=str, default='default',
                         help='Which plot configurations from config_path yaml to use. Defaults to default')
     parser.add_argument('--plot-rows', type=int, nargs=2, default=[0, 167],
                         help='First and last row to plot in time series (default: 0 167)')
+    parser.add_argument('--write-to-xlsx', action='store_true')
+    parser.add_argument('--write-to-ods', action='store_true')
     parser.add_argument(
         '--alternatives', metavar='S', type=str, nargs='+',
         help='Add alternative names manually')
     parser.add_argument(
-        '--plot_dir', default='output_plot_comparisons', 
+        '--plot-dir', default='output_plot_comparisons', 
         help='Directory to plot scenario comparison plots'
     )
 
@@ -516,10 +518,35 @@ if __name__ == '__main__':
     with open(args.output_config_path, 'r') as f:
         settings = yaml.safe_load(f)
 
-    scenarios, scenario_folders, combined_dfs = get_scenario_results(db_url=db_url, parquet_subdir=args.parquet_subdir)
+    scenario_folders, combined_dfs = get_scenario_results(db_url=db_url, parquet_subdir=args.parquet_subdir)
 
     if not os.path.exists(plot_dir):
         os.makedirs(plot_dir)
     
     plot_dict_of_dataframes(combined_dfs, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=True)
+    print(f'\nPlotted comparison of {len(scenario_folders)} scenarios to folder: {plot_dir}')
 
+        # Write to excel
+    if args.write_to_xlsx:
+        excel_dir = 'output_excel_comparison'
+        os.makedirs(excel_dir, exist_ok=True)
+        filename = 'compare_' + str(len(scenario_folders)) + '_scens.xlsx'
+        excel_path = os.path.join(excel_dir, filename)
+        with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
+            used_names = set()
+            for name, df in combined_dfs.items():
+                if (not df.empty) & (len(df) > 0):
+                    # Excel sheet names limited to 31 characters
+                    sheet_name = name[:31]
+                    # Handle duplicates from truncation
+                    if sheet_name in used_names:
+                        suffix = 1
+                        while f"{sheet_name[:28]}_{suffix}" in used_names:
+                            suffix += 1
+                        sheet_name = f"{sheet_name[:28]}_{suffix}"
+                    used_names.add(sheet_name)
+                    df.to_excel(writer, sheet_name=sheet_name)
+
+        print(f'\nWrote comparison of {len(scenario_folders)} scenarios to xlsx file: {excel_path}')
+
+    print('\nDone!')

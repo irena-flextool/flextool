@@ -6,6 +6,7 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import time
 import yaml
+import xlsxwriter
 from datetime import datetime, timezone
 from flextool.read_flextool_outputs import read_variables, read_parameters, read_sets
 from flextool.process_results import post_process_results
@@ -1374,7 +1375,7 @@ ALL_OUTPUTS = [
 
 
 # writer.py - handles the actual writing
-def write_outputs(scenario_name, output_config_path, active_configs=['default'], output_funcs=None, folder=None, subdir=None, read_parquet_dir=False, methods=['plot', 'parquet', 'csv'], plot_rows=(0, 167), debug=False, single_result=None):
+def write_outputs(scenario_name, output_config_path, active_configs=['default'], output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=['plot', 'parquet'], plot_rows=(0, 167), debug=False, single_result=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -1385,7 +1386,7 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
         output_funcs: list of functions to run, or None for ALL_OUTPUTS
         subdir: Subdirectory for outputs
         read_parquet_dir: Directory to read existing parquet files from
-        methods: List of output methods ('plot', 'parquet', 'excel', 'db', 'csv')
+        write_methods: List of output methods ('plot', 'parquet', 'excel', 'csv')
         plot_rows: Tuple of first and last row to plot in a time series plots. Default is (0, 167).
         debug: Enable debug output
         single_result: Tuple of (key, csv_name, plot_name, plot_type, subplots_per_row, legend_position)
@@ -1430,17 +1431,13 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
             settings = yaml.safe_load(f)
 
     if subdir:
-        parquet_dir = os.path.join(folder, 'output_parquet', subdir)
-        csv_dir = os.path.join(folder, 'output', subdir)
-        plot_dir = os.path.join(folder, 'output_plots', subdir)  # Fixed: was os.path.join(subdir, ' output_plots')
+        parquet_dir = os.path.join(output_location, 'output_parquet', subdir)
+        csv_dir = os.path.join(output_location, 'output_csv', subdir)
+        plot_dir = os.path.join(output_location, 'output_plots', subdir)  # Fixed: was os.path.join(subdir, ' output_plots')
     else:
-        parquet_dir = os.path.join(folder, 'output_parquet')
-        csv_dir = os.path.join(folder, 'output')
-        plot_dir = os.path.join(folder, 'output_plots')
-
-    os.makedirs(parquet_dir, exist_ok=True)
-    os.makedirs(csv_dir, exist_ok=True)
-    os.makedirs(plot_dir, exist_ok=True)
+        parquet_dir = os.path.join(output_location, 'output_parquet')
+        csv_dir = os.path.join(output_location, 'output_csv')
+        plot_dir = os.path.join(output_location, 'output_plots')
 
     # Read and process data
     start = log_time("Read configuration files", start)
@@ -1504,7 +1501,8 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
         start = log_time("Wrote debugging files", start)
 
     # Write to parquet
-    if 'parquet' in methods and not read_parquet_dir:
+    if 'parquet' in write_methods and not read_parquet_dir:
+        os.makedirs(parquet_dir, exist_ok=True)
         for name, df in results.items():
             if not os.path.exists(parquet_dir):
                 os.makedirs(parquet_dir)
@@ -1515,7 +1513,8 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
         start = log_time("Wrote to parquet", start)
 
     # Plot results
-    if 'plot' in methods:
+    if 'plot' in write_methods:
+        os.makedirs(plot_dir, exist_ok=True)
         if not os.path.exists(plot_dir):
             os.makedirs(plot_dir)
         # Don't delete existing plots when processing single result
@@ -1525,7 +1524,8 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
         start = log_time('Plotted figures', start)
 
     # Write to csv
-    if 'csv' in methods:
+    if 'csv' in write_methods:
+        os.makedirs(csv_dir, exist_ok=True)
         if not os.path.exists(csv_dir):
             os.makedirs(csv_dir)
 
@@ -1576,11 +1576,24 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
         start = log_time('Wrote to csv', start)
 
     # Write to excel
-    if 'excel' in methods:
-        with pd.ExcelWriter('output_' + scenario_name + '.xlsx') as writer:
+    if 'excel' in write_methods:
+        excel_dir = os.path.join(output_location, 'output_excel')
+        os.makedirs(excel_dir, exist_ok=True)
+        excel_path = os.path.join(excel_dir, 'output_' + scenario_name + '.xlsx')
+        with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
+            used_names = set()
             for name, df in results.items():
                 if (not df.empty) & (len(df) > 0):
-                    df.to_excel(writer, sheet_name=name)
+                    # Excel sheet names limited to 31 characters
+                    sheet_name = name[:31]
+                    # Handle duplicates from truncation
+                    if sheet_name in used_names:
+                        suffix = 1
+                        while f"{sheet_name[:28]}_{suffix}" in used_names:
+                            suffix += 1
+                        sheet_name = f"{sheet_name[:28]}_{suffix}"
+                    used_names.add(sheet_name)
+                    df.to_excel(writer, sheet_name=sheet_name)
 
         start = log_time('Wrote to Excel', start)
 
@@ -1588,20 +1601,20 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description='Write FlexTool outputs to various formats')
-    parser.add_argument('--scenario_name', type=str, help='Name of the scenario')
-    parser.add_argument('--output_locations_db_url', type=str, help='URL of the database that holds the locations of scenario run outputs')
-    parser.add_argument('--input_db_url', type=str, help='URL of the input database')
-    parser.add_argument('--config_path', type=str, default='templates/default_plots.yaml',
+    parser.add_argument('--input-db-url', type=str, help='URL of the input database with scenario filter (used when run_flextool.py calls this from Toolbox)')
+    parser.add_argument('--scenario-name', type=str, help='Name of a scenario that must have raw outputs available (when re-plotting single scenario from terminal)')
+    parser.add_argument('--output-locations-db-url', type=str, help='URL of the database that holds the locations of existing outputs (for re-plotting from Toolbox)')
+    parser.add_argument('--config-path', type=str, default='templates/default_plots.yaml',
                         help='Path to output configuration YAML file (default: templates/default_plots.yaml)')
-    parser.add_argument('--active_configs', type=str, default='default',
+    parser.add_argument('--active-configs', type=str, default='default',
                         help='Which plot configurations from config_path yaml to use. Defaults to default')
-    parser.add_argument('--folder', type=str, default='',
-                        help='Directory for the root for input and output folders (default: flextool root)')
+    parser.add_argument('--output-location', type=str, default='',
+                        help='Directory for the root for input and output locations (default: flextool root)')
     parser.add_argument('--subdir', type=str, default=None,
                         help='Subdirectory for outputs (default: scenario name)')
     parser.add_argument('--read-parquet-dir', type=str, default=False,
                         help='Directory to read existing parquet files from (default: False, reads from raw CSV files)')
-    parser.add_argument('--methods', type=str, nargs='+', default=['plot', 'parquet', 'csv'],
+    parser.add_argument('--write-methods', type=str, nargs='+', default=['plot', 'parquet', 'csv'],
                         choices=['plot', 'parquet', 'excel', 'db', 'csv'],
                         help='Output methods to use (default: plot parquet csv)')
     parser.add_argument('--plot-rows', type=int, nargs=2, default=[0, 167],
@@ -1621,7 +1634,7 @@ if __name__ == "__main__":
     else:
         subdir = scenario_names[0]
     read_parquet_dir=args.read_parquet_dir
-    folder = args.folder
+    output_location = args.output_location
 
     if input_db_url:
         db_map = DatabaseMapping(input_db_url)
@@ -1639,13 +1652,13 @@ if __name__ == "__main__":
             param_value = db_map.get_parameter_value_item(
                 entity_class_name='scenario',
                 entity_byname=(scenario_name,),
-                parameter_definition_name='folder',
+                parameter_definition_name='output_location',
                 alternative_name=scenario_name
             )
             if param_value:
-                folder = param_value['parsed_value']
+                output_location = param_value['parsed_value']
             else:
-                raise FileNotFoundError(f"Could not find output data folder for scenario {scenario_name} from db {output_locations_db_url}.")
+                raise FileNotFoundError(f"Could not find output data location directory for scenario {scenario_name} from db {output_locations_db_url}.")
             subdir = scenario_name
         
         write_outputs(
@@ -1653,10 +1666,10 @@ if __name__ == "__main__":
             output_config_path=args.config_path,
             active_configs=args.active_configs,
             output_funcs=None,
-            folder=folder,
+            output_location=output_location,
             subdir=subdir,
             read_parquet_dir=read_parquet_dir,
-            methods=args.methods,
+            write_methods=args.write_methods,
             plot_rows=tuple(args.plot_rows),
             debug=args.debug,
             single_result=tuple(args.single_result) if args.single_result else None

@@ -76,13 +76,13 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         elif 'default' in active_settings:
                 chosen_settings.append(plot_settings[key])
 
-        print(f"Plot: {plot_dir} {key}", end='')
+        # print(f"Plot: {plot_dir} {key}", end='')
 
         # Loop through all active settings for this dataframe        
         for setting in chosen_settings:
             rules = setting[2]
             if not rules:
-                print('   ...no plot rule')
+                # print('   ...no plot rule')
                 continue
             rules = rules.replace('_', '')
 
@@ -190,7 +190,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
 
             # Decide how to plot
             if (not df.empty) & (len(df) > 0):
-                print('')
+                # print('')
                 bar_levels = [i for i, c in enumerate(rules) if c == "b" or c == 't']
                 for i, bar_level in enumerate(reversed(bar_levels)):
                     # Move bar_levels from columns to index (not including period (0), which is there already)
@@ -239,13 +239,13 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             bar_orientation=bar_orientation, base_bar_length=base_length)
                 else:
                     raise ValueError(f'Could not interpret plot rule for {key}')
-            else: 
-                print('   ...no data')
+            # else: 
+                # print('   ...no data')
 
             plt.close('all')  # Clean up
 
     # Print summary after all plots
-    print_perf_summary()
+    # print_perf_summary()
 
 
 def estimate_legend_width(labels, title='', base_width=1.5):

@@ -684,7 +684,8 @@ class TabularReader:
 
         if 'Entity_byname' in df_work.index.names \
             and not any(x.startswith('ParameterValueIndex') for x in df_work.index.names) \
-            and 'ParameterDefinition' not in df_work.columns.names:
+            and 'ParameterDefinition' not in df_work.columns.names \
+            and 'ExpandedValue' not in df_work.columns.to_list():
             df_work = df_work.T
 
         # Step 7: Add hidden values as constant levels

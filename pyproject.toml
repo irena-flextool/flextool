@@ -12,6 +12,7 @@ dependencies = [
     "odfpy",
     "spinedb-api",
     "python-calamine",
+    "xlsxwriter"
 ]
 
 [tool.setuptools]

@@ -6,11 +6,12 @@ import importlib.util
 from typing import Callable
 from functools import wraps
 from pathlib import Path
+from datetime import datetime
 import time
 import os
 from write_outputs import write_outputs
 from spinedb_api.filters.tools import name_from_dict
-from spinedb_api import DatabaseMapping, to_database
+from spinedb_api import DatabaseMapping, to_database, DateTime
 from spinedb_api.exception import NothingToCommit
 
 class FlushingStream:
@@ -46,11 +47,12 @@ def main():
     parser.description = "Run flextool using the specified database URL. Return codes are 0: success, 1: infeasible or unbounded, -1: failure."
     parser.add_argument('input_db_url', help='Database URL to connect to (can be copied from Toolbox workflow db item')
     parser.add_argument('output_db_url', metavar='DB_URL', help='Save information about result location to database for post-processing')
-    parser.add_argument('--scenario_name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
+    parser.add_argument('--scenario-name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
-    parser.add_argument('--write-outputs', action='store_true',
-                        help='Automatically write outputs after successful run')
+    parser.add_argument('--write-methods', type=str, nargs='+', default=['plot', 'parquet'],
+                        choices=['plot', 'parquet', 'excel', 'csv'],
+                        help='Output methods to use (default: plot parquet csv)')
     parser.add_argument('--output-config', metavar='PATH',
                         default='templates/default_plots.yaml',
                         help='Path to output configuration file (default: templates/default_plots.yaml)')
@@ -74,49 +76,49 @@ def main():
         runner = flextoolrunner.FlexToolRunner(input_db_url, output_path, scenario_name)
         timer.insert(0, time.perf_counter())
         print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open("output/solve_progress.csv", "w") as solve_progress:
+        with open("solve_data/solve_progress.csv", "w") as solve_progress:
             solve_progress.write('scenario,' + scenario_name + '\n')
             solve_progress.write('Init time,' + str(round(timer[0] - timer[1],4)) + '\n')
         runner.write_input(input_db_url, scenario_name)
         timer.insert(0, time.perf_counter())
         print("--- Write time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open("output/solve_progress.csv", "a") as solve_progress:
+        with open("solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write('Write input time,' + str(round(timer[0] - timer[1],4)) + '\n')
 
     else:
         runner = flextoolrunner.FlexToolRunner(input_db_url, output_path)
         timer.insert(0, time.perf_counter())
         print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open("output/solve_progress.csv", "a") as solve_progress:
+        with open("solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write('scenario,unknown\n')
             solve_progress.write('Init time,' + str(round(timer[0] - timer[1],4)) + '\n')
         runner.write_input(input_db_url)
         timer.insert(0, time.perf_counter())
         print("--- Write time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open("output/solve_progress.csv", "a") as solve_progress:
+        with open("solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write('Write all input time,' + str(round(timer[0] - timer[1],4)) + '\n')
         db_map = DatabaseMapping(input_db_url)
         scenario_name = name_from_dict(db_map.get_filter_configs()[0])
 
+    print(f'Scenario: {scenario_name}')
     try:
         return_code = runner.run_model()
         timer.insert(0, time.perf_counter())
         print("--- All Flextool solves time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open("output/solve_progress.csv", "a") as solve_progress:
+        with open("solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write('All Flextool solves,' + str(round(timer[0] - timer[1],4)) + '\n')
     except Exception as e:
         logging.error(f"Model run failed: {str(e)}\nTraceback:\n{traceback.format_exc()}")
         sys.exit(1)
     
     # If successful and requested, write outputs
-    if return_code == 0 and args.write_outputs:
-        write_outputs(scenario_name=scenario_name, folder=output_path, subdir=scenario_name, output_config_path=args.output_config)
+    if return_code == 0:
+        write_outputs(scenario_name=scenario_name, output_location=output_path, subdir=scenario_name, output_config_path=args.output_config, write_methods=args.write_methods)
         timer.insert(0, time.perf_counter())
-        ## print("--- write outputs time %s seconds ---" % (timer[0] - timer[1]))
     
     print("\n--- Full execution time %.4s seconds ---------------------------------------" % (timer[0] - timer[-1]))
     print("--------------------------------------------------------------------------\n")
-    with open("output/solve_progress.csv", "a") as solve_progress:
+    with open("solve_data/solve_progress.csv", "a") as solve_progress:
         solve_progress.write('Full execution time,' + str(round(timer[0] - timer[-1],4)) + '\n')
 
     # Write scenario information to output database if provided
@@ -146,11 +148,24 @@ def main():
             # Convert folder path to database representation
             value, type_ = to_database(str(output_path))
 
-            # Add/update parameter value for folder
+            # Add/update folder infio
             output_db.add_or_update_parameter_value(
                 entity_class_name="scenario",
                 entity_byname=(scenario_name,),
-                parameter_definition_name="folder",
+                parameter_definition_name="output_location",
+                alternative_name=scenario_name,
+                value=value,
+                type=type_
+            )
+
+            dt_value = DateTime(datetime.now())
+            value, type_ = to_database(dt_value)
+
+            # Add/update execution time
+            output_db.add_or_update_parameter_value(
+                entity_class_name="scenario",
+                entity_byname=(scenario_name,),
+                parameter_definition_name="finish_time",
                 alternative_name=scenario_name,
                 value=value,
                 type=type_

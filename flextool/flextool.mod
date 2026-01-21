@@ -1,4 +1,4 @@
-    # © International Renewable Energy Agency 2018-2022
+# © International Renewable Energy Agency 2018-2022
 
 #The FlexTool is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License
 #as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
@@ -578,10 +578,10 @@ if p_model["solveFirst"] == 1 and 'read' in phase then {
   printf "node, period, step, ndt_fix_storage_quantity\n" > "solve_data/fix_storage_quantity.csv";
   printf "node, period, step, ndt_fix_storage_usage\n" > "solve_data/fix_storage_usage.csv";
   printf "node, p_roll_continue_state\n" > "solve_data/p_roll_continue_state.csv";
-  printf 'param_costs,costs_discounted\n' > "output/costs_discounted.csv";
-  printf 'param_co2\n' > "output/co2.csv";
+  printf 'param_costs,costs_discounted\n' > "solve_data/costs_discounted.csv";
+  printf 'param_co2\n' > "solve_data/co2.csv";
   printf 'period\n' > 'solve_data/period_capacity.csv';
-  printf '' >> "output/costs_discounted.csv";  # To close the previous file and update the changes
+  printf '' >> "solve_data/costs_discounted.csv";  # To close the previous file and update the changes
 }
 
 # Further parameters from the solve loop
@@ -620,8 +620,8 @@ table data IN 'CSV' 'solve_data/p_entity_period_existing_capacity.csv' : [entity
 table data IN 'CSV' 'solve_data/p_entity_period_existing_capacity.csv' : [entity, period], p_entity_period_invested_capacity;
 
 # Reading results from previous solves
-table data IN 'CSV' 'output/costs_discounted.csv' : [param_costs], costs_discounted;
-table data IN 'CSV' 'output/co2.csv' : [param_co2], model_co2~model_wide;
+table data IN 'CSV' 'solve_data/costs_discounted.csv' : [param_costs], costs_discounted;
+table data IN 'CSV' 'solve_data/co2.csv' : [param_co2], model_co2~model_wide;
 table data IN 'CSV' 'solve_data/period_capacity.csv' : period_capacity <- [period];
 
 #check
@@ -1408,7 +1408,8 @@ set edd_history_choice := {e in entity, d_history in period_with_history, d in p
 set edd_history_automatic := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'reinvest_automatic') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history]};
 set edd_history := edd_history_choice union edd_history_automatic;
 set edd_history_invest := {(e, d_invest, d) in edd_history : e in entityInvest};
-set edd_invest := {(e, d_invest, d) in edd_history_invest : (e, d) in ed_invest};
+set edd_invest := {(e, d_invest, d) in edd_history_invest : (e, d_invest) in ed_invest};
+
 set pd_invest := {(p, d) in ed_invest : p in process};
 set nd_invest := {(n, d) in ed_invest : n in node};
 set ed_divest := {e in entityDivest, d in period_invest : ed_entity_annual_divest[e, d] || exists{(e, c) in process_capacity_constraint} 1 || exists{(e, c) in node_capacity_constraint} 1 };
@@ -1931,7 +1932,7 @@ if p_model["solveFirst"] == 1 && 'read' in phase then {
 
 param setup := gmtime();
 printf 'Timer - Setup: %ss\n', setup - datetime0;
-param solve_progress symbolic := 'output/solve_progress.csv';
+param solve_progress symbolic := 'solve_data/solve_progress.csv';
 printf ',%s', setup - datetime0 >> solve_progress;
 
 printf("Constraint generation:\n");
@@ -4005,7 +4006,7 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, d in d_realize_dispatch_or_invest} {
     printf "\n%s,%s,%.8g", s, d, p_years_represented_d[d] >> "output_raw/p_years_represented_d.csv";
 }
-
+display solve_current, d_realize_dispatch_or_invest, d_realize_invest;
 # Write p_entity_max_units
 if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/p_entity_max_units.csv";
@@ -4695,7 +4696,7 @@ for {s in solve_current, d in d_realize_invest} {
 
 # ed_invest - (entity, period) pairs where investment occurs
 if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "output_raw/set_ed_invest.csv";
-for {s in solve_current, (e, d) in ed_invest} {
+for {s in solve_current, (e, d) in ed_invest : d in d_realize_invest} {
     printf "%s,%s,%s\n", s, e, d >> "output_raw/set_ed_invest.csv";
 }
 
@@ -4893,6 +4894,23 @@ for {(n,'fix_usage') in node__storage_nested_fix_method, (d, t) in dt_fix_storag
   {
     printf '%s,%s,%s,%.8g\n', d, t, n, r_storage_usage_dt[n,d,t] >> fn_fix_usage_nodeState__dt;
   }
+for {s in solve_current}
+  printf '%s\n', s >> "solve_data/a_test.csv";
+for {(d, t) in realized_period__time_last}
+  printf '%s,%s\n', d, t >> "solve_data/a_test.csv";
+printf '\n' >> "solve_data/a_test.csv";
+
+for {s in solve_current}
+  printf '%s\n', s >> "solve_data/aa_test.csv";
+for {(d, t) in dt_realize_dispatch}
+  printf '%s,%s\n', d, t >> "solve_data/aa_test.csv";
+printf '\n' >> "solve_data/aa_test.csv";
+
+for {s in solve_current}
+  printf '%s\n', s >> "solve_data/aaa_test.csv";
+for {(d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt}
+  printf '%s,%s,%s,%s,%s,%s\n',d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve >> "solve_data/aaa_test.csv";
+printf '\n' >> "solve_data/aaa_test.csv";
 
 printf 'Write node state last timestep ..\n';
 param fn_p_roll_continue_state symbolic := "solve_data/p_roll_continue_state.csv";
@@ -4914,7 +4932,7 @@ for {d in period_capacity union d_realize_dispatch_or_invest}
 
 #### Write out results
 printf 'Write unit capacity results...\n';
-param fn_unit_capacity symbolic := "output/unit_capacity__period.csv";
+param fn_unit_capacity symbolic := "solve_data/unit_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'unit,solve,period,existing,invested,divested,total\n' > fn_unit_capacity; }  # Clear the file on the first solve
 for {s in solve_current, p in process_unit, d in d_realize_dispatch_or_invest: 'yes' not in exclude_entity_outputs && d not in period_capacity}
@@ -4928,7 +4946,7 @@ for {s in solve_current, p in process_unit, d in d_realize_dispatch_or_invest: '
   }
 
 printf 'Write connection capacity results...\n';
-param fn_connection_capacity symbolic := "output/connection_capacity__period.csv";
+param fn_connection_capacity symbolic := "solve_data/connection_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'connection,solve,period,existing,invested,divested,total\n' > fn_connection_capacity; }  # Clear the file on the first solve
 for {s in solve_current, p in process_connection, d in d_realize_dispatch_or_invest: 'yes' not in exclude_entity_outputs && d not in period_capacity}
@@ -4942,7 +4960,7 @@ for {s in solve_current, p in process_connection, d in d_realize_dispatch_or_inv
   }
 
 printf 'Write node/storage capacity results...\n';
-param fn_node_capacity symbolic := "output/node_capacity__period.csv";
+param fn_node_capacity symbolic := "solve_data/node_capacity__period.csv";
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'node,solve,period,existing,invested,divested,total\n' > fn_node_capacity; }  # Clear the file on the first solve
 for {s in solve_current, e in nodeState, d in d_realize_dispatch_or_invest: 'yes' not in exclude_entity_outputs && d not in period_capacity}

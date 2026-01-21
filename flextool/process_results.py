@@ -30,14 +30,16 @@ def post_process_results(par, s, v):
         capacity_add = v.invest.mul(par.entity_unitsize[v.invest.columns])
         capacity_add_recursive = pd.DataFrame(columns=v.invest.columns)
         for i, period in enumerate(periods):
-            capacity_add_recursive.loc[period] = capacity_add.loc[periods[:i+1]].sum()
+            available_periods = capacity_add.index.intersection(periods[:i+1])
+            capacity_add_recursive.loc[period] = capacity_add.loc[available_periods].sum()
         r.entity_all_capacity = r.entity_all_capacity.add(capacity_add_recursive, fill_value=0)
       # Subtract divestments
     if not v.divest.empty:
         capacity_sub = v.divest.mul(par.entity_unitsize[v.divest.columns])
         capacity_sub_recursive = pd.DataFrame(columns=v.divest.columns)
         for i, period in enumerate(periods):
-            capacity_sub_recursive.loc[period] = capacity_sub.loc[periods[:i+1]].sum()
+            available_periods = capacity_sub.index.intersection(periods[:i+1])
+            capacity_sub_recursive.loc[period] = capacity_sub.loc[available_periods].sum()
         r.entity_all_capacity = r.entity_all_capacity.sub(capacity_sub_recursive, fill_value=0)
 
     # r_process_Online__dt - just sum the two DataFrames

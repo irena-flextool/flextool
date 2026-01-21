@@ -40,9 +40,9 @@ class FlexToolRunner:
         # delete highs.log from previous run
         if os.path.exists("./HiGHS.log"):
             os.remove("./HiGHS.log")
-        # make a directory for model unit tests
-        if not os.path.exists("./tests"):
-            os.makedirs("./tests")
+        # make a directory for solve data
+        if not os.path.exists("./solve_data"):
+            os.makedirs("./solve_data")
         if flextool_dir is None:
             self.flextool_dir = Path(__file__).parent.parent / "flextool"
         if bin_dir is None:
@@ -76,9 +76,11 @@ class FlexToolRunner:
             self.timelines = self.params_to_dict(db=db, cl="timeline", par="timestep_duration", mode="defaultdict")
             self.model = self.get_single_entities(db=db, entity_class_name="model")
             self.model_solve = self.params_to_dict(db=db, cl="model", par="solves", mode="defaultdict")
+            # In case no model has been defined and there is only one model entity in the database, then use that:
             solves_temp = self.get_single_entities(db=db, entity_class_name='solve')
             if len(self.model_solve) == 0 and len(solves_temp) == 1:
                 self.model_solve['flextool'] = [solves_temp[0]]
+            # Continue assignments.
             self.solve_modes = self.params_to_dict(db=db, cl="solve", par="solve_mode", mode="dict")
             self.roll_counter = self.make_roll_counter()
             self.highs_presolve = self.params_to_dict(db=db, cl="solve", par="highs_presolve", mode="dict")
@@ -127,15 +129,23 @@ class FlexToolRunner:
         self.create_timeline_from_timestep_duration()
         self.first_of_complete_solve = []
         self.last_of_solve = []
+        self.real_solves = []  # Use list to preserve solve execution order (important for history building)
         #self.write_full_timelines(self.timelines, 'steps.csv')
 
 
 
     def periods_to_tuples(self, db, cl, par):
+        """
+        Read period parameters from database and return as dict of tuples.
+
+        Returns:
+            defaultdict(list) where key is solve name and value is list of
+            (period_from, period_included) tuples.
+        """
         entities = db.find_entities(entity_class_name=cl)
         params = db.find_parameter_values(entity_class_name=cl,
                                             parameter_definition_name=par)
-        tuple_list = []
+        result_dict = defaultdict(list)
         for entity in entities:
             for param in params:
                 if param["entity_name"] == entity["name"]:
@@ -143,25 +153,29 @@ class FlexToolRunner:
 
                     for (i, row) in enumerate(param_value.values):
                         if isinstance(param_value.values[i], api.Map):
-                            new_name = param["entity_name"] + "_" + param_value.indexes[i]
-                            self.duplicate_solve(param["entity_name"], new_name)
-                            tuple_list.append((new_name, param_value.indexes[i]))
+                            for (j, row2) in enumerate(row.values):
+                                if isinstance(param_value.values[j], api.Map):
+                                    new_name = param["entity_name"] + "_" + param_value.indexes[i]
+                                    self.duplicate_solve(param["entity_name"], new_name)
+                                    result_dict[new_name].append((param_value.indexes[i], param_value.values[i].indexes[j]))
 
-                            new_period_timeset_list = []
-                            for solve, period__timeset_list in list(self.timesets_used_by_solves.items()):
-                                if solve == param["entity_name"]:
-                                    for period__timeset in period__timeset_list:
-                                        if period__timeset[0] == param_value.indexes[i]:
-                                            new_period_timeset_list.append(period__timeset)
-                            if new_name not in self.timesets_used_by_solves.keys():
-                                self.timesets_used_by_solves[new_name] = new_period_timeset_list
-                            else:
-                                for item in new_period_timeset_list:
-                                    if item not in self.timesets_used_by_solves[new_name]:
-                                        self.timesets_used_by_solves[new_name].append(item)
+                                    new_period_timeset_list = []
+                                    for solve, period__timeset_list in list(self.timesets_used_by_solves.items()):
+                                        if solve == param["entity_name"]:
+                                            for period__timeset in period__timeset_list:
+                                                if period__timeset[0] == param_value.values[i].indexes[j]:
+                                                    new_period_timeset_list.append(period__timeset)
+                                    if new_name not in self.timesets_used_by_solves.keys():
+                                        self.timesets_used_by_solves[new_name] = new_period_timeset_list
+                                    else:
+                                        for item in new_period_timeset_list:
+                                            if item not in self.timesets_used_by_solves[new_name]:
+                                                self.timesets_used_by_solves[new_name].append(item)
+                                else:
+                                    raise ValueError(f'periods_to_tuple function handles only arrays or 2d maps: {entity}, {param}')
                         else:
-                            tuple_list.append((param["entity_name"], row))
-        return tuple_list
+                            result_dict[param["entity_name"]].append((row, row))
+        return result_dict
 
 
 
@@ -213,7 +227,7 @@ class FlexToolRunner:
 
 
 
-    def duplicate_solve(self, old_solve, new_name):
+    def duplicate_solve(self, old_solve, new_name, first_level_flag=True):
         if new_name not in self.model_solve.values() and new_name not in self.contains_solves.values():
             dup_map_list=[
                 self.solve_modes,
@@ -226,17 +240,18 @@ class FlexToolRunner:
                 self.solver_precommand,
                 self.solver_arguments,
                 self.contains_solves,
-                self.rolling_times
+                self.rolling_times,
             ]
             for dup_map in dup_map_list:
                 if old_solve in dup_map.keys():
                     dup_map[new_name]=dup_map[old_solve]
-            for model, solves in list(self.model_solve.items()):
-                if old_solve in solves:
-                    solves.remove(old_solve)
-                if new_name not in solves:
-                    solves.append(new_name)
-                self.model_solve[model] = solves
+            if first_level_flag:
+                for model, solves in list(self.model_solve.items()):
+                    if old_solve in solves:
+                        solves.remove(old_solve)
+                    if new_name not in solves:
+                        solves.append(new_name)
+                    self.model_solve[model] = solves
 
 
     def make_roll_counter(self):
@@ -441,14 +456,16 @@ class FlexToolRunner:
                     self.logger.error("""'Data contains multiple solve entities and FlexTool does not know which to use. 
                                     Please use 'solves' parameter of 'model' class to inform which solves are to be included in the model instance.""")
                     sys.exit(-1)
-                for solve_period in self.realized_periods + self.invest_periods:
+                # Check all solves from realized_periods and invest_periods dicts
+                all_solves_in_periods = set(self.realized_periods.keys()) | set(self.invest_periods.keys())
+                for solve_name in all_solves_in_periods:
                     if solve:
-                        if solve_period[0] != solve:
-                            self.logger.error("""'Data contains multiple solve entities and FlexTool does not know which to use. 
+                        if solve_name != solve:
+                            self.logger.error("""'Data contains multiple solve entities and FlexTool does not know which to use.
                                     Please use 'solves' parameter of 'model' class to inform which solves are to be included in the model instance.""")
                             sys.exit(-1)
-                    else:  
-                        solve = solve_period[0]
+                    else:
+                        solve = solve_name
                 self.model_solve[self.model[0]] = [solve]
             else:
                 self.logger.error("""'More than one model entity found in the database and FlexTool does not know which to use.""")
@@ -459,12 +476,12 @@ class FlexToolRunner:
 
         for model, solves in self.model_solve.items():
             for solve in solves:
-                if not any(solve == solve_period[0] for solve_period in self.realized_periods) and \
-                not any(solve == solve_period[0] for solve_period in self.invest_periods) and \
+                if solve not in self.realized_periods and \
+                solve not in self.invest_periods and \
                 solve not in self.timesets_used_by_solves.keys():
                     if model in self.periods_available.keys():
                         for period in self.periods_available[model]:
-                            self.realized_periods.append((solve,period))
+                            self.realized_periods[solve].append((period, period))
                     else:
                         self.logger.error(f'The solve {solve} in the model: solves array does not have any periods defined: \
                                           (period_timeset, realized_periods, invest_periods)\n \
@@ -476,9 +493,9 @@ class FlexToolRunner:
             if solve not in list(self.timesets_used_by_solves.keys()):
                 if len(self.timeset_durations.keys()) == 1:
                     period__timeset_list = list()
-                    for solve_period in self.invest_periods + self.realized_periods:
-                        if solve_period[0] == solve:
-                            period__timeset_list.append((solve_period[1],list(self.timeset_durations.keys())[0]))
+                    timeset_name = list(self.timeset_durations.keys())[0]
+                    for period_tuple in self.invest_periods.get(solve, []) + self.realized_periods.get(solve, []):
+                        period__timeset_list.append((period_tuple[1], timeset_name))
                     self.timesets_used_by_solves[solve] = period__timeset_list
                 else:
                     self.logger.error("""More than one timeset available and FlexTool does not know which ones to use. 
@@ -488,12 +505,12 @@ class FlexToolRunner:
         
         """If realized_periods or invest_periods or nested solves do not exist, but period__timeset exist, assume all periods to be realized"""
         for solve in list(self.model_solve.values())[0]:
-            if not any(solve == solve_period[0] for solve_period in self.realized_periods) \
-            and not any(solve == solve_period[0] for solve_period in self.invest_periods) \
+            if solve not in self.realized_periods \
+            and solve not in self.invest_periods \
             and not self.contains_solves[solve] \
-            and solve in self.timesets_used_by_solves.keys() :
+            and solve in self.timesets_used_by_solves.keys():
                 for period_timeset in self.timesets_used_by_solves[solve]:
-                    self.realized_periods.append((solve,period_timeset[0]))
+                    self.realized_periods[solve].append((period_timeset[0], period_timeset[0]))
 
 
     def make_steps(self, start, stop):
@@ -650,6 +667,8 @@ class FlexToolRunner:
         cplex_sol_file = str(self.root_dir / "cplex.sol")
         flextool_sol_file = str(self.root_dir / "flextool.sol")
         if solver == "glpsol":
+            with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
+                p_model_file.write("phase\nread\n")
             only_glpsol = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '--cbg','-w', glp_solution_file]
             try:
                 returncode = self.run_glpsol(only_glpsol)
@@ -671,7 +690,7 @@ class FlexToolRunner:
 
             timing = time.perf_counter() - timer_in_model_run
             print(f"--- Solve with GLPSOL: {timing:.4f} seconds ---")
-            with open("output/solve_progress.csv", "a") as solve_progress:
+            with open("solve_data/solve_progress.csv", "a") as solve_progress:
                 solve_progress.write(',,' + str(round(timing,4)) + ',')
             timer_in_model_run = timer_in_model_run + timing
 
@@ -694,7 +713,7 @@ class FlexToolRunner:
 
             timing = time.perf_counter() - timer_in_model_run
             print(f"--- GLPSOL created sol file: {timing:.4f} seconds ---\n")
-            with open("output/solve_progress.csv", "a") as solve_progress:
+            with open("solve_data/solve_progress.csv", "a") as solve_progress:
                 solve_progress.write(',' + str(round(timing,4)))
             timer_in_model_run = timer_in_model_run + timing
 
@@ -718,11 +737,13 @@ class FlexToolRunner:
             
                 timing = time.perf_counter() - timer_in_model_run
                 print(f"--- Solver (HiGHS): {timing:.4f} seconds ---\n")
-                with open("output/solve_progress.csv", "a") as solve_progress:
+                with open("solve_data/solve_progress.csv", "a") as solve_progress:
                     solve_progress.write(',' + str(round(timing,4)))
                 timer_in_model_run = timer_in_model_run + timing
 
             elif solver == "cplex": #or gurobi
+                with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
+                    p_model_file.write("phase\nread\n")
                 if current_solve not in self.solver_precommand.keys():
                     if solver == "cplex":
                         if current_solve not in self.solver_arguments.keys():
@@ -757,7 +778,7 @@ class FlexToolRunner:
 
                 timing = time.perf_counter() - timer_in_model_run
                 print(f"--- Solver (CPLEX or Gurobi): {timing:.4f} seconds ---\n")
-                with open("output/solve_progress.csv", "a") as solve_progress:
+                with open("solve_data/solve_progress.csv", "a") as solve_progress:
                     solve_progress.write(',' + str(round(timing,4)))
                 timer_in_model_run = timer_in_model_run + timing
 
@@ -770,7 +791,7 @@ class FlexToolRunner:
 
             timing = time.perf_counter() - timer_in_model_run
             print(f"\n--- GLPSOL wrote outputs: {timing:.4f} seconds ---\n")
-            with open("output/solve_progress.csv", "a") as solve_progress:
+            with open("solve_data/solve_progress.csv", "a") as solve_progress:
                 solve_progress.write(',' + str(round(timing,4)) + '\n')
             timer_in_model_run = timer_in_model_run + timing
 
@@ -961,7 +982,7 @@ class FlexToolRunner:
 
         # Skip if not current solve
         if current_solve not in timesets_used_by_solves:
-            raise ValueError(f"{current_solve}: this solve does not have period_timeset defined. Check values and that the alternative is in the scenario.")
+            raise ValueError(f"{current_solve}: this solve does not have period_timeset defined. Check that it has period_timeset parameter defined and the names of period and timeset are spelled correctly (case sensitive). Check that the alternative is included in the scenario.")
 
         for period, timeset_id in timesets_used_by_solves[current_solve]:
             # Get timeline ID for this timeset
@@ -987,8 +1008,7 @@ class FlexToolRunner:
                         break
 
         if not active_time:
-            raise ValueError(f"{current_solve}: Failed to map to timeline. Check period_timeset, "
-                             "realized_periods, timeset and timeline definitions.")
+            raise ValueError(f"{current_solve}: Failed to map timeset to timeline. Check that all timeset entities have timeline parameter defined and the name of the timeline is spelled correctly (case sensitive). Check that the alternative of the timeline parameter is included in the modelled scenario.")
 
         return active_time
 
@@ -1173,8 +1193,8 @@ class FlexToolRunner:
             out = []
             has_realized_period = False
             for period_name, period in realized_timeline.items():
-                if (solve, period_name) in self.realized_periods:
-                    last_realized_period = (period_name,period)
+                if any(t[1] == period_name for t in self.realized_periods.get(solve, [])):
+                    last_realized_period = (period_name, period)
                     has_realized_period = True
             if has_realized_period: 
                 for item in last_realized_period[1][-1:]:
@@ -1182,21 +1202,20 @@ class FlexToolRunner:
                     outfile.write(out[0] + ',' + out[1] + '\n')
 
     @staticmethod
-    def write_periods(solve, periods, filename):
+    def write_periods(solve, periods_dict, filename):
         """
-        write to file a list of periods based on the current solve and
-        a list of tuples with the solve as the first element in the tuple
+        write to file a list of periods based on the current solve.
         :param solve: current solve
+        :param periods_dict: dict where key is solve name and value is list of
+                            (period_from, period_included) tuples
         :param filename: filename to write to
-        :param periods: list of tuples with solve and periods to be printed to the file
         :return: nothing
         """
         with open(filename, 'w') as outfile:
             # prepend with a header
             outfile.write('period\n')
-            for item in periods:
-                if item[0] == solve:
-                    outfile.write(item[1] + '\n')
+            for period_tuple in periods_dict.get(solve, []):
+                outfile.write(period_tuple[1] + '\n')
 
     @staticmethod
     def write_solve_status(first_state, last_state, nested = False):
@@ -1277,18 +1296,18 @@ class FlexToolRunner:
         with open("solve_data/realized_dispatch.csv", 'w') as realfile:
             realfile.write("period,step\n")
             for period, realized_time in realized_time_list.items():
-                if (solve,period) in self.realized_periods:
+                if any(t[1] == period for t in self.realized_periods.get(solve, [])):
                     for i in realized_time:
                         realfile.write(period+","+i[0]+"\n")
 
-    def write_fix_storage_timesteps(self,active_time_list,solve):
+    def write_fix_storage_timesteps(self, active_time_list, solve):
         """
         write the timesteps to where the storage is fixed for included solves
         """
         with open("solve_data/fix_storage_timesteps.csv", 'w') as realfile:
             realfile.write("period,step\n")
             for period, active_time in active_time_list.items():
-                if (solve,period) in self.fix_storage_periods:
+                if any(t[1] == period for t in self.fix_storage_periods.get(solve, [])):
                     for i in active_time:
                         realfile.write(period+","+i[0]+"\n")
 
@@ -1478,15 +1497,23 @@ class FlexToolRunner:
     def connect_two_timelines(self,period,first_solve,second_solve, period__branch):
         first_period_timesets = self.timesets_used_by_solves[first_solve]
         second_period_timesets = self.timesets_used_by_solves[second_solve]
+        real_period = None
         for row in period__branch:
             if row[1] == period:
                 real_period = row[0]
+        first_timeset = None
         for period_timeset in first_period_timesets:
             if period_timeset[0] == real_period:
                 first_timeset = period_timeset[1]
+        second_timeset = None
         for period_timeset in second_period_timesets:
             if period_timeset[0] == real_period:
                 second_timeset = period_timeset[1]
+
+        if first_timeset is None:
+            raise ValueError(f"Could not find first_timeset for real_period={real_period} in first_period_timesets={first_period_timesets}")
+        if second_timeset is None:
+            raise ValueError(f"Could not find second_timeset for real_period={real_period} in second_period_timesets={second_period_timesets}")
 
         first_timeline = self.timesets__timeline[first_timeset]
         second_timeline = self.timesets__timeline[second_timeset]
@@ -1534,17 +1561,62 @@ class FlexToolRunner:
         return next_timestep
 
     def write_timeline_matching_map(self, upper_active_time_list, lower_active_time_list, upper_solve, lower_solve, period__branch):
+        import bisect
+
+        # Pre-compute period -> real_period mapping (O(n) once instead of O(n) per timestep)
+        period_to_real = {row[1]: row[0] for row in period__branch}
+
+        # Get the periods that exist in the upper solve's timesets
+        upper_period_timesets = self.timesets_used_by_solves[upper_solve]
+        upper_periods = {pt[0] for pt in upper_period_timesets}
+
         matching_map = OrderedDict()
         for period, lower_active_time in lower_active_time_list.items():
-            #period_last = (period, lower_active_time[-1][0])
+            # Get the real period for this period
+            real_period = period_to_real.get(period)
+
+            # Skip periods that don't exist in the upper solve's timesets
+            if real_period not in upper_periods:
+                continue
+
+            # Call connect_two_timelines ONCE per period, not per timestep
+            this_timeline_duration, from_timeline_duration = self.connect_two_timelines(
+                period, lower_solve, upper_solve, period__branch
+            )
+
+            upper_timesteps = upper_active_time_list[real_period]
+
+            # Pre-compute list of (duration, timestep_name) for binary search
+            from_durations = []
+            from_timestep_names = []
+            for ts in upper_timesteps:
+                from_durations.append(from_timeline_duration[ts[0]])
+                from_timestep_names.append(ts[0])
+
+            default_timestep = upper_timesteps[-1][0]  # last is the default
+
             for timestep in lower_active_time:
                 period_timestep = (period, timestep[0])
-                previous_timestep = self.find_previous_timestep(upper_active_time_list, period_timestep, lower_solve, upper_solve, period__branch)
+                from_start = this_timeline_duration[timestep[0]]
+
+                # Binary search: find first index where duration > from_start
+                idx = bisect.bisect_right(from_durations, from_start)
+
+                if idx == 0:
+                    # All upper durations are > from_start, use first timestep
+                    previous_timestep = upper_timesteps[0][0]
+                elif idx >= len(from_durations):
+                    # All upper durations are <= from_start, use default (last)
+                    previous_timestep = default_timestep
+                else:
+                    # Use the timestep just before the one that exceeds from_start
+                    previous_timestep = from_timestep_names[idx - 1]
+
                 matching_map[period_timestep] = previous_timestep
 
         with open("solve_data/timeline_matching_map.csv", 'w') as realfile:
             realfile.write("period,step,upper_step\n")
-            for period_timestep, upper_timestep in list(matching_map.items()):
+            for period_timestep, upper_timestep in matching_map.items():
                 realfile.write(period_timestep[0]+","+period_timestep[1]+","+ upper_timestep+"\n")
 
     def create_rolling_solves(self, solve, full_active_time_list, jump, horizon, start = None, duration = -1):
@@ -1644,24 +1716,24 @@ class FlexToolRunner:
     # Named tuple for tracking parent solve relationships
     ParentSolveInfo = namedtuple('ParentSolveInfo', ['solve', 'roll'])
 
-    def _filter_time_list_by_periods(self, full_time_list, period_list, solve_name):
+    def _filter_time_list_by_periods(self, full_time_list, period_dict, solve_name):
         """
-        Filter a time list to include only periods that are in the given period list.
+        Filter a time list to include only periods that are in the given period dict.
 
         Args:
             full_time_list: OrderedDict of {period: [(timestep, idx, value), ...]}
-            period_list: List of (solve, period) tuples
+            period_dict: dict where key is solve name and value is list of
+                        (period_from, period_included) tuples
             solve_name: Name of the solve to filter for
 
         Returns:
             OrderedDict with only the matching periods
         """
         filtered = OrderedDict()
-        for solve_period_tuple in period_list:
-            if solve_period_tuple[0] == solve_name:
-                period = solve_period_tuple[1]
-                if period in full_time_list:
-                    filtered[period] = full_time_list[period]
+        for period_tuple in period_dict.get(solve_name, []):
+            period = period_tuple[1]  # period_included
+            if period in full_time_list:
+                filtered[period] = full_time_list[period]
         return filtered
 
     def _get_periods_from_parent_time_list(self, parent_time_list):
@@ -1818,6 +1890,7 @@ class FlexToolRunner:
         solves = [solve]
         complete_solves = OrderedDict()
         active_time_lists = OrderedDict()
+        invest_time_lists = OrderedDict()
         fix_storage_time_lists = OrderedDict()
         realized_time_lists = OrderedDict()
         parent_roll_lists = OrderedDict()
@@ -1827,6 +1900,8 @@ class FlexToolRunner:
         active_time_lists[solve] = full_active_time_list
 
         # Get fix_storage and realized time lists from class attributes
+        invest_time_lists[solve] = self._filter_time_list_by_periods(
+            full_active_time_list, self.invest_periods, solve)
         fix_storage_time_lists[solve] = self._filter_time_list_by_periods(
             full_active_time_list, self.fix_storage_periods, solve)
         realized_time_lists[solve] = self._filter_time_list_by_periods(
@@ -1878,32 +1953,61 @@ class FlexToolRunner:
             Tuple of (solves, complete_solves, active_time_lists, fix_storage_time_lists,
                      realized_time_lists, parent_roll_lists)
         """
+        new_name = solve
+        if parent_info.solve:
+            joint_current_solve_periods = list(set(self.invest_periods[solve] + self.fix_storage_periods[solve] + self.realized_periods[solve]))
+            current_solve_periods = [t[0] for t in joint_current_solve_periods]
+            for current_solve_period in current_solve_periods:
+                joint_parent_periods = list(set(self.invest_periods[parent_info.solve] + self.fix_storage_periods[parent_info.solve] + self.realized_periods[parent_info.solve]))
+                parent_period = set([t[0] for t in joint_parent_periods])
+                if current_solve_period in parent_period:
+                    new_name = solve + "_" + str(current_solve_period)
+                    self.duplicate_solve(solve, new_name, first_level_flag=False)
+                    self.solve_period_years_represented[new_name] = self.solve_period_years_represented[solve]
+
+                    new_period_timeset_list = []
+                    for solve2, period__timeset_list in list(self.timesets_used_by_solves.items()):
+                        if solve2 == solve:
+                            for period__timeset in period__timeset_list:
+                                if period__timeset[0] == current_solve_period:
+                                    new_period_timeset_list.append(period__timeset)
+                    if new_name not in self.timesets_used_by_solves.keys():
+                        self.timesets_used_by_solves[new_name] = new_period_timeset_list
+                    else:
+                        for item in new_period_timeset_list:
+                            if item not in self.timesets_used_by_solves[new_name]:
+                                self.timesets_used_by_solves[new_name].append(item)
+                    # There should be only one parent 'period_from'
+                    break
+
+        if new_name not in self.real_solves:
+            self.real_solves.append(new_name)
+
         # Get full active time list for this solve (all timesteps it could use)
         full_active_time_list_own = self.get_active_time(
-            solve, self.timesets_used_by_solves, self.timeset_durations,
+            new_name, self.timesets_used_by_solves, self.timeset_durations,
             self.timelines, self.timesets__timeline)
 
         # If this is a child solve, constrain it to parent's scope
-        if parent_scope_periods is not None:
-            full_active_time_list = self._filter_time_list_by_parent_scope(
-                full_active_time_list_own, parent_scope_periods)
-        else:
+        if not parent_scope_periods:
             # Top-level solve: include realized_invest_periods in scope
             # (they contribute to active time but not to fix_storage/realized directly)
             full_active_time_list = full_active_time_list_own
+        else:
+            full_active_time_list = self._filter_time_list_by_parent_scope(
+                full_active_time_list_own, parent_scope_periods)
 
         # Determine solve mode
-        solve_mode = self.solve_modes.get(solve, "single_solve")
-
+        solve_mode = self.solve_modes.get(new_name, "single_solve")
         if solve_mode == "rolling_window":
             # Process as rolling window solve
             complete_solve_name = solve
             return self._process_rolling_solve(
-                solve, complete_solve_name, full_active_time_list,
+                new_name, complete_solve_name, full_active_time_list,
                 parent_info, start, duration)
         else:
             # Process as single solve
-            return self._process_single_solve(solve, full_active_time_list, parent_info)
+            return self._process_single_solve(new_name, full_active_time_list, parent_info)
 
     def create_stochastic_periods(self, stochastic_branches, solves, complete_solves, active_time_lists, fix_storage_time_lists, realized_time_lists):
         """
@@ -2054,9 +2158,9 @@ class FlexToolRunner:
     def periodic_postprocess(self,groupby_map, method = None, arithmetic = "sum"):
         for key, group in list(groupby_map.items()):
             if method == "timewise":
-                filepath = 'output/' + key + '__t.csv'
+                filepath = 'solve_data/' + key + '__t.csv'
             else:
-                filepath = 'output/' + key + '.csv'
+                filepath = 'solve_data/' + key + '.csv'
             if os.path.exists(filepath):
                 #get the relationship indicators from the start of the file
                 if group[1]>1:
@@ -2097,9 +2201,9 @@ class FlexToolRunner:
                     combined = pd.concat([relationship_start_df,combined])
 
                 if arithmetic == "sum":
-                    combined.to_csv('output/' + key + '.csv',index=False, float_format= "%.6g")
+                    combined.to_csv('solve_data/' + key + '.csv',index=False, float_format= "%.6g")
                 else:
-                    combined.to_csv('output/' + key + '_average.csv',index=False, float_format= "%.6g")
+                    combined.to_csv('solve_data/' + key + '_average.csv',index=False, float_format= "%.6g")
 
     def combine_result_tables(self, inputfile1, inputfile2, outputfile, combine_headers = None, move_column = []):
         input1 = pd.read_csv(inputfile1,header = 0)
@@ -2211,18 +2315,25 @@ class FlexToolRunner:
             parent_roll.update(solve_parent_roll)
             active_time_lists.update(solve_active_time_lists)
             fix_storage_time_lists.update(solve_fix_storage_time_lists)
-            realized_time_lists.update(solve_realized_time_lists)
+            realized_time_lists.update(copy.deepcopy(solve_realized_time_lists))
 
-        period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, fix_storage_time_lists, realized_time_lists, branch_start_time_lists = self.create_stochastic_periods(self.stochastic_branches, all_solves, complete_solve, active_time_lists, fix_storage_time_lists, realized_time_lists)
+        # Leave only one realized timestep for each timestep in each period
+        already_realized_timesteps = OrderedDict()
+        for solve, realized_time_list in reversed(realized_time_lists.items()):
+            for period, timesteps in realized_time_list.items():
+                if period not in already_realized_timesteps.keys():
+                    already_realized_timesteps[period] = []
+                for i, timestep in enumerate(timesteps):
+                    # If a timestep is found, then assume that all the rest of the timesteps are overlapping (can this fail?)
+                    if timestep[0] in already_realized_timesteps[period]:
+                        del realized_time_lists[solve][period][i:]
+                        break
+                    else:
+                        already_realized_timesteps[period].append(timestep[0])
+                if not timesteps:
+                    del realized_time_lists[solve][period]
 
-        real_solves = [] 
-        for solve in solves: #real solves are the defined solves not including the individual rolls
-            real_solves.append(solve)     
-        for solve, inner_solves in list(self.contains_solves.items()):
-            for inner_solve in inner_solves:
-                real_solves.append(inner_solve)
-
-        for solve in real_solves:
+        for solve in self.real_solves:
             #check that period__years_represented has only periods included in the solve
             new_years_represented = []
             for period__year in self.solve_period_years_represented[solve]:
@@ -2230,15 +2341,21 @@ class FlexToolRunner:
                     new_years_represented.append(period__year)
             self.solve_period_years_represented[solve] = new_years_represented
             # get period_history from earlier solves
-            for solve_2 in real_solves:
+            for solve_2 in self.real_solves:
                 if solve_2 == solve:
                     break
-                for solve__period in (self.realized_periods+self.invest_periods+self.fix_storage_periods+self.realized_invest_periods):
-                    if solve__period[0] == solve_2:
-                        this_solve = self.solve_period_years_represented[solve_2]
-                        for period in this_solve:
-                            if period[0] == solve__period[1] and not any(period[0]== sublist[0] for sublist in solve_period_history[solve]):
-                                    solve_period_history[solve].append((period[0], period[1]))
+                # Combine all period tuples for solve_2 from all period dicts
+                all_period_tuples = (
+                    self.realized_periods.get(solve_2, []) +
+                    self.invest_periods.get(solve_2, []) +
+                    self.fix_storage_periods.get(solve_2, []) +
+                    self.realized_invest_periods.get(solve_2, [])
+                )
+                for period_tuple in all_period_tuples:
+                    this_solve = self.solve_period_years_represented[solve_2]
+                    for period in this_solve:
+                        if period[0] == period_tuple[0] and not any(period[0] == sublist[0] for sublist in solve_period_history[solve]):
+                            solve_period_history[solve].append((period[0], period[1]))
             # get period_history from this solve
             for period__year in self.solve_period_years_represented[solve]:
                 if not any(period__year[0]== sublist[0] for sublist in solve_period_history[solve]):
@@ -2248,6 +2365,9 @@ class FlexToolRunner:
                 for period__timeset in self.timesets_used_by_solves[solve]:
                     if not any(period__timeset[0]== sublist[0] for sublist in solve_period_history[solve]):
                         solve_period_history[solve].append((period__timeset[0], 1))
+
+        period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, fix_storage_time_lists, realized_time_lists, branch_start_time_lists = self.create_stochastic_periods(self.stochastic_branches, all_solves, complete_solve, active_time_lists, fix_storage_time_lists, realized_time_lists)
+
         for solve in active_time_lists.keys():
             for period in active_time_lists[solve]:
                 if (period,period) in period__branch_lists[solve] and not any(period== sublist[0] for sublist in solve_period_history[complete_solve[solve]]):
@@ -2256,7 +2376,7 @@ class FlexToolRunner:
 
         timing = time.perf_counter() - timer
         print(f"--- Pre-processing of data: {timing:.4f} seconds ---")
-        with open("output/solve_progress.csv", "a") as solve_progress:
+        with open("solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write(',,solve,write_solve_input,setup,total_obj_cost,balance,reserves,rest,constraints,glpsol_input,solver,' \
                 'setup2,total_obj_cost2,balance2,reserves2,rest2,constraints2,r_solution,w_raw,w_capacity,glpsol_output,\n')
         timer = timer + timing
@@ -2268,7 +2388,24 @@ class FlexToolRunner:
 
             self.logger.info("Creating timelines for solve " + solve + " (" + str(i) + ")")
             complete_active_time_lists = self.get_active_time(complete_solve[solve], self.timesets_used_by_solves, self.timeset_durations, self.timelines, self.timesets__timeline)
-            self.write_full_timelines(self.stochastic_timesteps[solve], self.timesets_used_by_solves[complete_solve[solve]], self.timesets__timeline, self.timelines, 'solve_data/steps_in_timeline.csv')
+
+            # Build a combined period__timeset list that includes history periods
+            period__timesets_with_history = list(self.timesets_used_by_solves[complete_solve[solve]])
+            current_periods = {pt[0] for pt in period__timesets_with_history}
+
+            # Determine the timeset to use for history periods (use the timeset from the current solve)
+            # If the current solve has multiple timesets, prefer the first one
+            current_timeset = period__timesets_with_history[0][1] if period__timesets_with_history else None
+
+            # Add history periods from solve_period_history
+            for history_period, _ in solve_period_history[complete_solve[solve]]:
+                if history_period not in current_periods:
+                    # Use the same timeset as the current solve for history periods
+                    if current_timeset:
+                        period__timesets_with_history.append((history_period, current_timeset))
+                        current_periods.add(history_period)
+
+            self.write_full_timelines(self.stochastic_timesteps[solve], period__timesets_with_history, self.timesets__timeline, self.timelines, 'solve_data/steps_in_timeline.csv')
             self.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
             self.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete = True)
             self.write_step_jump(jump_lists[solve])
@@ -2277,8 +2414,8 @@ class FlexToolRunner:
             self.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], 'solve_data/period_with_history.csv')
             self.write_periods(complete_solve[solve], self.realized_invest_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
             #assume that if realized_invest_periods is not defined,but the invest_periods and realized_periods are defined, use realized_periods also as the realized_invest_periods
-            if (not any(complete_solve[solve] == step[0] for step in self.realized_invest_periods)) and any(complete_solve[solve] == step[0] for step in self.invest_periods) and any(complete_solve[solve] == step[0] for step in self.realized_periods):
-                 self.write_periods(complete_solve[solve], self.realized_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
+            if not self.realized_invest_periods[complete_solve[solve]] and self.invest_periods[complete_solve[solve]] and self.realized_periods[complete_solve[solve]]:
+                self.write_periods(complete_solve[solve], self.realized_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
             self.write_periods(complete_solve[solve], self.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
             self.write_years_represented(period__branch_lists[solve], self.solve_period_years_represented[complete_solve[solve]],'solve_data/p_years_represented.csv')
             self.write_period_years(period__branch_lists[solve], self.solve_period_years_represented[complete_solve[solve]],'solve_data/p_discount_years.csv')
@@ -2286,7 +2423,7 @@ class FlexToolRunner:
             self.write_hole_multiplier(solve, 'solve_data/solve_hole_multiplier.csv')
             self.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
             self.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
-            self.write_last_realized_step(realized_time_lists[solve], complete_solve[solve], 'solve_data/last_realized_timestep.csv')
+            self.write_last_realized_step(active_time_lists[solve], complete_solve[solve], 'solve_data/last_realized_timestep.csv')
             self.logger.info("Create realized timeline")
             self.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
             self.write_fix_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
@@ -2299,7 +2436,7 @@ class FlexToolRunner:
             self.separate_period_and_timeseries_data(self.timelines, self.timesets_used_by_solves)
 
             #check if the upper level fixes storages
-            if [complete_solve[solve]] in self.contains_solves.values() and any(complete_solve[parent_roll[solve]] == solve_period[0] for solve_period in self.fix_storage_periods): # check that the parent_roll exists and has storage fixing
+            if [complete_solve[solve]] in self.contains_solves.values() and complete_solve[parent_roll[solve]] in self.fix_storage_periods:  # check that the parent_roll exists and has storage fixing
                 storage_fix_values_exist = True
             else:
                 storage_fix_values_exist = False
@@ -2336,12 +2473,12 @@ class FlexToolRunner:
                 first = False
                 self.write_empty_investment_file()
                 self.write_empty_storage_fix_file()
-                self.write_headers_for_empty_output_files('output/costs_discounted.csv', 'param_costs,costs_discounted')
-                self.write_headers_for_empty_output_files('output/co2.csv', 'param_co2,model_wide')
+                self.write_headers_for_empty_output_files('solve_data/costs_discounted.csv', 'param_costs,costs_discounted')
+                self.write_headers_for_empty_output_files('solve_data/co2.csv', 'param_co2,model_wide')
                 self.write_headers_for_empty_output_files('solve_data/period_capacity.csv', 'period')
             self.logger.info("Starting model creation")
 
-            with open("output/solve_progress.csv", "a") as solve_progress:
+            with open("solve_data/solve_progress.csv", "a") as solve_progress:
                 solve_progress.write(',,' + solve + ',' + str(round(time.perf_counter() - timer_in_solve,4)))
             
             exit_status = self.model_run(complete_solve[solve])
@@ -2353,7 +2490,7 @@ class FlexToolRunner:
                 sys.exit(-1)
 
             #if multiple storage solve levels, save the storage fix of this level:
-            if any(complete_solve[solve] == solve_period[0] for solve_period in self.fix_storage_periods):
+            if complete_solve[solve] in self.fix_storage_periods:
                 shutil.copy("solve_data/fix_storage_quantity.csv","solve_data/fix_storage_quantity_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_price.csv", "solve_data/fix_storage_price_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_usage.csv","solve_data/fix_storage_usage_"+ complete_solve[solve]+".csv")
@@ -2361,7 +2498,8 @@ class FlexToolRunner:
         #produce periodic data as post-process for rolling window solves
         results_post_processed = False
         for solve in complete_solve.keys():
-            if self.solve_modes[complete_solve[solve]] == "rolling_window":
+            solve_mode = self.solve_modes.get(complete_solve[solve], 'single_solve')
+            if solve_mode == "rolling_window":
                 results_post_processed = True
         if results_post_processed:
             #[[group by], relation dimensions]

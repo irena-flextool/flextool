@@ -249,6 +249,9 @@
                     "FlexTool",
                     "left"
                 ],
+                "options": {
+                    "require_scenario_filter": true
+                },
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input_data": {
@@ -298,8 +301,7 @@
                     "known_filters": {
                         "db_url@Results": {
                             "scenario_filter": {},
-                            "alternative_filter": {
-                            }
+                            "alternative_filter": {}
                         }
                     },
                     "auto_online": true,
@@ -329,13 +331,13 @@
                 }
             },
             {
-                "name": "from FlexTool to scenario info",
+                "name": "from FlexTool to output info",
                 "from": [
                     "FlexTool",
                     "right"
                 ],
                 "to": [
-                    "scenario info",
+                    "output info",
                     "left"
                 ],
                 "filter_settings": {
@@ -348,20 +350,24 @@
                 }
             },
             {
-                "name": "from scenario info to scenario comparison",
+                "name": "from output info to scenario comparison",
                 "from": [
-                    "scenario info",
+                    "output info",
                     "right"
                 ],
                 "to": [
                     "scenario comparison",
                     "left"
                 ],
+                "options": {
+                    "require_scenario_filter": true
+                },
                 "filter_settings": {
                     "known_filters": {
-                        "db_url@scenario info": {
+                        "db_url@output info": {
                             "scenario_filter": {},
                             "alternative_filter": {
+                                "base": true
                             }
                         }
                     },
@@ -401,37 +407,36 @@
                     "Input_data",
                     "left"
                 ],
+                "options": {
+                    "purge_before_writing": true,
+                    "purge_settings": {
+                        "alternative": true,
+                        "scenario": true,
+                        "scenario_alternative": true,
+                        "entity_class": false,
+                        "display_mode": false,
+                        "entity_class_display_mode": false,
+                        "superclass_subclass": false,
+                        "entity": true,
+                        "entity_group": true,
+                        "entity_alternative": true,
+                        "parameter_value_list": false,
+                        "list_value": false,
+                        "parameter_definition": false,
+                        "parameter_type": false,
+                        "parameter_value": true,
+                        "metadata": true,
+                        "entity_metadata": true,
+                        "parameter_value_metadata": true,
+                        "entity_location": true
+                    }
+                },
                 "filter_settings": {
                     "known_filters": {},
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": false,
                         "scenario_filter": true
-                    }
-                }
-            },
-            {
-                "name": "from scenario info to Re-create results",
-                "from": [
-                    "scenario info",
-                    "right"
-                ],
-                "to": [
-                    "Re-create results",
-                    "right"
-                ],
-                "filter_settings": {
-                    "known_filters": {
-                        "db_url@scenario info": {
-                            "scenario_filter": {},
-                            "alternative_filter": {
-                            }
-                        }
-                    },
-                    "auto_online": true,
-                    "enabled_filter_types": {
-                        "alternative_filter": true,
-                        "scenario_filter": false
                     }
                 }
             },
@@ -453,17 +458,46 @@
                         "scenario_filter": true
                     }
                 }
+            },
+            {
+                "name": "from output info to Re-create results",
+                "from": [
+                    "output info",
+                    "right"
+                ],
+                "to": [
+                    "Re-create results",
+                    "right"
+                ],
+                "options": {
+                    "require_scenario_filter": true
+                },
+                "filter_settings": {
+                    "known_filters": {
+                        "db_url@output info": {
+                            "scenario_filter": {},
+                            "alternative_filter": {
+                                "base": true
+                            }
+                        }
+                    },
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": true,
+                        "scenario_filter": false
+                    }
+                }
             }
         ],
         "jumps": [
             {
-                "name": "from Re-create results to scenario info",
+                "name": "from Re-create results to output info",
                 "from": [
                     "Re-create results",
                     "left"
                 ],
                 "to": [
-                    "scenario info",
+                    "output info",
                     "left"
                 ],
                 "condition": {
@@ -504,6 +538,14 @@
             "file_selection": [
                 [
                     "datapackage@FlexTool",
+                    true
+                ],
+                [
+                    "output_csv/*.csv",
+                    true
+                ],
+                [
+                    "output_csv/*/*.csv",
                     true
                 ],
                 [
@@ -565,6 +607,11 @@
                     "type": "path",
                     "relative": true,
                     "path": "example_input.xlsx"
+                },
+                {
+                    "type": "path",
+                    "relative": false,
+                    "path": "/home/jkiviluo/sources/flextool3/20251216_FT_Input_himalaya.xlsx"
                 }
             ],
             "file_patterns": [],
@@ -598,6 +645,10 @@
             "on_conflict": "replace",
             "file_selection": [
                 [
+                    "/home/jkiviluo/sources/flextool3/20251216_FT_Input_himalaya.xlsx",
+                    true
+                ],
+                [
                     "<project>/example_input.xlsx",
                     true
                 ]
@@ -613,8 +664,8 @@
         "FlexTool": {
             "type": "Tool",
             "description": "",
-            "x": -5.389126812858366,
-            "y": -51.489828427713256,
+            "x": -6.838176407662271,
+            "y": -55.71186820125284,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": [
@@ -624,11 +675,7 @@
                 },
                 {
                     "type": "resource",
-                    "arg": "db_url@scenario info"
-                },
-                {
-                    "type": "literal",
-                    "arg": "--write-outputs"
+                    "arg": "db_url@output info"
                 },
                 {
                     "type": "literal",
@@ -637,6 +684,22 @@
                 {
                     "type": "resource",
                     "arg": "<project>/templates/flextool_location.txt"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--write-methods"
+                },
+                {
+                    "type": "literal",
+                    "arg": "parquet"
+                },
+                {
+                    "type": "literal",
+                    "arg": "plot"
+                },
+                {
+                    "type": "literal",
+                    "arg": "csv"
                 }
             ],
             "kill_completed_processes": false,
@@ -658,34 +721,17 @@
             "kill_completed_processes": false,
             "log_process_output": false
         },
-        "scenario info": {
-            "type": "Data Store",
-            "description": "",
-            "x": 163.84801244650532,
-            "y": -104.30350711758898,
-            "url": {
-                "dialect": "sqlite",
-                "host": "",
-                "port": null,
-                "database": {
-                    "type": "path",
-                    "relative": true,
-                    "path": "scenario_info.sqlite"
-                },
-                "schema": ""
-            }
-        },
         "scenario comparison": {
             "type": "Tool",
             "description": "",
-            "x": 324.20633695355644,
-            "y": -105.30706369439088,
+            "x": 323.1866033421187,
+            "y": -106.3267973058286,
             "specification": "scenario comparison",
             "execute_in_work": false,
             "cmd_line_args": [
                 {
                     "type": "resource",
-                    "arg": "db_url@scenario info"
+                    "arg": "db_url@output info"
                 }
             ],
             "kill_completed_processes": false,
@@ -694,7 +740,7 @@
         "Read input spreadsheet": {
             "type": "Tool",
             "description": "",
-            "x": -327.62833722541336,
+            "x": -326.6086036139757,
             "y": -165.3356624388308,
             "specification": "Read tabular data",
             "execute_in_work": false,
@@ -709,27 +755,7 @@
                 },
                 {
                     "type": "resource",
-                    "arg": "<project>/example_input.xlsx"
-                }
-            ],
-            "kill_completed_processes": false,
-            "log_process_output": false
-        },
-        "Re-create results": {
-            "type": "Tool",
-            "description": "",
-            "x": 161.72688441130828,
-            "y": -216.82000395868312,
-            "specification": "scenario comparison",
-            "execute_in_work": false,
-            "cmd_line_args": [
-                {
-                    "type": "literal",
-                    "arg": "--output_locations_db_url"
-                },
-                {
-                    "type": "resource",
-                    "arg": "db_url@scenario info"
+                    "arg": "/home/jkiviluo/sources/flextool3/20251216_FT_Input_himalaya.xlsx"
                 }
             ],
             "kill_completed_processes": false,
@@ -750,6 +776,55 @@
             "file_patterns": [],
             "directory_references": [],
             "db_references": []
+        },
+        "Re-create results": {
+            "type": "Tool",
+            "description": "",
+            "x": 161.72688441130828,
+            "y": -216.82000395868312,
+            "specification": "Process outputs",
+            "execute_in_work": false,
+            "cmd_line_args": [
+                {
+                    "type": "literal",
+                    "arg": "--output-locations-db-url"
+                },
+                {
+                    "type": "resource",
+                    "arg": "db_url@output info"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--write-methods"
+                },
+                {
+                    "type": "literal",
+                    "arg": "plot"
+                },
+                {
+                    "type": "literal",
+                    "arg": "excel"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "output info": {
+            "type": "Data Store",
+            "description": "",
+            "x": 163.84801244650532,
+            "y": -104.30350711758898,
+            "url": {
+                "dialect": "sqlite",
+                "host": "",
+                "port": null,
+                "database": {
+                    "type": "path",
+                    "relative": true,
+                    "path": "output_info.sqlite"
+                },
+                "schema": ""
+            }
         }
     }
 }

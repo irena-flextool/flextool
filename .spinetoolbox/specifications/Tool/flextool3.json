@@ -32,7 +32,8 @@
     "inputfiles": [],
     "inputfiles_opt": [],
     "outputfiles": [
-        "output/*.csv",
+        "output_csv/*.csv",
+        "output_csv/*/*.csv",
         "output_parquet/*.parquet",
         "output_raw/*.csv"
     ],

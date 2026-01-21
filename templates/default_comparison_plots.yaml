@@ -20,7 +20,7 @@ plots:
     CO2__: [co2, _, m_bm, null, null, null, null, null, null]
     CO2_d_g: [group_CO2, d_sg, m_bx, null, null, null, null, null, null]
     annualized_costs_d_p:
-        default: [annualized_costs, d_sp, a_bx, null, null, null, 10, null, 'Currency']
+        default: [annualized_costs, d_sp, x_bs, null, null, null, 10, null, 'Currency']
         sum_periods: [annualized_costs, d_sp, m_gb, null, null, null, 10, null, null]
     connection_capacity_ed_p: [connection_capacity, ed_sp, bu_gu, 4, null, null, 3, null, null]
     connection_cf_d_e: [connection_cf, d_se, b_gx, null, null, null, null, null, null]
