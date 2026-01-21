@@ -66,71 +66,6 @@
         },
         "connections": [
             {
-                "name": "from Excel input to Replace with Excel input",
-                "from": [
-                    "Excel input",
-                    "right"
-                ],
-                "to": [
-                    "Replace with Excel input",
-                    "left"
-                ],
-                "filter_settings": {
-                    "known_filters": {},
-                    "auto_online": true,
-                    "enabled_filter_types": {
-                        "alternative_filter": false,
-                        "scenario_filter": true
-                    }
-                }
-            },
-            {
-                "name": "from Import_results to Results",
-                "from": [
-                    "Import_results",
-                    "right"
-                ],
-                "to": [
-                    "Results",
-                    "left"
-                ],
-                "options": {
-                    "write_index": 1,
-                    "purge_before_writing": false,
-                    "purge_settings": null
-                },
-                "filter_settings": {
-                    "known_filters": {},
-                    "auto_online": true,
-                    "enabled_filter_types": {
-                        "alternative_filter": false,
-                        "scenario_filter": true
-                    }
-                }
-            },
-            {
-                "name": "from FlexTool to Import_results",
-                "from": [
-                    "FlexTool",
-                    "right"
-                ],
-                "to": [
-                    "Import_results",
-                    "left"
-                ],
-                "options": {
-                    "use_datapackage": true
-                },
-                "filter_settings": {
-                    "known_filters": {},
-                    "auto_online": true,
-                    "enabled_filter_types": {
-                        "alternative_filter": false,
-                        "scenario_filter": true
-                    }
-                }
-            },
-            {
                 "name": "from Examples to Replace with examples",
                 "from": [
                     "Examples",
@@ -197,49 +132,6 @@
                 }
             },
             {
-                "name": "from Replace with Excel input to Input_data",
-                "from": [
-                    "Replace with Excel input",
-                    "right"
-                ],
-                "to": [
-                    "Input_data",
-                    "left"
-                ],
-                "options": {
-                    "purge_before_writing": true,
-                    "purge_settings": {
-                        "alternative": true,
-                        "scenario": true,
-                        "scenario_alternative": true,
-                        "entity_class": false,
-                        "display_mode": false,
-                        "entity_class_display_mode": false,
-                        "superclass_subclass": false,
-                        "entity": true,
-                        "entity_group": true,
-                        "entity_alternative": true,
-                        "parameter_value_list": false,
-                        "list_value": false,
-                        "parameter_definition": false,
-                        "parameter_type": false,
-                        "parameter_value": true,
-                        "metadata": true,
-                        "entity_metadata": true,
-                        "parameter_value_metadata": true
-                    },
-                    "write_index": 2
-                },
-                "filter_settings": {
-                    "known_filters": {},
-                    "auto_online": true,
-                    "enabled_filter_types": {
-                        "alternative_filter": false,
-                        "scenario_filter": true
-                    }
-                }
-            },
-            {
                 "name": "from Input_data to FlexTool",
                 "from": [
                     "Input_data",
@@ -255,10 +147,8 @@
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input_data": {
-                            "scenario_filter": {
-                            },
-                            "alternative_filter": {
-                            }
+                            "scenario_filter": {},
+                            "alternative_filter": {}
                         }
                     },
                     "auto_online": false,
@@ -280,30 +170,6 @@
                 ],
                 "filter_settings": {
                     "known_filters": {},
-                    "auto_online": true,
-                    "enabled_filter_types": {
-                        "alternative_filter": false,
-                        "scenario_filter": true
-                    }
-                }
-            },
-            {
-                "name": "from Results to To_Excel",
-                "from": [
-                    "Results",
-                    "right"
-                ],
-                "to": [
-                    "To_Excel",
-                    "left"
-                ],
-                "filter_settings": {
-                    "known_filters": {
-                        "db_url@Results": {
-                            "scenario_filter": {},
-                            "alternative_filter": {}
-                        }
-                    },
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": false,
@@ -527,70 +393,11 @@
                 "schema": ""
             }
         },
-        "Import_results": {
-            "type": "Importer",
-            "description": "",
-            "x": 135.8927914893119,
-            "y": 12.761718773261329,
-            "specification": "Import_flex3",
-            "cancel_on_error": false,
-            "on_conflict": "replace",
-            "file_selection": [
-                [
-                    "datapackage@FlexTool",
-                    true
-                ],
-                [
-                    "output_csv/*.csv",
-                    true
-                ],
-                [
-                    "output_csv/*/*.csv",
-                    true
-                ],
-                [
-                    "output_parquet/*.parquet",
-                    false
-                ]
-            ]
-        },
-        "Results": {
-            "type": "Data Store",
-            "description": "",
-            "x": 270.75093462761276,
-            "y": 11.975489729646874,
-            "url": {
-                "dialect": "sqlite",
-                "host": "",
-                "port": null,
-                "database": {
-                    "type": "path",
-                    "relative": true,
-                    "path": "results.sqlite"
-                },
-                "schema": ""
-            }
-        },
-        "To_Excel": {
-            "type": "Exporter",
-            "description": "",
-            "x": 389.3129099380192,
-            "y": 12.319319858077264,
-            "output_time_stamps": false,
-            "cancel_on_error": true,
-            "output_labels": [
-                {
-                    "in_label": "db_url@Results",
-                    "out_label": "FlexTool_results.xlsx"
-                }
-            ],
-            "specification": "Results_to_Excel"
-        },
         "Open_summary": {
             "type": "Tool",
             "description": "",
-            "x": 39.59785716880638,
-            "y": 91.00033984239435,
+            "x": 44.70906510141128,
+            "y": 57.77748828046251,
             "specification": "open_summary",
             "execute_in_work": true,
             "cmd_line_args": [],
@@ -600,18 +407,13 @@
         "Excel input": {
             "type": "Data Connection",
             "description": "",
-            "x": -460.14972266262254,
-            "y": -43.96108521051141,
+            "x": -455.8903827187851,
+            "y": -76.33206878367577,
             "file_references": [
                 {
                     "type": "path",
                     "relative": true,
                     "path": "example_input.xlsx"
-                },
-                {
-                    "type": "path",
-                    "relative": false,
-                    "path": "/home/jkiviluo/sources/flextool3/20251216_FT_Input_himalaya.xlsx"
                 }
             ],
             "file_patterns": [],
@@ -621,8 +423,8 @@
         "Examples": {
             "type": "Data Store",
             "description": "",
-            "x": -450.3652782769653,
-            "y": 67.63049092504008,
+            "x": -452.92088224326767,
+            "y": 46.33379120585301,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -635,30 +437,11 @@
                 "schema": ""
             }
         },
-        "Replace with Excel input": {
-            "type": "Importer",
-            "description": "",
-            "x": -325.5949834498154,
-            "y": -46.42159694812737,
-            "specification": "FlexTool3_Excel_input",
-            "cancel_on_error": false,
-            "on_conflict": "replace",
-            "file_selection": [
-                [
-                    "/home/jkiviluo/sources/flextool3/20251216_FT_Input_himalaya.xlsx",
-                    true
-                ],
-                [
-                    "<project>/example_input.xlsx",
-                    true
-                ]
-            ]
-        },
         "Replace with examples": {
             "type": "Merger",
             "description": "",
-            "x": -334.9160803985192,
-            "y": 68.47111969441713,
+            "x": -328.1011364883794,
+            "y": 44.6188160089276,
             "cancel_on_error": true
         },
         "FlexTool": {
@@ -708,8 +491,8 @@
         "Migrate database version": {
             "type": "Tool",
             "description": "",
-            "x": -194.61058713629697,
-            "y": 79.0605510241206,
+            "x": -201.42553104643682,
+            "y": 73.94934309151569,
             "specification": "migrate_database",
             "execute_in_work": true,
             "cmd_line_args": [
@@ -724,8 +507,8 @@
         "scenario comparison": {
             "type": "Tool",
             "description": "",
-            "x": 323.1866033421187,
-            "y": -106.3267973058286,
+            "x": 315.028734450617,
+            "y": -55.340116733942835,
             "specification": "scenario comparison",
             "execute_in_work": false,
             "cmd_line_args": [
@@ -740,8 +523,8 @@
         "Read input spreadsheet": {
             "type": "Tool",
             "description": "",
-            "x": -326.6086036139757,
-            "y": -165.3356624388308,
+            "x": -317.61140660912287,
+            "y": -74.30633915261538,
             "specification": "Read tabular data",
             "execute_in_work": false,
             "cmd_line_args": [
@@ -755,7 +538,7 @@
                 },
                 {
                     "type": "resource",
-                    "arg": "/home/jkiviluo/sources/flextool3/20251216_FT_Input_himalaya.xlsx"
+                    "arg": "<project>/example_input.xlsx"
                 }
             ],
             "kill_completed_processes": false,
@@ -780,8 +563,8 @@
         "Re-create results": {
             "type": "Tool",
             "description": "",
-            "x": 161.72688441130828,
-            "y": -216.82000395868312,
+            "x": 153.56901551980656,
+            "y": -152.5767864381071,
             "specification": "Process outputs",
             "execute_in_work": false,
             "cmd_line_args": [
@@ -812,8 +595,8 @@
         "output info": {
             "type": "Data Store",
             "description": "",
-            "x": 163.84801244650532,
-            "y": -104.30350711758898,
+            "x": 152.63094272069048,
+            "y": -54.33656015714098,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
