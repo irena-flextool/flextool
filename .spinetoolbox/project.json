@@ -147,30 +147,13 @@
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input_data": {
-                            "scenario_filter": {},
-                            "alternative_filter": {}
+                            "scenario_filter": {
+                            },
+                            "alternative_filter": {
+                            }
                         }
                     },
                     "auto_online": false,
-                    "enabled_filter_types": {
-                        "alternative_filter": false,
-                        "scenario_filter": true
-                    }
-                }
-            },
-            {
-                "name": "from FlexTool to Open_summary",
-                "from": [
-                    "FlexTool",
-                    "bottom"
-                ],
-                "to": [
-                    "Open_summary",
-                    "left"
-                ],
-                "filter_settings": {
-                    "known_filters": {},
-                    "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": false,
                         "scenario_filter": true
@@ -233,7 +216,6 @@
                         "db_url@output info": {
                             "scenario_filter": {},
                             "alternative_filter": {
-                                "base": true
                             }
                         }
                     },
@@ -343,7 +325,6 @@
                         "db_url@output info": {
                             "scenario_filter": {},
                             "alternative_filter": {
-                                "base": true
                             }
                         }
                     },
@@ -393,22 +374,11 @@
                 "schema": ""
             }
         },
-        "Open_summary": {
-            "type": "Tool",
-            "description": "",
-            "x": 44.70906510141128,
-            "y": 57.77748828046251,
-            "specification": "open_summary",
-            "execute_in_work": true,
-            "cmd_line_args": [],
-            "kill_completed_processes": false,
-            "log_process_output": false
-        },
         "Excel input": {
             "type": "Data Connection",
             "description": "",
-            "x": -455.8903827187851,
-            "y": -76.33206878367577,
+            "x": -456.9002767430159,
+            "y": -76.33206878367578,
             "file_references": [
                 {
                     "type": "path",
@@ -447,7 +417,7 @@
         "FlexTool": {
             "type": "Tool",
             "description": "",
-            "x": -6.838176407662271,
+            "x": -7.848070431893172,
             "y": -55.71186820125284,
             "specification": "FlexTool3",
             "execute_in_work": true,

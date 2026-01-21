@@ -31,12 +31,7 @@
     "description": "",
     "inputfiles": [],
     "inputfiles_opt": [],
-    "outputfiles": [
-        "output_csv/*.csv",
-        "output_csv/*/*.csv",
-        "output_parquet/*.parquet",
-        "output_raw/*.csv"
-    ],
+    "outputfiles": [],
     "cmdline_args": [],
     "includes_main_path": "../../.."
 }
