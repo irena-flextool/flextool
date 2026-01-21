@@ -4006,7 +4006,7 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, d in d_realize_dispatch_or_invest} {
     printf "\n%s,%s,%.8g", s, d, p_years_represented_d[d] >> "output_raw/p_years_represented_d.csv";
 }
-display solve_current, d_realize_dispatch_or_invest, d_realize_invest;
+
 # Write p_entity_max_units
 if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/p_entity_max_units.csv";

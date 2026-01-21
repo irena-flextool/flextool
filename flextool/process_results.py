@@ -41,6 +41,7 @@ def post_process_results(par, s, v):
             available_periods = capacity_sub.index.intersection(periods[:i+1])
             capacity_sub_recursive.loc[period] = capacity_sub.loc[available_periods].sum()
         r.entity_all_capacity = r.entity_all_capacity.sub(capacity_sub_recursive, fill_value=0)
+    r.entity_all_capacity.columns.name = 'process'  # Required for level=0 matching in VRE calculations
 
     # r_process_Online__dt - just sum the two DataFrames
     r.process_online_dt = v.online_linear.add(v.online_integer, fill_value=0)
