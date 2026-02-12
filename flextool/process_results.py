@@ -150,14 +150,14 @@ def post_process_results(par, s, v):
     to_conn = pd.concat([left_to_conn, right_to_conn], axis=1)     # columns: ['process', 'node']
 
     # r_group_output__from_connection_not_in_aggregate__dt
-    from_conn_set = s.group_output__process__connection__to_node_Not_in_aggregate.droplevel('connection')
+    from_conn_set = s.outputNodeGroup__process__connection__to_node_Not_in_aggregate.droplevel('connection')
     group_sets = from_conn.columns.join(from_conn_set, how='inner')
     from_conn_selected = from_conn[group_sets.droplevel('group')]
     from_conn_selected.columns = group_sets
     r.group_output__from_connection_not_in_aggregate__dt = from_conn_selected
 
     # r_group_output__to_connection_not_in_aggregate__dt
-    to_conn_set = s.group_output__process__node__to_connection_Not_in_aggregate.droplevel('connection')
+    to_conn_set = s.outputNodeGroup__process__node__to_connection_Not_in_aggregate.droplevel('connection')
     group_sets = to_conn.columns.join(to_conn_set, how='inner')
     to_conn_selected = to_conn[group_sets.droplevel('group')]
     to_conn_selected.columns = group_sets
@@ -168,14 +168,14 @@ def post_process_results(par, s, v):
     r.group_output__to_connection_not_in_aggregate__d = r.group_output__to_connection_not_in_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
 
     # r_group_output__from_connection_aggregate__dt
-    from_conn_agg_set = s.group_output__group_aggregate__process__connection__to_node.droplevel('connection')
+    from_conn_agg_set = s.outputNodeGroup__processGroup__process__connection__to_node.droplevel('connection')
     group_agg_sets = from_conn.columns.join(from_conn_agg_set, how='inner')
     from_conn_agg_selected = from_conn[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     from_conn_agg_selected.columns = group_agg_sets
     r.group_output__from_connection_aggregate__dt = from_conn_agg_selected.T.groupby(level=['group', 'group_aggregate']).sum().T
 
     # r_group_output__to_connection_aggregate__dt
-    to_conn_agg_set = s.group_output__group_aggregate__process__node__to_connection.droplevel('connection')
+    to_conn_agg_set = s.outputNodeGroup__processGroup__process__node__to_connection.droplevel('connection')
     group_agg_sets = to_conn_agg_set.join(to_conn.columns)
     to_conn_agg_selected = to_conn[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     to_conn_agg_selected.columns = group_agg_sets
@@ -186,7 +186,7 @@ def post_process_results(par, s, v):
     r.group_output__to_connection_aggregate__d = r.group_output__to_connection_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
 
     # r_group_output_Internal_connection_losses__dt
-    losses_set = s.group_output__process_fully_inside
+    losses_set = s.outputNodeGroup__process_fully_inside
     group_losses_sets = r.connection_losses_dt.columns.join(losses_set, how='inner')
     losses_selected = r.connection_losses_dt[group_losses_sets.droplevel('group')]
     losses_selected.columns = group_losses_sets
@@ -351,7 +351,7 @@ def post_process_results(par, s, v):
     r.emissions_co2_dt = r.process_emissions_co2_dt.sum(axis=1)
 
     # r_group co2
-    s.group_node_co2 = s.group_node[s.group_node.get_level_values('group').isin(par.group_co2_price.columns)]
+    s.group_node_co2 = s.group_node[s.group_node.get_level_values('group').isin(s.group_co2_limit.union(s.group_co2_price))]
     group_process_co2_columns = r.process_emissions_co2_dt.columns.join(s.group_node_co2)
     r.group_process_emissions_co2_dt = pd.DataFrame(index=r.process_emissions_co2_dt.index, columns=group_process_co2_columns)
     for col in group_process_co2_columns:
@@ -444,9 +444,9 @@ def post_process_results(par, s, v):
     r.cost_entity_divest_d = -v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_annual_divest_discounted)
     
     # Fixed cost for entities
-    r.cost_entity_fixed_pre_existing = (par.entity_pre_existing * par.entity_fixed_cost * 1000).mul(par.discount_factor_operations_yearly, axis=0)
-    r.cost_entity_fixed_invested = (v.invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns] * 1000))
-    r.cost_entity_fixed_divested = -(v.divest.mul(par.entity_unitsize[v.divest.columns] * par.entity_lifetime_fixed_cost_divest[v.divest.columns] * 1000))
+    r.cost_entity_fixed_pre_existing = (par.entity_pre_existing * par.entity_fixed_cost).mul(par.discount_factor_operations_yearly, axis=0)
+    r.cost_entity_fixed_invested = (v.invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]))
+    r.cost_entity_fixed_divested = -(v.divest.mul(par.entity_unitsize[v.divest.columns] * par.entity_lifetime_fixed_cost_divest[v.divest.columns]))
     
     # Aggregate costs
     r.costOper_dt = (r.cost_commodity_dt.sum(axis=1) -
@@ -546,14 +546,14 @@ def post_process_results(par, s, v):
     node_to_unit.columns.names = ['process', 'node']
 
     # r_group_output__unit_to_node_not_in_aggregate__dt
-    unit_to_node_set = s.group_output__process__unit__to_node_Not_in_aggregate.droplevel('unit')
+    unit_to_node_set = s.outputNodeGroup__process__unit__to_node_Not_in_aggregate.droplevel('unit')
     group_sets = unit_to_node.columns.join(unit_to_node_set, how='inner')
     unit_to_node_selected = unit_to_node[group_sets.droplevel('group')]
     unit_to_node_selected.columns = group_sets
     r.group_output__unit_to_node_not_in_aggregate__dt = unit_to_node_selected
 
     # r_group_output__node_to_unit_not_in_aggregate__dt
-    node_to_unit_set = s.group_output__process__node__to_unit_Not_in_aggregate.droplevel('unit')
+    node_to_unit_set = s.outputNodeGroup__process__node__to_unit_Not_in_aggregate.droplevel('unit')
     group_sets = node_to_unit.columns.join(node_to_unit_set, how='inner')
     node_to_unit_selected = node_to_unit[group_sets.droplevel('group')]
     node_to_unit_selected.columns = group_sets
@@ -564,7 +564,7 @@ def post_process_results(par, s, v):
     r.group_output__node_to_unit_not_in_aggregate__d = r.group_output__node_to_unit_not_in_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
 
     # r_group_output__group_aggregate_Unit_to_group__dt
-    unit_to_group_set = s.group_output__group_aggregate__process__unit__to_node.droplevel('unit')
+    unit_to_group_set = s.outputNodeGroup__processGroup__process__unit__to_node.droplevel('unit')
     group_agg_sets = unit_to_node.columns.join(unit_to_group_set, how='inner')
     unit_to_group_selected = unit_to_node[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     unit_to_group_selected.columns = group_agg_sets
@@ -575,7 +575,7 @@ def post_process_results(par, s, v):
     r.group_output__group_aggregate_Unit_to_group_negative__dt = unit_to_group_selected_negative.T.groupby(level=['group', 'group_aggregate']).sum().T
 
     # r_group_output__group_aggregate_Group_to_unit__dt (negative)
-    group_to_unit_set = s.group_output__group_aggregate__process__node__to_unit.droplevel('unit')
+    group_to_unit_set = s.outputNodeGroup__processGroup__process__node__to_unit.droplevel('unit')
     group_agg_sets = node_to_unit.columns.join(group_to_unit_set, how='inner')
     group_to_unit_selected = node_to_unit[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     group_to_unit_selected.columns = group_agg_sets
@@ -597,7 +597,7 @@ def post_process_results(par, s, v):
 
     # r_group_output_Internal_unit_losses__dt
     # Filter to only units that are fully inside groups first
-    losses_set = s.group_output__process_fully_inside
+    losses_set = s.outputNodeGroup__process_fully_inside
     group_losses_sets_node_to_unit = losses_set.join(node_to_unit.columns, how='inner')
     group_losses_sets_unit_to_node = losses_set.join(unit_to_node.columns, how='inner')
 
@@ -615,8 +615,8 @@ def post_process_results(par, s, v):
     r.group_output_Internal_unit_losses__d = r.group_output_Internal_unit_losses__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
 
     # r_group_node_inflow_dt
-    r_group_inflow = pd.DataFrame(0.0, index=dt_dispatch_idx, columns=s.groupOutputNodeFlows, dtype=float)
-    for g in s.groupOutputNodeFlows:
+    r_group_inflow = pd.DataFrame(0.0, index=dt_dispatch_idx, columns=s.outputNodeGroup_does_generic_flows, dtype=float)
+    for g in s.outputNodeGroup_does_generic_flows:
         inflow = pd.Series(0.0, index=dt_dispatch_idx)
         for n in s.node:
             if (g, n) in s.group_node and (n, 'no_inflow') not in s.node__inflow_method:
@@ -630,11 +630,11 @@ def post_process_results(par, s, v):
         r.group_node_inflow_dt[
             r.group_node_inflow_dt.index.get_level_values('period').isin(s.d_realized_period)
         ].groupby(level='period').sum() if not r.group_node_inflow_dt.empty
-        else pd.DataFrame(0.0, index=s.d_realized_period, columns=s.groupOutputNodeFlows))
+        else pd.DataFrame(0.0, index=s.d_realized_period, columns=s.outputNodeGroup_does_generic_flows))
     
     # r_group_node_state_losses__dt
-    r_group_state_losses = pd.DataFrame(0.0, index=dt_dispatch_idx, columns=s.groupOutputNodeFlows, dtype=float)
-    for g in s.groupOutputNodeFlows:
+    r_group_state_losses = pd.DataFrame(0.0, index=dt_dispatch_idx, columns=s.outputNodeGroup_does_generic_flows, dtype=float)
+    for g in s.outputNodeGroup_does_generic_flows:
         losses = pd.Series(0.0, index=dt_dispatch_idx)
         
         for n in s.node_self_discharge:
@@ -650,12 +650,12 @@ def post_process_results(par, s, v):
         r.group_node_state_losses__dt[
             r.group_node_state_losses__dt.index.get_level_values('period').isin(s.d_realized_period)
         ].groupby(level='period').sum() if not r.group_node_state_losses__dt.empty
-        else pd.DataFrame(0.0, index=s.d_realized_period, columns=s.groupOutputNodeFlows))
+        else pd.DataFrame(0.0, index=s.d_realized_period, columns=s.outputNodeGroup_does_generic_flows))
     
     # r_group_node slacks
     r.group_node_up_slack__dt = pd.DataFrame(index=s.dt_realize_dispatch)
     r.group_node_down_slack__dt = pd.DataFrame(index=s.dt_realize_dispatch)
-    for g in s.groupOutputNodeFlows:
+    for g in s.outputNodeGroup_does_generic_flows:
         g_node = s.group_node[s.group_node.get_level_values('node').isin(s.node_balance) & s.group_node.get_level_values('group').isin([g])].get_level_values('node')
         r.group_node_up_slack__dt[g] = r.upward_node_slack_dt[g_node].sum(axis=1)
         r.group_node_down_slack__dt[g] = r.downward_node_slack_dt[g_node].sum(axis=1)

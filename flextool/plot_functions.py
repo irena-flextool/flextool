@@ -1,4 +1,5 @@
 import os
+import re
 import pandas as pd
 import numpy as np
 import matplotlib
@@ -10,6 +11,133 @@ import time
 from contextlib import contextmanager
 
 logging.getLogger('matplotlib.category').disabled = True
+
+# Field names for plot settings
+PLOT_FIELD_NAMES = {
+    'plot_name', 'map_dimensions_for_plots', 'subplots_per_row', 'legend',
+    'bar_orientation', 'base_length', 'max_subplots_per_file', 'max_items_per_file',
+    'time_average_duration', 'xlabel', 'ylabel'
+}
+
+
+def _is_single_config(d: dict) -> bool:
+    """Check if a dict is a single config (has field names) vs multi-config (has config names)."""
+    return any(k in PLOT_FIELD_NAMES for k in d)
+
+
+def _is_datetime_format(s: str) -> bool:
+    """Check if a string matches ISO datetime pattern like 2023-01-01T00:00:00."""
+    return bool(re.match(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}', str(s)))
+
+
+def set_smart_xticks(ax, time_index, plot_width_inches: float) -> None:
+    """Set x-tick labels smartly based on whether the index contains datetime strings.
+
+    For datetime strings: parse, shorten labels, and space ticks based on plot width.
+    For non-datetime strings: estimate label width and choose spacing from calendar-like
+    intervals (24, 168, 336, 720) based on how many labels fit.
+    """
+    if len(time_index) == 0:
+        return
+
+    if not _is_datetime_format(time_index[0]):
+        # Estimate label width from the longest string in the index
+        max_label_len = max(len(str(s)) for s in time_index)
+        label_width_inches = max_label_len * 0.08 + 0.3  # ~0.08in per char + gap
+        effective_width = plot_width_inches * 0.85
+        max_labels = max(2, int(effective_width / label_width_inches))
+
+        # Minimum interval needed between ticks (in data points)
+        min_interval = max(1, len(time_index) // max_labels)
+
+        # Round up to next "nice" calendar-like interval
+        nice_intervals = [1, 2, 4, 6, 12, 24, 48, 168, 336, 720]
+        interval = nice_intervals[-1]
+        for ni in nice_intervals:
+            if ni >= min_interval:
+                interval = ni
+                break
+
+        tick_positions = list(range(0, len(time_index), interval))
+        if not tick_positions:
+            tick_positions = [0]
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels([time_index[i] for i in tick_positions], rotation=0, ha='left')
+        return
+
+    # Parse datetimes
+    dt = pd.to_datetime(time_index)
+    formatted = dt.strftime('%m-%dT%H:%M')
+
+    # Estimate how many labels fit
+    min_spacing_inches = 1.1  # label width (~0.8in) + gap
+    effective_width = plot_width_inches * 0.85
+    max_labels = max(2, int(effective_width / min_spacing_inches))
+
+    # Calculate data resolution in hours from first two points
+    if len(dt) >= 2:
+        resolution_hours = (dt[1] - dt[0]).total_seconds() / 3600
+    else:
+        resolution_hours = 1.0
+
+    # Minimum interval needed between ticks (in hours)
+    total_hours = len(time_index) * resolution_hours
+    min_interval_hours = total_hours / max_labels
+
+    # Round up to next "nice" interval
+    nice_intervals = [1, 2, 3, 4, 6, 8, 12, 24, 48, 72, 168, 336, 720]
+    interval_hours = nice_intervals[-1]
+    for ni in nice_intervals:
+        if ni >= min_interval_hours:
+            interval_hours = ni
+            break
+
+    # Convert interval from hours to number of data points
+    interval_points = max(1, round(interval_hours / resolution_hours))
+
+    # Find aligned starting position
+    positions = []
+    if interval_hours >= 24:
+        # Align to midnight
+        start = None
+        for i, t in enumerate(dt):
+            if t.hour == 0 and t.minute == 0:
+                start = i
+                break
+        if start is None:
+            start = 0
+    else:
+        # Align to even hour boundaries
+        start = None
+        for i, t in enumerate(dt):
+            if t.hour % interval_hours == 0 and t.minute == 0:
+                start = i
+                break
+        if start is None:
+            start = 0
+
+    positions = list(range(start, len(time_index), interval_points))
+    if not positions:
+        positions = [0]
+
+    ax.set_xticks(positions)
+    ax.set_xticklabels([formatted[i] for i in positions], rotation=0, ha='left')
+
+    # When label interval is a multiple of 24h and > 24h, add minor ticks every 24h
+    if interval_hours > 24 and interval_hours % 24 == 0:
+        daily_points = max(1, round(24 / resolution_hours))
+        # Find first midnight for minor tick alignment
+        minor_start = None
+        for i, t in enumerate(dt):
+            if t.hour == 0 and t.minute == 0:
+                minor_start = i
+                break
+        if minor_start is None:
+            minor_start = 0
+        minor_positions = [i for i in range(minor_start, len(time_index), daily_points)
+                           if i not in positions]
+        ax.set_xticks(minor_positions, minor=True)
+        ax.grid(True, which='minor', alpha=0.15)
 
 # Performance tracking
 PERF_STATS = {}
@@ -45,7 +173,45 @@ def print_perf_summary():
     print("="*80 + "\n")
 
 
-def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings, 
+def split_into_chunks(items, chunk_size):
+    """Split a list into chunks of specified size."""
+    for i in range(0, len(items), chunk_size):
+        yield items[i:i + chunk_size]
+
+
+def generate_split_filename(base_name, plot_dir, extension, file_idx=None, needs_split=False):
+    """
+    Generate filename with appropriate suffix based on splitting needs.
+
+    - No splitting: base_name.extension
+    - With splitting: base_name_01.extension, base_name_02.extension, ...
+
+    File index uses leading zeros for numbers < 10 (e.g., _01, _02, ..., _09, _10).
+    """
+    if not needs_split:
+        return f'{plot_dir}/{base_name}.{extension}'
+    else:
+        # Format with leading zero for numbers < 10
+        idx_str = f'{file_idx:02d}'
+        return f'{plot_dir}/{base_name}_{idx_str}.{extension}'
+
+
+def _chunk_average_df(df: pd.DataFrame, chunk_size: int) -> pd.DataFrame:
+    """Chunk-average a DataFrame along its (simple) index.
+
+    Divides the index into consecutive blocks of `chunk_size` rows,
+    averages each block, and labels the result with the first original
+    index label of each chunk.
+    """
+    chunk_ids = np.arange(len(df)) // chunk_size
+    first_labels = df.index[::chunk_size]
+    averaged = df.groupby(chunk_ids).mean()
+    averaged.index = first_labels[:len(averaged)]
+    averaged.index.name = df.index.name
+    return averaged
+
+
+def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         active_settings=['default'], plot_rows=(0,167), delete_existing_plots=True):
     """
     Plot dataframes from a dictionary according to key suffixes.
@@ -61,6 +227,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
     if delete_existing_plots:
         for filename in os.listdir(plot_dir):
             file_path = os.path.join(plot_dir, filename)
+            if filename == 'config.yaml':
+                continue
             if os.path.isfile(file_path):
                 os.remove(file_path)
 
@@ -69,56 +237,53 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         if key not in plot_settings:
             continue
         chosen_settings = []
-        if isinstance(plot_settings[key], dict):
-            for setting_name, setting in plot_settings[key].items():
+        entry = plot_settings[key]
+        if _is_single_config(entry):
+            # Single config (has field names like plot_name, map_dimensions_for_plots)
+            if 'default' in active_settings:
+                chosen_settings.append(entry)
+        else:
+            # Multi-config (keys are config names like 'default', 'sum_periods')
+            for setting_name, setting in entry.items():
                 if setting_name in active_settings:
                     chosen_settings.append(setting)
-        elif 'default' in active_settings:
-                chosen_settings.append(plot_settings[key])
 
-        # print(f"Plot: {plot_dir} {key}", end='')
-
-        # Loop through all active settings for this dataframe        
+        # Loop through all active settings for this dataframe
         for setting in chosen_settings:
-            rules = setting[2]
+            map_dims = setting.get('map_dimensions_for_plots')
+            if not map_dims or len(map_dims) < 2:
+                continue
+            index_types, rules = map_dims[0], map_dims[1]
             if not rules:
-                # print('   ...no plot rule')
                 continue
             rules = rules.replace('_', '')
 
-            if len(setting[1].split('_')) == 2:
-                df_index_levels, df_columns_levels = setting[1].split('_')
-            elif setting[1] is None:
+            if index_types is None:
                 continue
+            if len(index_types.split('_')) == 2:
+                df_index_levels, df_columns_levels = index_types.split('_')
             else:
-                raise(f'plot setting {key} should contain a string of characters as second list member that includes one underscore to separate row and column index indicators')
-            
+                raise ValueError(f'plot setting {key}: map_dimensions_for_plots first element should contain one underscore to separate row and column index indicators')
 
             # Extract settings and apply defaults if needed
-            key_name = setting[0]
-            plot_name = key_name + '_' + rules
-            subplots_per_row = 3
-            if setting[3]:
-                subplots_per_row = setting[3]
-            legend_position = 'right'
-            if setting[4]:
-                legend_position = setting[4]
-            bar_orientation = 'horizontal'
-            if setting[5]:
-                bar_orientation = setting[5]
-            base_length = 4
-            if setting[6]:
-                base_length = setting[6]
-            xlabel = None
-            if setting[7]:
-                xlabel = setting[7]
-            ylabel = None
-            if setting[8]:
-                ylabel = setting[8]
+            key_name = setting.get('plot_name', key)
+            plot_name = key_name
+            subplots_per_row = setting.get('subplots_per_row', 3)
+            legend_position = setting.get('legend', 'right')
+            bar_orientation = setting.get('bar_orientation', 'horizontal')
+            base_length = setting.get('base_length', 4)
+            max_subplots_per_file = setting.get('max_subplots_per_file', 9)
+            max_items_per_file = setting.get('max_items_per_file')
+            time_avg_duration = setting.get('time_average_duration')
+            xlabel = setting.get('xlabel')
+            ylabel = setting.get('ylabel')
 
-            if 't' in rules:
+            if 't' in rules and 'i' not in rules:
                 chart_type = 'time'
                 df = df_orig.iloc[plot_rows[0]:plot_rows[1]].copy()
+            elif 'i' in rules:
+                chart_type = 'time'
+                df = df_orig.copy()
             else:
                 chart_type = 'bar'
                 df = df_orig.copy()
@@ -185,17 +350,51 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                     df.columns = ['mean']
                     df.columns.name = 'mean'
 
-            # if key_name == 'unit_startup':
-            #     pass
+            nr_row_levels = df.index.nlevels
+            nr_column_levels = df.columns.nlevels
+
+            # Chunk-average the 'i' row level if time_avg_duration is set
+            i_positions = [pos for pos, char in enumerate(rules[:nr_row_levels]) if char == 'i']
+            if i_positions and time_avg_duration:
+                i_pos = i_positions[0]
+                chunk_size = int(time_avg_duration)
+                other_levels = [lv for lv in range(nr_row_levels) if lv != i_pos]
+                if other_levels and nr_row_levels > 1:
+                    # MultiIndex: split by other levels, chunk-average each group, recombine
+                    parts = []
+                    for group_key, group_df in df.groupby(level=other_levels):
+                        flat = group_df.droplevel(other_levels)
+                        averaged = _chunk_average_df(flat, chunk_size)
+                        # Rebuild MultiIndex with original level structure
+                        if not isinstance(group_key, tuple):
+                            group_key = (group_key,)
+                        new_tuples = []
+                        for idx_val in averaged.index:
+                            row = [None] * nr_row_levels
+                            row[i_pos] = idx_val
+                            for j, lv in enumerate(other_levels):
+                                row[lv] = group_key[j]
+                            new_tuples.append(tuple(row))
+                        averaged.index = pd.MultiIndex.from_tuples(
+                            new_tuples, names=df.index.names
+                        )
+                        parts.append(averaged)
+                    df = pd.concat(parts)
+                else:
+                    # Simple index: chunk-average directly
+                    df = _chunk_average_df(df, chunk_size)
+
+                nr_row_levels = df.index.nlevels
+                nr_column_levels = df.columns.nlevels
 
             # Decide how to plot
             if (not df.empty) & (len(df) > 0):
                 # print('')
-                bar_levels = [i for i, c in enumerate(rules) if c == "b" or c == 't']
-                for i, bar_level in enumerate(reversed(bar_levels)):
-                    # Move bar_levels from columns to index (not including period (0), which is there already)
-                    if bar_level >= df.index.nlevels:
-                        df = df.stack(bar_level - df.index.nlevels, future_stack=True)
+                bar_line_levels = [i for i, c in enumerate(rules) if c == "b" or c == 't' or c == 'i']
+                for i, bar_line_level in enumerate(reversed(bar_line_levels)):
+                    # Move bar_line_levels from columns to index (not including period (0), which is there already)
+                    if bar_line_level >= df.index.nlevels:
+                        df = df.stack(bar_line_level - df.index.nlevels, future_stack=True)
                         if isinstance(df, pd.Series):
                             df = df.to_frame()
 
@@ -214,31 +413,218 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 # Get level locations for different types of operations
                 grouped_bar_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'g']
                 stack_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 's']
-                expand_axis_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'x']
+                expand_axis_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'e']
                 subplot_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'u']
                 line_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'l']
-                if chart_type == 'time':
-                    if stack_levels:
-                        #with time_block(f"{key} - plot"):
-                            plot_dt_stack_sub(df, plot_name, plot_dir, stack_levels, subplot_levels, 
-                            rows=plot_rows, legend_position=legend_position,
-                            xlabel=xlabel, ylabel=ylabel,
-                            base_width_per_col=6, subplot_height=base_length)
-                    else:  # Plot lines if not stacked
-                        #with time_block(f"{key} - plot"):
-                            plot_dt_sub_lines(df, plot_name, plot_dir, subplot_levels, line_levels, 
-                            rows=plot_rows, legend_position=legend_position,
-                            xlabel=xlabel, ylabel=ylabel,
-                            base_width_per_col=6, subplot_height=base_length)
-                elif chart_type == 'bar':
-                    #with time_block(f"{key} - plot"):
-                        plot_rowbars_stack_groupbars(df, plot_name, plot_dir, 
-                            stack_levels, expand_axis_levels, subplot_levels, grouped_bar_levels, 
-                            subplots_per_row=subplots_per_row, legend_position=legend_position,
-                            xlabel=xlabel, ylabel=ylabel, 
-                            bar_orientation=bar_orientation, base_bar_length=base_length)
+
+                if len(df.columns) > 1:
+                    df = df.sort_index(axis=1, level=1)
+
+                # Determine original subplots
+                if not subplot_levels:
+                    all_subs = [None]
+                elif len(subplot_levels) == 1:
+                    all_subs = df.columns.get_level_values(subplot_levels[0]).unique().tolist()
                 else:
-                    raise ValueError(f'Could not interpret plot rule for {key}')
+                    sub_df = df.columns.to_frame().iloc[:, subplot_levels].drop_duplicates()
+                    all_subs = [tuple(row) for row in sub_df.values]
+
+                # Determine items for splitting
+                if chart_type == 'time':
+                    # For time plots, items are lines (from line_levels or stack_levels)
+                    default_max_items = 9
+                    if max_items_per_file is None:
+                        max_items_per_file = default_max_items
+                    item_levels = line_levels if line_levels else stack_levels
+                    if not item_levels:
+                        all_items = [None]
+                    elif len(item_levels) == 1:
+                        all_items = df.columns.get_level_values(item_levels[0]).unique().tolist()
+                    else:
+                        item_level_names = [df.columns.names[i] for i in item_levels]
+                        item_df = df.columns.to_frame()[item_level_names].drop_duplicates()
+                        all_items = [tuple(row) for row in item_df.values]
+                else:  # bar chart
+                    # For bar plots, items are bars (from df.index)
+                    default_max_items = 20
+                    if max_items_per_file is None:
+                        max_items_per_file = default_max_items
+                    all_items = df.index.tolist()
+
+                n_items = len(all_items)
+                needs_item_split = n_items > max_items_per_file
+
+                # Two different splitting strategies based on whether subplot_levels exist
+                if subplot_levels:
+                    # STRATEGY 1: When subplot_levels exist
+                    # Items that exceed limit create additional subplots (not files)
+                    # Files are only split when total effective subplots exceed max_subplots_per_file
+
+                    # Create item chunks
+                    if needs_item_split:
+                        item_chunks = list(split_into_chunks(all_items, max_items_per_file))
+                    else:
+                        item_chunks = [all_items]
+
+                    # Build list of effective subplots: (original_sub, item_chunk)
+                    # Each combination of original subplot and item chunk becomes one effective subplot
+                    effective_subplots = []
+                    for sub in all_subs:
+                        for item_chunk in item_chunks:
+                            effective_subplots.append((sub, item_chunk))
+
+                    # Now split effective subplots into files
+                    n_effective_subs = len(effective_subplots)
+                    needs_file_split = n_effective_subs > max_subplots_per_file
+
+                    if needs_file_split:
+                        file_chunks = list(split_into_chunks(effective_subplots, max_subplots_per_file))
+                    else:
+                        file_chunks = [effective_subplots]
+
+                    # Plot each file
+                    for file_idx, file_chunk in enumerate(file_chunks, start=1):
+                        # Collect unique original subs and item chunks for this file
+                        subs_in_file = []
+                        items_in_file = set()
+                        for sub, item_chunk in file_chunk:
+                            if sub not in subs_in_file:
+                                subs_in_file.append(sub)
+                            items_in_file.update(item_chunk if item_chunk[0] is not None else [])
+
+                        # Filter dataframe for this file
+                        df_chunk = df.copy()
+
+                        # Filter by subplots in this file (filter columns)
+                        if len(subs_in_file) < len(all_subs):
+                            if len(subplot_levels) == 1:
+                                level_name = df.columns.names[subplot_levels[0]]
+                                mask = df_chunk.columns.get_level_values(level_name).isin(subs_in_file)
+                                df_chunk = df_chunk.loc[:, mask]
+                            else:
+                                col_tuples = df_chunk.columns.to_frame().iloc[:, subplot_levels]
+                                mask = col_tuples.apply(tuple, axis=1).isin(subs_in_file)
+                                df_chunk = df_chunk.loc[:, mask.values]
+
+                        # Filter by items in this file
+                        if items_in_file and needs_item_split:
+                            if chart_type == 'bar':
+                                df_chunk = df_chunk.loc[df_chunk.index.isin(items_in_file)]
+                            else:
+                                if item_levels and len(item_levels) == 1:
+                                    level_name = df.columns.names[item_levels[0]]
+                                    mask = df_chunk.columns.get_level_values(level_name).isin(items_in_file)
+                                    df_chunk = df_chunk.loc[:, mask]
+                                elif item_levels:
+                                    item_level_names = [df.columns.names[i] for i in item_levels]
+                                    col_tuples = df_chunk.columns.to_frame()[item_level_names]
+                                    mask = col_tuples.apply(tuple, axis=1).isin(items_in_file)
+                                    df_chunk = df_chunk.loc[:, mask.values]
+
+                        if df_chunk.empty:
+                            continue
+
+                        # Generate filename
+                        if chart_type == 'time':
+                            base_filename = f'{plot_name}_dt'
+                        else:
+                            base_filename = f'{plot_name}_d'
+
+                        filepath = generate_split_filename(
+                            base_filename, plot_dir, 'svg',
+                            file_idx=file_idx, needs_split=needs_file_split
+                        )
+
+                        # Plot the chunk
+                        if chart_type == 'time':
+                            if stack_levels:
+                                plot_dt_stack_sub(df_chunk, plot_name, plot_dir, stack_levels, subplot_levels,
+                                    rows=plot_rows, subplots_per_row=subplots_per_row, legend_position=legend_position,
+                                    xlabel=xlabel, ylabel=ylabel,
+                                    base_width_per_col=6, subplot_height=base_length,
+                                    output_filepath=filepath)
+                            else:
+                                plot_dt_sub_lines(df_chunk, plot_name, plot_dir, subplot_levels, line_levels,
+                                    rows=plot_rows, subplots_per_row=subplots_per_row, legend_position=legend_position,
+                                    xlabel=xlabel, ylabel=ylabel,
+                                    base_width_per_col=6, subplot_height=base_length,
+                                    output_filepath=filepath)
+                        elif chart_type == 'bar':
+                            plot_rowbars_stack_groupbars(df_chunk, plot_name, plot_dir,
+                                stack_levels, expand_axis_levels, subplot_levels, grouped_bar_levels,
+                                subplots_per_row=subplots_per_row, legend_position=legend_position,
+                                xlabel=xlabel, ylabel=ylabel,
+                                bar_orientation=bar_orientation, base_bar_length=base_length,
+                                output_filepath=filepath)
+                        else:
+                            raise ValueError(f'Could not interpret plot rule for {key}')
+
+                else:
+                    # STRATEGY 2: When no subplot_levels exist
+                    # Items split directly into files (previous behavior)
+
+                    if needs_item_split:
+                        item_chunks = list(split_into_chunks(all_items, max_items_per_file))
+                    else:
+                        item_chunks = [all_items]
+
+                    for file_idx, item_chunk in enumerate(item_chunks, start=1):
+                        # Filter dataframe for this chunk
+                        df_chunk = df.copy()
+
+                        # Filter by item chunk
+                        if needs_item_split:
+                            if chart_type == 'bar':
+                                df_chunk = df_chunk.loc[df_chunk.index.isin(item_chunk)]
+                            else:
+                                if item_levels and item_chunk[0] is not None:
+                                    if len(item_levels) == 1:
+                                        level_name = df.columns.names[item_levels[0]]
+                                        mask = df_chunk.columns.get_level_values(level_name).isin(item_chunk)
+                                        df_chunk = df_chunk.loc[:, mask]
+                                    else:
+                                        item_level_names = [df.columns.names[i] for i in item_levels]
+                                        col_tuples = df_chunk.columns.to_frame()[item_level_names]
+                                        mask = col_tuples.apply(tuple, axis=1).isin(item_chunk)
+                                        df_chunk = df_chunk.loc[:, mask.values]
+
+                        if df_chunk.empty:
+                            continue
+
+                        # Generate filename
+                        if chart_type == 'time':
+                            base_filename = f'{plot_name}_dt'
+                        else:
+                            base_filename = f'{plot_name}_d'
+
+                        filepath = generate_split_filename(
+                            base_filename, plot_dir, 'svg',
+                            file_idx=file_idx, needs_split=needs_item_split
+                        )
+
+                        # Plot the chunk
+                        if chart_type == 'time':
+                            if stack_levels:
+                                plot_dt_stack_sub(df_chunk, plot_name, plot_dir, stack_levels, subplot_levels,
+                                    rows=plot_rows, legend_position=legend_position,
+                                    xlabel=xlabel, ylabel=ylabel,
+                                    base_width_per_col=6, subplot_height=base_length,
+                                    output_filepath=filepath)
+                            else:
+                                plot_dt_sub_lines(df_chunk, plot_name, plot_dir, subplot_levels, line_levels,
+                                    rows=plot_rows, legend_position=legend_position,
+                                    xlabel=xlabel, ylabel=ylabel,
+                                    base_width_per_col=6, subplot_height=base_length,
+                                    output_filepath=filepath)
+                        elif chart_type == 'bar':
+                            plot_rowbars_stack_groupbars(df_chunk, plot_name, plot_dir,
+                                stack_levels, expand_axis_levels, subplot_levels, grouped_bar_levels,
+                                subplots_per_row=subplots_per_row, legend_position=legend_position,
+                                xlabel=xlabel, ylabel=ylabel,
+                                bar_orientation=bar_orientation, base_bar_length=base_length,
+                                output_filepath=filepath)
+                        else:
+                            raise ValueError(f'Could not interpret plot rule for {key}')
             # else: 
                 # print('   ...no data')
 
@@ -279,9 +665,10 @@ def estimate_legend_width(labels, title='', base_width=1.5):
     return estimated_width
 
 
-def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels, 
-    rows=(0,167), subplots_per_row=3, legend_position='right', 
-    xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4):
+def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
+    rows=(0,167), subplots_per_row=3, legend_position='right',
+    xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
+    output_filepath=None):
 
     # Convert level indices to level names for later use after xs operations
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -361,9 +748,9 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
 
     # Get x-axis index (use last level if MultiIndex, otherwise use the index itself)
     if isinstance(df_plot.index, pd.MultiIndex):
-        time_index = df_plot.index.get_level_values(-1)
+        time_index = df_plot.index.get_level_values(-1).astype(str)
     else:
-        time_index = df_plot.index
+        time_index = df_plot.index.astype(str)
 
     for idx, sub in enumerate(subs):
         ax = axes[idx]
@@ -446,10 +833,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
         if xlabel and row == n_rows - 1:
             ax.set_xlabel(xlabel)
 
-        # Set xticks for every 24th time point
-        tick_positions = range(0, len(time_index), 24)
-        ax.set_xticks(tick_positions)
-        ax.set_xticklabels([time_index[i] for i in tick_positions], rotation=0, ha='left')
+        set_smart_xticks(ax, time_index, base_width_per_col)
 
     # Hide unused subplots
     for idx in range(n_subs, len(axes)):
@@ -458,14 +842,19 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     # Overall title
     fig.suptitle(plot_name)
 
-    plt.savefig(f'{plot_dir}/{plot_name}_dt.svg', bbox_inches='tight')
+    # Use provided filepath or generate default
+    if output_filepath:
+        plt.savefig(output_filepath, bbox_inches='tight')
+    else:
+        plt.savefig(f'{plot_dir}/{plot_name}_dt.svg', bbox_inches='tight')
     plt.close(fig)
 
 
-def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels, 
-        rows=(0,167), stack_element_to_split=None, subplots_per_row=3, 
-        legend_position='right', 
-        xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4):
+def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
+        rows=(0,167), stack_element_to_split=None, subplots_per_row=3,
+        legend_position='right',
+        xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
+        output_filepath=None):
 
     # Convert level indices to level names for later use after xs operations
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -534,20 +923,26 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
     else:
         axes = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
 
+    # Calculate vertical spacing to prevent row overlap
+    # Add space for ~1.5 rows of text, normalized to subplot height
+    if xlabel:
+        hspace = 1 / subplot_height
+    else:
+        hspace = 0.7 / subplot_height
+
     # Adjust subplot spacing to accommodate legends
     if legend_width > 0 and n_cols > 1:
         # wspace is the width of spacing as a fraction of average axes width
         wspace = legend_width / base_width_per_col
-        # Calculate vertical spacing to prevent row overlap
-        # Add space for ~1.5 rows of text, normalized to subplot height
-        hspace = 0.225 / subplot_height if subplot_height > 0 else 0.15
         fig.subplots_adjust(wspace=wspace, hspace=hspace)
+    else:
+        fig.subplots_adjust(hspace=hspace)
 
     # Get x-axis index (use last level if MultiIndex, otherwise use the index itself)
     if isinstance(df_plot.index, pd.MultiIndex):
-        time_index = df_plot.index.get_level_values(-1)
+        time_index = df_plot.index.get_level_values(-1).astype(str)
     else:
-        time_index = df_plot.index
+        time_index = df_plot.index.astype(str)
 
     for idx, sub in enumerate(subs):
         ax = axes[idx]
@@ -620,7 +1015,7 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
         colors = plt.colormaps['tab10'].colors[:n_columns]
         if n_columns > 10:
             colors = plt.colormaps['tab20'].colors[:n_columns]
-        df_to_plot.plot.area(stacked=True, ax=ax, alpha=1.0, legend=False, linewidth=0, color=colors)
+        df_to_plot.plot.area(stacked=True, ax=ax, alpha=1.0, legend=False, linewidth=0, color=colors, xlabel="")
 
         # Subplot formatting
         if sub is not None:
@@ -651,10 +1046,7 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
         if xlabel and row == n_rows - 1:
             ax.set_xlabel(xlabel)
 
-        # Set xticks for every 24th time point
-        tick_positions = range(0, len(time_index), 24)
-        ax.set_xticks(tick_positions)
-        ax.set_xticklabels([time_index[i] for i in tick_positions], rotation=0, ha='left')
+        set_smart_xticks(ax, time_index, base_width_per_col)
 
     # Hide unused subplots
     for idx in range(n_subs, len(axes)):
@@ -663,14 +1055,19 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
     # Overall title
     fig.suptitle(plot_name)
 
-    plt.savefig(f'{plot_dir}/{plot_name}_dt.svg', bbox_inches='tight')
+    # Use provided filepath or generate default
+    if output_filepath:
+        plt.savefig(output_filepath, bbox_inches='tight')
+    else:
+        plt.savefig(f'{plot_dir}/{plot_name}_dt.svg', bbox_inches='tight')
     plt.close(fig)
 
 
 def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_axis_levels,
         sub_levels=[], grouped_bar_levels=None,
         legend_position='right', subplots_per_row=3,
-        xlabel=None, ylabel=None, bar_orientation='horizontal', base_bar_length=4):
+        xlabel=None, ylabel=None, bar_orientation='horizontal', base_bar_length=4,
+        output_filepath=None):
     """
     Create horizontal stacked and grouped bar plot.
 
@@ -840,10 +1237,10 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             if grouped_bar_levels:
                 # Grouped bar legend items
                 if len(grouped_bar_level_names) == 1:
-                    items_temp = df_sub_temp.columns.get_level_values(grouped_bar_level_names[0]).unique().tolist()
+                    items_temp = df_sub_temp.columns.get_level_values(grouped_bar_level_names[0]).unique().astype(str).tolist()
                 else:
                     item_df = df_sub_temp.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
-                    items_temp = [tuple(row) for row in item_df.values]
+                    items_temp = [tuple(str(row)) for row in item_df.values]
 
                 # Generate legend title
                 if isinstance(df_sub_temp.columns, pd.MultiIndex):
@@ -853,10 +1250,10 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             else:
                 # Stack legend items
                 if len(stack_level_names) == 1:
-                    items_temp = df_sub_temp.columns.get_level_values(stack_level_names[0]).unique().tolist()
+                    items_temp = df_sub_temp.columns.get_level_values(stack_level_names[0]).unique().astype(str).tolist()
                 else:
                     stack_df = df_sub_temp.columns.to_frame()[stack_level_names].drop_duplicates()
-                    items_temp = [tuple(row) for row in stack_df.values]
+                    items_temp = [tuple(str(row)) for row in stack_df.values]
 
                 # Generate legend title
                 if isinstance(df_sub_temp.columns, pd.MultiIndex):
@@ -879,7 +1276,10 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
 
         legend_width = max_legend_width
 
-    bar_labels = df.index.map(' | '.join).tolist() if isinstance(df.index, pd.MultiIndex) else df.index.tolist()
+    if isinstance(df.index, pd.MultiIndex):
+        bar_labels = df.index.map(lambda x: ' | '.join(map(str, x))).to_list() 
+    else:
+        bar_labels = df.index.astype(str).tolist()
     # ~0.1 inches per character (font size 9)
     max_bar_label_len = max(len(label) for label in bar_labels) if bar_labels else 0
     # Estimate margins for each label type
@@ -1000,7 +1400,10 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             group_labels = []
 
         # Get bar labels from this subplot's index (not the global df)
-        subplot_bar_labels = df_sub.index.map('-'.join).tolist() if isinstance(df_sub.index, pd.MultiIndex) else df_sub.index.tolist()
+        if isinstance(df_sub.index, pd.MultiIndex):
+            subplot_bar_labels = df_sub.index.map(lambda x: ' | '.join(map(str, x))).to_list()  
+        else:
+            subplot_bar_labels = df_sub.index.astype(str).tolist()
         # Reverse to match the reversed groups order
         subplot_bar_labels = subplot_bar_labels[::-1]
 
@@ -1449,9 +1852,19 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
         if ylabel and col == 0:
             ax.set_ylabel(ylabel)
 
+        # Add a dotted zero line on the value axis
+        if bar_orientation == 'horizontal':
+            ax.axvline(0, color='black', linewidth=0.5, linestyle=':')
+        else:
+            ax.axhline(0, color='black', linewidth=0.5, linestyle=':')
+
     # Hide unused subplots
     for idx in range(n_subs, len(axes)):
         axes[idx].set_visible(False)
 
-    plt.savefig(f'{plot_dir}/{key_name}_d.svg', bbox_inches='tight')
+    # Use provided filepath or generate default
+    if output_filepath:
+        plt.savefig(output_filepath, bbox_inches='tight')
+    else:
+        plt.savefig(f'{plot_dir}/{key_name}_d.svg', bbox_inches='tight')
     plt.close(fig)

@@ -175,7 +175,7 @@ def nodeGroup_indicators(par, s, v, r, debug):
 
     results = []
 
-    if not list(s.groupOutput_node):
+    if not list(s.outputNodeGroup_does_specified_flows_node):
         return results
 
     # Get time steps
@@ -184,7 +184,7 @@ def nodeGroup_indicators(par, s, v, r, debug):
     # Calculate timestep-level results first
     results_dt = []
 
-    for g in s.groupOutput_node:
+    for g in s.outputNodeGroup_does_specified_flows_node:
         # Get nodes in this group
         group_nodes = s.group_node[s.group_node.get_level_values('group').isin([g])].get_level_values('node').tolist()
 
@@ -317,7 +317,7 @@ def nodeGroup_VRE_share(par, s, v, r, debug):
     
     # Filter groups that have nodes with inflow
     groups_with_inflow = []
-    for g in s.groupOutput_node:
+    for g in s.outputNodeGroup_does_specified_flows_node:
         # Get nodes in this group
         group_nodes_df = s.group_node[s.group_node.get_level_values('group') == g]
         if not group_nodes_df.empty:
@@ -400,7 +400,7 @@ def nodeGroup_total_inflow(par, s, v, r, debug):
     """Total inflow (inflow - outflow) to groups by period and time"""
 
     results = []
-    groups = list(s.groupOutput_process)
+    groups = list(s.outputNodeGroup_does_specified_flows_process)
 
     if not groups:
         return results
@@ -570,7 +570,7 @@ def nodeGroup_flows(par, s, v, r, debug):
 
     results = []
 
-    if s.groupOutputNodeFlows.empty or s.dt_realize_dispatch.empty:
+    if s.outputNodeGroup_does_generic_flows.empty or s.dt_realize_dispatch.empty:
         return results
 
     # Calculate timestep-level results first
@@ -841,19 +841,19 @@ def cost_summaries(par, s, v, r, debug):
     # 3. Discounted and inflation adjusted (with years represented) investment costs (d_realize_invest only)
     investment_costs = pd.DataFrame(index=s.d_realize_invest, dtype=float)
     investment_costs.columns.name = 'category'
-    investment_costs['unit investment retirement'] = (r.costInvestUnit_d + r.costDivestUnit_d) / to_millions
-    investment_costs['connection investment retirement'] = (r.costInvestConnection_d + r.costDivestConnection_d) / to_millions
-    investment_costs['storage investment retirement'] = (r.costInvestState_d + r.costDivestState_d) / to_millions
+    investment_costs['unit investment & retirement'] = (r.costInvestUnit_d + r.costDivestUnit_d) / to_millions
+    investment_costs['connection investment & retirement'] = (r.costInvestConnection_d + r.costDivestConnection_d) / to_millions
+    investment_costs['storage investment & retirement'] = (r.costInvestState_d + r.costDivestState_d) / to_millions
     investment_costs['fixed cost pre-existing'] = r.costFixedPreExisting_d / to_millions
     investment_costs['fixed cost invested'] = r.costFixedInvested_d / to_millions
-    investment_costs['fixed cost reduction due to divested'] = r.costFixedDivested_d / to_millions
+    investment_costs['fixed cost reduction of divestments'] = r.costFixedDivested_d / to_millions
     investment_costs['capacity margin penalty'] = r.costPenalty_capacity_margin_d / to_millions
 
     # Annualize back: Remove inflation adjustment and years represented
     annual_invest_costs = investment_costs.div(discount_invs, axis=0)
     annual_invest_costs['fixed cost pre-existing'] = investment_costs['fixed cost pre-existing'].div(discount_ops, axis=0)
     annual_invest_costs['fixed cost invested'] = investment_costs['fixed cost invested'].div(discount_ops, axis=0)
-    annual_invest_costs['fixed cost reduction due to divested'] = investment_costs['fixed cost reduction due to divested'].div(discount_ops, axis=0)
+    annual_invest_costs['fixed cost reduction of divestments'] = investment_costs['fixed cost reduction of divestments'].div(discount_ops, axis=0)
     annual_invest_costs['capacity margin penalty'] = investment_costs['capacity margin penalty'].div(discount_ops, axis=0)
 
     # results.append((investment_costs.reset_index(), investment_costs, 'annualized_investment_costs_d', 'tbl_annualized_investment_costs_period'))
@@ -1164,6 +1164,32 @@ def slack_variables(par, s, v, r, debug):
     
     return results
 
+def input_sets(par, s, v, r, debug):
+    """Input sets needed for scenario results"""
+    
+    results = []    
+    results.append((s.group_node, 'group_node'))
+    results.append((s.group_process, 'group_process'))
+    results.append((s.group_process_node, 'group_process_node'))
+    results.append((s.outputNodeGroup_does_specified_flows, 'outputNodeGroup_does_specified_flows'))
+    results.append((s.outputNodeGroup_does_generic_flows, 'outputNodeGroup_does_generic_flows'))
+    results.append((s.outputNodeGroup__connection_Not_in_aggregate, 'outputNodeGroup__connection_Not_in_aggregate'))
+    results.append((s.outputNodeGroup__process__unit__to_node_Not_in_aggregate, 'outputNodeGroup__process__unit__to_node_Not_in_aggregate'))
+    results.append((s.outputNodeGroup__process__node__to_unit_Not_in_aggregate, 'outputNodeGroup__process__node__to_unit_Not_in_aggregate'))
+    results.append((s.outputNodeGroup__process__connection__to_node_Not_in_aggregate, 'outputNodeGroup__process__connection__to_node_Not_in_aggregate'))
+    results.append((s.outputNodeGroup__process__node__to_connection_Not_in_aggregate, 'outputNodeGroup__process__node__to_connection_Not_in_aggregate'))
+    results.append((s.outputNodeGroup__processGroup_Unit_to_group, 'outputNodeGroup__processGroup_Unit_to_group'))
+    results.append((s.outputNodeGroup__processGroup__process__unit__to_node, 'outputNodeGroup__processGroup__process__unit__to_node'))
+    results.append((s.outputNodeGroup__processGroup_Group_to_unit, 'outputNodeGroup__processGroup_Group_to_unit'))
+    results.append((s.outputNodeGroup__processGroup__process__node__to_unit, 'outputNodeGroup__processGroup__process__node__to_unit'))
+    results.append((s.outputNodeGroup__processGroup_Connection, 'outputNodeGroup__processGroup_Connection'))
+    results.append((s.outputNodeGroup__processGroup__process__connection__to_node, 'outputNodeGroup__processGroup__process__connection__to_node'))
+    results.append((s.outputNodeGroup__processGroup__process__node__to_connection, 'outputNodeGroup__processGroup__process__node__to_connection'))
+    results.append((s.outputNodeGroup__process_fully_inside, 'outputNodeGroup__process_fully_inside'))
+    results.append((par.node_inflow, 'node_inflow__dt'))
+
+    return results
+
 
 def print_namespace_structure(namespace, name='r', max_items=3, output_file='namespace_structure.txt'):
     import pandas as pd
@@ -1345,6 +1371,7 @@ def write_summary_csv(par, s, v, r, csv_dir):
 
 # List of all output functions
 ALL_OUTPUTS = [
+    input_sets,
     generic,
     cost_summaries,
     reserves,
@@ -1503,10 +1530,15 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
     # Write to parquet
     if 'parquet' in write_methods and not read_parquet_dir:
         os.makedirs(parquet_dir, exist_ok=True)
+        if not os.path.exists(parquet_dir):
+            os.makedirs(parquet_dir)
         for name, df in results.items():
-            if not os.path.exists(parquet_dir):
-                os.makedirs(parquet_dir)
-            df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
+            if isinstance(df, (pd.MultiIndex, pd.Index)):
+                df = df.to_frame(index=False)
+                df.insert(0, 'scenario', scenario_name)
+                df.set_index(list(df.columns)).index
+            else:
+                df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
             df.to_parquet(f'{parquet_dir}/{name}.parquet')
             # print(f'{parquet_dir}/{name}')
 
@@ -1555,6 +1587,8 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
                 if table_name and table_name in results and attributes:
                     csv_filename = attributes + '.csv'
                     df = results[table_name]
+                    if isinstance(df, (pd.MultiIndex, pd.Index)):
+                        df = df.to_frame(index=False)
                     if 'solve' not in df.index.names and 'period' in df.index.names: # and csv_filename not in ['costs_discounted.csv']
                         df.index = df.index.join(s.solve_period)
                         names = list(df.index.names)
@@ -1583,6 +1617,8 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
         with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
             used_names = set()
             for name, df in results.items():
+                if isinstance(df, (pd.MultiIndex, pd.Index)):
+                    df = df.to_frame(index=False)
                 if (not df.empty) & (len(df) > 0):
                     # Excel sheet names limited to 31 characters
                     sheet_name = name[:31]

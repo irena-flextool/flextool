@@ -1,6 +1,7 @@
 - [Install a front-end](https://irena-flextool.github.io/flextool/install_toolbox): Install Spine Toolbox and run IRENA FlexTool as a Spine Toolbox project. This gives you the graphical user interface of Spine Toolbox. https://github.com/Spine-project/Spine-Toolbox. The interface and instructions to it are shown [Toolbox interface](https://irena-flextool.github.io/flextool/spine_toolbox)
 - [Use a browser](https://irena-flextool.github.io/flextool/browser_interface): IRENA FlexTool can be accessed with a web browser if you have an account for an IRENA FlexTool server. However, no public servers are available at the moment. The browser interface is introduced [here](https://irena-flextool.github.io/flextool/browser_interface).
 - Local server: It is possible to setup a local server and then use a browser to access that server. See https://github.com/irena-flextool/flextool-web-interface
+- [Use the terminal](https://irena-flextool.github.io/flextool/terminal_workflow): Run IRENA FlexTool directly from the command line using Python scripts. This is useful for scripting, automation, and running on servers. See the [terminal workflow guide](https://irena-flextool.github.io/flextool/terminal_workflow).
 <!---
 - [Use Excel](#using-excel-as-an-interface): It is also possible to define all the data in Excel and execute IRENA FlexTool workflows that takes the data and scenarios from Excel and returns results in another Excel file. This functionality is still under development.
 --->

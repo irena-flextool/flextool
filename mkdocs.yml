@@ -39,4 +39,5 @@ nav:
     - 'Toolbox interface': spine_toolbox.md
     - 'Spine data editor' : spine_database.md
     - 'Browser interface': browser_interface.md
+    - 'Terminal workflow': terminal_workflow.md
  

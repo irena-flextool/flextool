@@ -512,6 +512,13 @@ class FlexToolRunner:
                 for period_timeset in self.timesets_used_by_solves[solve]:
                     self.realized_periods[solve].append((period_timeset[0], period_timeset[0]))
 
+        """If solve_period_years_represented has not been set, assume length of one year for each period in the model"""
+        for solve in list(self.model_solve.values())[0]:
+            all_periods = (self.realized_periods[solve] + self.invest_periods[solve])
+            all_periods = {item for tuple in all_periods for item in tuple}
+            for period in all_periods:
+                if solve not in self.solve_period_years_represented:
+                    self.solve_period_years_represented[solve].append([period, 1.0])
 
     def make_steps(self, start, stop):
         """

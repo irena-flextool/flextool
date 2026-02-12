@@ -1,154 +1,350 @@
 # FlexTool Output Configuration
 #
-# Each result can have multiple configurations (user can choose which ones to plot)
-# Each result is mapped to a list with the following fields:
-# [plot_name, plot_type, subplots_per_row, legend, bar_orientation, base_bar_length, xlabel, ylabel]
+# Each result can have multiple configurations (user can choose which ones to plot).
+# Each result is mapped to a dict with named parameters (only non-default values need to be specified):
 #
 # - plot_name: Name used for plot titles
-# - plot_type: Plot type code (e.g., 'bs' for bar/stacked, 'tl' for time/lines, or null for no plot)
-# - subplots_per_row: Number of subplots per row (null defaults to 3)
-# - legend: Legend placement ('right', 'all', or null for default)
+# - map_dimensions_for_plots: [index_types, plot_type] tuple that maps dataframe dimensions to plot roles.
+#     Omit for no plot. The first element describes the dataframe dimensions, the second how to plot them.
+#     Each character in index_types maps 1:1 to a character in plot_type. An underscore separates
+#     row index dimensions from column index dimensions in both strings.
+#     index_types characters: 'd' period, 't' time, 'e' entity, 'p' parameter, 'g' group, 's' scenario, 'm' method
+#     plot_type characters:
+#     - 't' marks the dimension as x-axis for line plots
+#     - 'i' average the dimension in chunks of 'time_average_duration' and make the dimension x-axis for line plots
+#     - 'l' turns that dimension into a separate line in a line plot
+#     - 'b' for bars in the bar plot  (cannot combine b with t or l)
+#     - 'g' groups the bars (and gives each member of the group an entry in the legend with separate color for each entry)
+#     - 'e' expands the name of the bar on the y-axis with this additional dimension
+#     - 's' stacks the dimension in bar plots or area plots
+#     - 'u' sub-plots the dimension
+#     - 'm' sums the dimension
+#     - 'a' averages the dimension
+#     - 'x' no specific role
+# - subplots_per_row: Number of subplots per row (default 3)
+# - legend: Legend placement ('right', 'all', or default)
 # - bar_orientation: Orientation for bar charts only (default 'horizontal', also 'vertical')
 # - base_length: "Length" of each subplot in the orientation of the bars or height for time plots (in inches, default 4)
+# - max_subplots_per_file: Maximum subplots per file before splitting (default 9). When exceeded, creates multiple files with _1, _2, etc. suffixes
+# - max_items_per_file: Maximum items (bars for bar plots, lines for line plots) per file before splitting (default 20 for bar plots, 9 for line plots). When exceeded, creates multiple files
+# - time_average_duration: Duration of time blocks that are averaged (in time steps)
+# - xlabel: Label for x axis
+# - ylabel: Label for y axis
 #
 # There is also filename configuration section after the plot rules (used by csv and parquet)
 
 plots:
-    annualized_costs_d_p:
-        default: [annualized_costs, d_p, a_s, null, null, vertical, 6, null, 'Currency']
-        sum_periods: [annualized_costs, d_p, m_s, null, null, vertical, 6, null, null]
-    CO2__: [co2, null, null, null, null, null, null, null, null]
-    connection_d_eee: [connection, d_e, u_b, null, null, null, null, 'MWh', null]
-    connection_losses_d_eee: [connection_losses, null, null, null, null, null, null, 'MWh', null]
-    connection_dt_eee: [connection, null, null, null, null, null, null, null, null]
-    connection_losses_dt_eee: [connection_losses, null, null, null, null, null, null, null, null]
-    connection_leftward_dt_eee: [connection_leftward, null, null, null, null, null, null, null, null]
-    connection_leftward_d_eee: [connection_leftward, null, null, null, null, null, null, null, null]
-    connection_rightward_dt_eee: [connection_rightward, null, null, null, null, null, null, null, null]
-    connection_rightward_d_eee: [connection_rightward, null, null, null, null, null, null, null, null]
-    connection_capacity_ed_p: [connection_capacity, ed_p, bg_x, null, null, null, null, null, null]
-    connection_cf_d_e: [connection_cf, d_e, b_x, null, null, null, null, null, null]
-    costs_dt_p:
-        default: [costs, dt_p, ttm, null, null, null, null, null, null]
-        lines: [costs, dt_p, ttl, null, null, null, null, null, null]
-    costs_discounted_d_p: [costs_discounted, d_p, bs, null, null, vertical, 6, null, null]
-    costs_discounted_p_: [costs_discounted, null, null, null, null, null, null, null, null]
-    discountFactors_d_p: [discount_factors, null, null, null, null, null, null, null, null]
-    dual_invest_connection_d_e: [connection_invest_marginal, d_e, g_b, null, null, null, null, null, null]
-    dual_invest_node_d_e: [node_invest_marginal, d_e, g_b, null, null, null, null, null, null]
-    dual_invest_unit_d_e: [unit_invest_marginal, d_e, g_b, null, null, null, null, null, null]
-    entity_annuity_d_p: [entity_annuity, null, null, null, null, null, null, null, null]
-    total_inflow_d_g:
-        default: [group_flows, d_g, b_s, null, null, vertical, 8, null, null]
-        sum_periods: [group_flows, d_g, m_s, null, null, vertical, 8, null, null]
-    total_inflow_dt_g: [group_flows, dt_g, tt_l, null, null, null, null, null, null]
-    nodeGroup_unit_node_inertia_dt_gee: [nodeGroup__unit__node_inertia, dt_gee, tt_uss, null, null, null, null, null, null]
-    nodeGroup_flows_d_gpe: [nodeGroup_flows, d_gpe, b_uss, null, all, vertical, 6, null, null]
-    nodeGroup_flows_dt_gpe: [nodeGroup_flows, dt_gpe, tt_uss, null, all, null, null, null, null]
-    nodeGroup_inertia_dt_g: [nodeGroup_inertia, dt_g, tt_l, null, null, null, null, null, null]
-    nodeGroup_inertia_largest_flow_dt_g: [nodeGroup_inertia_largest_flow, dt_g, tt_l, null, null, null, null, null, null]
-    nodeGroup_gdt_p: [nodeGroup, gdt_p, ltt_u, null, null, null, null, null, null]
-    nodeGroup_gd_p: [nodeGroup, gd_p, bg_u, null, null, null, null, null, null]
-    nodeGroup_VRE_share_d_g: [nodeGroup_VRE_share, d_g, b_x, null, null, null, null, null, null]
-    nodeGroup_VRE_share_dt_g: [nodeGroup_VRE_share__dt, dt_g, tt_l, null, null, null, null, null, null]
-    CO2_d_g: [group_CO2, d_g, b_x, null, null, null, null, null, null]
-    node_d_ep: [node, d_ep, b_xs, null, null, null, null, null, null]
-    node_dt_ep: [node, dt_ep, tt_us, null, null, null, null, null, null]
-    node_capacity_ed_p: [node_capacity, ed_p, bg_x, null, null, null, null, null, null]
-    node_prices_sdt_e: [node_prices, sdt_e, mtt_l, null, null, null, null, null, null]
-    node_state_dt_e: [node_state, dt_e, tt_l, null, null, null, null, null, null]
-    process_co2_d_eeee: [process__d_co2, d_eeee, b_xbxx, null, null, null, null, null, null]
-    process_reserve_upDown_node_dt_eppe: [process__reserve__upDown__node, dt_eppe, tt_ussu, null, null, null, null, null, null]
-    process_reserve_average_d_eppe: [process__reserve__upDown__node__d_average, d_eppe, b_xssx, null, null, null, null, null, null]
-    reserve_prices_mdt_ppg: [reserve_price__upDown__group, mdt_ppg, mtt_llu, null, null, null, null, null, null]
-    nodeGroup_slack_capacity_margin_d_g: [slack__capacity_margin, d_g, b_x, null, null, null, null, null, null]
-    node_slack_down_dt_e: [slack__downward__node, dt_e, tt_l, null, null, null, null, null, null]
-    nodeGroup_slack_inertia_dt_g: [slack__inertia_group, dt_g, tt_u, null, null, null, null, null, null]
-    nodeGroup_slack_nonsync_dt_g: [slack__nonsync_group, dt_g, tt_u, null, null, null, null, null, null]
-    nodeGroup_slack_reserve_dt_eeg: [slack__reserve__upDown__group, dt_eeg, tt_ssu, null, null, null, null, null, null]
-    node_slack_up_dt_e: [slack__upward__node, dt_e, tt_l, null, null, null, null, null, null]
-    unit_inputNode_d_ee: [unit__inputNode, d_ee, b_xu, null, null, null, null, null, null]
-    unit_inputNode_dt_ee: [unit__inputNode, dt_ee, tt_su, null, all, null, null, null, null]
-    unit_outputNode_d_ee: [unit__outputNode, d_ee, b_xu, null, null, null, null, null, null]
-    unit_outputNode_dt_ee: [unit__outputNode, dt_ee, tt_su, null, all, null, null, null, null]
-    unit_capacity_ed_p: [unit_capacity, ed_p, bg_x, null, null, null, null, null, null]
-    unit_inputs_cf_d_ee: [unit_cf__inputNode, null, null, null, null, null, null, null, null]
-    unit_outputs_cf_d_ee: [unit_cf__outputNode, d_ee, b_xu, null, null, null, null, null, null]
-    unit_curtailment_outputNode_dt_ee: [unit_curtailment__outputNode, null, null, null, null, null, null, null, null]
-    unit_online_dt_e: [unit_online, dt_e, tt_l, null, null, null, null, null, null]
-    unit_online_average_d_e: [unit_online__d_average, d_e, bx, null, null, null, null, null, null]
-    unit_ramp_inputs_dt_ee: [unit_ramp__inputNode, null, null, null, null, null, null, null, null]
-    unit_ramp_outputs_dt_ee: [unit_ramp__outputNode, null, null, null, null, null, null, null, null]
-    unit_startup_d_e: [unit_startup, d_e, b_g, null, null, null, null, null, null]
-    unit_VRE_potential_outputNode_dt_ee: [unit_outputNode_VRE_potential, dt_ee, tt_ll, null, null, null, null, null, null]
-    unit_VRE_curtailment_outputNode_dt_ee: [unit_outputNode_VRE_curtailment, dt_ee, tt_ll, null, null, null, null, null, null]
-    unit_curtailment_share_outputNode_dt_ee: [unit_outputNode_VRE_curtailment_share, dt_ee, tt_ll, null, null, null, null, null, null]
-    unit_VRE_potential_outputNode_d_ee: [unit_outputNode_VRE_potential, d_ee, b_ux, null, null, null, null, null, null]
-    unit_VRE_curtailment_outputNode_d_ee: [unit_outputNode_VRE_curtailment, d_ee, b_ux, null, null, null, null, null, null]
-    unit_curtailment_share_outputNode_d_ee: [unit_outputNode_VRE_curtailment_share, d_ee, b_ux, null, null, null, null, null, null]
+  # Infeasibilities
+  node_slack_up_dt_e:
+    plot_name: '0_infeas_0 node upward slack'
+    map_dimensions_for_plots: [dt_e, tt_l]
+  node_slack_down_dt_e:
+    plot_name: '0_infeas_1 node downward slack'
+    map_dimensions_for_plots: [dt_e, tt_l]
+  nodeGroup_slack_reserve_dt_eeg:
+    plot_name: '0_infeas_2 nodeGroup reserve slack'
+    map_dimensions_for_plots: [dt_eeg, tt_ssu]
+  nodeGroup_slack_inertia_dt_g:
+    plot_name: '0_infeas_3 nodeGroup inertia slack'
+    map_dimensions_for_plots: [dt_g, tt_u]
+  nodeGroup_slack_nonsync_dt_g:
+    plot_name: '0_infeas_4 nodeGroup nonsync slack'
+    map_dimensions_for_plots: [dt_g, tt_u]
+  nodeGroup_slack_capacity_margin_d_g:
+    plot_name: '0_infeas_5 nodeGroup capacity_margin slack'
+    map_dimensions_for_plots: [d_g, b_x]
 
+  # Curtailments
+  unit_VRE_curtailment_outputNode_d_ee:
+    plot_name: '1_curtail_0 VRE curtailment'
+    map_dimensions_for_plots: [d_ee, b_ux]
+  unit_VRE_curtailment_outputNode_dt_ee:
+    plot_name: '1_curtail_1 VRE curtailment'
+    map_dimensions_for_plots: [dt_ee, tt_ll]
+  unit_curtailment_share_outputNode_d_ee:
+    plot_name: '1_curtail_2 VRE curtailment share'
+    map_dimensions_for_plots: [d_ee, b_ux]
+  unit_curtailment_share_outputNode_dt_ee:
+    plot_name: '1_curtail_3 VRE curtailment share'
+    map_dimensions_for_plots: [dt_ee, tt_ll]
+
+  # Flows for units and connections
+  unit_outputNode_d_ee:
+    plot_name: '2_flows_0 unit to node'
+    map_dimensions_for_plots: [d_ee, b_xu]
+  unit_outputNode_dt_ee:
+    plot_name: '2_flows_1 unit to node'
+    legend: all
+    map_dimensions_for_plots: [dt_ee, tt_su]
+  unit_inputNode_d_ee:
+    plot_name: '2_flows_2 node to unit'
+    map_dimensions_for_plots: [d_ee, b_xu]
+  unit_inputNode_dt_ee:
+    plot_name: '2_flows_3 node to unit'
+    legend: all
+    map_dimensions_for_plots: [dt_ee, tt_su]
+  connection_d_eee:
+    plot_name: '2_flows_4 connection'
+    xlabel: MWh
+    map_dimensions_for_plots: [d_e, u_b]
+  connection_dt_eee:
+    plot_name: '2_flows_5 connection'
+    map_dimensions_for_plots: [dt_e, tt_l]
+
+  # Costs
+  annualized_costs_d_p:
+    default:
+      plot_name: '3_costs_0 annualized costs'
+      bar_orientation: vertical
+      base_length: 6
+      ylabel: Currency
+      map_dimensions_for_plots: [d_p, b_s]
+    sum_periods:
+      plot_name: '3_costs_0b annualized costs sum periods'
+      bar_orientation: vertical
+      base_length: 6
+      map_dimensions_for_plots: [d_p, m_s]
+  costs_dt_p:
+    default:
+      plot_name: '3_costs_1 stack'
+      map_dimensions_for_plots: [dt_p, tt_s]
+    chunks:
+      plot_name: '3_costs_1b time chunks'
+      map_dimensions_for_plots: [dt_sp, i_lu]
+      max_subplots_per_file: 12
+      time_average_duration: 24
+    lines:
+      plot_name: '3_costs_1c lines'
+      map_dimensions_for_plots: [dt_p, tt_l]
+  costs_discounted_d_p:
+    plot_name: '3_costs_2 costs discounted'
+    bar_orientation: vertical
+    base_length: 6
+    map_dimensions_for_plots: [d_p, bs]
+
+  unit_capacity_ed_p:
+    plot_name: unit_capacity
+    map_dimensions_for_plots: [ed_p, bg_x]
+  node_capacity_ed_p:
+    plot_name: node_capacity
+    map_dimensions_for_plots: [ed_p, bg_x]
+  connection_capacity_ed_p:
+    plot_name: connection_capacity
+    map_dimensions_for_plots: [ed_p, bg_x]
+  unit_inputs_cf_d_ee:
+    plot_name: unit_cf__inputNode
+  unit_outputs_cf_d_ee:
+    plot_name: unit_cf__outputNode
+    map_dimensions_for_plots: [d_ee, b_xu]
+  unit_curtailment_outputNode_dt_ee:
+    plot_name: unit_curtailment__outputNode
+  unit_online_dt_e:
+    plot_name: unit_online
+    map_dimensions_for_plots: [dt_e, tt_l]
+  unit_online_average_d_e:
+    plot_name: unit_online__d_average
+    map_dimensions_for_plots: [d_e, bx]
+  unit_ramp_inputs_dt_ee:
+    plot_name: unit_ramp__inputNode
+  unit_ramp_outputs_dt_ee:
+    plot_name: unit_ramp__outputNode
+  unit_startup_d_e:
+    plot_name: unit_startup
+    map_dimensions_for_plots: [d_e, b_g]
+  # Extras
+  unit_VRE_potential_outputNode_d_ee:
+    plot_name: '9_extras_4 VRE_potential'
+    map_dimensions_for_plots: [d_ee, b_ux]
+  unit_VRE_potential_outputNode_dt_ee:
+    plot_name: '9_extras_5 VRE potential'
+    map_dimensions_for_plots: [dt_ee, tt_ll]
+  connection_losses_d_eee:
+    plot_name: connection_losses
+    xlabel: MWh
+  connection_losses_dt_eee:
+    plot_name: connection_losses
+  connection_leftward_dt_eee:
+    plot_name: connection_leftward
+  connection_leftward_d_eee:
+    plot_name: connection_leftward
+  connection_rightward_dt_eee:
+    plot_name: connection_rightward
+  connection_rightward_d_eee:
+    plot_name: connection_rightward
+  connection_cf_d_e:
+    plot_name: connection_cf
+    map_dimensions_for_plots: [d_e, b_x]
+  CO2__:
+    plot_name: co2
+    map_dimensions_for_plots: [_, m_b]
+  costs_discounted_p_:
+    plot_name: costs_discounted
+  discountFactors_d_p:
+    plot_name: discount_factors
+  dual_invest_connection_d_e:
+    plot_name: connection_invest_marginal
+    map_dimensions_for_plots: [d_e, g_b]
+  dual_invest_node_d_e:
+    plot_name: node_invest_marginal
+    map_dimensions_for_plots: [d_e, g_b]
+  dual_invest_unit_d_e:
+    plot_name: unit_invest_marginal
+    map_dimensions_for_plots: [d_e, g_b]
+  entity_annuity_d_p:
+    plot_name: entity_annuity
+  total_inflow_d_g:
+    default:
+      plot_name: group_flows
+      bar_orientation: vertical
+      base_length: 8
+      map_dimensions_for_plots: [d_g, b_s]
+    sum_periods:
+      plot_name: group_flows
+      bar_orientation: vertical
+      base_length: 8
+      map_dimensions_for_plots: [d_g, m_s]
+  total_inflow_dt_g:
+    plot_name: group_flows
+    map_dimensions_for_plots: [dt_g, tt_l]
+  nodeGroup_unit_node_inertia_dt_gee:
+    plot_name: nodeGroup__unit__node_inertia
+    map_dimensions_for_plots: [dt_gee, tt_uss]
+  nodeGroup_flows_d_gpe:
+    plot_name: nodeGroup_flows
+    legend: all
+    bar_orientation: vertical
+    base_length: 6
+    map_dimensions_for_plots: [d_gpe, b_uss]
+  nodeGroup_flows_dt_gpe:
+    plot_name: nodeGroup_flows
+    legend: all
+    map_dimensions_for_plots: [dt_gpe, tt_uss]
+  nodeGroup_inertia_dt_g:
+    plot_name: nodeGroup_inertia
+    map_dimensions_for_plots: [dt_g, tt_l]
+  nodeGroup_inertia_largest_flow_dt_g:
+    plot_name: nodeGroup_inertia_largest_flow
+    map_dimensions_for_plots: [dt_g, tt_l]
+  nodeGroup_gdt_p:
+    plot_name: nodeGroup
+    map_dimensions_for_plots: [gdt_p, ltt_u]
+  nodeGroup_gd_p:
+    plot_name: nodeGroup
+    map_dimensions_for_plots: [gd_p, gb_u]
+  nodeGroup_VRE_share_d_g:
+    plot_name: nodeGroup_VRE_share
+    map_dimensions_for_plots: [d_g, b_x]
+  nodeGroup_VRE_share_dt_g:
+    plot_name: nodeGroup_VRE_share__dt
+    map_dimensions_for_plots: [dt_g, tt_l]
+  CO2_d_g:
+    plot_name: group_CO2
+    map_dimensions_for_plots: [d_g, b_x]
+  node_d_ep:
+    plot_name: node
+    map_dimensions_for_plots: [d_ep, b_xs]
+  node_dt_ep:
+    plot_name: node
+    map_dimensions_for_plots: [dt_ep, tt_us]
+  node_prices_sdt_e:
+    plot_name: node_prices
+    map_dimensions_for_plots: [sdt_e, mtt_l]
+  node_state_dt_e:
+    plot_name: node_state
+    map_dimensions_for_plots: [dt_e, tt_l]
+  process_co2_d_eeee:
+    plot_name: process__d_co2
+    map_dimensions_for_plots: [d_eeee, b_xbxx]
+  process_reserve_upDown_node_dt_eppe:
+    plot_name: process__reserve__upDown__node
+    map_dimensions_for_plots: [dt_eppe, tt_ussu]
+  process_reserve_average_d_eppe:
+    plot_name: process__reserve__upDown__node__d_average
+    map_dimensions_for_plots: [d_eppe, b_xssx]
+  reserve_prices_mdt_ppg:
+    plot_name: reserve_price__upDown__group
+    map_dimensions_for_plots: [mdt_ppg, mtt_llu]
 filenames:
-    annualized_costs_d_p: annualized_costs__d
-    CO2__: co2
-    connection_d_eee: connection__d
-    connection_losses_d_eee: connection_losses__d
-    connection_dt_eee: connection__dt
-    connection_losses_dt_eee: connection__dt_losses
-    connection_leftward_dt_eee: connection_leftward__dt
-    connection_leftward_d_eee: connection_leftward__d
-    connection_rightward_dt_eee: connection_rightward__dt
-    connection_rightward_d_eee: connection_rightward__d
-    connection_capacity_ed_p: connection_capacity__d
-    connection_cf_d_e: connection_cf__d
-    costs_dt_p: costs__dt
-    costs_discounted_d_p: costs_discounted
-    costs_discounted_p_: costs_discounted
-    discountFactors_d_p: discount_factors__d
-    dual_invest_connection_d_e: connection_invest_marginal__d
-    dual_invest_node_d_e: node_invest_marginal__d
-    dual_invest_unit_d_e: unit_invest_marginal__d
-    entity_annuity_d_p: entity_annuity
-    nodeGroup_unit_node_inertia_dt_gee: group__unit__node_inertia__dt
-    nodeGroup_flows_d_gpe: group_flows__d
-    nodeGroup_flows_dt_gpe: group_flows__dt
-    nodeGroup_inertia_dt_g: group_inertia__dt
-    nodeGroup_inertia_largest_flow_dt_g: group_inertia_largest_flow__dt
-    nodeGroup_gdt_p: group_node__dt
-    nodeGroup_gd_p: group_node__d
-    nodeGroup_VRE_share_d_g: group_node_VRE_share__dt
-    nodeGroup_VRE_share_dt_g: group_node_VRE_share
-    CO2_d_g: group_CO2__d
-    node_d_ep: node__d
-    node_dt_ep: node__dt
-    node_capacity_ed_p: node_capacity__d
-    node_prices_dt_e: node_prices__dt
-    node_state_dt_e: node_state__dt
-    process_co2_d_eee: process__d_co2
-    process_reserve_upDown_node_dt_eppe: process__reserve__upDown__node__dt
-    process_reserve_average_d_eppe: process__reserve__upDown__node__d_average
-    reserve_prices_dt_ppg: reserve_price__upDown__group__dt
-    nodeGroup_slack_capacity_margin_d_g: slack__capacity_margin__d
-    node_slack_down_dt_e: slack__downward__node_state__dt
-    nodeGroup_slack_inertia_dt_g: slack__inertia_group__dt
-    nodeGroup_slack_nonsync_dt_g: slack__nonsync_group__dt
-    nodeGroup_slack_reserve_dt_eeg: slack__reserve__upDown__group__dt
-    node_slack_up_dt_e: slack__upward__node_state__dt
-    unit_inputNode_d_ee: unit__inputNode__d
-    unit_inputNode_dt_ee: unit__inputNode__dt
-    unit_outputNode_d_ee: unit__outputNode__d
-    unit_outputNode_dt_ee: unit__outputNode__dt
-    unit_capacity_ed_p: unit_capacity__d
-    unit_inputs_cf_d_ee: unit_cf__inputNode__d
-    unit_outputs_cf_d_ee: unit_cf__outputNode__d
-    unit_curtailment_outputNode_dt_ee: unit_curtailment__outputNode__dt
-    unit_online_dt_e: unit_online__dt
-    unit_online_average_d_e: unit_online__d_average
-    unit_ramp_inputs_dt_ee: unit_ramp__inputNode__dt
-    unit_ramp_outputs_dt_ee: unit_ramp__outputNode__dt
-    unit_startup_d_e: unit_startup__d
-    unit_VRE_potential_outputNode_dt_ee: unit_outputNode_VRE_potential__dt
-    unit_VRE_curtailment_outputNode_dt_ee: unit_outputNode_VRE_curtailment__dt
-    unit_curtailment_share_outputNode_dt_ee: unit_outputNode_VRE_curtailment_share__dt
-    unit_VRE_potential_outputNode_d_ee: unit_outputNode_VRE_potential__d
-    unit_VRE_curtailment_outputNode_d_ee: unit_outputNode_VRE_curtailment__d
-    unit_curtailment_share_outputNode_d_ee: unit_outputNode_VRE_curtailment_share__d
+  group_node: group_node
+  group_process: group_process
+  group_process_node: group_process_node
+  outputNodeGroup_does_specified_flows: outputNodeGroup_does_specified_flows
+  outputNodeGroup_does_generic_flows: outputNodeGroup_does_generic_flows
+  outputNodeGroup__connection_Not_in_aggregate: outputNodeGroup__connection_Not_in_aggregate
+  outputNodeGroup__process__unit__to_node_Not_in_aggregate: outputNodeGroup__process__unit__to_node_Not_in_aggregate
+  outputNodeGroup__process__node__to_unit_Not_in_aggregate: outputNodeGroup__process__node__to_unit_Not_in_aggregate
+  outputNodeGroup__process__connection__to_node_Not_in_aggregate: outputNodeGroup__process__connection__to_node_Not_in_aggregate
+  outputNodeGroup__process__node__to_connection_Not_in_aggregate: outputNodeGroup__process__node__to_connection_Not_in_aggregate
+  outputNodeGroup__processGroup_Unit_to_group: outputNodeGroup__processGroup_Unit_to_group
+  outputNodeGroup__processGroup__process__unit__to_node: outputNodeGroup__processGroup__process__unit__to_node
+  outputNodeGroup__processGroup_Group_to_unit: outputNodeGroup__processGroup_Group_to_unit
+  outputNodeGroup__processGroup__process__node__to_unit: outputNodeGroup__processGroup__process__node__to_unit
+  outputNodeGroup__processGroup_Connection: outputNodeGroup__processGroup_Connection
+  outputNodeGroup__processGroup__process__connection__to_node: outputNodeGroup__processGroup__process__connection__to_node
+  outputNodeGroup__processGroup__process__node__to_connection: outputNodeGroup__processGroup__process__node__to_connection
+  outputNodeGroup__process_fully_inside: outputNodeGroup__process_fully_inside
+  node_inflow__dt: node_inflow__dt
+  annualized_costs_d_p: annualized_costs__d
+  CO2__: co2
+  connection_d_eee: connection__d
+  connection_losses_d_eee: connection_losses__d
+  connection_dt_eee: connection__dt
+  connection_losses_dt_eee: connection__dt_losses
+  connection_leftward_dt_eee: connection_leftward__dt
+  connection_leftward_d_eee: connection_leftward__d
+  connection_rightward_dt_eee: connection_rightward__dt
+  connection_rightward_d_eee: connection_rightward__d
+  connection_capacity_ed_p: connection_capacity__d
+  connection_cf_d_e: connection_cf__d
+  costs_dt_p: costs__dt
+  costs_discounted_d_p: costs_discounted
+  costs_discounted_p_: costs_discounted
+  discountFactors_d_p: discount_factors__d
+  dual_invest_connection_d_e: connection_invest_marginal__d
+  dual_invest_node_d_e: node_invest_marginal__d
+  dual_invest_unit_d_e: unit_invest_marginal__d
+  entity_annuity_d_p: entity_annuity
+  nodeGroup_unit_node_inertia_dt_gee: group__unit__node_inertia__dt
+  nodeGroup_flows_d_gpe: group_flows__d
+  nodeGroup_flows_dt_gpe: group_flows__dt
+  nodeGroup_inertia_dt_g: group_inertia__dt
+  nodeGroup_inertia_largest_flow_dt_g: group_inertia_largest_flow__dt
+  nodeGroup_gdt_p: group_node__dt
+  nodeGroup_gd_p: group_node__d
+  nodeGroup_VRE_share_d_g: group_node_VRE_share__dt
+  nodeGroup_VRE_share_dt_g: group_node_VRE_share
+  CO2_d_g: group_CO2__d
+  node_d_ep: node__d
+  node_dt_ep: node__dt
+  node_capacity_ed_p: node_capacity__d
+  node_prices_dt_e: node_prices__dt
+  node_state_dt_e: node_state__dt
+  process_co2_d_eee: process__d_co2
+  process_reserve_upDown_node_dt_eppe: process__reserve__upDown__node__dt
+  process_reserve_average_d_eppe: process__reserve__upDown__node__d_average
+  reserve_prices_dt_ppg: reserve_price__upDown__group__dt
+  nodeGroup_slack_capacity_margin_d_g: slack__capacity_margin__d
+  node_slack_down_dt_e: slack__downward__node_state__dt
+  nodeGroup_slack_inertia_dt_g: slack__inertia_group__dt
+  nodeGroup_slack_nonsync_dt_g: slack__nonsync_group__dt
+  nodeGroup_slack_reserve_dt_eeg: slack__reserve__upDown__group__dt
+  node_slack_up_dt_e: slack__upward__node_state__dt
+  unit_inputNode_d_ee: unit__inputNode__d
+  unit_inputNode_dt_ee: unit__inputNode__dt
+  unit_outputNode_d_ee: unit__outputNode__d
+  unit_outputNode_dt_ee: unit__outputNode__dt
+  unit_capacity_ed_p: unit_capacity__d
+  unit_inputs_cf_d_ee: unit_cf__inputNode__d
+  unit_outputs_cf_d_ee: unit_cf__outputNode__d
+  unit_curtailment_outputNode_dt_ee: unit_curtailment__outputNode__dt
+  unit_online_dt_e: unit_online__dt
+  unit_online_average_d_e: unit_online__d_average
+  unit_ramp_inputs_dt_ee: unit_ramp__inputNode__dt
+  unit_ramp_outputs_dt_ee: unit_ramp__outputNode__dt
+  unit_startup_d_e: unit_startup__d
+  unit_VRE_potential_outputNode_dt_ee: unit_outputNode_VRE_potential__dt
+  unit_VRE_curtailment_outputNode_dt_ee: unit_outputNode_VRE_curtailment__dt
+  unit_curtailment_share_outputNode_dt_ee: unit_outputNode_VRE_curtailment_share__dt
+  unit_VRE_potential_outputNode_d_ee: unit_outputNode_VRE_potential__d
+  unit_VRE_curtailment_outputNode_d_ee: unit_outputNode_VRE_curtailment__d
+  unit_curtailment_share_outputNode_d_ee: unit_outputNode_VRE_curtailment_share__d

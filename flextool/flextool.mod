@@ -2060,7 +2060,7 @@ minimize total_cost:
   + sum {(e, d) in ed_invest}
       + v_invest[e, d]
           * p_entity_unitsize[e]
-          * ed_lifetime_fixed_cost[e, d]  # This includes all years until end of lifetime, inflation adjuste
+          * ed_lifetime_fixed_cost[e, d]  # This includes all years until end of lifetime, inflation adjusted
   - sum {(e, d) in ed_divest}
       + v_divest[e, d]
           * p_entity_unitsize[e]
@@ -4043,7 +4043,7 @@ for {s in solve_current, d in d_realize_dispatch_or_invest} {
     }
 }
 
-# Write pdProcess (startup_cost, fixed_cost)
+# Write pdProcess_startup_cost
 if p_model["solveFirst"] == 1 then {
   printf "solve,period" > "output_raw/pdProcess_startup_cost.csv";
   for {p in process_online} {printf ",%s", p >> "output_raw/pdProcess_startup_cost.csv";}
@@ -4552,6 +4552,11 @@ if p_model['solveFirst'] then {
   printf "group\n" > "output_raw/set_group_co2_price.csv";
   for {g in group_co2_price} {
       printf "%s\n", g >> "output_raw/set_group_co2_price.csv";
+  }
+
+  printf "group\n" > "output_raw/set_group_co2_limit.csv";
+  for {g in group_co2_max_period union group_co2_max_total} {
+      printf "%s\n", g >> "output_raw/set_group_co2_limit.csv";
   }
 
   printf "group\n" > "output_raw/set_groupInertia.csv";
