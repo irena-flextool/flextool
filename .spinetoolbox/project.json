@@ -76,11 +76,6 @@
                     "left"
                 ],
                 "filter_settings": {
-                    "known_filters": {
-                        "db_url@Init": {
-                            "scenario_filter": {}
-                        }
-                    },
                     "auto_online": false,
                     "enabled_filter_types": {
                         "alternative_filter": false,
@@ -123,7 +118,6 @@
                     "write_index": 1
                 },
                 "filter_settings": {
-                    "known_filters": {},
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": false,
@@ -145,14 +139,6 @@
                     "require_scenario_filter": true
                 },
                 "filter_settings": {
-                    "known_filters": {
-                        "db_url@Input_data": {
-                            "scenario_filter": {
-                            },
-                            "alternative_filter": {
-                            }
-                        }
-                    },
                     "auto_online": false,
                     "enabled_filter_types": {
                         "alternative_filter": false,
@@ -171,7 +157,6 @@
                     "bottom"
                 ],
                 "filter_settings": {
-                    "known_filters": {},
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": false,
@@ -190,7 +175,6 @@
                     "left"
                 ],
                 "filter_settings": {
-                    "known_filters": {},
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": false,
@@ -212,13 +196,6 @@
                     "require_scenario_filter": true
                 },
                 "filter_settings": {
-                    "known_filters": {
-                        "db_url@output info": {
-                            "scenario_filter": {},
-                            "alternative_filter": {
-                            }
-                        }
-                    },
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": true,
@@ -237,7 +214,6 @@
                     "left"
                 ],
                 "filter_settings": {
-                    "known_filters": {},
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": false,
@@ -280,7 +256,6 @@
                     }
                 },
                 "filter_settings": {
-                    "known_filters": {},
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": false,
@@ -299,7 +274,6 @@
                     "left"
                 ],
                 "filter_settings": {
-                    "known_filters": {},
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": false,
@@ -321,13 +295,6 @@
                     "require_scenario_filter": true
                 },
                 "filter_settings": {
-                    "known_filters": {
-                        "db_url@output info": {
-                            "scenario_filter": {},
-                            "alternative_filter": {
-                            }
-                        }
-                    },
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": true,
@@ -360,16 +327,16 @@
         "Input_data": {
             "type": "Data Store",
             "description": "",
-            "x": -144.75849788616992,
-            "y": -47.914620947913825,
+            "x": -144.75644895326718,
+            "y": -49.761821645780685,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
                 "port": null,
                 "database": {
                     "type": "path",
-                    "relative": true,
-                    "path": "input_data.sqlite"
+                    "relative": false,
+                    "path": "/home/jkiviluo/sources/flextool-africa2/input_data.sqlite"
                 },
                 "schema": ""
             }
@@ -417,8 +384,8 @@
         "FlexTool": {
             "type": "Tool",
             "description": "",
-            "x": -7.848070431893172,
-            "y": -55.71186820125284,
+            "x": -10.024167796000725,
+            "y": -55.7112626983467,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": [
@@ -453,6 +420,10 @@
                 {
                     "type": "literal",
                     "arg": "csv"
+                },
+                {
+                    "type": "literal",
+                    "arg": "excel"
                 }
             ],
             "kill_completed_processes": false,
@@ -477,14 +448,42 @@
         "scenario comparison": {
             "type": "Tool",
             "description": "",
-            "x": 315.028734450617,
-            "y": -55.340116733942835,
+            "x": 326.0936608014038,
+            "y": -58.19388037596063,
             "specification": "scenario comparison",
             "execute_in_work": false,
             "cmd_line_args": [
                 {
                     "type": "resource",
                     "arg": "db_url@output info"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--all-plots"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--active-configs"
+                },
+                {
+                    "type": "literal",
+                    "arg": "default"
+                },
+                {
+                    "type": "literal",
+                    "arg": "chunks"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--plot-rows"
+                },
+                {
+                    "type": "literal",
+                    "arg": "1"
+                },
+                {
+                    "type": "literal",
+                    "arg": "336"
                 }
             ],
             "kill_completed_processes": false,
@@ -556,7 +555,15 @@
                 },
                 {
                     "type": "literal",
-                    "arg": "excel"
+                    "arg": "--plot-rows"
+                },
+                {
+                    "type": "literal",
+                    "arg": "1"
+                },
+                {
+                    "type": "literal",
+                    "arg": "240"
                 }
             ],
             "kill_completed_processes": false,
@@ -565,8 +572,8 @@
         "output info": {
             "type": "Data Store",
             "description": "",
-            "x": 152.63094272069048,
-            "y": -54.33656015714098,
+            "x": 151.78909396116228,
+            "y": -53.49471139761279,
             "url": {
                 "dialect": "sqlite",
                 "host": "",

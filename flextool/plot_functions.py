@@ -362,7 +362,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 if other_levels and nr_row_levels > 1:
                     # MultiIndex: split by other levels, chunk-average each group, recombine
                     parts = []
-                    for group_key, group_df in df.groupby(level=other_levels):
+                    group_level = other_levels[0] if len(other_levels) == 1 else other_levels
+                    for group_key, group_df in df.groupby(level=group_level):
                         flat = group_df.droplevel(other_levels)
                         averaged = _chunk_average_df(flat, chunk_size)
                         # Rebuild MultiIndex with original level structure
@@ -397,6 +398,14 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                         df = df.stack(bar_line_level - df.index.nlevels, future_stack=True)
                         if isinstance(df, pd.Series):
                             df = df.to_frame()
+
+                # Move column-type levels from row index to columns
+                # (symmetric to stacking bar/line levels from columns to index above)
+                column_type_levels = [i for i, c in enumerate(rules[:df.index.nlevels])
+                                      if c in ('u', 'g', 's', 'l', 'e')]
+                for col_level in reversed(column_type_levels):
+                    if col_level < df.index.nlevels:
+                        df = df.unstack(col_level)
 
                 sum_mean_row_levels = [i for i, char in enumerate(rules[:df.index.nlevels]) if char == 'm' or char == 'a']
                 if df.index.nlevels - len(sum_mean_row_levels) > 0:

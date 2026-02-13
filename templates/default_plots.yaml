@@ -36,36 +36,36 @@
 plots:
   # Infeasibilities
   node_slack_up_dt_e:
-    plot_name: '0_infeas_0 node upward slack'
+    plot_name: '0.0 Infeas. node upward slack'
     map_dimensions_for_plots: [dt_e, tt_l]
   node_slack_down_dt_e:
-    plot_name: '0_infeas_1 node downward slack'
+    plot_name: '0.1 Infeas. node downward slack'
     map_dimensions_for_plots: [dt_e, tt_l]
   nodeGroup_slack_reserve_dt_eeg:
-    plot_name: '0_infeas_2 nodeGroup reserve slack'
+    plot_name: '0.2 Infeas. nodeGroup reserve slack'
     map_dimensions_for_plots: [dt_eeg, tt_ssu]
   nodeGroup_slack_inertia_dt_g:
-    plot_name: '0_infeas_3 nodeGroup inertia slack'
+    plot_name: '0.3 Infeas. nodeGroup inertia slack'
     map_dimensions_for_plots: [dt_g, tt_u]
   nodeGroup_slack_nonsync_dt_g:
-    plot_name: '0_infeas_4 nodeGroup nonsync slack'
+    plot_name: '0.4 Infeas. nodeGroup nonsync slack'
     map_dimensions_for_plots: [dt_g, tt_u]
   nodeGroup_slack_capacity_margin_d_g:
-    plot_name: '0_infeas_5 nodeGroup capacity_margin slack'
+    plot_name: '0.5 Infeas. nodeGroup capacity_margin slack'
     map_dimensions_for_plots: [d_g, b_x]
 
   # Curtailments
   unit_VRE_curtailment_outputNode_d_ee:
-    plot_name: '1_curtail_0 VRE curtailment'
+    plot_name: '1.0 Curtail. amount'
     map_dimensions_for_plots: [d_ee, b_ux]
   unit_VRE_curtailment_outputNode_dt_ee:
-    plot_name: '1_curtail_1 VRE curtailment'
+    plot_name: '1.1 Curtail. amount'
     map_dimensions_for_plots: [dt_ee, tt_ll]
   unit_curtailment_share_outputNode_d_ee:
-    plot_name: '1_curtail_2 VRE curtailment share'
+    plot_name: '1.2 Curtail. share of VRE'
     map_dimensions_for_plots: [d_ee, b_ux]
   unit_curtailment_share_outputNode_dt_ee:
-    plot_name: '1_curtail_3 VRE curtailment share'
+    plot_name: '1.3 Curtail. share of VRE'
     map_dimensions_for_plots: [dt_ee, tt_ll]
 
   # Flows for units and connections
@@ -122,15 +122,18 @@ plots:
     base_length: 6
     map_dimensions_for_plots: [d_p, bs]
 
+  # Capacities for units, nodes and connections
   unit_capacity_ed_p:
-    plot_name: unit_capacity
+    plot_name: '4_capacity_0 units'
     map_dimensions_for_plots: [ed_p, bg_x]
   node_capacity_ed_p:
-    plot_name: node_capacity
+    plot_name: '4_capacity_1 nodes'
     map_dimensions_for_plots: [ed_p, bg_x]
   connection_capacity_ed_p:
-    plot_name: connection_capacity
+    plot_name: '4_capacity_2 connections'
     map_dimensions_for_plots: [ed_p, bg_x]
+
+  # Unit details
   unit_inputs_cf_d_ee:
     plot_name: unit_cf__inputNode
   unit_outputs_cf_d_ee:
@@ -151,6 +154,7 @@ plots:
   unit_startup_d_e:
     plot_name: unit_startup
     map_dimensions_for_plots: [d_e, b_g]
+
   # Extras
   unit_VRE_potential_outputNode_d_ee:
     plot_name: '9_extras_4 VRE_potential'

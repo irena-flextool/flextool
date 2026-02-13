@@ -1961,6 +1961,9 @@ class FlexToolRunner:
                      realized_time_lists, parent_roll_lists)
         """
         new_name = solve
+        if new_name not in self.real_solves:
+            self.real_solves.append(new_name)
+
         if parent_info.solve:
             joint_current_solve_periods = list(set(self.invest_periods[solve] + self.fix_storage_periods[solve] + self.realized_periods[solve]))
             current_solve_periods = [t[0] for t in joint_current_solve_periods]
@@ -1986,9 +1989,6 @@ class FlexToolRunner:
                                 self.timesets_used_by_solves[new_name].append(item)
                     # There should be only one parent 'period_from'
                     break
-
-        if new_name not in self.real_solves:
-            self.real_solves.append(new_name)
 
         # Get full active time list for this solve (all timesteps it could use)
         full_active_time_list_own = self.get_active_time(
@@ -2373,12 +2373,13 @@ class FlexToolRunner:
                     if not any(period__timeset[0]== sublist[0] for sublist in solve_period_history[solve]):
                         solve_period_history[solve].append((period__timeset[0], 1))
 
-        period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, fix_storage_time_lists, realized_time_lists, branch_start_time_lists = self.create_stochastic_periods(self.stochastic_branches, all_solves, complete_solve, active_time_lists, fix_storage_time_lists, realized_time_lists)
+        period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, fix_storage_time_lists, realized_time_lists, branch_start_time_lists = \
+            self.create_stochastic_periods(self.stochastic_branches, all_solves, complete_solve, active_time_lists, fix_storage_time_lists, realized_time_lists)
 
         for solve in active_time_lists.keys():
             for period in active_time_lists[solve]:
                 if (period,period) in period__branch_lists[solve] and not any(period== sublist[0] for sublist in solve_period_history[complete_solve[solve]]):
-                    self.logger.error("The years_represented is defined, but not to all of the periods in the solve")
+                    self.logger.error(f"The years_represented is defined, but not to all of the periods ({period}) in the solve")
                     sys.exit(-1)
 
         timing = time.perf_counter() - timer

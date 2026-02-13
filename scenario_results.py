@@ -828,9 +828,7 @@ def plot_dispatch_area(df_dispatch, inflow_series, output_path, title, ylabel="M
     handles, labels = ax.get_legend_handles_labels()
     ax.legend(handles[::-1], labels[::-1], bbox_to_anchor=(1.05, 1), loc='upper left')
 
-    plt.tight_layout()
-
-    # Save
+    # Save (bbox_inches='tight' in savefig handles layout)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
@@ -992,12 +990,12 @@ def prepare_dispatch_data(combined_dfs, combined_mapping_dfs, scenario, output_n
         conn_to_node_members = _get_mapping('processGroup_connection_to_node_members')
         conn_from_node_members = _get_mapping('processGroup_node_to_connection_members')
 
+        conn_left = None
+        conn_right = None
         if connection_df is not None and not connection_df.empty:
             group_aggregates = connection_df[connection_df['group'] == output_node_group]['group_aggregate'].unique()
 
             # Load connection flow data
-            conn_left = None
-            conn_right = None
             if 'connection_leftward_dt_eee' in combined_dfs:
                 conn_left = combined_dfs['connection_leftward_dt_eee'].copy()
                 if scenario in conn_left.columns.get_level_values('scenario'):
@@ -1667,9 +1665,14 @@ def create_summary_plots(combined_dfs, group_node_df, config, plot_dir, scenario
                     df_lol_filtered = df_lol.loc[:, df_lol.columns.get_level_values('node').isin(valid_nodes)]
 
                     if not df_lol_filtered.empty:
-                        # LoL per nodeGroup
-                        df_lol_filtered.columns = df_lol_filtered.columns.join(group_node)
-                        df_lol_sum = df_lol_filtered.groupby('period').sum().T.groupby(['group', 'scenario']).sum().stack().unstack('scenario')
+                        # LoL per nodeGroup — stack to long format and merge with group mapping
+                        # (avoids index join which breaks when nodes belong to multiple groups)
+                        df_summed = df_lol_filtered.groupby('period').sum()
+                        df_long = df_summed.stack(list(range(len(df_summed.columns.names))), future_stack=True).rename('value').reset_index()
+                        node_col = next(c for c in df_long.columns if c not in ('period', 'scenario', 'value'))
+                        gn = group_node_df[group_node_df['scenario'] == first_scen][['group', 'node']].drop_duplicates()
+                        df_merged = df_long.merge(gn, left_on=node_col, right_on='node', how='inner')
+                        df_lol_sum = df_merged.groupby(['group', 'period', 'scenario'])['value'].sum().unstack('scenario')
                         df_lol_sum = reindex_scenarios(df_lol_sum, scenarios)
 
                         plot_horizontal_bar(
@@ -1710,8 +1713,9 @@ def create_summary_plots(combined_dfs, group_node_df, config, plot_dir, scenario
             df_curtail = combined_dfs['unit_curtailment_outputNode_dt_ee'].copy()
             df_curtail = reindex_scenarios(df_curtail, scenarios)
 
-            # Curtailment per node
-            curtail_by_node = df_curtail.sum(axis=0).groupby(['node', 'scenario']).sum().unstack('scenario')
+            # Curtailment per node (column level may be 'sink' or 'node')
+            node_level = 'sink' if 'sink' in df_curtail.columns.names else 'node'
+            curtail_by_node = df_curtail.sum(axis=0).groupby([node_level, 'scenario']).sum().unstack('scenario')
 
             # Filter to configured nodes
             if nodes:
