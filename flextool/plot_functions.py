@@ -6,17 +6,22 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+from matplotlib.ticker import MaxNLocator, FuncFormatter
+from decimal import Decimal, InvalidOperation
 import logging
 import time
 from contextlib import contextmanager
 
 logging.getLogger('matplotlib.category').disabled = True
+matplotlib.rcParams['axes.spines.top'] = False
+matplotlib.rcParams['axes.spines.right'] = False
 
 # Field names for plot settings
 PLOT_FIELD_NAMES = {
     'plot_name', 'map_dimensions_for_plots', 'subplots_per_row', 'legend',
     'bar_orientation', 'base_length', 'max_subplots_per_file', 'max_items_per_file',
-    'time_average_duration', 'xlabel', 'ylabel'
+    'time_average_duration', 'xlabel', 'ylabel', 'value_label', 'axis_scale_min_max',
+    'axis_tick_format', 'always_include_zero'
 }
 
 
@@ -28,6 +33,94 @@ def _is_single_config(d: dict) -> bool:
 def _is_datetime_format(s: str) -> bool:
     """Check if a string matches ISO datetime pattern like 2023-01-01T00:00:00."""
     return bool(re.match(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}', str(s)))
+
+
+def _normalize_axis_scale(raw) -> list | None:
+    """Convert axis_scale_min_max setting to a list of (min, max) | None entries.
+
+    Accepts:
+      [min, max]               → single pair applied to all subplots
+      [[min, max], [], [0, 1]] → per-subplot; empty list means auto-scale
+    Returns None if raw is falsy.
+    """
+    if not raw:
+        return None
+    if isinstance(raw[0], (int, float)):
+        return [(raw[0], raw[1])]
+    result = []
+    for item in raw:
+        result.append((item[0], item[1]) if item else None)
+    return result
+
+
+def _subplot_axis_scale(axis_scale_min_max: list | None, idx: int) -> tuple | None:
+    """Return the (min, max) scale for subplot idx, or None for auto."""
+    if not axis_scale_min_max:
+        return None
+    if len(axis_scale_min_max) == 1:
+        return axis_scale_min_max[0]
+    return axis_scale_min_max[idx] if idx < len(axis_scale_min_max) else None
+
+
+def _apply_subplot_label(ax, xlabel, ylabel, idx: int, row: int, col: int, n_rows: int) -> None:
+    """Apply xlabel/ylabel to ax, supporting both str (positional) and list (per-subplot)."""
+    if isinstance(ylabel, list):
+        val = ylabel[idx] if idx < len(ylabel) else None
+        if val:
+            ax.set_ylabel(val)
+    elif ylabel and col == 0:
+        ax.set_ylabel(ylabel)
+
+    if isinstance(xlabel, list):
+        val = xlabel[idx] if idx < len(xlabel) else None
+        if val:
+            ax.set_xlabel(val, labelpad=2)
+    elif xlabel and row == n_rows - 1:
+        ax.set_xlabel(xlabel)
+
+
+def _sig_figs_fmt(x, pos, n: int = 5) -> str:
+    """Format x with n significant figures, plain notation, no trailing zeros."""
+    if x == 0:
+        return '0'
+    try:
+        d = Decimal(str(x))
+        rounded = d.quantize(Decimal(10) ** (d.adjusted() - n + 1))
+        result = f'{rounded:f}'
+        if '.' in result:
+            result = result.rstrip('0').rstrip('.')
+        return result
+    except (InvalidOperation, ValueError):
+        return str(x)
+
+
+def _get_value_formatter(axis_tick_format, idx: int):
+    """Return a tick formatter for subplot idx.
+
+    axis_tick_format can be:
+      None           → sig-figs FuncFormatter (default, 5 sig figs, plain notation)
+      ',.0f'         → StrMethodFormatter applied to all subplots
+      [',.0f', '.2%'] → per-subplot StrMethodFormatter; sig-figs default beyond list length
+    The format spec is a standard Python format spec (without braces), e.g. ',.0f', '.2%'.
+    """
+    if axis_tick_format is None:
+        return FuncFormatter(_sig_figs_fmt)
+    if isinstance(axis_tick_format, str):
+        spec = axis_tick_format
+    elif isinstance(axis_tick_format, list):
+        entry = axis_tick_format[idx] if idx < len(axis_tick_format) else None
+        if entry is None:
+            return FuncFormatter(_sig_figs_fmt)
+        spec = entry
+    else:
+        return FuncFormatter(_sig_figs_fmt)
+    def _fmt_with_spec(x, pos, _spec=str(spec)):
+        try:
+            return format(x, _spec)
+        except (ValueError, TypeError) as e:
+            logging.error(f"axis_tick_format: cannot format value {x!r} with spec {_spec!r}: {e}")
+            return str(x)
+    return FuncFormatter(_fmt_with_spec)
 
 
 def set_smart_xticks(ax, time_index, plot_width_inches: float) -> None:
@@ -236,6 +329,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         # Filter plot settings that are active based on chosen_settings (or default to default)
         if key not in plot_settings:
             continue
+        if df_orig.empty:
+            continue
         chosen_settings = []
         entry = plot_settings[key]
         if _is_single_config(entry):
@@ -277,6 +372,10 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
             time_avg_duration = setting.get('time_average_duration')
             xlabel = setting.get('xlabel')
             ylabel = setting.get('ylabel')
+            value_label = setting.get('value_label', False)
+            axis_scale_min_max = _normalize_axis_scale(setting.get('axis_scale_min_max'))
+            axis_tick_format = setting.get('axis_tick_format')
+            always_include_zero = setting.get('always_include_zero', True)
 
             if 't' in rules and 'i' not in rules:
                 chart_type = 'time'
@@ -292,7 +391,11 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
             nr_row_levels = df.index.nlevels
             if len(rules) != nr_row_levels + df.columns.nlevels:
                 raise ValueError(f"Number of plot_type rules different from the number of index + column levels in the dataframe. {key_name}")
-            
+
+            levels_to_sort = [i for i, c in enumerate(df_columns_levels) if c in ('e', 'g')]
+            if levels_to_sort:
+                df = df.sort_index(axis=1, level=levels_to_sort, sort_remaining=False)
+
             # Sum sum_levels for row index
             sum_row_levels = [i for i, char in enumerate(rules[:nr_row_levels]) if char == 'm']
             if sum_row_levels:
@@ -391,11 +494,17 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
             # Decide how to plot
             if (not df.empty) & (len(df) > 0):
                 # print('')
+                # Track level names before rearrangement so we can rebuild rules
+                # to match the actual level order after stacking/unstacking
+                level_names_before = list(df.index.names) + list(df.columns.names)
+                name_to_rule = dict(zip(level_names_before, rules))
+
                 bar_line_levels = [i for i, c in enumerate(rules) if c == "b" or c == 't' or c == 'i']
+                pre_stack_nr_row_levels = df.index.nlevels  # Save before stacking changes nlevels
                 for i, bar_line_level in enumerate(reversed(bar_line_levels)):
                     # Move bar_line_levels from columns to index (not including period (0), which is there already)
-                    if bar_line_level >= df.index.nlevels:
-                        df = df.stack(bar_line_level - df.index.nlevels, future_stack=True)
+                    if bar_line_level >= pre_stack_nr_row_levels:
+                        df = df.stack(bar_line_level - pre_stack_nr_row_levels, future_stack=True)
                         if isinstance(df, pd.Series):
                             df = df.to_frame()
 
@@ -406,6 +515,19 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 for col_level in reversed(column_type_levels):
                     if col_level < df.index.nlevels:
                         df = df.unstack(col_level)
+                        if isinstance(df, pd.Series):
+                            df = df.to_frame()
+
+                # Rebuild rules to match actual level order after stacking/unstacking
+                # (stack/unstack place moved levels at the innermost position, which
+                # shifts the correspondence between rules characters and DataFrame levels)
+                level_names_after = list(df.index.names) + list(df.columns.names)
+                if (len(set(level_names_before)) == len(level_names_before)
+                        and all(n is not None for n in level_names_before)):
+                    try:
+                        rules = ''.join(name_to_rule[n] for n in level_names_after)
+                    except KeyError:
+                        pass  # names changed unexpectedly, keep original rules
 
                 sum_mean_row_levels = [i for i, char in enumerate(rules[:df.index.nlevels]) if char == 'm' or char == 'a']
                 if df.index.nlevels - len(sum_mean_row_levels) > 0:
@@ -425,9 +547,6 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 expand_axis_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'e']
                 subplot_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'u']
                 line_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'l']
-
-                if len(df.columns) > 1:
-                    df = df.sort_index(axis=1, level=1)
 
                 # Determine original subplots
                 if not subplot_levels:
@@ -534,10 +653,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             continue
 
                         # Generate filename
-                        if chart_type == 'time':
-                            base_filename = f'{plot_name}_dt'
-                        else:
-                            base_filename = f'{plot_name}_d'
+                        base_filename = f'{plot_name}'
 
                         filepath = generate_split_filename(
                             base_filename, plot_dir, 'svg',
@@ -551,12 +667,18 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                     rows=plot_rows, subplots_per_row=subplots_per_row, legend_position=legend_position,
                                     xlabel=xlabel, ylabel=ylabel,
                                     base_width_per_col=6, subplot_height=base_length,
+                                    axis_scale_min_max=axis_scale_min_max,
+                                    axis_tick_format=axis_tick_format,
+                                    always_include_zero=always_include_zero,
                                     output_filepath=filepath)
                             else:
                                 plot_dt_sub_lines(df_chunk, plot_name, plot_dir, subplot_levels, line_levels,
                                     rows=plot_rows, subplots_per_row=subplots_per_row, legend_position=legend_position,
                                     xlabel=xlabel, ylabel=ylabel,
                                     base_width_per_col=6, subplot_height=base_length,
+                                    axis_scale_min_max=axis_scale_min_max,
+                                    axis_tick_format=axis_tick_format,
+                                    always_include_zero=always_include_zero,
                                     output_filepath=filepath)
                         elif chart_type == 'bar':
                             plot_rowbars_stack_groupbars(df_chunk, plot_name, plot_dir,
@@ -564,13 +686,16 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                 subplots_per_row=subplots_per_row, legend_position=legend_position,
                                 xlabel=xlabel, ylabel=ylabel,
                                 bar_orientation=bar_orientation, base_bar_length=base_length,
+                                value_label=value_label, axis_scale_min_max=axis_scale_min_max,
+                                axis_tick_format=axis_tick_format,
+                                always_include_zero=always_include_zero,
                                 output_filepath=filepath)
                         else:
                             raise ValueError(f'Could not interpret plot rule for {key}')
 
                 else:
                     # STRATEGY 2: When no subplot_levels exist
-                    # Items split directly into files (previous behavior)
+                    # Items split directly into files
 
                     if needs_item_split:
                         item_chunks = list(split_into_chunks(all_items, max_items_per_file))
@@ -602,9 +727,9 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
 
                         # Generate filename
                         if chart_type == 'time':
-                            base_filename = f'{plot_name}_dt'
+                            base_filename = f'{plot_name}'
                         else:
-                            base_filename = f'{plot_name}_d'
+                            base_filename = f'{plot_name}'
 
                         filepath = generate_split_filename(
                             base_filename, plot_dir, 'svg',
@@ -618,12 +743,16 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                     rows=plot_rows, legend_position=legend_position,
                                     xlabel=xlabel, ylabel=ylabel,
                                     base_width_per_col=6, subplot_height=base_length,
+                                    axis_scale_min_max=axis_scale_min_max,
+                                    always_include_zero=always_include_zero,
                                     output_filepath=filepath)
                             else:
                                 plot_dt_sub_lines(df_chunk, plot_name, plot_dir, subplot_levels, line_levels,
                                     rows=plot_rows, legend_position=legend_position,
                                     xlabel=xlabel, ylabel=ylabel,
                                     base_width_per_col=6, subplot_height=base_length,
+                                    axis_scale_min_max=axis_scale_min_max,
+                                    always_include_zero=always_include_zero,
                                     output_filepath=filepath)
                         elif chart_type == 'bar':
                             plot_rowbars_stack_groupbars(df_chunk, plot_name, plot_dir,
@@ -631,10 +760,12 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                 subplots_per_row=subplots_per_row, legend_position=legend_position,
                                 xlabel=xlabel, ylabel=ylabel,
                                 bar_orientation=bar_orientation, base_bar_length=base_length,
+                                value_label=value_label, axis_scale_min_max=axis_scale_min_max,
+                                always_include_zero=always_include_zero,
                                 output_filepath=filepath)
                         else:
                             raise ValueError(f'Could not interpret plot rule for {key}')
-            # else: 
+            # else:
                 # print('   ...no data')
 
             plt.close('all')  # Clean up
@@ -677,6 +808,7 @@ def estimate_legend_width(labels, title='', base_width=1.5):
 def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     rows=(0,167), subplots_per_row=3, legend_position='right',
     xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
+    axis_scale_min_max=None, axis_tick_format=None, always_include_zero=True,
     output_filepath=None):
 
     # Convert level indices to level names for later use after xs operations
@@ -714,6 +846,8 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
                 df_sub_temp = df_plot.xs(sub, level=sub_levels[0], axis=1)
             else:
                 df_sub_temp = df_plot.xs(sub, level=sub_levels, axis=1)
+            if isinstance(df_sub_temp, pd.Series):
+                df_sub_temp = df_sub_temp.to_frame()
 
             # Get line labels
             is_multiindex = isinstance(df_sub_temp.columns, pd.MultiIndex)
@@ -752,7 +886,10 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
         wspace = legend_width / base_width_per_col
         # Calculate vertical spacing to prevent row overlap
         # Add space for ~1.5 rows of text, normalized to subplot height
-        hspace = 0.225 / subplot_height if subplot_height > 0 else 0.15
+        if xlabel:
+            hspace = 0.25 / subplot_height
+        else:
+            hspace = 0.225 / subplot_height
         fig.subplots_adjust(wspace=wspace, hspace=hspace)
 
     # Get x-axis index (use last level if MultiIndex, otherwise use the index itself)
@@ -815,7 +952,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
 
         # Subplot formatting
         if sub is not None:
-            ax.set_title(str(sub))
+            ax.set_title(str(sub), pad=2)
 
         # Determine if legend should be shown
         show_legend = False
@@ -830,17 +967,22 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
                     show_legend = True
 
         if show_legend:
-            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, borderaxespad=0.1)
 
         ax.grid(True, alpha=0.3)
 
-        # Apply axis labels conditionally based on subplot position
+        # Axis scale, formatter, and labels
         row = idx // n_cols
         col = idx % n_cols
-        if ylabel and col == 0:
-            ax.set_ylabel(ylabel)
-        if xlabel and row == n_rows - 1:
-            ax.set_xlabel(xlabel)
+        if always_include_zero:
+            lo, hi = ax.get_ylim()
+            ax.set_ylim(min(lo, 0), max(hi, 0))
+        scale = _subplot_axis_scale(axis_scale_min_max, idx)
+        if scale:
+            ax.set_ylim(scale[0], scale[1])
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5, prune='upper'))
+        ax.yaxis.set_major_formatter(_get_value_formatter(axis_tick_format, idx))
+        _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows)
 
         set_smart_xticks(ax, time_index, base_width_per_col)
 
@@ -855,7 +997,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     if output_filepath:
         plt.savefig(output_filepath, bbox_inches='tight')
     else:
-        plt.savefig(f'{plot_dir}/{plot_name}_dt.svg', bbox_inches='tight')
+        plt.savefig(f'{plot_dir}/{plot_name}.svg', bbox_inches='tight')
     plt.close(fig)
 
 
@@ -863,6 +1005,7 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
         rows=(0,167), stack_element_to_split=None, subplots_per_row=3,
         legend_position='right',
         xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
+        axis_scale_min_max=None, axis_tick_format=None, always_include_zero=True,
         output_filepath=None):
 
     # Convert level indices to level names for later use after xs operations
@@ -900,6 +1043,8 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
                 df_sub_temp = df_plot.xs(sub, level=sub_levels[0], axis=1)
             else:
                 df_sub_temp = df_plot.xs(sub, level=sub_levels, axis=1)
+            if isinstance(df_sub_temp, pd.Series):
+                df_sub_temp = df_sub_temp.to_frame()
 
             # Get stack labels
             is_multiindex = isinstance(df_sub_temp.columns, pd.MultiIndex)
@@ -1028,7 +1173,7 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
 
         # Subplot formatting
         if sub is not None:
-            ax.set_title(str(sub))
+            ax.set_title(str(sub), pad=2)
 
         # Determine if legend should be shown
         show_legend = False
@@ -1043,17 +1188,22 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
                     show_legend = True
 
         if show_legend:
-            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, borderaxespad=0.1)
 
         ax.grid(True, alpha=0.3)
 
-        # Apply axis labels conditionally based on subplot position
+        # Axis scale, formatter, and labels
         row = idx // n_cols
         col = idx % n_cols
-        if ylabel and col == 0:
-            ax.set_ylabel(ylabel)
-        if xlabel and row == n_rows - 1:
-            ax.set_xlabel(xlabel)
+        if always_include_zero:
+            lo, hi = ax.get_ylim()
+            ax.set_ylim(min(lo, 0), max(hi, 0))
+        scale = _subplot_axis_scale(axis_scale_min_max, idx)
+        if scale:
+            ax.set_ylim(scale[0], scale[1])
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5, prune='upper'))
+        ax.yaxis.set_major_formatter(_get_value_formatter(axis_tick_format, idx))
+        _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows)
 
         set_smart_xticks(ax, time_index, base_width_per_col)
 
@@ -1068,7 +1218,7 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
     if output_filepath:
         plt.savefig(output_filepath, bbox_inches='tight')
     else:
-        plt.savefig(f'{plot_dir}/{plot_name}_dt.svg', bbox_inches='tight')
+        plt.savefig(f'{plot_dir}/{plot_name}.svg', bbox_inches='tight')
     plt.close(fig)
 
 
@@ -1076,7 +1226,8 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
         sub_levels=[], grouped_bar_levels=None,
         legend_position='right', subplots_per_row=3,
         xlabel=None, ylabel=None, bar_orientation='horizontal', base_bar_length=4,
-        output_filepath=None):
+        value_label=False, axis_scale_min_max=None, axis_tick_format=None,
+        always_include_zero=True, output_filepath=None):
     """
     Create horizontal stacked and grouped bar plot.
 
@@ -1136,6 +1287,14 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             "Choose one approach or use neither for simple bars."
         )
 
+    # Resolve value_label to a format string or None
+    if value_label is True or value_label == 'true':
+        value_fmt = '%.3g'
+    elif value_label:
+        value_fmt = str(value_label)
+    else:
+        value_fmt = None
+
     # Normalize None to empty list for consistent checking
     if stack_levels is None:
         stack_levels = []
@@ -1180,6 +1339,8 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             df_sub_temp = df[sub]
         else:
             df_sub_temp = df.xs(sub, level=sub_levels, axis=1)
+        if isinstance(df_sub_temp, pd.Series):
+            df_sub_temp = df_sub_temp.to_frame()
 
         # Get unique group combinations from df_sub_temp
         if not expand_axis_levels:
@@ -1241,6 +1402,8 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
                 df_sub_temp = df.xs(sub, level=sub_levels[0], axis=1)
             else:
                 df_sub_temp = df.xs(sub, level=sub_levels, axis=1)
+            if isinstance(df_sub_temp, pd.Series):
+                df_sub_temp = df_sub_temp.to_frame()
 
             # BRANCH: Get legend items based on mode
             if grouped_bar_levels:
@@ -1292,7 +1455,7 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
     # ~0.1 inches per character (font size 9)
     max_bar_label_len = max(len(label) for label in bar_labels) if bar_labels else 0
     # Estimate margins for each label type
-    bar_label_width = max_bar_label_len * 0.085
+    bar_label_width = max_bar_label_len * 0.09
     left_margin = bar_label_width
 
     # Calculate left margin width needed for group labels
@@ -1303,7 +1466,7 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
         joined_expand_axis_names = expand_axis_names.map(' | '.join).tolist() if isinstance(expand_axis_names, pd.MultiIndex) else expand_axis_names.tolist()
         
         # Calculate group label width (~0.08 inches per character for font size 10)
-        group_label_width = max(len(s) for s in joined_expand_axis_names) * 0.08
+        group_label_width = max(len(s) for s in joined_expand_axis_names) * 0.09
         left_margin = bar_label_width + group_label_width
     else:
         group_label_width = 0
@@ -1344,7 +1507,10 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             # Assuming 0.15 inches per text row, 1.5 rows = 0.225 inches
             # hspace is relative to average subplot height
             avg_subplot_height = total_height / n_rows if n_rows > 0 else 1
-            hspace = 1.4 / avg_subplot_height if avg_subplot_height > 0 else 0.15
+            if xlabel:
+                hspace = 1.6 / avg_subplot_height
+            else:
+                hspace = 1.4 / avg_subplot_height
 
             gs = GridSpec(n_rows, n_cols, figure=fig, height_ratios=row_heights, wspace=wspace, hspace=hspace)
 
@@ -1364,7 +1530,10 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             wspace_val = 0.2  # Default matplotlib spacing
             if legend_width > 0 and n_cols > 1:
                 avg_subplot_width = total_width / n_cols
-                wspace_val = legend_width / avg_subplot_width
+                if ylabel:
+                    wspace_val = (legend_width + 0.5) / avg_subplot_width
+                else:
+                    wspace_val = legend_width / avg_subplot_width
 
             # Calculate vertical spacing
             hspace = left_margin / base_bar_length
@@ -1388,6 +1557,8 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
         else:
             # For multiple sub_levels, apply xs for all levels at once
             df_sub = df.xs(sub, level=sub_levels, axis=1)
+        if isinstance(df_sub, pd.Series):
+            df_sub = df_sub.to_frame()
 
         # Get unique group combinations from df_sub
         if not expand_axis_levels:
@@ -1476,6 +1647,8 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
                     df_bar = df_sub[group]
                 else:
                     df_bar = df_sub.xs(group, level=expand_axis_level_names, axis=1)
+                if isinstance(df_bar, pd.Series):
+                    df_bar = df_bar.to_frame()
 
                 # Plot each grouped bar at this position
                 for grouped_idx, grouped_bar in enumerate(grouped_bars):
@@ -1521,13 +1694,15 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
                     # Plot bar with offset
                     bar_position = bar_idx + bar_offsets[grouped_idx]
                     if bar_orientation == 'horizontal':
-                        ax.barh(bar_position, value, height=bar_width,
+                        container = ax.barh(bar_position, value, height=bar_width,
                                label=label,
                                color=colors[grouped_idx % len(colors)])
                     else:  # vertical
-                        ax.bar(bar_position, value, width=bar_width,
+                        container = ax.bar(bar_position, value, width=bar_width,
                               label=label,
                               color=colors[grouped_idx % len(colors)])
+                    if value_fmt:
+                        ax.bar_label(container, fmt=value_fmt, padding=3)
 
             # Add invisible bars for zero-value grouped bars (for legend completeness)
             for grouped_idx in range(len(grouped_bars)):
@@ -1577,6 +1752,8 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
                 else:
                     # For multiple expand_axis_levels, apply xs for all levels at once
                     df_bar = df_sub.xs(group, level=expand_axis_level_names, axis=1)
+                if isinstance(df_bar, pd.Series):
+                    df_bar = df_bar.to_frame()
 
                 # Collect all values for this bar
                 values = []
@@ -1627,10 +1804,9 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
                                 label = ' | '.join(str(v) for v in stack_value)
                             else:
                                 label = str(stack_value)
+                            labeled_stacks.add(stack_idx)
                         else:
                             label = ''
-                        if stack_idx not in labeled_stacks:
-                            labeled_stacks.add(stack_idx)
                         if bar_orientation == 'horizontal':
                             ax.barh(bar_idx, value, left=left_pos,
                                    label=label,
@@ -1640,6 +1816,27 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
                                   label=label,
                                   color=colors[stack_idx % len(colors)])
                         left_pos += value
+
+                # Stack zero values
+                for stack_idx, value in enumerate(values):
+                    if value == 0.0:
+                        if stack_idx not in labeled_stacks:
+                            stack_value = stacks[stack_idx]
+                            if isinstance(stack_value, (tuple, list)):
+                                label = ' | '.join(str(v) for v in stack_value)
+                            else:
+                                label = str(stack_value)
+                            labeled_stacks.add(stack_idx)
+                        else:
+                            label = ''
+                        if bar_orientation == 'horizontal':
+                            ax.barh(0, 0, left=0,
+                                label=label,
+                                color=colors[stack_idx % len(colors)])
+                        else:  # vertical
+                            ax.bar(0, 0, bottom=0,
+                                label=label,
+                                color=colors[stack_idx % len(colors)])
 
                 # Stack negative values to the left from 0
                 left_neg = 0
@@ -1652,10 +1849,9 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
                                 label = ' | '.join(str(v) for v in stack_value)
                             else:
                                 label = str(stack_value)
+                            labeled_stacks.add(stack_idx)
                         else:
                             label = ''
-                        if stack_idx not in labeled_stacks:
-                            labeled_stacks.add(stack_idx)
                         if bar_orientation == 'horizontal':
                             ax.barh(bar_idx, value, left=left_neg,
                                    label=label,
@@ -1665,23 +1861,6 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
                                   label=label,
                                   color=colors[stack_idx % len(colors)])
                         left_neg += value
-
-            # Add invisible bars for any stacks that were never labeled (all zero values)
-            for stack_idx in range(len(stacks)):
-                if stack_idx not in labeled_stacks:
-                    stack_value = stacks[stack_idx]
-                    if isinstance(stack_value, (tuple, list)):
-                        label = ' | '.join(str(v) for v in stack_value)
-                    else:
-                        label = str(stack_value)
-                    if bar_orientation == 'horizontal':
-                        ax.barh(0, 0, left=0,
-                               label=label,
-                               color=colors[stack_idx % len(colors)])
-                    else:  # vertical
-                        ax.bar(0, 0, bottom=0,
-                              label=label,
-                              color=colors[stack_idx % len(colors)])
 
         else:
             # ==================== SIMPLE BARS MODE (no stacking, no grouping) ====================
@@ -1704,9 +1883,11 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
 
                 # Plot single-color bar (no label, no legend)
                 if bar_orientation == 'horizontal':
-                    ax.barh(bar_idx, value, color='steelblue')
+                    container = ax.barh(bar_idx, value, color='steelblue')
                 else:  # vertical
-                    ax.bar(bar_idx, value, color='steelblue')
+                    container = ax.bar(bar_idx, value, color='steelblue')
+                if value_fmt:
+                    ax.bar_label(container, fmt=value_fmt, padding=3)
 
         # Set up axis with groups and bars
         # Build bar labels for display (matching all_bars structure)
@@ -1815,9 +1996,9 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
                 title = ' | '.join(str(v) for v in sub)
             else:
                 title = str(sub)
-            ax.set_title(f'{title}')
+            ax.set_title(f'{title}', pad=2)
         else:
-            ax.set_title(key_name)
+            ax.set_title(key_name, pad=2)
 
         # Legend
         if stack_levels or grouped_bar_levels:
@@ -1851,15 +2032,41 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
 
             if show_legend:
                 ax.legend(handles[::-1], labels_leg[::-1], title=legend_title,
-                        bbox_to_anchor=(1.01, 1), loc='upper left')
+                        bbox_to_anchor=(1.01, 1), loc='upper left', borderaxespad=0.1)
 
-        # Apply axis labels conditionally based on subplot position
+        # Value axis: pad for bar labels → apply explicit scale → formatter → labels
         row = idx // n_cols
         col = idx % n_cols
-        if xlabel and (idx * row + col >= len(subs) - n_cols):
-            ax.set_xlabel(xlabel)
-        if ylabel and col == 0:
-            ax.set_ylabel(ylabel)
+        if value_fmt:
+            if bar_orientation == 'horizontal':
+                xmin, xmax = ax.get_xlim()
+                pad = (xmax - xmin) * 0.12
+                ax.set_xlim(xmin - pad, xmax + pad)
+            else:
+                ymin, ymax = ax.get_ylim()
+                pad = (ymax - ymin) * 0.12
+                ax.set_ylim(ymin - pad, ymax + pad)
+        if always_include_zero:
+            if bar_orientation == 'horizontal':
+                lo, hi = ax.get_xlim()
+                ax.set_xlim(min(lo, 0), max(hi, 0))
+            else:
+                lo, hi = ax.get_ylim()
+                ax.set_ylim(min(lo, 0), max(hi, 0))
+        scale = _subplot_axis_scale(axis_scale_min_max, idx)
+        if scale:
+            if bar_orientation == 'horizontal':
+                ax.set_xlim(scale[0], scale[1])
+            else:
+                ax.set_ylim(scale[0], scale[1])
+        _fmt = _get_value_formatter(axis_tick_format, idx)
+        if bar_orientation == 'horizontal':
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=5, prune='upper'))
+            ax.xaxis.set_major_formatter(_fmt)
+        else:
+            ax.yaxis.set_major_locator(MaxNLocator(nbins=5, prune='upper'))
+            ax.yaxis.set_major_formatter(_fmt)
+        _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows)
 
         # Add a dotted zero line on the value axis
         if bar_orientation == 'horizontal':

@@ -47,20 +47,28 @@ def main():
     parser.description = "Run flextool using the specified database URL. Return codes are 0: success, 1: infeasible or unbounded, -1: failure."
     parser.add_argument('input_db_url', help='Database URL to connect to (can be copied from Toolbox workflow db item')
     parser.add_argument('output_db_url', metavar='DB_URL', help='Save information about result location to database for post-processing')
+    parser.add_argument('--settings-db-url', help='Settings for post-processing')
     parser.add_argument('--scenario-name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
-    parser.add_argument('--write-methods', type=str, nargs='+', default=['plot', 'parquet'],
+    parser.add_argument('--write-methods', type=str, nargs='+', default=None,
                         choices=['plot', 'parquet', 'excel', 'csv'],
-                        help='Output methods to use (default: plot parquet csv)')
+                        help='Output methods to use (default: plot parquet)')
     parser.add_argument('--output-config', metavar='PATH',
-                        default='templates/default_plots.yaml',
+                        default=None,
                         help='Path to output configuration file (default: templates/default_plots.yaml)')
+    parser.add_argument('--active-configs', type=str, nargs='+', default=None,
+                        help='Active output configurations to use (default: default)')
+    parser.add_argument('--plot-rows', type=int, nargs=2, default=None, metavar=('FIRST', 'LAST'),
+                        help='First and last row to plot in time series (default: 0 167)')
+    parser.add_argument('--output-location', metavar='PATH', default=None,
+                        help='Override output location path')
     parser.add_argument('--flextool-location', default='template/flextool_location.txt',
                         help='When running in Spine Toolbox, this argument provides the location of FlexTool so outputs can be directed there (instead of work directories).')
 
     args = parser.parse_args()
     input_db_url = args.input_db_url
+    settings_db_url = args.settings_db_url
     scenario_name = args.scenario_name
     DEBUG = args.debug
     output_path = Path(args.flextool_location).resolve().parent.parent
@@ -70,8 +78,9 @@ def main():
         format='%(levelname)s:%(filename)s:%(lineno)d:%(message)s',
         handlers=[logging.StreamHandler(sys.stdout)]
     )
-    timer = [] 
+    timer = []
     timer.append(time.perf_counter())
+
     if scenario_name:
         runner = flextoolrunner.FlexToolRunner(input_db_url, output_path, scenario_name)
         timer.insert(0, time.perf_counter())
@@ -113,7 +122,17 @@ def main():
     
     # If successful and requested, write outputs
     if return_code == 0:
-        write_outputs(scenario_name=scenario_name, output_location=output_path, subdir=scenario_name, output_config_path=args.output_config, write_methods=args.write_methods)
+        write_outputs(
+            scenario_name=scenario_name,
+            output_location=args.output_location,
+            subdir=scenario_name,
+            output_config_path=args.output_config,
+            active_configs=args.active_configs,
+            write_methods=args.write_methods,
+            plot_rows=tuple(args.plot_rows) if args.plot_rows else None,
+            settings_db_url=settings_db_url,
+            fallback_output_location=str(output_path),
+        )
         timer.insert(0, time.perf_counter())
     
     print("\n--- Full execution time %.4s seconds ---------------------------------------" % (timer[0] - timer[-1]))

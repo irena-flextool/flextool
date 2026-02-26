@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 from flextool.read_flextool_outputs import read_variables, read_parameters, read_sets
 from flextool.process_results import post_process_results
 from flextool.plot_functions import plot_dict_of_dataframes
-from spinedb_api import DatabaseMapping
+import logging
+from spinedb_api import DatabaseMapping, from_database, Array
 from spinedb_api.filters.tools import name_from_dict
 import warnings
 
@@ -224,6 +225,7 @@ def nodeGroup_indicators(par, s, v, r, debug):
         potential_sum = r.potentialVREgen_dt[potential_cols].sum(axis=1)
         curtailed_vre = (potential_sum - vre_flow_sum).clip(lower=0)
         curtailed_vre_share = curtailed_vre / group_inflow.where(group_inflow != 0, pd.NA)
+        curtailed_vre_of_potential_vre = curtailed_vre / potential_sum
 
         # Filter balance nodes directly from the sets
         balance_nodes = s.node_balance.union(s.node_balance_period)
@@ -232,13 +234,13 @@ def nodeGroup_indicators(par, s, v, r, debug):
 
         # 5. Upward slack
         if balance_nodes and not v.q_state_up.empty:
-            upward_slack = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).sum(axis=1)
+            upward_slack = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).sum(axis=1).clip(lower=0)
         else:
             upward_slack = pd.Series(0, index=dt_index)
 
         # 6. Downward slack
         if balance_nodes and not v.q_state_down.empty:
-            downward_slack = v.q_state_down.mul(par.node_capacity_for_scaling[v.q_state_down.columns]).sum(axis=1)
+            downward_slack = v.q_state_down.mul(par.node_capacity_for_scaling[v.q_state_down.columns]).sum(axis=1).clip(lower=0)
         else:
             downward_slack = pd.Series(0, index=dt_index)
 
@@ -247,12 +249,14 @@ def nodeGroup_indicators(par, s, v, r, debug):
             'group': g,
             'period': dt_index.get_level_values('period'),
             'time': dt_index.get_level_values('time'),
-            'pdtNodeInflow': group_inflow.values,
-            'annualized_inflows': annualized_inflow.values,
-            'vre_share': vre_share.fillna(0).values,
-            'curtailed_vre_share': curtailed_vre_share.fillna(0).values,
-            'upward_slack': upward_slack.fillna(0).values,
-            'downward_slack': downward_slack.fillna(0).values
+            '1. Loss of load': upward_slack.fillna(0).values,
+            '2. VRE generation': vre_flow_sum.values,
+            '3. Excess load': downward_slack.fillna(0).values,
+            '4. Curtailed VRE': curtailed_vre.values,
+            '5. Timestep inflow': group_inflow.values,
+            '6. Curtailed VRE of potential VRE': curtailed_vre_share.fillna(0).values,
+            '7. Annualized inflow': annualized_inflow.values,
+            '8. VRE share of demand': vre_share.fillna(0).values,
         })
         results_dt.append(group_result_dt)
 
@@ -261,8 +265,8 @@ def nodeGroup_indicators(par, s, v, r, debug):
 
     # Create multi-index version for timestep level
     results_dt_indexed = result_flat_dt.set_index(['group', 'period', 'time'])[
-        ['pdtNodeInflow', 'annualized_inflows', 'vre_share', 'curtailed_vre_share',
-         'upward_slack', 'downward_slack']
+        ['1. Loss of load', '2. VRE generation', '3. Excess load', '4. Curtailed VRE',
+         '5. Timestep inflow', '6. Curtailed VRE of potential VRE', '7. Annualized inflow', '8. VRE share of demand']
     ]
     results_dt_indexed.columns.name = "parameter"
 
@@ -271,34 +275,35 @@ def nodeGroup_indicators(par, s, v, r, debug):
     # Aggregate to period level
     # For shares, we need to recalculate properly:
     # Sum the numerators and denominators separately, then divide
-    inflow_d = results_dt_indexed['pdtNodeInflow'].groupby(level=['group', 'period']).sum()
-    annualized_d = results_dt_indexed['annualized_inflows'].groupby(level=['group', 'period']).sum()
+    inflow_d = results_dt_indexed['5. Timestep inflow'].groupby(level=['group', 'period']).sum()
+    annualized_inflow_d = results_dt_indexed['7. Annualized inflow'].groupby(level=['group', 'period']).sum()
 
     # For VRE share: need to sum absolute flows and recalculate
     # Since we have vre_share * inflow = vre_flow, we can recover vre_flow
-    vre_flow_dt = results_dt_indexed['vre_share'] * results_dt_indexed['pdtNodeInflow']
+    vre_flow_dt = results_dt_indexed['8. VRE share of demand'] * results_dt_indexed['5. Timestep inflow']
     vre_flow_d = vre_flow_dt.groupby(level=['group', 'period']).sum()
     vre_share_d = vre_flow_d / inflow_d.where(inflow_d != 0, pd.NA)
 
     # For curtailed VRE share: similar recovery
-    curtailed_flow_dt = results_dt_indexed['curtailed_vre_share'] * results_dt_indexed['pdtNodeInflow']
-    curtailed_flow_d = curtailed_flow_dt.groupby(level=['group', 'period']).sum()
-    curtailed_vre_share_d = curtailed_flow_d / inflow_d.where(inflow_d != 0, pd.NA)
+    curtailed_vre_share_dt = results_dt_indexed['4. Curtailed VRE'] / results_dt_indexed['5. Timestep inflow']
+    curtailed_vre_share_d = curtailed_vre_share_dt.groupby(level=['group', 'period']).mean()
+    curtailed_vre_of_potential_vre_d = results_dt_indexed['6. Curtailed VRE of potential VRE'].groupby(level=['group', 'period']).sum()
 
     # Slack shares: sum absolute values and recalculate
-    upward_slack_d = results_dt_indexed['upward_slack'].groupby(['group', 'period']).sum()
-    upward_slack_d = upward_slack_d.div(annualized_d.where(annualized_d != 0, pd.NA))
+    upward_slack_d = results_dt_indexed['1. Loss of load'].groupby(['group', 'period']).sum()
+    upward_slack_share_d = upward_slack_d / inflow_d
 
-    downward_slack_d = results_dt_indexed['downward_slack'].groupby(['group', 'period']).sum()
-    downward_slack_d = downward_slack_d.div(annualized_d.where(annualized_d != 0, pd.NA))
+    downward_slack_d = results_dt_indexed['3. Excess load'].groupby(['group', 'period']).sum()
+    downward_slack_share_d = downward_slack_d / inflow_d
 
     # Combine period-level results
     results_d_indexed = pd.DataFrame({
-        'sum_annualized_inflows': annualized_d,
-        'vre_share': vre_share_d.fillna(0),
-        'curtailed_vre_share': curtailed_vre_share_d.fillna(0),
-        'upward_slack': upward_slack_d.fillna(0),
-        'downward_slack': downward_slack_d.fillna(0)
+        '1. Loss of load share': upward_slack_share_d.fillna(0),
+        '2. VRE share of demand': vre_share_d.fillna(0),
+        '3. Excess load share': downward_slack_share_d.fillna(0),
+        '4. Curtailed VRE of demand': curtailed_vre_share_d.fillna(0),
+        '5. Annualized inflow': annualized_inflow_d,
+        '6. Curtailed VRE of potential VRE': curtailed_vre_of_potential_vre_d.fillna(0)
     })
     results_d_indexed.columns.name = "parameter"
 
@@ -915,7 +920,7 @@ def node_summary(par, s, v, r, debug):
     """Node balance summaries for periods and timesteps"""
     results = []
 
-    categories = ['inflow', 'from_units', 'from_connections', 'to_units', 'to_connections', 'self_discharge', 'upward_slack', 'downward_slack']
+    categories = ['From units', 'From connections', 'Loss of load', 'To units', 'To connections', 'Self discharge', 'Excess load', 'Inflow']
 
     balanced_nodes = s.node_balance.union(s.node_balance_period)
     if debug:
@@ -929,60 +934,64 @@ def node_summary(par, s, v, r, debug):
 
     # 1. Timestep-level node summary
     node_dt = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_product([nodes, categories], names=['node', 'category']), dtype=float)
-    inflow_cols = node_dt.columns[
-                    node_dt.columns.get_level_values('node').isin(par.node_inflow.columns.intersection(nodes))
-                    & node_dt.columns.get_level_values('category').isin(['inflow'])]
-    node_dt[inflow_cols] = par.node_inflow[inflow_cols.get_level_values('node')]
 
+    # From units
     from_units = r.flow_dt[s.process_unit.join(r.flow_dt.columns).join(nodes_sink, how='inner')].T.groupby('sink').sum().T
     from_units_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(from_units.columns)
-                        & node_dt.columns.get_level_values('category').isin(['from_units'])]
+                        & node_dt.columns.get_level_values('category').isin(['From units'])]
     node_dt[from_units_cols] = from_units[from_units_cols.get_level_values('node')]
 
     # From connections
     from_connections = r.flow_dt[s.process_connection.join(r.flow_dt.columns).join(nodes_sink, how='inner')].T.groupby('sink').sum().T
     from_connections_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(from_connections.columns)
-                        & node_dt.columns.get_level_values('category').isin(['from_connections'])]
+                        & node_dt.columns.get_level_values('category').isin(['From connections'])]
     node_dt[from_connections_cols] = from_connections[from_connections_cols.get_level_values('node')]
+
+    # Upward slack
+    upward_slack_data = v.q_state_up.loc[:, v.q_state_up.columns.get_level_values('node').isin(balanced_nodes.intersection(nodes))].clip(lower=0)
+    upward_slack_data = upward_slack_data.mul(par.node_capacity_for_scaling[upward_slack_data.columns], axis=1)
+    upward_slack_cols = node_dt.columns[
+                        node_dt.columns.get_level_values('node').isin(upward_slack_data.columns.get_level_values('node'))
+                        & node_dt.columns.get_level_values('category').isin(['Loss of load'])]
+    node_dt[upward_slack_cols] = upward_slack_data[upward_slack_cols.get_level_values('node')]
 
     # To units (negative)
     to_units = -r.flow_dt[s.process_unit.join(r.flow_dt.columns).join(nodes_source, how='inner')].T.groupby('source').sum().T
     to_units_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(to_units.columns)
-                        & node_dt.columns.get_level_values('category').isin(['to_units'])]
+                        & node_dt.columns.get_level_values('category').isin(['To units'])]
     node_dt[to_units_cols] = to_units[to_units_cols.get_level_values('node')]
 
     # To connections (negative)
     to_connections = -r.flow_dt[s.process_connection.join(r.flow_dt.columns).join(nodes_source, how='inner')].T.groupby('source').sum().T
     to_connections_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(to_connections.columns)
-                        & node_dt.columns.get_level_values('category').isin(['to_connections'])]
+                        & node_dt.columns.get_level_values('category').isin(['To connections'])]
     node_dt[to_connections_cols] = to_connections[to_connections_cols.get_level_values('node')]
 
-    # Self discharge
-    self_discharge = r.self_discharge_loss_dt[r.self_discharge_loss_dt.columns.intersection(s.node_self_discharge.intersection(nodes))]
+    # Self discharge (negative)
+    self_discharge = -r.self_discharge_loss_dt[r.self_discharge_loss_dt.columns.intersection(s.node_self_discharge.intersection(nodes))]
     self_discharge_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(self_discharge.columns)
-                        & node_dt.columns.get_level_values('category').isin(['self_discharge'])]
+                        & node_dt.columns.get_level_values('category').isin(['Self discharge'])]
     node_dt[self_discharge_cols] = self_discharge[self_discharge_cols.get_level_values('node')]
 
-    # Upward slack
-    upward_slack_data = v.q_state_up.loc[:, v.q_state_up.columns.get_level_values('node').isin(balanced_nodes.intersection(nodes))]
-    upward_slack_data = upward_slack_data.mul(par.node_capacity_for_scaling[upward_slack_data.columns], axis=1)
-    upward_slack_cols = node_dt.columns[
-                        node_dt.columns.get_level_values('node').isin(upward_slack_data.columns.get_level_values('node'))
-                        & node_dt.columns.get_level_values('category').isin(['upward_slack'])]
-    node_dt[upward_slack_cols] = upward_slack_data[upward_slack_cols.get_level_values('node')]
-
     # Downward slack (negative)
-    downward_slack_data = -v.q_state_down.loc[:, v.q_state_down.columns.get_level_values('node').isin(balanced_nodes.intersection(nodes))]
+    downward_slack_data = (-v.q_state_down.loc[:, v.q_state_down.columns.get_level_values('node').isin(balanced_nodes.intersection(nodes))]).clip(upper=0)
     downward_slack_data = downward_slack_data.mul(par.node_capacity_for_scaling[downward_slack_data.columns], axis=1)
     downward_slack_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(downward_slack_data.columns.get_level_values('node'))
-                        & node_dt.columns.get_level_values('category').isin(['downward_slack'])]
+                        & node_dt.columns.get_level_values('category').isin(['Excess load'])]
     node_dt[downward_slack_cols] = downward_slack_data[downward_slack_cols.get_level_values('node')]
+
+    # Inflow
+    inflow_cols = node_dt.columns[
+                    node_dt.columns.get_level_values('node').isin(par.node_inflow.columns.intersection(nodes))
+                    & node_dt.columns.get_level_values('category').isin(['Inflow'])]
+    node_dt[inflow_cols] = par.node_inflow[inflow_cols.get_level_values('node')]
+
 
     # Fill any remaining NaN values with 0
     node_dt = node_dt.fillna(0.0)
@@ -1008,12 +1017,16 @@ def node_additional_results(par, s, v, r, debug):
     results.append((node_state, 'node_state_dt_e'))
     
     # 3. Node upward slack
-    upward_slack = v.q_state_up.mul(par.node_capacity_for_scaling[s.node_balance.union(s.node_balance_period)], level=0)
+    upward_slack = v.q_state_up.mul(par.node_capacity_for_scaling[s.node_balance.union(s.node_balance_period)], level=0).clip(lower=0)
     results.append((upward_slack, 'node_slack_up_dt_e'))
+    upward_slack_d = upward_slack.groupby(level='period').sum().div(par.complete_period_share_of_year, axis=0, level=1)
+    results.append((upward_slack_d, 'node_slack_up_d_e'))
 
     # 4. Node downward slack
-    downward_slack = v.q_state_down.mul(par.node_capacity_for_scaling[s.node_balance.union(s.node_balance_period)], level=0)
+    downward_slack = v.q_state_down.mul(par.node_capacity_for_scaling[s.node_balance.union(s.node_balance_period)], level=0).clip(lower=0)
     results.append((downward_slack, 'node_slack_down_dt_e'))
+    downward_slack_d = downward_slack.groupby(level='period').sum().div(par.complete_period_share_of_year, axis=0, level=1)
+    results.append((downward_slack_d, 'node_slack_down_d_e'))
     
     return results
 
@@ -1402,7 +1415,7 @@ ALL_OUTPUTS = [
 
 
 # writer.py - handles the actual writing
-def write_outputs(scenario_name, output_config_path, active_configs=['default'], output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=['plot', 'parquet'], plot_rows=(0, 167), debug=False, single_result=None):
+def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -1418,7 +1431,66 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
         debug: Enable debug output
         single_result: Tuple of (key, csv_name, plot_name, plot_type, subplots_per_row, legend_position)
                        for processing a single result. Overrides config file.
+        settings_db_url: URL of the settings database (optional, fills in unset params)
+        fallback_output_location: Used as output_location if not set by caller or settings DB
     """
+    # Resolve output parameters: explicit args > settings DB > hardcoded defaults
+    if settings_db_url and os.path.exists(settings_db_url.replace('sqlite:///', '')):
+        with DatabaseMapping(settings_db_url) as settings_db:
+            settings_entities = settings_db.get_entity_items(entity_class_name="settings")
+            if len(settings_entities) == 1:
+                settings_name = settings_entities[0]["name"]
+                settings_params: dict = {}
+                for pv in settings_db.get_parameter_value_items(entity_class_name="settings"):
+                    if pv["entity_byname"] == (settings_name,):
+                        settings_params[pv["parameter_definition_name"]] = from_database(pv["value"], pv["type"])
+                logging.debug(f"Settings DB parameters: {settings_params}")
+
+                if write_methods is None:
+                    method_keys = [f'output-{m}' for m in ['plot', 'parquet', 'csv', 'excel']]
+                    if any(k in settings_params for k in method_keys):
+                        write_methods = [m for m in ['plot', 'parquet', 'csv', 'excel']
+                                         if settings_params.get(f'output-{m}', False)]
+
+                if output_config_path is None and 'output-config-path' in settings_params:
+                    output_config_path = str(settings_params['output-config-path'])
+
+                if active_configs is None and 'active-output-configs' in settings_params:
+                    val = settings_params['active-output-configs']
+                    if isinstance(val, str):
+                        active_configs = [val]
+                    elif isinstance(val, Array):
+                        active_configs = list(val.values)
+                    else:
+                        active_configs = list(val)
+
+                if plot_rows is None:
+                    first = settings_params.get('plot_first_timestep')
+                    duration = settings_params.get('plot_duration')
+                    if first is not None and duration is not None:
+                        plot_rows = (int(first), int(first) + int(duration))
+
+                if output_location is None and 'output-location' in settings_params:
+                    output_location = str(settings_params['output-location'])
+
+    # Apply hardcoded defaults for anything still unset
+    if write_methods is None:
+        write_methods = ['plot', 'parquet', 'excel']
+    if output_config_path is None:
+        output_config_path = 'templates/default_plots.yaml'
+    if active_configs is None:
+        active_configs = ['default']
+    if plot_rows is None:
+        plot_rows = (0, 167)
+    if output_location is None:
+        output_location = fallback_output_location or ''
+
+    logging.debug(
+        f"Resolved output settings: write_methods={write_methods}, "
+        f"output_config_path={output_config_path}, active_configs={active_configs}, "
+        f"plot_rows={plot_rows}, output_location={output_location}"
+    )
+
     warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
     start = time.perf_counter()
 
@@ -1551,6 +1623,7 @@ def write_outputs(scenario_name, output_config_path, active_configs=['default'],
             os.makedirs(plot_dir)
         # Don't delete existing plots when processing single result
         delete_plots = not bool(single_result)
+        results = {k: v.to_frame() if isinstance(v, pd.Series) else v for k, v in results.items()}
         plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots)
 
         start = log_time('Plotted figures', start)
@@ -1640,20 +1713,22 @@ if __name__ == "__main__":
     parser.add_argument('--input-db-url', type=str, help='URL of the input database with scenario filter (used when run_flextool.py calls this from Toolbox)')
     parser.add_argument('--scenario-name', type=str, help='Name of a scenario that must have raw outputs available (when re-plotting single scenario from terminal)')
     parser.add_argument('--output-locations-db-url', type=str, help='URL of the database that holds the locations of existing outputs (for re-plotting from Toolbox)')
-    parser.add_argument('--config-path', type=str, default='templates/default_plots.yaml',
+    parser.add_argument('--settings-db-url', type=str, default=None,
+                        help='URL of the settings database (fills in unset params)')
+    parser.add_argument('--config-path', type=str, default=None,
                         help='Path to output configuration YAML file (default: templates/default_plots.yaml)')
-    parser.add_argument('--active-configs', type=str, default='default',
-                        help='Which plot configurations from config_path yaml to use. Defaults to default')
-    parser.add_argument('--output-location', type=str, default='',
+    parser.add_argument('--active-configs', type=str, nargs='+', default=None,
+                        help='Which plot configurations from config_path yaml to use (default: default)')
+    parser.add_argument('--output-location', type=str, default=None,
                         help='Directory for the root for input and output locations (default: flextool root)')
     parser.add_argument('--subdir', type=str, default=None,
                         help='Subdirectory for outputs (default: scenario name)')
     parser.add_argument('--read-parquet-dir', type=str, default=False,
                         help='Directory to read existing parquet files from (default: False, reads from raw CSV files)')
-    parser.add_argument('--write-methods', type=str, nargs='+', default=['plot', 'parquet', 'csv'],
+    parser.add_argument('--write-methods', type=str, nargs='+', default=None,
                         choices=['plot', 'parquet', 'excel', 'db', 'csv'],
-                        help='Output methods to use (default: plot parquet csv)')
-    parser.add_argument('--plot-rows', type=int, nargs=2, default=[0, 167],
+                        help='Output methods to use (default: plot parquet excel)')
+    parser.add_argument('--plot-rows', type=int, nargs=2, default=None,
                         help='First and last row to plot in time series (default: 0 167)')
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug output')
@@ -1706,7 +1781,8 @@ if __name__ == "__main__":
             subdir=subdir,
             read_parquet_dir=read_parquet_dir,
             write_methods=args.write_methods,
-            plot_rows=tuple(args.plot_rows),
+            plot_rows=tuple(args.plot_rows) if args.plot_rows else None,
             debug=args.debug,
-            single_result=tuple(args.single_result) if args.single_result else None
+            single_result=tuple(args.single_result) if args.single_result else None,
+            settings_db_url=args.settings_db_url
         )

@@ -3,7 +3,7 @@ import os
 import math
 import yaml
 from pathlib import Path
-from spinedb_api import DatabaseMapping
+from spinedb_api import DatabaseMapping, from_database, Array
 from spinedb_api.filters.alternative_filter import alternative_filter_config
 from spinedb_api.filters.tools import append_filter_config
 import matplotlib
@@ -1535,6 +1535,62 @@ def create_dispatch_plots(combined_dfs, combined_mapping_dfs, config, plot_dir,
 
     excel_data = {}
 
+    # First pass: collect y-axis ranges across all scenarios for consistent scales
+    def _compute_ylim(df: pd.DataFrame, timeline: tuple) -> tuple[float, float]:
+        """Compute stacked area y-axis range from a dispatch DataFrame."""
+        plot_cols = [col for col in df.columns if col != 'Curtailed']
+        df_slice = df[plot_cols].iloc[timeline[0]:timeline[1]]
+        pos_sum = df_slice.clip(lower=0).sum(axis=1).max()
+        neg_sum = df_slice.clip(upper=0).sum(axis=1).min()
+        return (neg_sum, pos_sum)
+
+    ng_ylims: dict[str, tuple[float, float]] = {}
+    node_ylims: dict[str, tuple[float, float]] = {}
+    ng_columns: dict[str, list[str]] = {}
+    node_columns: dict[str, list[str]] = {}
+    nodes = config.get('nodes', [])
+
+    for scenario in scenarios:
+        for ng in node_groups:
+            df_dispatch, _ = prepare_dispatch_data(
+                combined_dfs, combined_mapping_dfs, scenario, ng,
+                colors=colors
+            )
+            if df_dispatch is not None and not df_dispatch.empty:
+                ymin, ymax = _compute_ylim(df_dispatch, timeline)
+                if ng in ng_ylims:
+                    ng_ylims[ng] = (min(ng_ylims[ng][0], ymin), max(ng_ylims[ng][1], ymax))
+                    # Add any new columns preserving existing order
+                    for col in df_dispatch.columns:
+                        if col not in ng_columns[ng]:
+                            ng_columns[ng].append(col)
+                else:
+                    ng_ylims[ng] = (ymin, ymax)
+                    ng_columns[ng] = list(df_dispatch.columns)
+
+        for node in nodes:
+            df_node, _ = prepare_node_dispatch_data(
+                combined_dfs, scenario, node
+            )
+            if df_node is not None and not df_node.empty:
+                ymin, ymax = _compute_ylim(df_node, timeline)
+                if node in node_ylims:
+                    node_ylims[node] = (min(node_ylims[node][0], ymin), max(node_ylims[node][1], ymax))
+                    for col in df_node.columns:
+                        if col not in node_columns[node]:
+                            node_columns[node].append(col)
+                else:
+                    node_ylims[node] = (ymin, ymax)
+                    node_columns[node] = list(df_node.columns)
+
+    # Add small margin to y-axis limits
+    for key, (ymin, ymax) in ng_ylims.items():
+        margin = (ymax - ymin) * 0.05
+        ng_ylims[key] = (ymin - margin, ymax + margin)
+    for key, (ymin, ymax) in node_ylims.items():
+        margin = (ymax - ymin) * 0.05
+        node_ylims[key] = (ymin - margin, ymax + margin)
+
     for scenario in scenarios:
         print(f"Creating dispatch plots for scenario: {scenario}")
 
@@ -1546,13 +1602,20 @@ def create_dispatch_plots(combined_dfs, combined_mapping_dfs, config, plot_dir,
             )
 
             if df_dispatch is not None and not df_dispatch.empty:
+                # Ensure consistent columns across scenarios for same nodeGroup
+                if ng in ng_columns:
+                    for col in ng_columns[ng]:
+                        if col not in df_dispatch.columns:
+                            df_dispatch[col] = 0.0
+                    df_dispatch = df_dispatch[ng_columns[ng]]
                 output_path = plot_dir / f"dispatch_nodeGroup_{ng}_{scenario}.png"
                 plot_dispatch_area(
                     df_dispatch, inflow, output_path,
                     title=f"{ng} - {scenario}",
                     colors=colors,
                     timeline=timeline,
-                    show_plot=show_plot
+                    show_plot=show_plot,
+                    ylim=ng_ylims.get(ng)
                 )
 
                 if write_xlsx:
@@ -1561,12 +1624,17 @@ def create_dispatch_plots(combined_dfs, combined_mapping_dfs, config, plot_dir,
                 print(f"  No dispatch data for nodeGroup {ng}")
 
         # Plot individual node dispatches
-        nodes = config.get('nodes', [])
         for node in nodes:
             df_node, inflow_node = prepare_node_dispatch_data(
                 combined_dfs, scenario, node
             )
             if df_node is not None and not df_node.empty:
+                # Ensure consistent columns across scenarios for same node
+                if node in node_columns:
+                    for col in node_columns[node]:
+                        if col not in df_node.columns:
+                            df_node[col] = 0.0
+                    df_node = df_node[node_columns[node]]
                 node_colors = _auto_assign_node_colors(df_node.columns)
                 output_path = plot_dir / f"dispatch_node_{node}_{scenario}.png"
                 plot_dispatch_area(
@@ -1574,7 +1642,8 @@ def create_dispatch_plots(combined_dfs, combined_mapping_dfs, config, plot_dir,
                     title=f"{node} - {scenario}",
                     colors=node_colors,
                     timeline=timeline,
-                    show_plot=show_plot
+                    show_plot=show_plot,
+                    ylim=node_ylims.get(node)
                 )
                 if write_xlsx:
                     excel_data[f"node_{node}_{scenario}"] = df_node
@@ -1591,7 +1660,7 @@ def create_dispatch_plots(combined_dfs, combined_mapping_dfs, config, plot_dir,
         print(f"Wrote dispatch data to {excel_path}")
 
 
-def create_summary_plots(combined_dfs, group_node_df, config, plot_dir, scenarios=None, show_plot=False):
+def create_basic_plots(combined_dfs, group_node_df, config, plot_dir, scenarios=None, show_plot=False):
     """
     Create summary bar chart plots comparing scenarios.
 
@@ -1736,38 +1805,60 @@ def create_summary_plots(combined_dfs, group_node_df, config, plot_dir, scenario
     print(f"Summary plots saved to {plot_dir}")
 
 
-def plot_horizontal_bar(df, filename=None, title=None, figsize=(10, 6), show_plot=False, subplot=None, stacked=None, sum_index_level=None, n_subplot_cols=1, xlabel=None, ylabel=None):    
+def plot_horizontal_bar(df, filename=None, title=None, figsize=(10, 6), show_plot=False, subplot=None, stacked=None, sum_index_level=None, n_subplot_cols=1, xlabel=None, ylabel=None, max_items: int = 20):
     if sum_index_level is not None:
         df = df.groupby(level=sum_index_level).sum()
-    n_subplots = 1
-    subplot_names = ['']
-    if subplot is not None:
-        subplot_names = df.columns.get_level_values(level=subplot).unique()
-        n_subplots = len(subplot_names)
-    n_subplot_rows = math.ceil(n_subplots / n_subplot_cols)
-    fig, axes = plt.subplots(nrows=n_subplot_rows, ncols=n_subplot_cols, figsize=figsize, squeeze=False)
-    axes = axes.flatten()
 
-    for i, subplot_name in enumerate(subplot_names):
-        if isinstance(df.columns, pd.MultiIndex):
-            df_sub = df.xs(subplot_name, axis=1, level=subplot)
-        else:
-            df_sub = df
-        ax = axes[i]
-        _ = df_sub.plot.barh(ax=ax, legend=False, title=subplot_name, xlabel=xlabel)
+    # Split into multiple files if too many items (rows)
+    all_items = df.index.tolist()
+    n_items = len(all_items)
+    needs_split = n_items > max_items
 
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles[::-1], labels[::-1], bbox_to_anchor=(1.05, 1), loc='upper left')
+    if needs_split:
+        chunks = [all_items[i:i + max_items] for i in range(0, n_items, max_items)]
+    else:
+        chunks = [all_items]
 
-    if title:
-        fig.suptitle(title, fontweight='bold')
-    plt.tight_layout()
-    # ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    if filename:
-        plt.savefig(filename, bbox_inches='tight')
-    if show_plot:
-        plt.show()
-    plt.close()
+    for chunk_idx, item_chunk in enumerate(chunks, start=1):
+        df_chunk = df.loc[item_chunk]
+
+        # Scale figsize height proportionally to number of items in this chunk
+        chunk_figsize = (figsize[0], figsize[1] * len(item_chunk) / min(n_items, max_items)) if figsize else figsize
+
+        n_subplots = 1
+        subplot_names = ['']
+        if subplot is not None:
+            subplot_names = df_chunk.columns.get_level_values(level=subplot).unique()
+            n_subplots = len(subplot_names)
+        n_subplot_rows = math.ceil(n_subplots / n_subplot_cols)
+        fig, axes = plt.subplots(nrows=n_subplot_rows, ncols=n_subplot_cols, figsize=chunk_figsize, squeeze=False)
+        axes = axes.flatten()
+
+        for i, subplot_name in enumerate(subplot_names):
+            if isinstance(df_chunk.columns, pd.MultiIndex):
+                df_sub = df_chunk.xs(subplot_name, axis=1, level=subplot)
+            else:
+                df_sub = df_chunk
+            ax = axes[i]
+            _ = df_sub.plot.barh(ax=ax, legend=False, title=subplot_name, xlabel=xlabel)
+
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(handles[::-1], labels[::-1], bbox_to_anchor=(1.05, 1), loc='upper left')
+
+        chunk_title = f"{title} ({chunk_idx}/{len(chunks)})" if title and needs_split else title
+        if chunk_title:
+            fig.suptitle(chunk_title, fontweight='bold')
+        plt.tight_layout()
+        if filename:
+            if needs_split:
+                base, ext = os.path.splitext(filename)
+                chunk_filename = f"{base}_{chunk_idx}{ext}"
+            else:
+                chunk_filename = filename
+            plt.savefig(chunk_filename, bbox_inches='tight')
+        if show_plot:
+            plt.show()
+        plt.close()
     return ax
 
 def stacked_and_grouped_bar_plot(df, output_dir, filename=None, title=None, ylabel=None, xlabel=None, show_plot=False):
@@ -2212,18 +2303,21 @@ if __name__ == '__main__':
         '--parquet-subdir',
         default='output_parquet',
         help='Subdirectory containing parquet files (default: output_parquet)')
+    parser.add_argument('--settings-db-url', default=None,
+                        help='Settings database URL (fills in unset params; CLI overrides DB)')
     parser.add_argument(
-        '--output-config-path', default='templates/default_comparison_plots.yaml'
+        '--output-config-path', default=None,
+        help='Path to output configuration YAML file (default: templates/default_comparison_plots.yaml)'
     )
-    parser.add_argument('--active-configs', type=str, default='default', nargs="+",
-                        help='Which plot configurations from config_path yaml to use. Defaults to default')
-    parser.add_argument('--plot-rows', type=int, nargs=2, default=[0, 167],
+    parser.add_argument('--active-configs', type=str, default=None, nargs="+",
+                        help='Which plot configurations from config_path yaml to use (default: default)')
+    parser.add_argument('--plot-rows', type=int, nargs=2, default=None,
                         help='First and last row to plot in time series (default: 0 167)')
-    parser.add_argument('--write-to-xlsx', action='store_true',
+    parser.add_argument('--write-to-xlsx', action='store_true', default=None,
                         help='Write combined results to Excel file')
-    parser.add_argument('--write-dispatch-xlsx', action='store_true',
+    parser.add_argument('--write-dispatch-xlsx', action='store_true', default=None,
                         help='Write dispatch data to Excel file in plot directory')
-    parser.add_argument('--write-to-ods', action='store_true')
+    parser.add_argument('--write-to-ods', action='store_true', default=None)
     parser.add_argument(
         '--alternatives', metavar='S', type=str, nargs='+',
         help='Add alternative names manually')
@@ -2236,15 +2330,15 @@ if __name__ == '__main__':
         help='Generate dispatch area plots for nodes and nodeGroups'
     )
     parser.add_argument(
-        '--summary-plots', action='store_true',
-        help='Generate summary bar chart plots'
+        '--basic-plots', action='store_true',
+        help='Generate basic comparison plots'
     )
     parser.add_argument(
         '--all-plots', action='store_true',
         help='Generate all plot types (dispatch and summary)'
     )
     parser.add_argument(
-        '--show-plots', action='store_true',
+        '--show-plots', action='store_true', default=None,
         help='Display plots interactively (in addition to saving)'
     )
 
@@ -2252,14 +2346,75 @@ if __name__ == '__main__':
     db_url = args.db_url
     alternatives = args.alternatives
     plot_dir = args.plot_dir
+
+    # Resolve parameters: CLI args > settings DB > hardcoded defaults
+    output_config_path = args.output_config_path
     active_configs = args.active_configs
     plot_rows = args.plot_rows
+    write_to_xlsx = args.write_to_xlsx
+    write_dispatch_xlsx = args.write_dispatch_xlsx
+    write_to_ods = args.write_to_ods
+    show_plots = args.show_plots
+
+    settings_db_url = args.settings_db_url
+    if settings_db_url and os.path.exists(settings_db_url.replace('sqlite:///', '')):
+        with DatabaseMapping(settings_db_url) as settings_db:
+            settings_entities = settings_db.get_entity_items(entity_class_name="settings")
+            if len(settings_entities) == 1:
+                settings_name = settings_entities[0]["name"]
+                settings_params: dict = {}
+                for pv in settings_db.get_parameter_value_items(entity_class_name="settings"):
+                    if pv["entity_byname"] == (settings_name,):
+                        settings_params[pv["parameter_definition_name"]] = from_database(pv["value"], pv["type"])
+
+                if output_config_path is None and 'output-config-path' in settings_params:
+                    output_config_path = str(settings_params['output-config-path'])
+
+                if active_configs is None and 'active-output-configs' in settings_params:
+                    val = settings_params['active-output-configs']
+                    if isinstance(val, str):
+                        active_configs = [val]
+                    elif isinstance(val, Array):
+                        active_configs = list(val.values)
+                    else:
+                        active_configs = list(val)
+
+                if plot_rows is None:
+                    first = settings_params.get('plot_first_timestep')
+                    duration = settings_params.get('plot_duration')
+                    if first is not None and duration is not None:
+                        plot_rows = [int(first), int(first) + int(duration)]
+
+                if write_to_xlsx is None and 'write-to-excel' in settings_params:
+                    write_to_xlsx = bool(settings_params['write-to-excel'])
+                if write_dispatch_xlsx is None and 'write-dispatch-to-excel' in settings_params:
+                    write_dispatch_xlsx = bool(settings_params['write-dispatch-to-excel'])
+                if write_to_ods is None and 'write-to-ods' in settings_params:
+                    write_to_ods = bool(settings_params['write-to-ods'])
+                if show_plots is None and 'show-plots' in settings_params:
+                    show_plots = bool(settings_params['show-plots'])
+
+    # Apply hardcoded defaults for anything still unset
+    if output_config_path is None:
+        output_config_path = 'templates/default_comparison_plots.yaml'
+    if active_configs is None:
+        active_configs = ['default']
+    if plot_rows is None:
+        plot_rows = [0, 167]
+    if write_to_xlsx is None:
+        write_to_xlsx = False
+    if write_dispatch_xlsx is None:
+        write_dispatch_xlsx = False
+    if write_to_ods is None:
+        write_to_ods = False
+    if show_plots is None:
+        show_plots = False
 
     if alternatives:
         alternative_filter = alternative_filter_config(alternatives)
         db_url = append_filter_config(db_url, alternative_filter)
 
-    with open(args.output_config_path, 'r') as f:
+    with open(output_config_path, 'r') as f:
         settings = yaml.safe_load(f)
 
     scenario_folders, combined_dfs = get_scenario_results(db_url=db_url, parquet_subdir=args.parquet_subdir)
@@ -2281,7 +2436,7 @@ if __name__ == '__main__':
 
     # Create or update dispatch config
     dispatch_config = None
-    if args.dispatch_plots or args.summary_plots or args.all_plots:
+    if args.dispatch_plots or args.basic_plots or args.all_plots:
         dispatch_config = create_or_update_dispatch_config(
             plot_dir, combined_dfs, scenarios, combined_mapping_dfs
         )
@@ -2297,24 +2452,24 @@ if __name__ == '__main__':
             create_dispatch_plots(
                 combined_dfs, combined_mapping_dfs, dispatch_config, plot_dir,
                 scenarios=get_scenarios_from_config(dispatch_config),
-                show_plot=args.show_plots,
-                write_xlsx=args.write_dispatch_xlsx
+                show_plot=show_plots,
+                write_xlsx=write_dispatch_xlsx
             )
         else:
             print("Warning: Cannot generate dispatch plots - missing dispatch mappings")
 
-    # Generate summary plots
-    if args.summary_plots or args.all_plots:
+    # Generate basic plots
+    if args.basic_plots or args.all_plots:
         if dispatch_config:
             print("\nGenerating summary plots...")
-            create_summary_plots(
+            create_basic_plots(
                 combined_dfs, group_node_df, dispatch_config, plot_dir,
                 scenarios=get_scenarios_from_config(dispatch_config),
-                show_plot=args.show_plots
+                show_plot=show_plots
             )
 
     # Write to excel (combined results)
-    if args.write_to_xlsx:
+    if write_to_xlsx:
         excel_dir = 'output_excel_comparison'
         os.makedirs(excel_dir, exist_ok=True)
         filename = 'compare_' + str(len(scenario_folders)) + '_scens.xlsx'
