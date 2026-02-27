@@ -1,4 +1,4 @@
-"""Convenience wrapper. Prefer `flextool-scenario-results` command after pip install."""
+"""Convenience wrapper. Run directly: python scenario_results.py <args>"""
 import sys
 import os
 

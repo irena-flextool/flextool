@@ -27,12 +27,3 @@ packages = [
     "flextool.helpers",
     "flextool.create_scenarios",
 ]
-
-[project.scripts]
-flextool = "flextool.cli.run_flextool:main"
-flextool-write-outputs = "flextool.cli.write_outputs:main"
-flextool-scenario-results = "flextool.cli.scenario_results:main"
-flextool-read-tabular = "flextool.cli.read_tabular_input:main"
-flextool-update = "flextool.cli.update_flextool:main"
-flextool-migrate = "flextool.cli.migrate_database:main"
-flextool-workflow = "flextool.cli.execute_flextool_workflow:main"

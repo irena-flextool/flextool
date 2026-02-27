@@ -1,4 +1,4 @@
-"""Convenience wrapper for Spine Toolbox. Prefer `flextool` command after pip install."""
+"""Convenience wrapper. Run directly: python run_flextool.py <args>"""
 import sys
 import os
 

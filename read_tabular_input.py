@@ -1,4 +1,4 @@
-"""Convenience wrapper. Prefer `flextool-read-tabular` command after pip install."""
+"""Convenience wrapper. Run directly: python read_tabular_input.py <args>"""
 import sys
 import os
 
