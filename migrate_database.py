@@ -1,13 +1,11 @@
-import argparse
-from flextool.migrate_database import migrate_database
+"""Convenience wrapper. Prefer `flextool-migrate` command after pip install."""
+import sys
+import os
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-def migrage_database(db_name):
-    migrate_database(db_name)
-
+from flextool.update_flextool import migrate_database  # noqa: F401
+from flextool.cli.migrate_database import main
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('filepath', help= "Filepath of the database, absolute or relative to flextool folder")
-    args = parser.parse_args()
-    migrate_database(args.filepath)
+    main()

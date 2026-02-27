@@ -44,13 +44,13 @@ class FlexToolRunner:
         if not os.path.exists("./solve_data"):
             os.makedirs("./solve_data")
         if flextool_dir is None:
-            self.flextool_dir = Path(__file__).parent.parent / "flextool"
+            self.flextool_dir = Path(__file__).parent.parent.parent / "flextool"
         if bin_dir is None:
-            self.bin_dir = Path(__file__).parent.parent / "bin"
+            self.bin_dir = Path(__file__).parent.parent.parent / "bin"
         if root_dir is None:
-            self.root_dir = Path(__file__).parent.parent
+            self.root_dir = Path(__file__).parent.parent.parent
         if output_path is None:
-            self.output_path = Path(__file__).parent.parent
+            self.output_path = Path(__file__).parent.parent.parent
         else:
             self.output_path = output_path
         # read the data in

@@ -8,8 +8,8 @@ try:
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
 from spinedb_api.exception import NothingToCommit
-from flextool.migrate_database import migrate_database
-from flextool.initialize_database import initialize_database
+from flextool.update_flextool.migrate_database import migrate_database
+from flextool.update_flextool.initialize_database import initialize_database
 
 
 def update_flextool(skip_git):
