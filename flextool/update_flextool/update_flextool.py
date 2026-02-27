@@ -47,7 +47,7 @@ def update_flextool(skip_git):
     # add the database used in the input_data tool
     with open("./.spinetoolbox/project.json") as json_file:
         specifications = json.load(json_file)
-    path = specifications["items"]["Input_data"]["url"]["database"]["path"]
+    path = specifications["items"]["Input data"]["url"]["database"]["path"]
     db_to_update.append(path)
 
     # add the databases in the example folder
