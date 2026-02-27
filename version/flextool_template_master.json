@@ -64,17 +64,17 @@
             true
         ],
         [
-            "timeblockSet",
-            [],
-            null,
-            280378317272400,
-            true
-        ],
-        [
             "timeline",
             [],
             null,
             280378317271144,
+            true
+        ],
+        [
+            "timeset",
+            [],
+            null,
+            280378317272400,
             true
         ],
         [
@@ -159,16 +159,6 @@
             ],
             null,
             280798025740550,
-            true
-        ],
-        [
-            "timeblockSet__timeline",
-            [
-                "timeblockSet",
-                "timeline"
-            ],
-            null,
-            null,
             true
         ],
         [
@@ -453,6 +443,10 @@
             "invest_retire_period_total"
         ],
         [
+            "invest_methods",
+            "cumulative_limits"
+        ],
+        [
             "is_DC",
             "yes"
         ],
@@ -495,6 +489,10 @@
         [
             "minimum_time_methods",
             "both"
+        ],
+        [
+            "node_type",
+            "balance_within_period"
         ],
         [
             "optional_output",
@@ -634,7 +632,7 @@
         ],
         [
             "storage_binding_methods",
-            "bind_within_timeblock"
+            "bind_within_timeset"
         ],
         [
             "storage_binding_methods",
@@ -667,6 +665,10 @@
         [
             "storage_nested_fix_method",
             "no"
+        ],
+        [
+            "storage_nested_fix_method",
+            "fix_usage"
         ],
         [
             "storage_solve_horizon_methods",
@@ -734,7 +736,7 @@
             "price",
             null,
             null,
-            "[CUR/MWh or other unit] Price of the commodity. Constant or period."
+            "[CUR/MWh or other unit] Price of the commodity. Constant, period or time."
         ],
         [
             "connection",
@@ -752,6 +754,27 @@
         ],
         [
             "connection",
+            "cumulative_max_capacity",
+            null,
+            null,
+            "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+        ],
+        [
+            "connection",
+            "cumulative_min_capacity",
+            null,
+            null,
+            "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+        ],
+        [
+            "connection",
+            "delay",
+            null,
+            null,
+            "[hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences."
+        ],
+        [
+            "connection",
             "efficiency",
             1.0,
             null,
@@ -762,7 +785,7 @@
             "existing",
             null,
             null,
-            "[MW] Existing capacity. Constant."
+            "[MW] Existing capacity. Constant or Period"
         ],
         [
             "connection",
@@ -846,7 +869,7 @@
             "other_operational_cost",
             null,
             null,
-            "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant or time."
+            "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time."
         ],
         [
             "connection",
@@ -972,7 +995,7 @@
             "co2_price",
             null,
             null,
-            "[CUR/ton] CO2 price for a group of nodes. Constant or period."
+            "[CUR/ton] CO2 price for a group of nodes. Constant, period or time."
         ],
         [
             "group",
@@ -1214,6 +1237,13 @@
         ],
         [
             "model",
+            "periods_available",
+            null,
+            null,
+            "(Optional) Array of periods available for the model. Periods that are in the data, but are not in period_timeset."
+        ],
+        [
+            "model",
             "solves",
             null,
             null,
@@ -1222,7 +1252,7 @@
         [
             "model",
             "version",
-            19,
+            25,
             null,
             "Contains database version information."
         ],
@@ -1256,10 +1286,24 @@
         ],
         [
             "node",
+            "cumulative_max_capacity",
+            null,
+            null,
+            "[MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+        ],
+        [
+            "node",
+            "cumulative_min_capacity",
+            null,
+            null,
+            "[MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+        ],
+        [
+            "node",
             "existing",
             null,
             null,
-            "[MWh] Existing storage capacity. Constant."
+            "[MWh] Existing storage capacity. Constant or Period"
         ],
         [
             "node",
@@ -1312,6 +1356,13 @@
         ],
         [
             "node",
+            "invest_forced",
+            null,
+            null,
+            null
+        ],
+        [
+            "node",
             "invest_max_period",
             null,
             null,
@@ -1361,6 +1412,13 @@
         ],
         [
             "node",
+            "node_type",
+            null,
+            "node_type",
+            "Selection for the node to have period balance, instead of time step balance."
+        ],
+        [
+            "node",
             "peak_inflow",
             null,
             null,
@@ -1371,14 +1429,14 @@
             "penalty_down",
             10000,
             null,
-            "[CUR/MW] Penalty cost for increasing consumption in the node. Constant or time."
+            "[CUR/MW] Penalty cost for increasing consumption in the node. Constant, Period or Time."
         ],
         [
             "node",
             "penalty_up",
             10000,
             null,
-            "[CUR/MW] Penalty cost for decreasing consumption in the node. Constant or time."
+            "[CUR/MW] Penalty cost for decreasing consumption in the node. Constant, Period or Time."
         ],
         [
             "node",
@@ -1427,7 +1485,7 @@
             "storage_binding_method",
             "bind_forward_only",
             "storage_binding_methods",
-            "Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over any holes in the used timeline, but will not bind end to the start. Meanwhile 'bind_between_timeblocks' will bind the storage end state at the end of the timeblock to the beginning of the timeblock. 'bind_within_period', 'bind_within_solve' and bind_within_model' will act similarly but over increasingly longer time span. Separate parameters (e.g. 'storage_state_start') can force bindings. By default, storage start state is bound to 0."
+            "Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over any holes in the used timeline, but will not bind end to the start. Meanwhile 'bind_between_timesets' will bind the storage end state at the end of the timeset to the beginning of the timeset. 'bind_within_period', 'bind_within_solve' and bind_within_model' will act similarly but over increasingly longer time span. Separate parameters (e.g. 'storage_state_start') can force bindings. By default, storage start state is bound to 0."
         ],
         [
             "node",
@@ -1477,6 +1535,13 @@
             0,
             null,
             "[0-1] Relative state of storage at the beginning of the first model solve (irrespective of when the model starts). Constant."
+        ],
+        [
+            "node",
+            "storate_state_end",
+            null,
+            null,
+            null
         ],
         [
             "node",
@@ -1588,7 +1653,7 @@
             "contains_solves",
             null,
             null,
-            "Array of solves - used for nested solve sequences"
+            "Array of solves - used for nested solve sequencesArray of solves - used for nested solve sequences"
         ],
         [
             "solve",
@@ -1627,10 +1692,10 @@
         ],
         [
             "solve",
-            "period_timeblockSet",
+            "period_timeset",
             null,
             null,
-            "Map of periods with associated timeblocks that will be included in the solve. Index: period name, value: timeblockSet name."
+            "Map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name."
         ],
         [
             "solve",
@@ -1672,7 +1737,7 @@
             "solve_mode",
             "single_solve",
             "solve_mode",
-            "A single_solve or rolling_window for a set of rolling optimisation windows solved in a sequence (not functional yet)."
+            "A single_solve or rolling_window for a set of rolling optimisation windows solved in a sequence."
         ],
         [
             "solve",
@@ -1710,32 +1775,32 @@
             "Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years."
         ],
         [
-            "timeblockSet",
-            "block_duration",
-            null,
-            null,
-            "Index: name of the the timestep that starts the timeblock, value: duration of the block in timesteps"
-        ],
-        [
-            "timeblockSet",
-            "new_stepduration",
-            null,
-            null,
-            "Hours. Creates a new `timeline` from the old for this `timeblockSet` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps. "
-        ],
-        [
-            "timeline",
-            "timeline_duration_in_years",
-            null,
-            null,
-            "Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model."
-        ],
-        [
             "timeline",
             "timestep_duration",
             null,
             null,
             "Map of time steps in the timeline. Index: time step name, value: time step duration in hours."
+        ],
+        [
+            "timeset",
+            "new_stepduration",
+            null,
+            null,
+            "Hours. Creates a new `timeline` from the old for this `timeset` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps."
+        ],
+        [
+            "timeset",
+            "timeline",
+            null,
+            null,
+            "The name of the timeline that the timeset uses. (String)"
+        ],
+        [
+            "timeset",
+            "timeset_duration",
+            null,
+            null,
+            "Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps"
         ],
         [
             "unit",
@@ -1760,6 +1825,27 @@
         ],
         [
             "unit",
+            "cumulative_max_capacity",
+            null,
+            null,
+            "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+        ],
+        [
+            "unit",
+            "cumulative_min_capacity",
+            null,
+            null,
+            "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period."
+        ],
+        [
+            "unit",
+            "delay",
+            null,
+            null,
+            "[hours] A time delay between the input nodes and the output nodes. Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences."
+        ],
+        [
+            "unit",
             "efficiency",
             1.0,
             null,
@@ -1777,7 +1863,7 @@
             "existing",
             null,
             null,
-            "[MW] Existing capacity. Constant."
+            "[MW] Existing capacity. Constant or Period"
         ],
         [
             "unit",
@@ -1966,7 +2052,7 @@
             "other_operational_cost",
             null,
             null,
-            "[CUR/MWh] Other operational variable costs for energy flows. Constant or time."
+            "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time."
         ],
         [
             "unit__inputNode",
@@ -2036,7 +2122,7 @@
             "other_operational_cost",
             null,
             null,
-            "[CUR/MWh] Other operational variable cost for energy flows. Constant or time."
+            "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time."
         ],
         [
             "unit__outputNode",
@@ -2065,6 +2151,1664 @@
             null,
             null,
             "[per unit  / minute] Maximum ramp up speed. Constant."
+        ]
+    ],
+    "parameter_types": [
+        [
+            "commodity",
+            "co2_content",
+            "float",
+            0
+        ],
+        [
+            "commodity",
+            "price",
+            "float",
+            0
+        ],
+        [
+            "commodity",
+            "price",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "availability",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "availability",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "constraint_capacity_coefficient",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "cumulative_max_capacity",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "cumulative_max_capacity",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "cumulative_min_capacity",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "cumulative_min_capacity",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "delay",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "delay",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "efficiency",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "efficiency",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "existing",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "existing",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "fixed_cost",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "fixed_cost",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "interest_rate",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "interest_rate",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "invest_cost",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "invest_cost",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "invest_max_period",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "invest_max_total",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "invest_method",
+            "str",
+            0
+        ],
+        [
+            "connection",
+            "invest_min_period",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "invest_min_total",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "is_DC",
+            "str",
+            0
+        ],
+        [
+            "connection",
+            "lifetime",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "lifetime",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "lifetime_method",
+            "str",
+            0
+        ],
+        [
+            "connection",
+            "other_operational_cost",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "other_operational_cost",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "retire_max_period",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "retire_max_total",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "retire_min_period",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "retire_min_total",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "salvage_value",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "salvage_value",
+            "map",
+            1
+        ],
+        [
+            "connection",
+            "startup_cost",
+            "float",
+            0
+        ],
+        [
+            "connection",
+            "startup_method",
+            "str",
+            0
+        ],
+        [
+            "connection",
+            "transfer_method",
+            "str",
+            0
+        ],
+        [
+            "connection",
+            "virtual_unitsize",
+            "float",
+            0
+        ],
+        [
+            "connection__node",
+            "constraint_flow_coefficient",
+            "map",
+            1
+        ],
+        [
+            "connection__profile",
+            "profile_method",
+            "str",
+            0
+        ],
+        [
+            "constraint",
+            "constant",
+            "float",
+            0
+        ],
+        [
+            "constraint",
+            "sense",
+            "str",
+            0
+        ],
+        [
+            "group",
+            "capacity_margin",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "capacity_margin",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "co2_max_period",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "co2_max_total",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "co2_method",
+            "str",
+            0
+        ],
+        [
+            "group",
+            "co2_price",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "co2_price",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "has_capacity_margin",
+            "str",
+            0
+        ],
+        [
+            "group",
+            "has_inertia",
+            "str",
+            0
+        ],
+        [
+            "group",
+            "has_non_synchronous",
+            "str",
+            0
+        ],
+        [
+            "group",
+            "include_stochastics",
+            "str",
+            0
+        ],
+        [
+            "group",
+            "inertia_limit",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "inertia_limit",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "invest_max_period",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "invest_max_total",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "invest_method",
+            "str",
+            0
+        ],
+        [
+            "group",
+            "invest_min_period",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "invest_min_total",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "max_cumulative_flow",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "max_cumulative_flow",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "max_instant_flow",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "max_instant_flow",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "min_cumulative_flow",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "min_cumulative_flow",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "min_instant_flow",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "min_instant_flow",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "non_synchronous_limit",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "non_synchronous_limit",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "output_aggregate_flows",
+            "str",
+            0
+        ],
+        [
+            "group",
+            "output_node_flows",
+            "str",
+            0
+        ],
+        [
+            "group",
+            "output_results",
+            "str",
+            0
+        ],
+        [
+            "group",
+            "penalty_capacity_margin",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "penalty_capacity_margin",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "penalty_inertia",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "penalty_inertia",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "penalty_non_synchronous",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "penalty_non_synchronous",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "share_loss_of_load",
+            "str",
+            0
+        ],
+        [
+            "model",
+            "debug",
+            "str",
+            0
+        ],
+        [
+            "model",
+            "discount_offset_investment",
+            "float",
+            0
+        ],
+        [
+            "model",
+            "discount_offset_operations",
+            "float",
+            0
+        ],
+        [
+            "model",
+            "discount_rate",
+            "float",
+            0
+        ],
+        [
+            "model",
+            "exclude_entity_outputs",
+            "str",
+            0
+        ],
+        [
+            "model",
+            "output_connection__node__node_flow_t",
+            "str",
+            0
+        ],
+        [
+            "model",
+            "output_connection_flow_separate",
+            "str",
+            0
+        ],
+        [
+            "model",
+            "output_horizon",
+            "str",
+            0
+        ],
+        [
+            "model",
+            "output_node_balance_t",
+            "str",
+            0
+        ],
+        [
+            "model",
+            "output_ramp_envelope",
+            "str",
+            0
+        ],
+        [
+            "model",
+            "output_unit__node_flow_t",
+            "str",
+            0
+        ],
+        [
+            "model",
+            "output_unit__node_ramp_t",
+            "str",
+            0
+        ],
+        [
+            "model",
+            "periods_available",
+            "array",
+            1
+        ],
+        [
+            "model",
+            "solves",
+            "array",
+            1
+        ],
+        [
+            "model",
+            "version",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "annual_flow",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "annual_flow",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "availability",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "availability",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "availability",
+            "map",
+            3
+        ],
+        [
+            "node",
+            "constraint_capacity_coefficient",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "constraint_state_coefficient",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "cumulative_max_capacity",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "cumulative_max_capacity",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "cumulative_min_capacity",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "cumulative_min_capacity",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "existing",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "existing",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "fixed_cost",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "fixed_cost",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "has_balance",
+            "str",
+            0
+        ],
+        [
+            "node",
+            "has_storage",
+            "str",
+            0
+        ],
+        [
+            "node",
+            "inflow",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "inflow",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "inflow",
+            "map",
+            3
+        ],
+        [
+            "node",
+            "inflow_method",
+            "str",
+            0
+        ],
+        [
+            "node",
+            "interest_rate",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "interest_rate",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "invest_cost",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "invest_cost",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "invest_forced",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "invest_forced",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "invest_max_period",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "invest_max_total",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "invest_method",
+            "str",
+            0
+        ],
+        [
+            "node",
+            "invest_min_period",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "invest_min_total",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "lifetime",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "lifetime",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "lifetime_method",
+            "str",
+            0
+        ],
+        [
+            "node",
+            "node_type",
+            "str",
+            0
+        ],
+        [
+            "node",
+            "peak_inflow",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "peak_inflow",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "penalty_down",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "penalty_down",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "penalty_up",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "penalty_up",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "retire_max_period",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "retire_max_total",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "retire_min_period",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "retire_min_total",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "salvage_value",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "salvage_value",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "self_discharge_loss",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "self_discharge_loss",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "storage_binding_method",
+            "str",
+            0
+        ],
+        [
+            "node",
+            "storage_nested_fix_method",
+            "str",
+            0
+        ],
+        [
+            "node",
+            "storage_solve_horizon_method",
+            "str",
+            0
+        ],
+        [
+            "node",
+            "storage_start_end_method",
+            "str",
+            0
+        ],
+        [
+            "node",
+            "storage_state_end",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "storage_state_reference_price",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "storage_state_reference_price",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "storage_state_reference_value",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "storage_state_reference_value",
+            "map",
+            1
+        ],
+        [
+            "node",
+            "storage_state_start",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "storate_state_end",
+            "float",
+            0
+        ],
+        [
+            "node",
+            "virtual_unitsize",
+            "float",
+            0
+        ],
+        [
+            "node__profile",
+            "profile_method",
+            "str",
+            0
+        ],
+        [
+            "profile",
+            "profile",
+            "map",
+            1
+        ],
+        [
+            "profile",
+            "profile",
+            "map",
+            3
+        ],
+        [
+            "reserve__upDown__connection__node",
+            "increase_reserve_ratio",
+            "float",
+            0
+        ],
+        [
+            "reserve__upDown__connection__node",
+            "large_failure_ratio",
+            "float",
+            0
+        ],
+        [
+            "reserve__upDown__connection__node",
+            "max_share",
+            "float",
+            0
+        ],
+        [
+            "reserve__upDown__connection__node",
+            "reliability",
+            "float",
+            0
+        ],
+        [
+            "reserve__upDown__group",
+            "increase_reserve_ratio",
+            "float",
+            0
+        ],
+        [
+            "reserve__upDown__group",
+            "penalty_reserve",
+            "float",
+            0
+        ],
+        [
+            "reserve__upDown__group",
+            "reservation",
+            "float",
+            0
+        ],
+        [
+            "reserve__upDown__group",
+            "reservation",
+            "map",
+            1
+        ],
+        [
+            "reserve__upDown__group",
+            "reservation",
+            "map",
+            3
+        ],
+        [
+            "reserve__upDown__group",
+            "reserve_method",
+            "str",
+            0
+        ],
+        [
+            "reserve__upDown__unit__node",
+            "increase_reserve_ratio",
+            "str",
+            0
+        ],
+        [
+            "reserve__upDown__unit__node",
+            "large_failure_ratio",
+            "float",
+            0
+        ],
+        [
+            "reserve__upDown__unit__node",
+            "max_share",
+            "float",
+            0
+        ],
+        [
+            "reserve__upDown__unit__node",
+            "reliability",
+            "float",
+            0
+        ],
+        [
+            "solve",
+            "contains_solves",
+            "array",
+            1
+        ],
+        [
+            "solve",
+            "contains_solves",
+            "str",
+            0
+        ],
+        [
+            "solve",
+            "fix_storage_periods",
+            "array",
+            1
+        ],
+        [
+            "solve",
+            "fix_storage_periods",
+            "map",
+            2
+        ],
+        [
+            "solve",
+            "highs_method",
+            "str",
+            0
+        ],
+        [
+            "solve",
+            "highs_parallel",
+            "str",
+            0
+        ],
+        [
+            "solve",
+            "highs_presolve",
+            "str",
+            0
+        ],
+        [
+            "solve",
+            "invest_periods",
+            "array",
+            1
+        ],
+        [
+            "solve",
+            "invest_periods",
+            "map",
+            2
+        ],
+        [
+            "solve",
+            "period_timeset",
+            "map",
+            1
+        ],
+        [
+            "solve",
+            "realized_invest_periods",
+            "array",
+            1
+        ],
+        [
+            "solve",
+            "realized_invest_periods",
+            "map",
+            2
+        ],
+        [
+            "solve",
+            "realized_periods",
+            "array",
+            1
+        ],
+        [
+            "solve",
+            "realized_periods",
+            "map",
+            2
+        ],
+        [
+            "solve",
+            "rolling_duration",
+            "float",
+            0
+        ],
+        [
+            "solve",
+            "rolling_solve_horizon",
+            "float",
+            0
+        ],
+        [
+            "solve",
+            "rolling_solve_jump",
+            "float",
+            0
+        ],
+        [
+            "solve",
+            "solve_mode",
+            "str",
+            0
+        ],
+        [
+            "solve",
+            "solver",
+            "str",
+            0
+        ],
+        [
+            "solve",
+            "solver_arguments",
+            "array",
+            1
+        ],
+        [
+            "solve",
+            "solver_precommand",
+            "str",
+            0
+        ],
+        [
+            "solve",
+            "stochastic_branches",
+            "map",
+            4
+        ],
+        [
+            "solve",
+            "years_represented",
+            "map",
+            1
+        ],
+        [
+            "timeline",
+            "timestep_duration",
+            "map",
+            1
+        ],
+        [
+            "timeset",
+            "new_stepduration",
+            "float",
+            0
+        ],
+        [
+            "timeset",
+            "timeline",
+            "str",
+            0
+        ],
+        [
+            "timeset",
+            "timeset_duration",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "availability",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "availability",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "availability",
+            "map",
+            3
+        ],
+        [
+            "unit",
+            "constraint_capacity_coefficient",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "conversion_method",
+            "str",
+            0
+        ],
+        [
+            "unit",
+            "cumulative_max_capacity",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "cumulative_max_capacity",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "cumulative_min_capacity",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "cumulative_min_capacity",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "delay",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "delay",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "efficiency",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "efficiency",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "efficiency",
+            "map",
+            3
+        ],
+        [
+            "unit",
+            "efficiency_at_min_load",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "existing",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "existing",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "fixed_cost",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "fixed_cost",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "interest_rate",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "interest_rate",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "invest_cost",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "invest_cost",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "invest_max_period",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "invest_max_total",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "invest_method",
+            "str",
+            0
+        ],
+        [
+            "unit",
+            "invest_min_period",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "invest_min_total",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "lifetime",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "lifetime",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "lifetime_method",
+            "str",
+            0
+        ],
+        [
+            "unit",
+            "min_downtime",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "min_load",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "min_load",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "min_load",
+            "map",
+            3
+        ],
+        [
+            "unit",
+            "min_uptime",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "minimum_time_method",
+            "str",
+            0
+        ],
+        [
+            "unit",
+            "retire_max_period",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "retire_max_total",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "retire_min_period",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "retire_min_total",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "salvage_value",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "salvage_value",
+            "map",
+            1
+        ],
+        [
+            "unit",
+            "startup_cost",
+            "float",
+            0
+        ],
+        [
+            "unit",
+            "startup_method",
+            "str",
+            0
+        ],
+        [
+            "unit",
+            "virtual_unitsize",
+            "float",
+            0
+        ],
+        [
+            "unit__inputNode",
+            "coefficient",
+            "float",
+            0
+        ],
+        [
+            "unit__inputNode",
+            "constraint_flow_coefficient",
+            "map",
+            1
+        ],
+        [
+            "unit__inputNode",
+            "inertia_constant",
+            "float",
+            0
+        ],
+        [
+            "unit__inputNode",
+            "is_non_synchronous",
+            "str",
+            0
+        ],
+        [
+            "unit__inputNode",
+            "other_operational_cost",
+            "float",
+            0
+        ],
+        [
+            "unit__inputNode",
+            "other_operational_cost",
+            "map",
+            1
+        ],
+        [
+            "unit__inputNode",
+            "other_operational_cost",
+            "map",
+            3
+        ],
+        [
+            "unit__inputNode",
+            "ramp_cost",
+            "float",
+            0
+        ],
+        [
+            "unit__inputNode",
+            "ramp_method",
+            "str",
+            0
+        ],
+        [
+            "unit__inputNode",
+            "ramp_speed_down",
+            "float",
+            0
+        ],
+        [
+            "unit__inputNode",
+            "ramp_speed_up",
+            "float",
+            0
+        ],
+        [
+            "unit__node__profile",
+            "profile_method",
+            "str",
+            0
+        ],
+        [
+            "unit__outputNode",
+            "coefficient",
+            "float",
+            0
+        ],
+        [
+            "unit__outputNode",
+            "constraint_flow_coefficient",
+            "map",
+            1
+        ],
+        [
+            "unit__outputNode",
+            "inertia_constant",
+            "float",
+            0
+        ],
+        [
+            "unit__outputNode",
+            "is_non_synchronous",
+            "str",
+            0
+        ],
+        [
+            "unit__outputNode",
+            "other_operational_cost",
+            "float",
+            0
+        ],
+        [
+            "unit__outputNode",
+            "other_operational_cost",
+            "map",
+            1
+        ],
+        [
+            "unit__outputNode",
+            "other_operational_cost",
+            "map",
+            3
+        ],
+        [
+            "unit__outputNode",
+            "ramp_cost",
+            "float",
+            0
+        ],
+        [
+            "unit__outputNode",
+            "ramp_method",
+            "str",
+            0
+        ],
+        [
+            "unit__outputNode",
+            "ramp_speed_down",
+            "float",
+            0
+        ],
+        [
+            "unit__outputNode",
+            "ramp_speed_up",
+            "float",
+            0
+        ]
+    ],
+    "alternatives": [
+        [
+            "Base",
+            "Base alternative"
         ]
     ]
 }

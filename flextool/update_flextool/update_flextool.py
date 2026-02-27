@@ -30,9 +30,17 @@ def update_flextool(skip_git):
     os.remove("./.spinetoolbox/project_temp.json")
 
     if not os.path.exists("input_data.sqlite"):
-        initialize_database("input_data.sqlite")
+        initialize_database("./version/flextool_template_master.json", "input_data.sqlite")
+        migrate_database("input_data.sqlite")
     if not os.path.exists("templates/input_data_template.sqlite"):
-        initialize_database("templates/input_data_template.sqlite")
+        initialize_database("./version/flextool_template_master.json", "templates/input_data_template.sqlite")
+        migrate_database("templates/input_data_template.sqlite")
+    if not os.path.exists("output_settings.sqlite"):
+        initialize_database("./version/output_settings_template.json", "output_settings.sqlite")
+    if not os.path.exists("output_info.sqlite"):
+        initialize_database("./version/output_info_template.json", "output_info.sqlite")
+    if not os.path.exists("comparison_settings.sqlite"):
+        initialize_database("./version/comparison_settings_template.json", "comparison_settings.sqlite")
     if not os.path.exists("example_input.xlsx"):
         shutil.copy("./templates/example_input_template.xlsx", "./example_input.xlsx")
     if not os.path.exists("output_info.sqlite"):
