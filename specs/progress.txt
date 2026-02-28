@@ -27,3 +27,21 @@
       * compute_storage_and_vre(par, s, v, r): node_state_change_dt/d, self_discharge_loss_dt/d, node_inflow_d, potentialVREgen_dt/d, storage_usage_dt
   - Updated process_results.py: calls three new functions; group-connection-flow code updated to use r.from_conn/r.to_conn; remaining costs/slacks/group-unit-flows stay inline
   - run_flextool.py with scenario network_all_tech passes end-to-end
+
+2026-02-28: Task 4 — Extract calc_slacks.py, calc_costs.py, calc_group_flows.py
+  - Created flextool/process_outputs/calc_slacks.py (~45 lines)
+      * compute_slacks(par, s, v, r): reserves_dt/d, upward/downward_node_slack_dt/d,
+        costPenalty_node_state_upDown_dt/d, q_inertia/non_synchronous/capacity_margin/reserves and
+        corresponding costPenalty_* attributes
+  - Created flextool/process_outputs/calc_costs.py (~115 lines)
+      * compute_costs(par, s, v, r): commodity/CO2/operational/startup/investment costs and all
+        aggregate cost series (costOper_d, costPenalty_d, costInvest_d, etc.)
+      * Added _agg_period_or_empty() helper (spec simplification) to replace four identical
+        empty-check patterns for startup and penalty period aggregations
+      * Aggregate costs use r.costPenalty_* pre-computed by compute_slacks (called first)
+  - Created flextool/process_outputs/calc_group_flows.py (~120 lines)
+      * compute_group_flows(par, s, v, r): all group-level connection and unit flow aggregations,
+        node inflow by group, state losses by group, and node slack by group
+  - Replaced process_results.py body with a 7-line thin coordinator calling all six compute_*
+    functions in the correct order
+  - run_flextool.py with scenario network_all_tech passes end-to-end
