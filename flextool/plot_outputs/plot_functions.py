@@ -9,8 +9,7 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import MaxNLocator, FuncFormatter
 from decimal import Decimal, InvalidOperation
 import logging
-import time
-from contextlib import contextmanager
+from flextool.plot_outputs.perf import PERF_STATS, time_block, print_perf_summary
 
 logging.getLogger('matplotlib.category').disabled = True
 matplotlib.rcParams['axes.spines.top'] = False
@@ -231,39 +230,6 @@ def set_smart_xticks(ax, time_index, plot_width_inches: float) -> None:
                            if i not in positions]
         ax.set_xticks(minor_positions, minor=True)
         ax.grid(True, which='minor', alpha=0.15)
-
-# Performance tracking
-PERF_STATS = {}
-
-@contextmanager
-def time_block(name, verbose=False):
-    """Context manager to time a block of code and accumulate stats"""
-    start = time.perf_counter()
-    try:
-        yield
-    finally:
-        elapsed = time.perf_counter() - start
-        if name not in PERF_STATS:
-            PERF_STATS[name] = {'total': 0}
-        PERF_STATS[name]['total'] += elapsed
-        if verbose:
-            print(f"  [{name}] {elapsed:.4f}s")
-
-def print_perf_summary():
-    """Print summary of performance statistics"""
-    if not PERF_STATS:
-        return
-
-    print("\n" + "="*80)
-    print("PERFORMANCE SUMMARY")
-    print("="*80)
-    print(f"{'Operation':<50}{'Total':>10}")
-    print("-"*80)
-
-    for name, stats in sorted(PERF_STATS.items(), key=lambda x: x[1]['total'], reverse=True):
-        print(f"{name:<50} {stats['total']:>10.4f}s")
-
-    print("="*80 + "\n")
 
 
 def split_into_chunks(items, chunk_size):
