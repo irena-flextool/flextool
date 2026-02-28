@@ -8,7 +8,9 @@ import time
 import yaml
 import xlsxwriter
 from datetime import datetime, timezone
-from flextool.process_outputs.read_flextool_outputs import read_variables, read_parameters, read_sets
+from flextool.process_outputs.read_variables import read_variables
+from flextool.process_outputs.read_parameters import read_parameters
+from flextool.process_outputs.read_sets import read_sets
 from flextool.process_outputs.process_results import post_process_results
 from flextool.plot_outputs.plot_functions import plot_dict_of_dataframes
 import logging

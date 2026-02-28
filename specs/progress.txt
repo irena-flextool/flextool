@@ -1,0 +1,9 @@
+
+
+2026-02-28: Task 1 — Split read_flextool_outputs.py into read_variables.py, read_parameters.py, read_sets.py
+  - Created flextool/process_outputs/read_variables.py  (~110 lines, pure extraction)
+  - Created flextool/process_outputs/read_parameters.py (~145 lines, pure extraction)
+  - Created flextool/process_outputs/read_sets.py        (~130 lines, pure extraction)
+  - Replaced read_flextool_outputs.py with a 6-line backward-compat re-export shim
+  - Updated __init__.py and result_writer.py to import from the new modules
+  - run_flextool.py with scenario network_all_tech passes end-to-end
