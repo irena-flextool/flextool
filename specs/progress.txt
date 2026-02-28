@@ -7,3 +7,10 @@
   - Replaced read_flextool_outputs.py with a 6-line backward-compat re-export shim
   - Updated __init__.py and result_writer.py to import from the new modules
   - run_flextool.py with scenario network_all_tech passes end-to-end
+
+2026-02-28: Task 2 — Extract drop_levels.py from process_results.py (with simplification)
+  - Created flextool/process_outputs/drop_levels.py (~80 lines)
+  - Replaced ~98 repetitive droplevel lines with three list-driven loops (_V_DROP, _PAR_DROP, _PAR_DEDUP)
+  - Sets section kept individual (too many special cases for a generic loop)
+  - Removed drop_levels() from process_results.py; added import from drop_levels module
+  - run_flextool.py with scenario network_all_tech passes end-to-end

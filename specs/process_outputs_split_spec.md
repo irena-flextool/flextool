@@ -652,7 +652,7 @@ Total estimated reduction: **~265 lines** removed by simplification alone.
    (pure extraction, no logic change)
 **Status**: implemented
 2. Extract `drop_levels.py` from `process_results.py` (with simplification)
-**Status**: not done
+**Status**: implemented
 3. Extract `calc_capacity_flows.py`, `calc_connections.py`, `calc_storage_vre.py` (no shared state)
 **Status**: not done
 4. Extract `calc_slacks.py`, `calc_costs.py`, `calc_group_flows.py`

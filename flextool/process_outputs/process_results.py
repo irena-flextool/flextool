@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 import pandas as pd
 
+from flextool.process_outputs.drop_levels import drop_levels
+
 def post_process_results(par, s, v):
     """Calculate post-processing results from variables, parameters, and sets"""
     r = SimpleNamespace()  # Initialize empty namespace for results
@@ -687,103 +689,3 @@ def post_process_results(par, s, v):
         if r_storage_usage else pd.DataFrame(0.0, index=dt_fix_idx, columns=[]))
     
     return r
-
-def drop_levels(par, s, v):
-    v.flow = v.flow.droplevel('solve')
-    v.ramp = v.ramp.droplevel('solve')
-    v.reserve = v.reserve.droplevel('solve')
-    v.state = v.state.droplevel('solve')
-    v.online_linear = v.online_linear.droplevel('solve')
-    v.startup_linear = v.startup_linear.droplevel('solve')
-    v.shutdown_linear = v.shutdown_linear.droplevel('solve')
-    v.online_integer = v.online_integer.droplevel('solve')
-    v.startup_integer = v.startup_integer.droplevel('solve')
-    v.shutdown_integer = v.shutdown_integer.droplevel('solve')
-    v.q_state_up = v.q_state_up.droplevel('solve')
-    v.q_state_down = v.q_state_down.droplevel('solve')
-    v.q_reserve = v.q_reserve.droplevel('solve')
-    v.q_inertia = v.q_inertia.droplevel('solve')
-    v.q_non_synchronous = v.q_non_synchronous.droplevel('solve')
-    v.q_state_up_group = v.q_state_up_group.droplevel('solve')
-    v.q_capacity_margin = v.q_capacity_margin.droplevel('solve')
-    v.invest = v.invest.droplevel('solve')
-    v.divest = v.divest.droplevel('solve')
-    v.dual_invest_connection = v.dual_invest_connection.droplevel('solve')
-    v.dual_invest_node = v.dual_invest_node.droplevel('solve')
-    v.dual_invest_unit = v.dual_invest_unit.droplevel('solve')
-
-    par.step_duration = par.step_duration.droplevel('solve')
-    par.flow_min = par.flow_min.droplevel('solve')
-    par.flow_max = par.flow_max.droplevel('solve')
-    par.process_availability = par.process_availability.droplevel('solve')
-    par.process_source_sink_varCost = par.process_source_sink_varCost.droplevel('solve')
-    par.process_slope = par.process_slope.droplevel('solve')
-    par.process_section = par.process_section.droplevel('solve')
-    par.node_self_discharge_loss = par.node_self_discharge_loss.droplevel('solve')
-    par.node_penalty_up = par.node_penalty_up.droplevel('solve')
-    par.node_penalty_down = par.node_penalty_down.droplevel('solve')
-    par.node_inflow = par.node_inflow.droplevel('solve')
-    par.commodity_price = par.commodity_price.droplevel('solve')
-    par.group_co2_price = par.group_co2_price.droplevel('solve')
-    par.reserve_upDown_group_reservation = par.reserve_upDown_group_reservation.droplevel('solve')
-    par.profile = par.profile.droplevel('solve')
-    par.years_from_start_d = par.years_from_start_d.droplevel('solve')
-    par.years_from_start_d = par.years_from_start_d[~par.years_from_start_d.index.duplicated(keep='first')]
-    par.years_represented_d = par.years_represented_d.droplevel('solve')
-    par.years_represented_d = par.years_represented_d[~par.years_represented_d.index.duplicated(keep='first')]
-    par.entity_max_units = par.entity_max_units.droplevel('solve')
-    par.entity_max_units = par.entity_max_units[~par.entity_max_units.index.duplicated(keep='first')]
-    par.entity_all_existing = par.entity_all_existing.droplevel('solve')
-    par.entity_all_existing = par.entity_all_existing[~par.entity_all_existing.index.duplicated(keep='first')]
-    par.entity_pre_existing = par.entity_pre_existing.droplevel('solve')
-    par.entity_pre_existing = par.entity_pre_existing[~par.entity_pre_existing.index.duplicated(keep='first')]
-    par.process_startup_cost = par.process_startup_cost.droplevel('solve')
-    par.process_startup_cost = par.process_startup_cost[~par.process_startup_cost.index.duplicated(keep='first')]
-    par.entity_fixed_cost = par.entity_fixed_cost.droplevel('solve')
-    par.entity_fixed_cost = par.entity_fixed_cost[~par.entity_fixed_cost.index.duplicated(keep='first')]
-    par.entity_lifetime_fixed_cost = par.entity_lifetime_fixed_cost.droplevel('solve')
-    par.entity_lifetime_fixed_cost = par.entity_lifetime_fixed_cost[~par.entity_lifetime_fixed_cost.index.duplicated(keep='first')]
-    par.entity_lifetime_fixed_cost_divest = par.entity_lifetime_fixed_cost_divest.droplevel('solve')
-    par.entity_lifetime_fixed_cost_divest = par.entity_lifetime_fixed_cost_divest[~par.entity_lifetime_fixed_cost_divest.index.duplicated(keep='first')]
-    par.node_annual_flow = par.node_annual_flow.droplevel('solve')
-    par.node_annual_flow = par.node_annual_flow[~par.node_annual_flow.index.duplicated(keep='first')]
-    par.group_penalty_inertia = par.group_penalty_inertia.droplevel('solve')
-    par.group_penalty_inertia = par.group_penalty_inertia[~par.group_penalty_inertia.index.duplicated(keep='first')]
-    par.group_penalty_non_synchronous = par.group_penalty_non_synchronous.droplevel('solve')
-    par.group_penalty_non_synchronous = par.group_penalty_non_synchronous[~par.group_penalty_non_synchronous.index.duplicated(keep='first')]
-    par.group_penalty_capacity_margin = par.group_penalty_capacity_margin.droplevel('solve')
-    par.group_inertia_limit = par.group_inertia_limit.droplevel('solve')
-    par.group_inertia_limit = par.group_inertia_limit[~par.group_inertia_limit.index.duplicated(keep='first')]
-    par.group_capacity_margin = par.group_capacity_margin.droplevel('solve')
-    par.entity_annual_discounted = par.entity_annual_discounted.droplevel('solve')
-    par.entity_annual_divest_discounted = par.entity_annual_divest_discounted.droplevel('solve')
-    par.discount_factor_operations_yearly = par.discount_factor_operations_yearly.droplevel('solve')
-    par.discount_factor_operations_yearly = par.discount_factor_operations_yearly[~par.discount_factor_operations_yearly.index.duplicated(keep='first')]
-    par.discount_factor_investment_yearly = par.discount_factor_investment_yearly.droplevel('solve')
-    par.node_capacity_for_scaling = par.node_capacity_for_scaling.droplevel('solve')
-    par.node_capacity_for_scaling = par.node_capacity_for_scaling[~par.node_capacity_for_scaling.index.duplicated(keep='first')]
-    par.group_capacity_for_scaling = par.group_capacity_for_scaling.droplevel('solve')
-    par.group_capacity_for_scaling = par.group_capacity_for_scaling[~par.group_capacity_for_scaling.index.duplicated(keep='first')]
-    par.complete_period_share_of_year = par.complete_period_share_of_year.droplevel('solve')
-    par.complete_period_share_of_year = par.complete_period_share_of_year[~par.complete_period_share_of_year.index.duplicated(keep='first')]
-
-    s.solve_period = s.period
-    s.period = s.period.droplevel('solve')
-    s.period__time_first = s.period__time_first.droplevel('solve')
-    s.period_first_of_solve = s.period_first_of_solve.droplevel('solve')
-    s.period_in_use = s.period_in_use.droplevel('solve').unique()
-    s.d_realize_dispatch_or_invest = s.d_realize_dispatch_or_invest.droplevel('solve').unique()
-    s.d_realize_invest = s.d_realize_invest.droplevel('solve')
-    s.d_realized_period = s.d_realized_period.droplevel('solve').unique()
-    s.dt = s.dt.droplevel('solve')
-    s.dt_fix_storage_timesteps = s.dt_fix_storage_timesteps.droplevel('solve')
-    s.dt_realize_dispatch = s.dt_realize_dispatch.droplevel('solve')
-    s.dtt = s.dtt.droplevel('solve')
-    s.dtttdt = s.dtttdt.droplevel('solve')
-    s.ed_invest = s.ed_invest.droplevel('solve').join(s.d_realize_invest, how='inner')
-    s.edd_invest = s.edd_invest.droplevel('solve')
-    s.edd_invest.names = ['entity', 'period_invest', 'period']
-    s.edd_invest = s.edd_invest.join(s.d_realize_invest, how='inner')
-    s.ed_divest = s.ed_divest.droplevel('solve').join(s.d_realize_invest, how='inner')
-
-    return par, s, v
