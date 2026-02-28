@@ -4,7 +4,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from flextool.cli.read_tabular_input import main
+from flextool.cli.cmd_read_tabular_input import main
 
 if __name__ == '__main__':
     main()

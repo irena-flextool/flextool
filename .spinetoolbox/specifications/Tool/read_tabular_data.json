@@ -2,14 +2,14 @@
     "name": "Read tabular data",
     "tooltype": "python",
     "includes": [
-        "read_tabular_input.py",
-        "flextool/import_excel_input.json",
-        "flextool/read_tabular_with_specification.py"
+        "cmd_read_tabular_input.py",
+        "../import_excel_input.json",
+        "../read_tabular_with_specification.py"
     ],
     "description": "",
     "inputfiles": [],
     "inputfiles_opt": [],
     "outputfiles": [],
     "cmdline_args": [],
-    "includes_main_path": "../../.."
+    "includes_main_path": "../../../flextool/cli"
 }

@@ -2,7 +2,7 @@
     "name": "FlexTool3",
     "tooltype": "python",
     "includes": [
-        "run_flextool.py",
+        "flextool/cli/cmd_run_flextool.py",
         "bin/glpk_4_61.dll",
         "bin/glpsol.exe",
         "bin/highs.exe",

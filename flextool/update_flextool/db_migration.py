@@ -2,16 +2,16 @@ import json
 import os
 import argparse
 from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError, to_database
-
+import logging
 
 def migrate_database(database_path):
 
-    if database_path.startswith('sqlite://'):
+    if database_path.startswith('sqlite://') or database_path.startswith('http://'):
         mapping_name = database_path
     elif os.path.exists(database_path) and database_path.endswith(".sqlite"):
         mapping_name = 'sqlite:///' + database_path
     else:
-        print("No sqlite file at " + database_path)
+        logging.critical("No sqlite file at " + database_path)
         exit(-1)
 
     with DatabaseMapping(mapping_name, create = False, upgrade = True) as db:

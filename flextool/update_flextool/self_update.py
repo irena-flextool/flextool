@@ -8,7 +8,7 @@ try:
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
 from spinedb_api.exception import NothingToCommit
-from flextool.update_flextool.migrate_database import migrate_database
+from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.initialize_database import initialize_database
 
 
@@ -29,22 +29,34 @@ def update_flextool(skip_git):
     migrate_project("./.spinetoolbox/project_temp.json","./.spinetoolbox/project.json")
     os.remove("./.spinetoolbox/project_temp.json")
 
+    # Create input databases if they do not exist.
     if not os.path.exists("input_data.sqlite"):
         initialize_database("./version/flextool_template_master.json", "input_data.sqlite")
-        migrate_database("input_data.sqlite")
     if not os.path.exists("templates/input_data_template.sqlite"):
         initialize_database("./version/flextool_template_master.json", "templates/input_data_template.sqlite")
-        migrate_database("templates/input_data_template.sqlite")
+
+    # Copy excel example from templates. It has no migration --> do it manually
+    if not os.path.exists("example_input.xlsx"):
+        shutil.copy("./templates/example_input_template.xlsx", "./example_input.xlsx")
+
+    # Create user copies of the auxiliary databases
     if not os.path.exists("output_settings.sqlite"):
         initialize_database("./version/output_settings_template.json", "output_settings.sqlite")
     if not os.path.exists("output_info.sqlite"):
         initialize_database("./version/output_info_template.json", "output_info.sqlite")
     if not os.path.exists("comparison_settings.sqlite"):
         initialize_database("./version/comparison_settings_template.json", "comparison_settings.sqlite")
-    if not os.path.exists("example_input.xlsx"):
-        shutil.copy("./templates/example_input_template.xlsx", "./example_input.xlsx")
-    if not os.path.exists("output_info.sqlite"):
-        shutil.copy("./templates/output_info_template.sqlite", "./output_info.sqlite")
+
+    # Keep templates up-to-date
+    if os.path.exists("templates/output_settings.sqlite"):
+        os.remove("templates/output_settings.sqlite")
+    initialize_database("./version/output_settings_template.json", "templates/output_settings.sqlite")
+    if os.path.exists("templates/output_info.sqlite"):
+        os.remove("templates/output_info.sqlite")
+    initialize_database("./version/output_info_template.json", "templates/output_info.sqlite")
+    if os.path.exists("templates/comparison_settings.sqlite"):
+        os.remove("templates/comparison_settings.sqlite")
+    initialize_database("./version/comparison_settings_template.json", "templates/comparison_settings.sqlite")
 
     db_to_update = []
     db_to_update.append("templates/examples.sqlite")

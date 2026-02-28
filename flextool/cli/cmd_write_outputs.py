@@ -1,7 +1,8 @@
-from flextool.process_outputs.write_outputs import write_outputs
+from flextool.process_outputs.result_writer import write_outputs
 from spinedb_api import DatabaseMapping
 from spinedb_api.filters.tools import name_from_dict
-
+import logging
+import sys
 
 def main():
 
@@ -37,11 +38,11 @@ def main():
         args = parser.parse_args()
         input_db_url = args.input_db_url
         output_locations_db_url = args.output_locations_db_url
-        scenario_names = [args.scenario_name]
-        if args.subdir:
-            subdir = args.subdir
+        if args.scenario_name:
+            scenario_names = [args.scenario_name]
         else:
-            subdir = scenario_names[0]
+            scenario_names = []
+
         read_parquet_dir=args.read_parquet_dir
         output_location = args.output_location
 
@@ -55,6 +56,15 @@ def main():
                 alternative_names = filter_configs[0]['alternatives']
                 scenario_names = alternative_names
             read_parquet_dir = True
+
+        if not scenario_names:
+            logging.critical("No scenario provided through any of the arguments: scenario-name or output-locations-db-url (or input-db-url by run_flextool.py)")
+            sys.exit(1)
+
+        if args.subdir:
+            subdir = args.subdir
+        else:
+            subdir = scenario_names[0]
 
         for i, scenario_name in enumerate(scenario_names):
             if not input_db_url and output_locations_db_url:

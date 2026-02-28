@@ -1,7 +1,7 @@
 import json
 import argparse
 from spinedb_api import import_data, DatabaseMapping
-from flextool.update_flextool.migrate_database import migrate_database
+from flextool.update_flextool.db_migration import migrate_database
 
 
 def initialize_database(json_template, database_name="new_database.sqlite"):

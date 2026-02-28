@@ -424,8 +424,8 @@
         "FlexTool": {
             "type": "Tool",
             "description": "",
-            "x": -10.024167796000725,
-            "y": -56.74271072067394,
+            "x": 5.220089446316834,
+            "y": -51.66129163990142,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": [
@@ -460,10 +460,10 @@
         "Migrate database version": {
             "type": "Tool",
             "description": "",
-            "x": -184.3533040212762,
-            "y": 79.97483498274885,
+            "x": -184.35330402127616,
+            "y": 78.95609996367143,
             "specification": "migrate_database",
-            "execute_in_work": true,
+            "execute_in_work": false,
             "cmd_line_args": [
                 {
                     "type": "resource",
@@ -476,8 +476,8 @@
         "Read input spreadsheet": {
             "type": "Tool",
             "description": "",
-            "x": -324.6411471488949,
-            "y": -86.3573229350817,
+            "x": -323.6245796511347,
+            "y": -85.3407554373215,
             "specification": "Read tabular data",
             "execute_in_work": false,
             "cmd_line_args": [
@@ -501,7 +501,7 @@
             "type": "Tool",
             "description": "",
             "x": 149.5520209256511,
-            "y": -82.27938104038684,
+            "y": -83.29811605946422,
             "specification": "Process outputs",
             "execute_in_work": false,
             "cmd_line_args": [
@@ -624,7 +624,7 @@
             "type": "Data Store",
             "description": "",
             "x": -149.79217856650007,
-            "y": -49.761821645780685,
+            "y": -50.77838914354089,
             "url": {
                 "dialect": "sqlite",
                 "host": "",

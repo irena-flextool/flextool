@@ -2,7 +2,7 @@
     "name": "scenario comparison",
     "tooltype": "python",
     "includes": [
-        "scenario_results.py",
+        "flextool/cli/cmd_scenario_results.py",
         "flextool/plot_functions.py",
         "templates/default_comparison_plots.yaml"
     ],

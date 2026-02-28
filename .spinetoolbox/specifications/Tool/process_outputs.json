@@ -2,11 +2,11 @@
     "name": "Process outputs",
     "tooltype": "python",
     "includes": [
-        "write_outputs.py",
-        "flextool/process_results.py",
-        "flextool/read_flextool_outputs.py",
-        "flextool/plot_functions.py",
-        "templates/default_plots.yaml"
+        "flextool/cli/cmd_write_outputs.py",
+        "../process_results.py",
+        "../read_flextool_outputs.py",
+        "../plot_functions.py",
+        "../../templates/default_plots.yaml"
     ],
     "description": "",
     "inputfiles": [],

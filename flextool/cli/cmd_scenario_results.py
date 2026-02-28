@@ -2,7 +2,7 @@ import matplotlib
 from spinedb_api import DatabaseMapping, from_database, Array
 from spinedb_api.filters.alternative_filter import alternative_filter_config
 from spinedb_api.filters.tools import append_filter_config
-from flextool.create_scenarios.scenario_results import (
+from flextool.create_scenarios.scenario_comparison import (
     get_scenario_results,
     combine_dispatch_mappings,
     create_or_update_dispatch_config,

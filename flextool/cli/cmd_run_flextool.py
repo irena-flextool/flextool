@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 import time
 import os
-from flextool.process_outputs.write_outputs import write_outputs
+from flextool.process_outputs.result_writer import write_outputs
 from flextool.flextoolrunner.flextoolrunner import FlexToolRunner
 from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import DatabaseMapping, to_database, DateTime

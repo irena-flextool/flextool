@@ -1,5 +1,5 @@
 import argparse
-from flextool.update_flextool.update_flextool import update_flextool
+from flextool.update_flextool.self_update import update_flextool
 
 
 def main():
