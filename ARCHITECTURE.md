@@ -49,8 +49,7 @@ flextool/
 │   └── result_writer.py               Backward-compat shim (re-exports write_outputs)
 ├── plot_outputs/
 │   ├── plot_functions.py              Core matplotlib plotting functions
-│   ├── plot_results.py                Result-specific plot generation
-│   └── open_summary.py                Open/display summary files
+│   └── plot_results.py                Result-specific plot generation
 ├── update_flextool/
 │   ├── update_flextool.py             Git pull + project migration
 │   ├── migrate_database.py            Schema migration to latest version
