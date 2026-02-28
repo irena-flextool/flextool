@@ -50,3 +50,21 @@
   - No code changes needed: task 4 already replaced process_results.py body with the thin
     coordinator (25 lines) matching the spec exactly
   - Updated spec status from 'not done' to 'implemented'
+
+2026-02-28: Task 6 — Extract output functions into out_capacity.py, out_flows.py, out_node.py, out_costs.py, out_ancillary.py
+  - Created flextool/process_outputs/out_capacity.py (~120 lines)
+      * unit_capacity(), connection_capacity(), node_capacity()
+      * Bug fixes applied: connection_capacity() 'divested' column (was 'invested'); node_capacity() uses v.divest (was v.invest)
+  - Created flextool/process_outputs/out_flows.py (~178 lines)
+      * unit_outputNode(), unit_inputNode(), unit_cf_outputNode(), unit_cf_inputNode(),
+        unit_VRE_curtailment_and_potential(), unit_ramps(), unit_online_and_startup()
+  - Created flextool/process_outputs/out_node.py (~116 lines)
+      * node_summary(), node_additional_results()
+  - Created flextool/process_outputs/out_costs.py (~111 lines)
+      * generic(), cost_summaries(), CO2()
+  - Created flextool/process_outputs/out_ancillary.py (~243 lines)
+      * connection(), connection_wards(), connection_cf(), reserves(), investment_duals(),
+        inertia_results(), slack_variables(), input_sets()
+  - Updated result_writer.py to import all extracted functions from new modules
+  - result_writer.py reduced from ~1790 to ~1052 lines (Task 7 group functions remain)
+  - run_flextool.py with scenario network_all_tech passes end-to-end

@@ -661,7 +661,7 @@ Total estimated reduction: **~265 lines** removed by simplification alone.
 **Status**: implemented
 6. Extract output functions: `out_capacity.py`, `out_flows.py`, `out_node.py`, `out_costs.py`,
    `out_ancillary.py` (with bug fixes)
-**Status**: not done
+**Status**: implemented
 7. Extract `out_group.py` (most complex, with shared VRE helper)
 **Status**: not done
 8. Extract `write_outputs.py` from `result_writer.py`, update `ALL_OUTPUTS` imports
