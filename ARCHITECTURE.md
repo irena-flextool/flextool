@@ -49,7 +49,10 @@ flextool/
 │   └── result_writer.py               Backward-compat shim (re-exports write_outputs)
 ├── plot_outputs/
 │   ├── plot_functions.py              Core matplotlib plotting functions
-│   └── plot_results.py                Result-specific plot generation
+│   ├── perf.py                        Timing utilities (PERF_STATS, time_block, print_perf_summary)
+│   ├── format_helpers.py              Value formatters, filename generation, chunking utilities
+│   ├── config.py                      PlotConfig dataclass, DIMENSION_RULES, PLOT_FIELD_NAMES
+│   └── legend_helpers.py              Legend sizing, label formatting, show/hide logic
 ├── update_flextool/
 │   ├── update_flextool.py             Git pull + project migration
 │   ├── migrate_database.py            Schema migration to latest version

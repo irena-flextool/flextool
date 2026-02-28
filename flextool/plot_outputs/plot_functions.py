@@ -14,6 +14,9 @@ from flextool.plot_outputs.format_helpers import (
     generate_split_filename, split_into_chunks, _chunk_average_df,
 )
 from flextool.plot_outputs.config import PLOT_FIELD_NAMES, _is_single_config
+from flextool.plot_outputs.legend_helpers import (
+    estimate_legend_width, _format_legend_labels, _should_show_legend,
+)
 
 logging.getLogger('matplotlib.category').disabled = True
 matplotlib.rcParams['axes.spines.top'] = False
@@ -649,36 +652,6 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
     # print_perf_summary()
 
 
-def estimate_legend_width(labels, title='', base_width=1.5):
-    """
-    Estimate the width in inches needed for a legend based on label content.
-
-    Args:
-        labels: List of label strings
-        title: Legend title string
-        base_width: Minimum width in inches (default: 1.5)
-
-    Returns:
-        Estimated width in inches
-    """
-    if not labels:
-        return base_width
-
-    # Calculate max label length
-    max_label_len = max(len(str(label)) for label in labels)
-    title_len = len(str(title)) if title else 0
-
-    # Estimate width: ~0.09 inches per character + base padding
-    # This accounts for typical matplotlib font sizes (8-10pt)
-    char_width = 0.09
-    label_width = max_label_len * char_width
-    title_width = title_len * char_width
-
-    # Use the larger of label or title width, plus padding
-    estimated_width = max(label_width, title_width, base_width) + 0.8
-
-    return estimated_width
-
 
 def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     rows=(0,167), subplots_per_row=3, legend_position='right',
@@ -736,7 +709,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
                 lines_temp = df_sub_temp.columns.unique().tolist()
 
             # Format labels
-            legend_labels = [str(line) for line in lines_temp]
+            legend_labels = _format_legend_labels(lines_temp)
 
             # Estimate width
             width = estimate_legend_width(legend_labels)
@@ -829,19 +802,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
         if sub is not None:
             ax.set_title(str(sub), pad=2)
 
-        # Determine if legend should be shown
-        show_legend = False
-        if legend_position == 'all':
-            show_legend = True
-        elif legend_position == 'right':
-            if not sub_levels:
-                show_legend = True
-            else:
-                col = idx % n_cols
-                if col == n_cols - 1 or idx == n_subs - 1:
-                    show_legend = True
-
-        if show_legend:
+        if _should_show_legend(legend_position, sub_levels, idx, n_cols, n_subs):
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, borderaxespad=0.1)
 
         ax.grid(True, alpha=0.3)
@@ -933,7 +894,7 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
                 stacks_temp = df_sub_temp.columns.unique().tolist()
 
             # Format labels
-            legend_labels = [str(stack) for stack in stacks_temp]
+            legend_labels = _format_legend_labels(stacks_temp)
 
             # Estimate width
             width = estimate_legend_width(legend_labels)
@@ -1050,19 +1011,7 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
         if sub is not None:
             ax.set_title(str(sub), pad=2)
 
-        # Determine if legend should be shown
-        show_legend = False
-        if legend_position == 'all':
-            show_legend = True
-        elif legend_position == 'right':
-            if not sub_levels:
-                show_legend = True
-            else:
-                col = idx % n_cols
-                if col == n_cols - 1 or idx == n_subs - 1:
-                    show_legend = True
-
-        if show_legend:
+        if _should_show_legend(legend_position, sub_levels, idx, n_cols, n_subs):
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, borderaxespad=0.1)
 
         ax.grid(True, alpha=0.3)
@@ -1309,13 +1258,7 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
                     legend_title = str(df_sub_temp.columns.name) if df_sub_temp.columns.name else 'stack'
 
             # Format labels as they will appear in legend
-            legend_labels = []
-            for item in items_temp:
-                if isinstance(item, (tuple, list)):
-                    label = ' | '.join(str(v) for v in item)
-                else:
-                    label = str(item)
-                legend_labels.append(label)
+            legend_labels = _format_legend_labels(items_temp)
 
             # Estimate width for this subplot's legend
             width = estimate_legend_width(legend_labels, legend_title)
@@ -1893,19 +1836,7 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
                 else:
                     legend_title = str(df_sub.columns.name) if df_sub.columns.name else 'stack'
 
-            # Determine if legend should be shown
-            show_legend = False
-            if legend_position == 'all':
-                show_legend = True
-            elif legend_position == 'right':
-                if not sub_levels:
-                    show_legend = True
-                else:
-                    col = idx % n_cols
-                    if col == n_cols - 1 or idx == n_subs - 1:
-                        show_legend = True
-
-            if show_legend:
+            if _should_show_legend(legend_position, sub_levels, idx, n_cols, n_subs):
                 ax.legend(handles[::-1], labels_leg[::-1], title=legend_title,
                         bbox_to_anchor=(1.01, 1), loc='upper left', borderaxespad=0.1)
 
