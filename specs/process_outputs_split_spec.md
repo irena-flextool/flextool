@@ -663,7 +663,7 @@ Total estimated reduction: **~265 lines** removed by simplification alone.
    `out_ancillary.py` (with bug fixes)
 **Status**: implemented
 7. Extract `out_group.py` (most complex, with shared VRE helper)
-**Status**: not done
+**Status**: implemented
 8. Extract `write_outputs.py` from `result_writer.py`, update `ALL_OUTPUTS` imports
 **Status**: not done
 9. Fix `to_spine_db.py` bug, apply simplifications

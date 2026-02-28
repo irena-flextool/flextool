@@ -68,3 +68,13 @@
   - Updated result_writer.py to import all extracted functions from new modules
   - result_writer.py reduced from ~1790 to ~1052 lines (Task 7 group functions remain)
   - run_flextool.py with scenario network_all_tech passes end-to-end
+
+2026-02-28: Task 7 — Extract out_group.py from result_writer.py
+  - Created flextool/process_outputs/out_group.py (~408 lines)
+      * nodeGroup_indicators(), nodeGroup_VRE_share(), nodeGroup_total_inflow(), nodeGroup_flows()
+      * Added _get_group_nodes_with_inflow(s, g) shared helper (spec simplification) — deduplicates
+        the 'no_inflow' filtering pattern that appeared identically in nodeGroup_indicators and
+        nodeGroup_VRE_share
+  - Updated result_writer.py to import all four functions from out_group module
+  - result_writer.py reduced from ~1052 to ~643 lines (group functions moved out)
+  - run_flextool.py with scenario network_all_tech passes end-to-end
