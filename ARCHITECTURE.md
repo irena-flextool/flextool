@@ -52,7 +52,8 @@ flextool/
 │   ├── perf.py                        Timing utilities (PERF_STATS, time_block, print_perf_summary)
 │   ├── format_helpers.py              Value formatters, filename generation, chunking utilities
 │   ├── config.py                      PlotConfig dataclass, DIMENSION_RULES, PLOT_FIELD_NAMES
-│   └── legend_helpers.py              Legend sizing, label formatting, show/hide logic
+│   ├── legend_helpers.py              Legend sizing, label formatting, show/hide logic
+│   └── axis_helpers.py                Axis formatting, smart xticks, scale/label helpers
 ├── update_flextool/
 │   ├── update_flextool.py             Git pull + project migration
 │   ├── migrate_database.py            Schema migration to latest version
