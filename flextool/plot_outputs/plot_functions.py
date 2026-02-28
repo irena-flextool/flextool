@@ -13,23 +13,11 @@ from flextool.plot_outputs.format_helpers import (
     _sig_figs_fmt, _get_value_formatter,
     generate_split_filename, split_into_chunks, _chunk_average_df,
 )
+from flextool.plot_outputs.config import PLOT_FIELD_NAMES, _is_single_config
 
 logging.getLogger('matplotlib.category').disabled = True
 matplotlib.rcParams['axes.spines.top'] = False
 matplotlib.rcParams['axes.spines.right'] = False
-
-# Field names for plot settings
-PLOT_FIELD_NAMES = {
-    'plot_name', 'map_dimensions_for_plots', 'subplots_per_row', 'legend',
-    'bar_orientation', 'base_length', 'max_subplots_per_file', 'max_items_per_file',
-    'time_average_duration', 'xlabel', 'ylabel', 'value_label', 'axis_scale_min_max',
-    'axis_tick_format', 'always_include_zero'
-}
-
-
-def _is_single_config(d: dict) -> bool:
-    """Check if a dict is a single config (has field names) vs multi-config (has config names)."""
-    return any(k in PLOT_FIELD_NAMES for k in d)
 
 
 def _is_datetime_format(s: str) -> bool:
