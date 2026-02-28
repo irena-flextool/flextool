@@ -97,3 +97,10 @@
     with a small build_value closure; each function reduced to ~10 lines
   - Total reduction: ~110 lines removed from the three functions (replaced by the helper)
   - run_flextool.py with scenario network_all_tech passes end-to-end
+2026-02-28: Task 10 — Update __init__.py and ARCHITECTURE.md
+  - Fixed __init__.py: changed import from result_writer to write_outputs
+      (was: from flextool.process_outputs.result_writer import write_outputs)
+      (now: from flextool.process_outputs.write_outputs import write_outputs)
+  - Updated ARCHITECTURE.md process_outputs/ section from 4-line stub to full 20-file listing
+      with all new modules grouped by layer (I/O, post-processing calculations, output functions)
+  - run_flextool.py with scenario network_all_tech passes end-to-end

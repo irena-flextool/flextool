@@ -669,4 +669,4 @@ Total estimated reduction: **~265 lines** removed by simplification alone.
 9. Fix `to_spine_db.py` bug, apply simplifications
 **Status**: implemented
 10. Update `__init__.py` and `ARCHITECTURE.md`
-**Status**: not done
+**Status**: implemented

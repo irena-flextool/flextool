@@ -22,10 +22,31 @@ flextool/
 ├── process_inputs/
 │   └── read_tabular_with_specification.py  Reads Excel/CSV to Spine DB format
 ├── process_outputs/
-│   ├── read_flextool_outputs.py       Reads solver CSV output files
-│   ├── process_results.py             Post-processes raw solver output DataFrames
-│   ├── write_outputs.py               Orchestrates writing outputs (parquet/Excel/plots)
-│   └── to_spine_db.py                 Writes results back to Spine DB
+│   ├── __init__.py                    Re-exports public API
+│   │   ── I/O layer ──
+│   ├── read_variables.py              Reads solver variable CSV files → SimpleNamespace v
+│   ├── read_parameters.py             Reads solver parameter CSV files → SimpleNamespace par
+│   ├── read_sets.py                   Reads solver set CSV files → SimpleNamespace s
+│   ├── read_flextool_outputs.py       Backward-compat shim (re-exports read_* functions)
+│   ├── to_spine_db.py                 Writes result DataFrames back to Spine DB
+│   │   ── Post-processing calculations ──
+│   ├── drop_levels.py                 Strips 'solve' level from all time-indexed objects
+│   ├── calc_capacity_flows.py         Computes capacity, online status, flow_dt, ramps
+│   ├── calc_connections.py            Computes connection flows and losses
+│   ├── calc_storage_vre.py            Computes storage state changes and VRE potential
+│   ├── calc_slacks.py                 Computes reserve, slack, and inertia quantities
+│   ├── calc_costs.py                  Computes all cost aggregates
+│   ├── calc_group_flows.py            Computes group-level flow aggregations
+│   ├── process_results.py             Thin coordinator: calls all calc_* in order
+│   │   ── Output functions ──
+│   ├── out_capacity.py                unit/connection/node capacity tables
+│   ├── out_flows.py                   unit flow, capacity-factor, VRE, ramp outputs
+│   ├── out_group.py                   nodeGroup flow, inflow, VRE-share, indicator outputs
+│   ├── out_node.py                    node summary and additional-results outputs
+│   ├── out_costs.py                   cost summary, CO2, and generic outputs
+│   ├── out_ancillary.py               connection, reserve, inertia, slack, dual outputs
+│   ├── write_outputs.py               ALL_OUTPUTS list + orchestrator + __main__
+│   └── result_writer.py               Backward-compat shim (re-exports write_outputs)
 ├── plot_outputs/
 │   ├── plot_functions.py              Core matplotlib plotting functions
 │   ├── plot_results.py                Result-specific plot generation
