@@ -667,6 +667,6 @@ Total estimated reduction: **~265 lines** removed by simplification alone.
 8. Extract `write_outputs.py` from `result_writer.py`, update `ALL_OUTPUTS` imports
 **Status**: implemented
 9. Fix `to_spine_db.py` bug, apply simplifications
-**Status**: not done
+**Status**: implemented
 10. Update `__init__.py` and `ARCHITECTURE.md`
 **Status**: not done

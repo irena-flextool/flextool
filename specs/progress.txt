@@ -88,3 +88,12 @@
   - Updated result_writer.py to import all four functions from out_group module
   - result_writer.py reduced from ~1052 to ~643 lines (group functions moved out)
   - run_flextool.py with scenario network_all_tech passes end-to-end
+
+2026-02-28: Task 9 — Fix to_spine_db.py bug, apply simplifications
+  - Fixed bug in _add_arrays: map(array, col) → map(str, col) for MultiIndex column entity names
+  - Extracted _add_column_based_params() shared helper (~50 lines) handling name parsing,
+    class-name conversion, parameter definition, entity-name extraction, and per-entity write loop
+  - Refactored _add_time_series, _add_strs, _add_arrays to each call _add_column_based_params
+    with a small build_value closure; each function reduced to ~10 lines
+  - Total reduction: ~110 lines removed from the three functions (replaced by the helper)
+  - run_flextool.py with scenario network_all_tech passes end-to-end
