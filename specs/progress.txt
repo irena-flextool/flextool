@@ -14,3 +14,16 @@
   - Sets section kept individual (too many special cases for a generic loop)
   - Removed drop_levels() from process_results.py; added import from drop_levels module
   - run_flextool.py with scenario network_all_tech passes end-to-end
+
+2026-02-28: Task 3 — Extract calc_capacity_flows.py, calc_connections.py, calc_storage_vre.py
+  - Created flextool/process_outputs/calc_capacity_flows.py (~85 lines)
+      * compute_capacity_and_flows(par, s, v, r): entity_all_capacity, process_online_dt, flow_dt, ramp_dtt, flow_d, process_source/sink_flow_d
+      * Dropped dead code: first r.flow_d assignment (overwritten later) and r_node_ramp_dt local var (never stored to r)
+  - Created flextool/process_outputs/calc_connections.py (~65 lines)
+      * compute_connection_flows(par, s, v, r): connection_dt/d, connection_losses_dt/d (NEW), connection_to_left/right_node__dt/d
+      * Exposes r.from_conn and r.to_conn for upcoming calc_group_flows extraction (task 4)
+      * connection_losses_d was missing in original code; added here (spec correctness fix)
+  - Created flextool/process_outputs/calc_storage_vre.py (~90 lines)
+      * compute_storage_and_vre(par, s, v, r): node_state_change_dt/d, self_discharge_loss_dt/d, node_inflow_d, potentialVREgen_dt/d, storage_usage_dt
+  - Updated process_results.py: calls three new functions; group-connection-flow code updated to use r.from_conn/r.to_conn; remaining costs/slacks/group-unit-flows stay inline
+  - run_flextool.py with scenario network_all_tech passes end-to-end

@@ -654,7 +654,7 @@ Total estimated reduction: **~265 lines** removed by simplification alone.
 2. Extract `drop_levels.py` from `process_results.py` (with simplification)
 **Status**: implemented
 3. Extract `calc_capacity_flows.py`, `calc_connections.py`, `calc_storage_vre.py` (no shared state)
-**Status**: not done
+**Status**: implemented
 4. Extract `calc_slacks.py`, `calc_costs.py`, `calc_group_flows.py`
 **Status**: not done
 5. Slim down `process_results.py` to coordinator
