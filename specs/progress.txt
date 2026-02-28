@@ -69,6 +69,16 @@
   - result_writer.py reduced from ~1790 to ~1052 lines (Task 7 group functions remain)
   - run_flextool.py with scenario network_all_tech passes end-to-end
 
+2026-02-28: Task 8 — Extract write_outputs.py from result_writer.py, update ALL_OUTPUTS imports
+  - Created flextool/process_outputs/write_outputs.py (~643 lines)
+      * Moved: _read_outputs(), log_time(), print_namespace_structure(), write_summary_csv()
+      * Moved: ALL_OUTPUTS list (all imports from out_*.py modules)
+      * Moved: write_outputs() orchestrator and __main__ argument-parsing block
+      * Added: _resolve_settings() private helper (spec simplification) — extracted settings
+        resolution block from write_outputs() to reduce visual complexity
+  - Replaced result_writer.py with a 10-line backward-compat re-export shim
+  - run_flextool.py with scenario network_all_tech passes end-to-end
+
 2026-02-28: Task 7 — Extract out_group.py from result_writer.py
   - Created flextool/process_outputs/out_group.py (~408 lines)
       * nodeGroup_indicators(), nodeGroup_VRE_share(), nodeGroup_total_inflow(), nodeGroup_flows()
