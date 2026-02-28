@@ -45,3 +45,8 @@
   - Replaced process_results.py body with a 7-line thin coordinator calling all six compute_*
     functions in the correct order
   - run_flextool.py with scenario network_all_tech passes end-to-end
+
+2026-02-28: Task 5 — Slim down process_results.py to coordinator
+  - No code changes needed: task 4 already replaced process_results.py body with the thin
+    coordinator (25 lines) matching the spec exactly
+  - Updated spec status from 'not done' to 'implemented'

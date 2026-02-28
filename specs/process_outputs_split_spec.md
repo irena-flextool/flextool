@@ -658,7 +658,7 @@ Total estimated reduction: **~265 lines** removed by simplification alone.
 4. Extract `calc_slacks.py`, `calc_costs.py`, `calc_group_flows.py`
 **Status**: implemented
 5. Slim down `process_results.py` to coordinator
-**Status**: not done
+**Status**: implemented
 6. Extract output functions: `out_capacity.py`, `out_flows.py`, `out_node.py`, `out_costs.py`,
    `out_ancillary.py` (with bug fixes)
 **Status**: not done
