@@ -1,6 +1,5 @@
 import time
 import csv
-import math
 import subprocess
 import logging
 import copy
@@ -16,14 +15,15 @@ from pathlib import Path
 from collections import OrderedDict, namedtuple
 from collections import defaultdict
 
-from flextool.flextoolrunner.db_reader import (
-    check_version,
-    entities_to_dict,
-    get_single_entities,
-    params_to_dict,
-)
+from flextool.flextoolrunner.db_reader import check_version
 from flextool.flextoolrunner import input_writer
 from flextool.flextoolrunner.solve_config import SolveConfig
+from flextool.flextoolrunner.timeline_config import (
+    TimelineConfig,
+    get_active_time,
+    make_step_jump,
+    separate_period_and_timeseries_data,
+)
 
 #return_codes
 #0 : Success
@@ -81,17 +81,18 @@ class FlexToolRunner:
             
             db.fetch_all("parameter_value")
             check_version(db=db, logger=self.logger)
-            # Timeline-level fields (will move to TimelineConfig in T05)
-            self.timelines = params_to_dict(db=db, cl="timeline", par="timestep_duration", mode="defaultdict")
-            self.timesets = get_single_entities(db=db, entity_class_name="timeset")
-            self.timeset_durations = params_to_dict(db=db, cl="timeset", par="timeset_duration", mode="defaultdict")
-            self.timesets__timeline = params_to_dict(db=db, cl="timeset", par="timeline", mode="defaultdict")
-            self.new_step_durations = params_to_dict(db=db, cl="timeset", par="new_stepduration", mode="dict")
             # Solve-level fields — delegated to SolveConfig
             self.solve = SolveConfig.load_from_db(db=db, logger=self.logger)
+            # Timeline-level fields — delegated to TimelineConfig
+            self.timeline = TimelineConfig.load_from_db(db=db, logger=self.logger)
+
+        # Post-DB initialization of timeline
+        self.timeline.create_assumptive_parts(self.solve)
+        self.timeline.create_timeline_from_timestep_duration()
 
         # Aliases for backward compatibility with methods that still live in this file
         # (these reference the SAME mutable objects, so mutations propagate both ways)
+        # -- solve aliases --
         self.model = self.solve.model
         self.model_solve = self.solve.model_solve
         self.solve_modes = self.solve.solve_modes
@@ -114,291 +115,19 @@ class FlexToolRunner:
         self.fix_storage_periods = self.solve.fix_storage_periods
         self.periods_available = self.solve.periods_available
         self.delay_durations = self.solve.delay_durations
-
-        self.create_assumptive_timestructure_parts()
-        self.stochastic_timesteps = defaultdict(list)
-        self.original_timeline = defaultdict()
-        self.create_timeline_from_timestep_duration()
         self.first_of_complete_solve = self.solve.first_of_complete_solve
         self.last_of_solve = self.solve.last_of_solve
         self.real_solves = self.solve.real_solves
-        #self.write_full_timelines(self.timelines, 'steps.csv')
+        # -- timeline aliases --
+        self.timelines = self.timeline.timelines
+        self.timesets = self.timeline.timesets
+        self.timesets__timeline = self.timeline.timesets__timeline
+        self.timeset_durations = self.timeline.timeset_durations
+        self.new_step_durations = self.timeline.new_step_durations
+        self.stochastic_timesteps = self.timeline.stochastic_timesteps
+        self.original_timeline = self.timeline.original_timeline
 
 
-
-    def create_timeline_from_timestep_duration(self):
-        for timeset_name, timeset in list(self.timeset_durations.items()):
-            if timeset_name in self.new_step_durations.keys():
-                step_duration= float(self.new_step_durations[timeset_name])
-                #create the new timeline
-                timeline_name = self.timesets__timeline[timeset_name]
-                old_steps = self.timelines[timeline_name]
-                new_steps = []
-                new_timesets = []
-                for timeset in timeset:
-                    first_step = timeset[0]
-                    first_index = [step[0] for step in old_steps].index(timeset[0])
-                    step_counter = 0 #float(old_steps[first_index][1])
-                    last_index = first_index + int(float(timeset[1]))
-                    added_steps = 0
-                    for step in old_steps[first_index:last_index]:
-                        if step_counter >= step_duration:
-                            new_steps.append((first_step,str(step_counter)))
-                            first_step = step[0]
-                            step_counter=0
-                            added_steps += 1
-                            if step_counter> step_duration:
-                                self.logger.warning("Warning: All new steps are not the size of the given step duration. The new step duration has to be multiple of old step durations for this to happen.")
-                        step_counter += float(step[1])
-                    new_steps.append((first_step,str(step_counter)))
-                    added_steps += 1
-                    new_timesets.append((timeset[0], added_steps))
-                self.timeset_durations[timeset_name] = new_timesets 
-                new_timeline_name = timeline_name+ "_"+ timeset_name 
-                self.timelines[new_timeline_name] = new_steps
-                self.timesets__timeline[timeset_name] = new_timeline_name
-                self.original_timeline[new_timeline_name] = timeline_name
-
-    def create_averaged_timeseries(self,solve):
-        timeseries_map={
-            'pt_node_inflow.csv': "sum",
-            'pt_commodity.csv': "average",
-            'pt_group.csv': "average",
-            'pt_node.csv': "average",
-            'pt_process.csv': "average",
-            'pt_profile.csv': "average",
-            'pt_process_source.csv': "average",
-            'pt_process_sink.csv': "average",
-            'pt_reserve__upDown__group.csv': "average",
-            'pbt_node_inflow.csv': "sum",
-            'pbt_node.csv': "average",
-            'pbt_process.csv': "average",
-            'pbt_profile.csv': "average",
-            'pbt_process_source.csv': "average",
-            'pbt_process_sink.csv': "average",
-            'pbt_reserve__upDown__group.csv': "average"
-        }
-        create = False
-        for period_timeset in self.timesets_used_by_solves[solve]:
-            if period_timeset[1] in self.new_step_durations.keys():
-                create = True
-        if not create:    
-            for timeseries in timeseries_map.keys():
-                shutil.copy('input/'+timeseries,'solve_data/'+timeseries)
-        else:
-            timelines=[]
-            for period, timeset in self.timesets_used_by_solves[solve]:
-                timeline = self.timesets__timeline[timeset]
-                if timeline not in timelines:
-                    if len(timelines) != 0:
-                        self.logger.error("Error: More than one timeline in the solve or the same timeline with different step durations in different timesets")
-                        sys.exit(-1)
-                    timelines.append(timeline)
-            for timeseries in timeseries_map.keys():
-                with open('input/'+ timeseries,'r') as blk:
-                    filereader = csv.reader(blk, delimiter=',')
-                    with open('solve_data/'+timeseries,'w', newline='') as solve_file:
-                        filewriter = csv.writer(solve_file,delimiter=',')
-                        headers = next(filereader)
-                        filewriter.writerow(headers)
-                        #assumes that the data is in the format:
-                        #[group1, group2, ... group_last, time, numeric_value]
-                        #ie. the numeric data is the last column and the timestep is the one before it.
-                        #and that there are no rows from other groups between the rows of one group 
-                        time_index = headers.index('time')
-                        while True:
-                            try:
-                                datain = next(filereader)
-                                timeline_step_duration = None
-                                for timeline in timelines:
-                                    new_timeline = self.timelines[timeline]
-                                    for timeline_row in new_timeline:
-                                        if timeline_row[0] == datain[time_index]:
-                                            timeline_step_duration = int(float(timeline_row[1]))
-                                            break
-                                if timeline_step_duration != None:
-                                    values = []
-                                    params = datain[0:time_index]
-                                    row = datain[0:time_index + 1]
-                                    values.append(float(datain[time_index + 1])),
-                                    if datain[1] != 'storage_state_reference_value':
-                                        for i in range(timeline_step_duration - 1):
-                                            datain = next(filereader)
-                                            if datain[0:time_index] != params:
-                                                self.logger.error("Cannot find the same timesteps in input data as in timeline for file  " + timeseries + " after " + row[-1])
-                                                sys.exit(-1)
-                                            values.append(float(datain[time_index + 1]))
-
-                                    if timeseries_map[timeseries] == "average":
-                                        out_value = round(sum(values) / len(values), 6)
-                                    else:
-                                        out_value = sum(values)
-                                    row.append(out_value)
-                                    filewriter.writerow(row)
-                                else:
-                                    #find previous timestep that is included and add this to the list
-                                    #this is for the parameters that do not have a value for each timestep
-                                    if datain[1] == 'storage_state_reference_value':
-                                        #get current index:
-                                        counter = 0
-                                        for timestep in self.timelines[self.original_timeline[timeline]]:
-                                            if datain[2] == timestep[0]:
-                                                current_index = counter 
-                                            counter +=1
-                                        found = False
-                                        for timestep in reversed(self.timelines[self.original_timeline[timeline]][0:current_index+1]):
-                                            for timeline_row in new_timeline:
-                                                if timeline_row[0] == timestep[0]:
-                                                    new_index = timeline_row[0]
-                                                    found = True
-                                                    break
-                                            if found:
-                                                break
-                                        if found:
-                                            row = datain[0:time_index]
-                                            row.append(new_index)
-                                            row.append(datain[time_index + 1])
-                                            filewriter.writerow(row)
-                            except Exception:
-                                break
-            #constaint inflow to a longer step size
-            node__inflow = []
-            with open('input/'+ 'p_node.csv','r') as blk:
-                filereader = csv.reader(blk, delimiter=',')
-                read_header = next(filereader)
-                while True:
-                    try:
-                        datain = next(filereader)
-                        if datain[1] == 'inflow':
-                            node__inflow.append([datain[0],datain[2]])
-                    except Exception:
-                        break
-            with open('solve_data/'+ 'pt_node_inflow.csv','a', newline='') as blk:
-                filewriter = csv.writer(blk, delimiter=',')
-                for timeline in timelines:
-                    new_timeline = self.timelines[timeline]
-                    for node__value in node__inflow:
-                        for timeline_row in new_timeline:
-                            timeline_step_duration = int(float(timeline_row[1]))
-                            value = float(node__value[1])*timeline_step_duration
-                            row = [node__value[0],timeline_row[0],value]
-                            filewriter.writerow(row)
-
-    def create_assumptive_timestructure_parts(self):
-
-        """If no timeset defined and only one timeline exists, create a timeset from timeline"""
-        if not self.timesets and len(self.timelines.keys()) == 1:
-            timeset_name = "full_timeline"
-            self.timesets = list(timeset_name)
-
-        """If no timeset_durations defined for a timeset and only one timeline exists, create a full timeline timeset"""
-
-        for timeset_name in self.timesets:
-            if not self.timeset_durations and len(self.timelines.keys()) == 1:
-                self.timesets__timeline[timeset_name] = list(self.timelines.keys())[0]
-                self.timeset_durations[timeset_name] = [(list(self.timelines.values())[0][0][0], len(list(self.timelines.values())[0]))]
-
-        """If timeset: timeline is not defined and only one timeline exists, use that timeline"""
-
-        for timeset_name, block in self.timeset_durations.items():
-            if timeset_name not in self.timesets__timeline.keys():
-                if len(self.timelines.keys()) == 1:
-                    self.timesets__timeline[timeset_name] = list(self.timelines.keys())[0]
-                elif len(self.timelines.keys()) > 1:
-                    self.logger.error("""More than one timeline available and FlexTool does not know which ones to use. 
-                                      Please use 'timeline' parameter of 'timeset' class to define which timelines are part of the timeset(s) in the model instance""")
-                    sys.exit(-1)
-        
-        """If model: solves does not exist and only one solve exists, use that"""
-
-        if not self.model_solve.keys():
-            if len(self.model) == 1:
-                solve = None
-                if len(self.timesets_used_by_solves.keys()) == 1:
-                    solve = list(self.timesets_used_by_solves.keys())[0]
-                elif len(self.timesets_used_by_solves.keys()) > 1:
-                    self.logger.error("""'Data contains multiple solve entities and FlexTool does not know which to use. 
-                                    Please use 'solves' parameter of 'model' class to inform which solves are to be included in the model instance.""")
-                    sys.exit(-1)
-                # Check all solves from realized_periods and invest_periods dicts
-                all_solves_in_periods = set(self.realized_periods.keys()) | set(self.invest_periods.keys())
-                for solve_name in all_solves_in_periods:
-                    if solve:
-                        if solve_name != solve:
-                            self.logger.error("""'Data contains multiple solve entities and FlexTool does not know which to use.
-                                    Please use 'solves' parameter of 'model' class to inform which solves are to be included in the model instance.""")
-                            sys.exit(-1)
-                    else:
-                        solve = solve_name
-                self.model_solve[self.model[0]] = [solve]
-            else:
-                self.logger.error("""'More than one model entity found in the database and FlexTool does not know which to use.""")
-                sys.exit(-1)
-
-        """If no solve entity, for model:solves, create a solve entity that has all available periods as realized.
-          In combination of the assumptions two below, will create a solvable timelines for all periods."""
-
-        for model, solves in self.model_solve.items():
-            for solve in solves:
-                if solve not in self.realized_periods and \
-                solve not in self.invest_periods and \
-                solve not in self.timesets_used_by_solves.keys():
-                    if model in self.periods_available.keys():
-                        for period in self.periods_available[model]:
-                            self.realized_periods[solve].append((period, period))
-                    else:
-                        self.logger.error(f'The solve {solve} in the model: solves array does not have any periods defined: \
-                                          (period_timeset, realized_periods, invest_periods)\n \
-                                        Alternatively add periods_available to the model to create simple full timelines for those periods')
-                        sys.exit(-1)
-
-        """If solve: period_timeset does not exist and only one timeset exists, create timesets for all realized and invested periods"""
-        for solve in list(self.model_solve.values())[0]:
-            if solve not in list(self.timesets_used_by_solves.keys()):
-                if len(self.timeset_durations.keys()) == 1:
-                    period__timeset_list = list()
-                    timeset_name = list(self.timeset_durations.keys())[0]
-                    for period_tuple in self.invest_periods.get(solve, []) + self.realized_periods.get(solve, []):
-                        period__timeset_list.append((period_tuple[1], timeset_name))
-                    self.timesets_used_by_solves[solve] = period__timeset_list
-                else:
-                    self.logger.error("""More than one timeset available and FlexTool does not know which ones to use. 
-                                      Please use 'period_timeset' parameter of 'solve' class to define which periods 
-                                      and which timesets are part of the solve(s) in the model instance""")
-                    sys.exit(-1)
-        
-        """If realized_periods or invest_periods or nested solves do not exist, but period__timeset exist, assume all periods to be realized"""
-        for solve in list(self.model_solve.values())[0]:
-            if solve not in self.realized_periods \
-            and solve not in self.invest_periods \
-            and not self.contains_solves[solve] \
-            and solve in self.timesets_used_by_solves.keys():
-                for period_timeset in self.timesets_used_by_solves[solve]:
-                    self.realized_periods[solve].append((period_timeset[0], period_timeset[0]))
-
-        """If solve_period_years_represented has not been set, assume length of one year for each period in the model"""
-        for solve in list(self.model_solve.values())[0]:
-            all_periods = (self.realized_periods[solve] + self.invest_periods[solve])
-            all_periods = {item for tuple in all_periods for item in tuple}
-            for period in all_periods:
-                if solve not in self.solve_period_years_represented:
-                    self.solve_period_years_represented[solve].append([period, 1.0])
-
-    def make_steps(self, start, stop):
-        """
-        make a list of timesteps available
-        :param start: Start index of of the set
-        :param stop: Stop index of the set
-        :param steplist: list of steps, read from steps.csv
-        :return: list of timesteps
-        """
-
-        active_step = start
-        steps = []
-        while active_step <= stop:
-            steps.append(self.steplist[active_step])
-            active_step += 1
-        return steps
 
     def write_full_timelines(self, stochastic_timesteps, period__timesets_in_this_solve, timesets__timeline, timelines, filename):
         """
@@ -489,19 +218,6 @@ class FlexToolRunner:
                         outfile.write(pd[1] + ',' + str(year_count) + '\n')
                 year_count += float(period__year[1])
 
-
-    def make_timeset_timeline(self, start, length):
-        """
-        make a timeset timeline, there might be multiple timesets per solve so these timesets might need to be combined for a run
-        :param start: start of timeset
-        :param length: length of timeset
-        :return: timeset timeline
-        """
-        steplist = []
-        startnum = self.steplist.index(start)
-        for i in range(startnum, math.ceil(startnum + float(length))):
-            steplist.append(self.steplist[i])
-        return steplist
 
     def model_run(self, current_solve):
         """
@@ -843,133 +559,6 @@ class FlexToolRunner:
         return 0
 
 
-    def get_active_time(self, current_solve, timesets_used_by_solves, timesets, timelines, timesets__timelines):
-        """
-        Maps periods to their corresponding timeline entries for a given solve.
-
-        Returns a dict mapping period IDs to lists of (timestep, index, value) tuples.
-        """
-        active_time = defaultdict(list)
-
-        # Skip if not current solve
-        if current_solve not in timesets_used_by_solves:
-            raise ValueError(f"{current_solve}: this solve does not have period_timeset defined. Check that it has period_timeset parameter defined and the names of period and timeset are spelled correctly (case sensitive). Check that the alternative is included in the scenario.")
-
-        for period, timeset_id in timesets_used_by_solves[current_solve]:
-            # Get timeline ID for this timeset
-            timeline_id = timesets__timelines.get(timeset_id)
-            if not timeline_id:
-                continue
-
-            # Get timeline data
-            timeline_data = timelines.get(timeline_id, [])
-            if not timeline_data:
-                continue
-
-            # Process each timeset definition
-            for start_time, duration in timesets[timeset_id]:
-                # Find starting index in timeline
-                for idx, (time, value) in enumerate(timeline_data):
-                    if time == start_time:
-                        # Add entries for duration
-                        for step in range(int(float(duration))):
-                            if idx + step < len(timeline_data):
-                                entry = timeline_data[idx + step]
-                                active_time[period].append((entry[0], idx + step, entry[1]))
-                        break
-
-        if not active_time:
-            raise ValueError(f"{current_solve}: Failed to map timeset to timeline. Check that all timeset entities have timeline parameter defined and the name of the timeline is spelled correctly (case sensitive). Check that the alternative of the timeline parameter is included in the modelled scenario.")
-
-        return active_time
-
-    def make_step_jump(self, active_time_list, period__branch, solve_branch__time_branch_list):
-        """
-        make a file that indicates the length of jump from one simulation step to next one.
-        the final line should always contain a jump to the first line.
-
-        length of jump is the number of lines needed to advance in the timeline specified in step_duration.csv
-
-        :param steplist: active steps used in the solve
-        :param duration: duration of every timestep
-        :return:
-        """
-        step_lengths = []
-        period_start_pos = 0
-        period_counter = -1
-        first_period_name = list(active_time_list)[0]
-        last_period_name = list(active_time_list)[-1]
-        for period, active_time in reversed(active_time_list.items()):
-            period_counter -= 1
-            period_last = len(active_time)
-            block_last = len(active_time) - 1
-            if period == first_period_name:
-                previous_period_name = last_period_name
-            else:
-                previous_period_name = list(active_time_list)[period_counter]
-            for i, step in enumerate(reversed(active_time)):
-                j = period_last - i - 1
-                if j > 0:  # handle the first element of the period separately below
-                    jump = active_time[j][1] - active_time[j - 1][1]
-                    if jump > 1:
-                        step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], period, active_time[j - 1][0], jump))
-                        block_last = j - 1
-                    else:
-                        step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[j - 1][0], period, active_time[j - 1][0], jump))
-                else:  # first time step of the period is handled here
-                    #three options (period,period) is the realized, (period, branch) are the branches in the realized period, 
-                    #(other_period,branch): continuing branch to the next period
-                    if (period, period) not in period__branch:
-                        for i in period__branch:
-                            if i[1] == period:
-                                original_period = i[0]
-                        if (original_period,original_period) in period__branch and original_period in active_time_list.keys():
-                            jump = active_time[j][1] - active_time[-1][1]
-                            step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], period, active_time_list[period][-1][0], jump))
-                        elif (original_period,original_period) in period__branch: 
-                            #if branching happens in the first timestep of a period
-                            #find the last realized period
-                            past = False
-                            #previous_realized_period = None
-                            #for solve_period, a_t in reversed(active_time_list.items()):
-                            #    if past:
-                            #        if (solve_period, solve_period) in period__branch:
-                            #            previous_realized_period = solve_period
-                            #            break
-                            #    else:
-                            #        if solve_period == period:
-                            #            past = True
-                            jump = active_time[j][1] - active_time[-1][1]
-                            step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], period, active_time_list[period][-1][0], jump))   
-                        else:
-                            #if branch continuing in the next period
-                            #find the previous branch with the same time_branch
-                            for sb_tb in solve_branch__time_branch_list:
-                                if sb_tb[0] == period:
-                                    time_branch = sb_tb[1]
-                            past = False
-                            found = False
-                            previous_period_with_branch = None
-                            for solve_period, a_t in reversed(active_time_list.items()):
-                                if past:
-                                    for sb_tb in solve_branch__time_branch_list:
-                                        if sb_tb[0] == solve_period and sb_tb[1] == time_branch:
-                                            previous_period_with_branch = solve_period
-                                            found = True
-                                    if found:
-                                        break
-                                else:
-                                    if solve_period == period:
-                                        past = True
-
-                            jump = active_time[j][1] - active_time_list[previous_period_with_branch][-1][1]
-                            step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], previous_period_with_branch, active_time_list[previous_period_with_branch][-1][0], jump))
-                        
-                    else:
-                        jump = active_time[j][1] - active_time_list[previous_period_name][-1][1]
-                        step_lengths.insert(period_start_pos, (period, step[0], active_time[j - 1][0], active_time[block_last][0], previous_period_name, active_time_list[previous_period_name][-1][0], jump))
-        return step_lengths
-    
     def write_timesets(self, timesets_used_by_solves, timeset__timeline):
         """
         write timesets_in_use.csv and timeset__timeline.csv. 
@@ -1326,43 +915,6 @@ class FlexToolRunner:
             realfile.write("period\n")
             for period in period_first_list:
                 realfile.write(period+"\n")
-
-    def separate_period_and_timeseries_data(self, timelines, solve__period__timeset):
-        """
-        This function separates period data from timeseries data. It only exists because there is no good way to differentiate 1d-Maps from each other.
-        """
-        inputfiles = ['pdt_commodity.csv',
-                      'pdt_group.csv']
-        for inputfile in inputfiles:
-            output_period = f'input/pd_{inputfile[4:]}'
-            output_timeseries = f'input/pt_{inputfile[4:]}'
-            timesteps = []
-            for timeline in list(timelines.values()):
-                for step in timeline:
-                    timesteps.append(step[0])
-            periods = []
-            for period__timesets in solve__period__timeset.values():
-                for period__timeset in period__timesets:
-                    periods.append(period__timeset[0]) 
-
-            with open(output_period, 'w', newline='') as blk_p:
-                period_writer = csv.writer(blk_p, delimiter=',')
-                with open(output_timeseries, 'w', newline='') as blk_t:
-                    timeseries_writer = csv.writer(blk_t, delimiter=',') 
-                    with open(f'input/{inputfile}', 'r') as blk:
-                        filereader = csv.reader(blk, delimiter=',')
-                        headers = next(filereader)
-                        timeseries_writer.writerow(headers)
-                        period_writer.writerow(headers[:-2]+['period',f'pd_{headers[-1][3:]}'])
-                        while True:
-                            try:
-                                datain = next(filereader)
-                                if datain[2] in periods:
-                                    period_writer.writerow(datain)
-                                elif datain[2] in timesteps:
-                                    timeseries_writer.writerow(datain)
-                            except StopIteration:
-                                break
 
     #these exist to connect timesteps from two different timelines or aggregated versions of one
     def connect_two_timelines(self,period,first_solve,second_solve, period__branch):
@@ -1855,7 +1407,7 @@ class FlexToolRunner:
                     break
 
         # Get full active time list for this solve (all timesteps it could use)
-        full_active_time_list_own = self.get_active_time(
+        full_active_time_list_own = get_active_time(
             new_name, self.timesets_used_by_solves, self.timeset_durations,
             self.timelines, self.timesets__timeline)
 
@@ -2022,7 +1574,7 @@ class FlexToolRunner:
             realized_time_lists[solve] = new_realized_time_list
             fix_storage_time_lists[solve] = new_fix_storage_time_list
             active_time_lists[solve] = new_active_time_list
-            jump_lists[solve] = self.make_step_jump(new_active_time_list, period__branch_lists[solve], solve_branch__time_branch_lists[solve])
+            jump_lists[solve] = make_step_jump(new_active_time_list, period__branch_lists[solve], solve_branch__time_branch_lists[solve])
 
         return period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, fix_storage_time_lists, realized_time_lists, branch_start_time_lists
 
@@ -2147,7 +1699,7 @@ class FlexToolRunner:
             timer_in_solve = time.perf_counter()
 
             self.logger.info("Creating timelines for solve " + solve + " (" + str(i) + ")")
-            complete_active_time_lists = self.get_active_time(complete_solve[solve], self.timesets_used_by_solves, self.timeset_durations, self.timelines, self.timesets__timeline)
+            complete_active_time_lists = get_active_time(complete_solve[solve], self.timesets_used_by_solves, self.timeset_durations, self.timelines, self.timesets__timeline)
 
             # Build a combined period__timeset list that includes history periods
             period__timesets_with_history = list(self.timesets_used_by_solves[complete_solve[solve]])
@@ -2193,7 +1745,7 @@ class FlexToolRunner:
             self.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve])
             self.write_solve_branch__time_branch_list_and_weight(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve])
             self.write_first_and_last_periods(active_time_lists[solve], self.timesets_used_by_solves[complete_solve[solve]], period__branch_lists[solve])
-            self.separate_period_and_timeseries_data(self.timelines, self.timesets_used_by_solves)
+            separate_period_and_timeseries_data(self.timelines, self.timesets_used_by_solves)
 
             #check if the upper level fixes storages
             if [complete_solve[solve]] in self.contains_solves.values() and complete_solve[parent_roll[solve]] in self.fix_storage_periods:  # check that the parent_roll exists and has storage fixing
@@ -2209,7 +1761,7 @@ class FlexToolRunner:
             #if timeline created from new step_duration, all timeseries have to be averaged or summed for the new timestep
             if previous_complete_solve != complete_solve[solve]:
                 self.logger.info("Aggregating timeline and parameters for the new step size")
-                self.create_averaged_timeseries(complete_solve[solve])
+                self.timeline.create_averaged_timeseries(complete_solve[solve], self.solve, self.logger)
             previous_complete_solve = complete_solve[solve]
             if solve in self.first_of_complete_solve:
                 first_of_nested_level = True
