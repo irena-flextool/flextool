@@ -20,13 +20,17 @@ from flextool.flextoolrunner.solver_runner import SolverRunner
 
 
 class FlexToolRunner:
-    """
-    Define Class to run the model and read and recreate the required config files:
+    """Thin coordinator that builds RunnerState and delegates to submodules.
+
+    Public API:
+        write_input()  — reads DB, writes input/ CSV files (delegates to input_writer)
+        run_model()    — runs the full solve loop (delegates to orchestration)
+
+    See ``flextool.flextoolrunner.__init__`` docstring for a full module navigation guide.
     """
 
     def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None):
         logger = logging.getLogger(__name__)
-        translation = {39: None}
         # delete highs.log from previous run
         if os.path.exists("./HiGHS.log"):
             os.remove("./HiGHS.log")
@@ -72,8 +76,6 @@ class FlexToolRunner:
 
         # Assemble RunnerState — the single cross-cutting state container
         self.state = RunnerState(paths=paths, solve=solve, timeline=timeline, logger=logger)
-
-
 
     def run_model(self) -> int:
         """Run the full solve loop (delegates to orchestration.run_model)."""
