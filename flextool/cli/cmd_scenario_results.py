@@ -3,8 +3,8 @@ from spinedb_api import DatabaseMapping, from_database, Array
 from spinedb_api.filters.alternative_filter import alternative_filter_config
 from spinedb_api.filters.tools import append_filter_config
 from flextool.scenario_comparison.db_reader import get_scenario_results
+from flextool.scenario_comparison.dispatch_mappings import combine_dispatch_mappings
 from flextool.scenario_comparison.scenario_comparison import (
-    combine_dispatch_mappings,
     create_or_update_dispatch_config,
     create_dispatch_plots,
     create_basic_plots,
@@ -152,7 +152,11 @@ def main():
         scenarios = list(scenario_folders.keys())
 
         # Load and combine dispatch mappings across all scenarios
-        combined_mapping_dfs = combine_dispatch_mappings(scenario_folders, args.parquet_subdir) if scenario_folders else {}
+        if scenario_folders:
+            mappings = combine_dispatch_mappings(scenario_folders, args.parquet_subdir)
+            combined_mapping_dfs = {k: v for k, v in vars(mappings).items() if v is not None}  # dict view until downstream functions accept DispatchMappings
+        else:
+            combined_mapping_dfs = {}
 
         # Derive group_node_df for summary plots (needs 'scenario' as column)
         group_node_df = None
