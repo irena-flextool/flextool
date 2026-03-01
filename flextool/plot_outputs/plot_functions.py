@@ -20,6 +20,9 @@ from flextool.plot_outputs.axis_helpers import (
     _is_datetime_format, _normalize_axis_scale, _subplot_axis_scale,
     _apply_subplot_label, set_smart_xticks,
 )
+from flextool.plot_outputs.subplot_helpers import (
+    _calculate_grid_layout, _get_unique_levels, _extract_subplot_data,
+)
 
 logging.getLogger('matplotlib.category').disabled = True
 matplotlib.rcParams['axes.spines.top'] = False
@@ -512,19 +515,11 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
         line_level_names = line_levels
 
     # Handle empty sub_levels (single plot, no subplotting)
-    if not sub_levels:
-        subs = [None]
-    elif len(sub_levels) == 1:
-        subs = df_plot.columns.get_level_values(sub_levels[0]).unique().tolist()
-    else:
-        # Join multiple levels as tuples
-        sub_df = df_plot.columns.to_frame().iloc[:, sub_levels].drop_duplicates()
-        subs = [tuple(row) for row in sub_df.values]
+    subs = _get_unique_levels(df_plot.columns, sub_levels)
 
     # Calculate subplot grid
     n_subs = len(subs)
-    n_cols = min(subplots_per_row, n_subs)
-    n_rows = (n_subs + n_cols - 1) // n_cols  # Ceiling division
+    n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
     # Calculate legend width if needed
     legend_width = 0
@@ -533,14 +528,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
 
         for sub in subs:
             # Extract data for this subplot
-            if sub is None:
-                df_sub_temp = df_plot
-            elif len(sub_levels) == 1:
-                df_sub_temp = df_plot.xs(sub, level=sub_levels[0], axis=1)
-            else:
-                df_sub_temp = df_plot.xs(sub, level=sub_levels, axis=1)
-            if isinstance(df_sub_temp, pd.Series):
-                df_sub_temp = df_sub_temp.to_frame()
+            df_sub_temp = _extract_subplot_data(df_plot, sub, sub_levels)
 
             # Get line labels
             is_multiindex = isinstance(df_sub_temp.columns, pd.MultiIndex)
@@ -594,17 +582,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     for idx, sub in enumerate(subs):
         ax = axes[idx]
 
-        if not sub:
-            df_sub = df_plot
-        elif isinstance(df_plot.columns, pd.MultiIndex):
-            if len(sub_levels) > 1:
-                df_sub = df_plot.xs(sub, level=sub_levels, axis=1)
-            else:
-                df_sub = df_plot.xs(sub, level=sub_levels[0], axis=1)
-            if isinstance(df_sub, pd.Series):
-                df_sub = df_sub.to_frame()
-        else:
-            df_sub = df_plot.loc[:,sub].to_frame()
+        df_sub = _extract_subplot_data(df_plot, sub, sub_levels)
 
         # Get line combinations from line_levels
         if isinstance(df_sub, pd.Series):
@@ -697,19 +675,11 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
         stack_level_names = stack_levels
 
     # Handle empty sub_levels (single plot, no subplotting)
-    if not sub_levels:
-        subs = [None]
-    elif len(sub_levels) == 1:
-        subs = df_plot.columns.get_level_values(sub_levels[0]).unique().tolist()
-    else:
-        # Join multiple levels as tuples
-        sub_df = df_plot.columns.to_frame().iloc[:, sub_levels].drop_duplicates()
-        subs = [tuple(row) for row in sub_df.values]
+    subs = _get_unique_levels(df_plot.columns, sub_levels)
 
     # Calculate subplot grid
     n_subs = len(subs)
-    n_cols = min(subplots_per_row, n_subs)
-    n_rows = (n_subs + n_cols - 1) // n_cols  # Ceiling division
+    n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
     # Calculate legend width if needed
     legend_width = 0
@@ -718,14 +688,7 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
 
         for sub in subs:
             # Extract data for this subplot
-            if sub is None:
-                df_sub_temp = df_plot
-            elif len(sub_levels) == 1:
-                df_sub_temp = df_plot.xs(sub, level=sub_levels[0], axis=1)
-            else:
-                df_sub_temp = df_plot.xs(sub, level=sub_levels, axis=1)
-            if isinstance(df_sub_temp, pd.Series):
-                df_sub_temp = df_sub_temp.to_frame()
+            df_sub_temp = _extract_subplot_data(df_plot, sub, sub_levels)
 
             # Get stack labels
             is_multiindex = isinstance(df_sub_temp.columns, pd.MultiIndex)
@@ -783,14 +746,7 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
         ax = axes[idx]
 
         # Extract data for this subplot using xs
-        if sub is None:
-            # No sub_levels - use full dataframe
-            df_sub = df_plot
-        elif len(sub_levels) == 1:
-            df_sub = df_plot.xs(sub, level=sub_levels[0], axis=1)
-        else:
-            # For multiple sub_levels, apply xs for all levels at once
-            df_sub = df_plot.xs(sub, level=sub_levels, axis=1)
+        df_sub = _extract_subplot_data(df_plot, sub, sub_levels)
 
         # Get stack combinations from stack_levels
         if isinstance(df_sub, pd.Series):
@@ -982,34 +938,17 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
         grouped_bar_level_names = [df.columns.name] if grouped_bar_levels else []
 
     # Handle empty sub_levels (single plot, no subplotting)
-    if not sub_levels:
-        subs = [None]
-    elif len(sub_levels) == 1:
-        subs = df.columns.get_level_values(sub_levels[0]).unique().tolist()
-    else:
-        # Join multiple levels as tuples
-        sub_df = df.columns.to_frame().iloc[:, sub_levels].drop_duplicates()
-        subs = [tuple(row) for row in sub_df.values]
+    subs = _get_unique_levels(df.columns, sub_levels)
 
     # Calculate subplot grid
     n_subs = len(subs)
-    n_cols = min(subplots_per_row, n_subs)
-    n_rows = (n_subs + n_cols - 1) // n_cols  # Ceiling division
+    n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
     # First pass: calculate number of bars for each subplot to determine heights
     bar_counts = []
     for sub in subs:
         # Extract data for this subplot using xs
-        if sub is None:
-            df_sub_temp = df
-        elif len(sub_levels) == 1 and isinstance(df.columns, pd.MultiIndex):
-            df_sub_temp = df.xs(sub, level=sub_levels[0], axis=1)
-        elif len(sub_levels) == 1:
-            df_sub_temp = df[sub]
-        else:
-            df_sub_temp = df.xs(sub, level=sub_levels, axis=1)
-        if isinstance(df_sub_temp, pd.Series):
-            df_sub_temp = df_sub_temp.to_frame()
+        df_sub_temp = _extract_subplot_data(df, sub, sub_levels)
 
         # Get unique group combinations from df_sub_temp
         if not expand_axis_levels:
@@ -1065,14 +1004,7 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
 
         for sub in subs:
             # Extract data for this subplot
-            if sub is None:
-                df_sub_temp = df
-            elif len(sub_levels) == 1:
-                df_sub_temp = df.xs(sub, level=sub_levels[0], axis=1)
-            else:
-                df_sub_temp = df.xs(sub, level=sub_levels, axis=1)
-            if isinstance(df_sub_temp, pd.Series):
-                df_sub_temp = df_sub_temp.to_frame()
+            df_sub_temp = _extract_subplot_data(df, sub, sub_levels)
 
             # BRANCH: Get legend items based on mode
             if grouped_bar_levels:
@@ -1210,18 +1142,7 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
 
     for idx, sub in enumerate(subs):
         # Extract data for this subplot using xs
-        if sub is None:
-            # No sub_levels - use full dataframe
-            df_sub = df
-        elif len(sub_levels) == 1 and isinstance(df.columns, pd.MultiIndex):
-            df_sub = df.xs(sub, level=sub_levels[0], axis=1)
-        elif len(sub_levels) == 1:
-            df_sub = df[sub]
-        else:
-            # For multiple sub_levels, apply xs for all levels at once
-            df_sub = df.xs(sub, level=sub_levels, axis=1)
-        if isinstance(df_sub, pd.Series):
-            df_sub = df_sub.to_frame()
+        df_sub = _extract_subplot_data(df, sub, sub_levels)
 
         # Get unique group combinations from df_sub
         if not expand_axis_levels:
