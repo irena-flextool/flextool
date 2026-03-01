@@ -33,19 +33,10 @@ LINE_COLUMNS = ['Curtailed', 'Demand']
 
 
 def get_scenarios_from_config(config: dict) -> list[str]:
-    """Extract active scenario names from config, handling both dict and list formats."""
-    scenarios = config.get('scenarios', [])
+    """Extract active scenario names from config."""
+    scenarios = config.get('scenarios', {})
     if isinstance(scenarios, dict):
         return list(scenarios.keys())
-    if isinstance(scenarios, list):
-        # Old list format: items may be plain strings or single-key dicts
-        result = []
-        for item in scenarios:
-            if isinstance(item, dict):
-                result.extend(item.keys())
-            else:
-                result.append(item)
-        return result
     return []
 
 
@@ -515,24 +506,6 @@ def create_or_update_dispatch_config(plot_dir, combined_dfs, scenarios, combined
     # Parse existing config
     existing_config, commented_entries = parse_config_with_comments(config_path)
 
-    # --- 4a: Old format migration ---
-    old_format = isinstance(existing_config.get('scenarios'), list)
-    old_colors: dict[str, str] = {}
-    if old_format:
-        # Collect colors from old colors section
-        old_colors_section = existing_config.get('colors', {}) or {}
-        for sub in ['positive', 'negative']:
-            sub_colors = old_colors_section.get(sub, {}) or {}
-            for cat in ['processGroups', 'processes_not_aggregated']:
-                old_colors.update(sub_colors.get(cat, {}) or {})
-        # Old flat processGroups/processes_not_aggregated colors
-        old_colors.update(old_colors_section.get('processGroups', {}) or {})
-        old_colors.update(old_colors_section.get('processes_not_aggregated', {}) or {})
-        # Scenario colors from old format
-        old_scenario_colors = old_colors_section.get('scenarios', {}) or {}
-    else:
-        old_scenario_colors = {}
-
     # --- 4b: Build scenarios dict ---
     new_config: dict = {}
     new_config['time_to_plot'] = existing_config.get('time_to_plot', {
@@ -542,52 +515,35 @@ def create_or_update_dispatch_config(plot_dir, combined_dfs, scenarios, combined
 
     scenario_colormap = plt.cm.tab10(np.linspace(0, 1, 10))
 
-    if old_format:
-        # Migrate old list format → dict with colors
-        existing_scenario_list = get_scenarios_from_config(existing_config)
-        active_scenarios: dict[str, str] = {}
-        for i, name in enumerate(existing_scenario_list):
-            if name in available_scenarios:
-                color = old_scenario_colors.get(name,
-                        matplotlib.colors.rgb2hex(scenario_colormap[i % 10]))
-                active_scenarios[name] = color
-        commented_scens: dict[str, str] = {}
-        # New scenarios not in old config → active
-        for name in scenarios:
-            if name not in active_scenarios and name not in commented_scens:
-                idx = len(active_scenarios) + len(commented_scens)
-                active_scenarios[name] = matplotlib.colors.rgb2hex(scenario_colormap[idx % 10])
+    existing_scenarios = existing_config.get('scenarios', {}) or {}
+    if isinstance(existing_scenarios, dict):
+        existing_active_scens = existing_scenarios
     else:
-        # New dict format: preserve existing active + commented
-        existing_scenarios = existing_config.get('scenarios', {}) or {}
-        if isinstance(existing_scenarios, dict):
-            existing_active_scens = existing_scenarios
-        else:
-            existing_active_scens = {}
+        existing_active_scens = {}
 
-        existing_commented_scens = commented_entries.get('scenarios', {})
-        if not isinstance(existing_commented_scens, dict):
-            existing_commented_scens = {}
+    existing_commented_scens = commented_entries.get('scenarios', {})
+    if not isinstance(existing_commented_scens, dict):
+        existing_commented_scens = {}
 
-        active_scenarios = {}
-        commented_scens = {}
+    active_scenarios: dict[str, str] = {}
+    commented_scens: dict[str, str] = {}
 
-        # Existing active → keep if still available
-        for name, color in existing_active_scens.items():
-            if name in available_scenarios:
-                active_scenarios[name] = color or ''
+    # Existing active → keep if still available
+    for name, color in existing_active_scens.items():
+        if name in available_scenarios:
+            active_scenarios[name] = color or ''
 
-        # Existing commented → keep if still available
-        for name, color in existing_commented_scens.items():
-            if name in available_scenarios and name not in active_scenarios:
-                commented_scens[name] = color or ''
+    # Existing commented → keep if still available
+    for name, color in existing_commented_scens.items():
+        if name in available_scenarios and name not in active_scenarios:
+            commented_scens[name] = color or ''
 
-        # New scenarios not in config → add as active
-        all_known = set(active_scenarios) | set(commented_scens)
-        for name in scenarios:
-            if name not in all_known:
-                idx = len(active_scenarios) + len(commented_scens)
-                active_scenarios[name] = matplotlib.colors.rgb2hex(scenario_colormap[idx % 10])
+    # New scenarios not in config → add as active
+    all_known = set(active_scenarios) | set(commented_scens)
+    for name in scenarios:
+        if name not in all_known:
+            idx = len(active_scenarios) + len(commented_scens)
+            active_scenarios[name] = matplotlib.colors.rgb2hex(scenario_colormap[idx % 10])
 
     new_config['scenarios'] = active_scenarios
     new_commented: dict[str, dict[str, str] | set[str]] = {
@@ -647,8 +603,7 @@ def create_or_update_dispatch_config(plot_dir, combined_dfs, scenarios, combined
             cat_dict = section.get(cat)
             if isinstance(cat_dict, dict):
                 existing_inline_colors.update(cat_dict)
-    # Merge old colors from migration
-    all_existing_colors = {**old_colors, **existing_inline_colors}
+    all_existing_colors = existing_inline_colors
 
     process_group_colormap = plt.cm.tab20(np.linspace(0, 1, 20))
     color_idx = 0
