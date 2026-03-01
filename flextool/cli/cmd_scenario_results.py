@@ -9,8 +9,8 @@ from flextool.scenario_comparison.config_builder import (
     get_scenarios_from_config,
 )
 from flextool.scenario_comparison.data_models import DispatchMappings
+from flextool.scenario_comparison.dispatch_plots import create_dispatch_plots
 from flextool.scenario_comparison.scenario_comparison import (
-    create_dispatch_plots,
     create_basic_plots,
 )
 from flextool.plot_outputs.plot_functions import plot_dict_of_dataframes
@@ -184,7 +184,7 @@ def main():
             if dispatch_config and combined_mapping_dfs:
                 print("\nGenerating dispatch plots...")
                 create_dispatch_plots(
-                    combined_dfs, combined_mapping_dfs, dispatch_config, plot_dir,
+                    results, mappings, dispatch_config, plot_dir,
                     scenarios=get_scenarios_from_config(dispatch_config),
                     show_plot=show_plots,
                     write_xlsx=write_dispatch_xlsx
