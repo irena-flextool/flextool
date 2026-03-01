@@ -68,8 +68,19 @@ flextool/
 │   ├── find_coefficients.py           LP coefficient analysis
 │   ├── mps_matrix_to_csv.py           MPS matrix parsing
 │   └── transform_toolbox_schema.py    Spine Toolbox schema conversion
-└── create_scenarios/
-    └── scenario_results.py            Load, combine, and plot multi-scenario results
+└── scenario_comparison/
+    ├── __init__.py                       Re-exports get_scenario_results
+    ├── constants.py                      Colors and special column name lists
+    ├── data_models.py                    TimeSeriesResults and DispatchMappings dataclasses
+    ├── db_reader.py                      Load parquet files from scenario folders → TimeSeriesResults
+    ├── dispatch_mappings.py              Load and combine dispatch mapping parquets → DispatchMappings
+    ├── config_io.py                      Parse/write config.yaml with commented entries
+    ├── config_builder.py                 Build/update dispatch config from data
+    ├── dispatch_data.py                  Prepare per-scenario dispatch DataFrames for plotting
+    ├── dispatch_plots.py                 Render and save dispatch stacked area plots
+    ├── summary_plots.py                  Summary bar chart plots
+    ├── orchestrator.py                   Top-level run() tying db_reader → plots
+    └── scenario_comparison.py            Backward-compat shim (re-exports from new modules)
 ```
 
 Root directory contains thin wrapper scripts for backward compatibility with Spine Toolbox:
@@ -96,7 +107,7 @@ Root directory contains thin wrapper scripts for backward compatibility with Spi
 ```python
 from flextool import FlexToolRunner, write_outputs, migrate_database
 from flextool.process_outputs import write_outputs, read_variables, read_parameters, read_sets
-from flextool.create_scenarios import get_scenario_results
+from flextool.scenario_comparison import get_scenario_results
 from flextool.plot_outputs import plot_dict_of_dataframes
 from flextool.process_inputs import TabularReader
 from flextool.update_flextool import migrate_database, initialize_database, update_flextool
