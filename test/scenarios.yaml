@@ -1,0 +1,43 @@
+# Scenario tests for FlexTool.
+#
+# Each entry defines a scenario name and the CSV files to compare against
+# golden files in test/expected/<scenario>/.
+#
+# CSV filenames come from the filenames: section of templates/default_plots.yaml.
+# Keep the list focused — 2-3 files that directly exercise what the scenario tests.
+#
+# To add a new scenario:
+#   1. Add an entry here
+#   2. Run: pytest test/ --regenerate <scenario>
+#   3. Inspect test/expected/<scenario>/ and commit
+
+- scenario: coal
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs__dt.csv
+
+- scenario: wind_battery
+  csvs:
+    - unit__outputNode__dt.csv
+    - node_state__dt.csv
+    - costs__dt.csv
+
+- scenario: coal_co2_price
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs__dt.csv
+
+- scenario: coal_min_load
+  csvs:
+    - unit__outputNode__dt.csv
+
+- scenario: network_coal_wind
+  csvs:
+    - unit__outputNode__dt.csv
+    - node__dt.csv
+    - costs__dt.csv
+
+- scenario: wind_battery_invest
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs__dt.csv

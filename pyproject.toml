@@ -15,6 +15,9 @@ dependencies = [
     "xlsxwriter"
 ]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [tool.setuptools]
 packages = [
     "flextool",

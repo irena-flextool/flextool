@@ -1,0 +1,15 @@
+# HiGHS options for test runs
+# Deterministic and tight precision for reproducible golden file comparisons.
+# Rounding in test harness (4 decimal places) is set one order of magnitude
+# above the feasibility tolerances here.
+write_solution_to_file=true
+solution_file=flextool.sol
+write_solution_style=2
+mip_report_level=2
+mip_heuristic_effort=0.0
+mip_detect_symmetry=false
+mip_rel_gap=0.0001
+threads=1
+log_to_console=true
+primal_feasibility_tolerance=1e-8
+dual_feasibility_tolerance=1e-8
