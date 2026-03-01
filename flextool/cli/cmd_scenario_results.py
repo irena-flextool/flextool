@@ -2,8 +2,8 @@ import matplotlib
 from spinedb_api import DatabaseMapping, from_database, Array
 from spinedb_api.filters.alternative_filter import alternative_filter_config
 from spinedb_api.filters.tools import append_filter_config
-from flextool.create_scenarios.scenario_comparison import (
-    get_scenario_results,
+from flextool.scenario_comparison.db_reader import get_scenario_results
+from flextool.scenario_comparison.scenario_comparison import (
     combine_dispatch_mappings,
     create_or_update_dispatch_config,
     create_dispatch_plots,
@@ -142,7 +142,8 @@ def main():
         with open(output_config_path, 'r') as f:
             settings = yaml.safe_load(f)
 
-        scenario_folders, combined_dfs = get_scenario_results(db_url=db_url, parquet_subdir=args.parquet_subdir)
+        scenario_folders, results = get_scenario_results(db_url=db_url, parquet_subdir=args.parquet_subdir)
+        combined_dfs = results.to_dict()  # dict view until downstream functions accept TimeSeriesResults
 
         if not os.path.exists(plot_dir):
             os.makedirs(plot_dir)
