@@ -1,5 +1,4 @@
 import time
-import csv
 import subprocess
 import logging
 import copy
@@ -17,6 +16,7 @@ from collections import defaultdict
 
 from flextool.flextoolrunner.db_reader import check_version
 from flextool.flextoolrunner import input_writer
+from flextool.flextoolrunner import solve_writers
 from flextool.flextoolrunner.solve_config import SolveConfig
 from flextool.flextoolrunner.timeline_config import (
     TimelineConfig,
@@ -86,96 +86,6 @@ class FlexToolRunner:
         # Assemble RunnerState — the single cross-cutting state container
         self.state = RunnerState(paths=paths, solve=solve, timeline=timeline, logger=logger)
 
-
-
-    def write_full_timelines(self, stochastic_timesteps, period__timesets_in_this_solve, timesets__timeline, timelines, filename):
-        """
-        write to file a list of timestep as defined in timelines.
-        :param filename: filename to write to
-        :param steplist: list of timestep indexes
-        :return:
-        """
-        with open(filename, 'w') as outfile:
-            # prepend with a header
-            outfile.write('period,step\n')
-            for period__timeset in period__timesets_in_this_solve:
-                for timeline in timelines:
-                    for timeset_in_timeline, tt in timesets__timeline.items():
-                        if period__timeset[1] == timeset_in_timeline:
-                            if timeline == tt:
-                                for item in timelines[timeline]:
-                                    outfile.write(period__timeset[0] + ',' + item[0] + '\n')
-            for step in stochastic_timesteps:
-                outfile.write(step[0] + ',' + step[1] + '\n')
-
-    def write_active_timelines(self, timeline, filename, complete = False):
-        """
-        write to file a list of timesteps as defined by the active timeline of the current solve
-        :param filename: filename to write to
-        :param timeline: list of tuples containing the period and the timestep
-        :return: nothing
-        """
-        if not complete:
-            with open(filename, 'w') as outfile:
-                # prepend with a header
-                outfile.write('period,step,step_duration\n')
-                for period_name, period in timeline.items():
-                    for item in period:
-                        outfile.write(period_name + ',' + item[0] + ',' + str(item[2]) + '\n')
-        else: 
-            with open(filename, 'w') as outfile:
-                # prepend with a header
-                outfile.write('period,step,complete_step_duration\n')
-                for period_name, period in timeline.items():
-                    for item in period:
-                        outfile.write(period_name + ',' + item[0] + ',' + str(item[2]) + '\n')
-
-    def write_years_represented(self, period__branch, years_represented, filename):
-        """
-        write to file a list of periods with the number of years the period represents before the next period starts
-        :param filename: filename to write to
-        :param years_represented: dict of periods with the number of years represented
-        :return: nothing
-        """
-        with open(filename, 'w') as outfile:
-            # prepend with a header
-            outfile.write('period,years_from_solve,p_years_from_solve,p_years_represented\n')
-            year_count = 0
-            for period__years in years_represented:
-                for i in range(int(max(1.0, float(period__years[1])))):
-                    years_to_cover_within_year = min(1, float(period__years[1]))
-                    outfile.write(period__years[0] + ',' + str(year_count) + ',' + str(year_count) + ','
-                            + str(years_to_cover_within_year) + '\n')
-                    for pd in period__branch:
-                        if pd[0] in period__years[0] and pd[0] != pd[1]:
-                            outfile.write(pd[1]+ ',' + str(year_count) + ',' + str(year_count) + ','
-                            + str(years_to_cover_within_year) + '\n')
-                    year_count = year_count + years_to_cover_within_year
-
-    def write_hole_multiplier(self, solve, filename):
-        with open(filename, 'w') as holefile:
-            holefile.write("solve,p_hole_multiplier\n")
-            if self.state.solve.hole_multipliers[solve]:
-                holefile.write(solve + "," + self.state.solve.hole_multipliers[solve] + "\n")
-
-
-    def write_period_years(self, stochastic_branches, years_represented, filename):
-        """
-        write to file a list of timesteps as defined by the active timeline of the current solve
-        :param filename: filename to write to
-        :param timeline: list of tuples containing the period and the timestep
-        :return: nothing
-        """
-        with open(filename, 'w') as outfile:
-            # prepend with a header
-            outfile.write('period,param\n')
-            year_count = 0
-            for period__year in years_represented:
-                outfile.write(period__year[0] + ',' + str(year_count) + '\n')
-                for pd in stochastic_branches:
-                    if pd[0] in period__year[0] and pd[0] != pd[1]:
-                        outfile.write(pd[1] + ',' + str(year_count) + '\n')
-                year_count += float(period__year[1])
 
 
     def model_run(self, current_solve):
@@ -517,363 +427,6 @@ class FlexToolRunner:
         
         return 0
 
-
-    def write_timesets(self, timesets_used_by_solves, timeset__timeline):
-        """
-        write timesets_in_use.csv and timeset__timeline.csv. 
-        Only exists as a separate function, because of the 'create_assumptive_timestructure_parts' function might create new timesets.
-
-        :param timesets_used_by_solves: dict of solves and their period__timesets
-        :param timeset__timeline: dict of timesets and their timelines
-        :return:
-        """
-        headers = ("solve", "period", "timesets")
-        with open("input/timesets_in_use.csv", 'w', newline='\n') as timesetfile:
-            writer = csv.writer(timesetfile, delimiter=',')
-            writer.writerow(headers)
-            for solve, period_timeset_list in timesets_used_by_solves.items():
-                for period, timeset in period_timeset_list:
-                    writer.writerow((solve, period, timeset))
-
-        headers = ("timesets", "timeline")
-        with open("input/timesets__timeline.csv", 'w', newline='\n') as timesetfile:
-            writer = csv.writer(timesetfile, delimiter=',')
-            writer.writerow(headers)
-            for timeset, timeline in timeset__timeline.items():
-                writer.writerow((timeset, timeline))
-
-    def write_step_jump(self, step_lengths):
-        """
-        write step_jump.csv according to spec.
-
-        :param step_lengths:
-        :return:
-        """
-
-        headers = ("period", "time", "previous", "previous_within_timeset", "previous_period", "previous_within_solve", "jump")
-        with open("solve_data/step_previous.csv", 'w', newline='\n') as stepfile:
-            writer = csv.writer(stepfile, delimiter=',')
-            writer.writerow(headers)
-            writer.writerows(step_lengths)
-
-    @staticmethod
-    def get_first_steps(steplists):
-        """
-        get the first step of the current solve and the next solve in execution order.
-        :param steplists: Dictionary containg steplist for each solve, in order
-        :return: Return a dictionary containing tuples of current_first, next first
-        """
-        solve_names = list(steplists.keys())
-        starts = OrderedDict()
-        for index, name in enumerate(solve_names):
-            # last key is a different case
-            if index == (len(solve_names) - 1):
-                starts[name] = (steplists[name][0],)
-            else:
-                starts[name] = (steplists[solve_names[index]][0], steplists[solve_names[index + 1]][0])
-        return starts
-
-    @staticmethod
-    def write_first_steps(timeline, filename):
-        """
-        write to file the first step of each period
-        
-        :param steps: a tuple containing the period and the timestep
-        """
-        with open(filename, 'w') as outfile:
-            # prepend with a header
-            outfile.write('period,step\n')
-            for period_name, period in timeline.items():
-                for item in period[:1]:
-                    outfile.write(period_name + ',' + item[0] + '\n')
-
-    def write_last_steps(self, timeline, filename):
-        """
-        write to file the last step of each period
-
-        :param steps: a tuple containing the period and the timestep
-        """
-        with open(filename, 'w') as outfile:
-            # prepend with a header
-            outfile.write('period,step\n')
-            for period_name, period in timeline.items():
-                for item in period[-1:]:
-                    outfile.write(period_name + ',' + item[0] + '\n')
-    
-    def write_last_realized_step(self, realized_timeline, solve, filename):
-        """
-        write to file the last step of timeline
-
-        :param steps: a tuple containing the period and the timestep
-        """
-        with open(filename, 'w') as outfile:
-            # prepend with a header
-            outfile.write('period,step\n')
-            out = []
-            has_realized_period = False
-            for period_name, period in realized_timeline.items():
-                if any(t[1] == period_name for t in self.state.solve.realized_periods.get(solve, [])):
-                    last_realized_period = (period_name, period)
-                    has_realized_period = True
-            if has_realized_period: 
-                for item in last_realized_period[1][-1:]:
-                    out = [period_name, item[0]]
-                    outfile.write(out[0] + ',' + out[1] + '\n')
-
-    @staticmethod
-    def write_periods(solve, periods_dict, filename):
-        """
-        write to file a list of periods based on the current solve.
-        :param solve: current solve
-        :param periods_dict: dict where key is solve name and value is list of
-                            (period_from, period_included) tuples
-        :param filename: filename to write to
-        :return: nothing
-        """
-        with open(filename, 'w') as outfile:
-            # prepend with a header
-            outfile.write('period\n')
-            for period_tuple in periods_dict.get(solve, []):
-                outfile.write(period_tuple[1] + '\n')
-
-    @staticmethod
-    def write_solve_status(first_state, last_state, nested = False):
-        """
-        make a file solve_first.csv that contains information if the current solve is the first to be run
-
-        :param first_state: boolean if the current solve is the first
-        :param last_state: boolean if the current solve is the last
-
-        """
-        if not nested:
-            with open("input/p_model.csv", 'w') as p_model_file:
-                p_model_file.write("modelParam,p_model\n")
-                if first_state:
-                    p_model_file.write("solveFirst,1\n")
-                else:
-                    p_model_file.write("solveFirst,0\n")
-                if last_state:
-                    p_model_file.write("solveLast,1\n")
-                else:
-                    p_model_file.write("solveLast,0\n")
-        else:
-            with open("solve_data/p_nested_model.csv", 'w') as p_model_file:
-                p_model_file.write("modelParam,p_nested_model\n")
-                if first_state:
-                    p_model_file.write("solveFirst,1\n")
-                else:
-                    p_model_file.write("solveFirst,0\n")
-                if last_state:
-                    p_model_file.write("solveLast,1\n")
-                else:
-                    p_model_file.write("solveLast,0\n")
-
-    @staticmethod
-    def write_currentSolve(solve, filename):
-        """
-        make a file with the current solve name
-        """
-        with open(filename, 'w') as solvefile:
-            solvefile.write("solve\n")
-            solvefile.write(solve + "\n")
-
-    @staticmethod
-    def write_empty_investment_file():
-        """
-        make a file p_entity_invested.csv that will contain capacities of invested and divested processes. For the first solve it will be empty.
-        """
-        with open("solve_data/p_entity_invested.csv", 'w') as firstfile:
-            firstfile.write("entity,p_entity_invested\n")
-        with open("solve_data/p_entity_divested.csv", 'w') as firstfile:
-            firstfile.write("entity,p_entity_divested\n")
-        with open("solve_data/p_entity_period_existing_capacity.csv", 'w') as firstfile:
-            firstfile.write("entity,period,p_entity_period_existing_capacity,p_entity_period_invested_capacity\n")
-
-    @staticmethod
-    def write_empty_storage_fix_file():
-        with open("solve_data/fix_storage_price.csv", 'w') as firstfile:
-            firstfile.write("node, period, step, ndt_fix_storage_price\n")
-        with open("solve_data/fix_storage_quantity.csv", 'w') as firstfile:
-            firstfile.write("node, period, step, ndt_fix_storage_quantity\n")
-        with open("solve_data/fix_storage_usage.csv", 'w') as firstfile:
-            firstfile.write("node, period, step, ndt_fix_storage_usage\n")
-        with open("solve_data/p_roll_continue_state.csv", 'w') as firstfile:
-            firstfile.write("node, p_roll_continue_state\n")
-
-    @staticmethod
-    def write_headers_for_empty_output_files(filename, header):
-        """
-        make an empty output file with headers
-        """
-        with open(filename, 'w') as firstfile:
-            firstfile.write(header+"\n")
-
-    def write_realized_dispatch(self, realized_time_list, solve):
-        """
-        write the timesteps to be realized for the dispatch decisions
-        """
-        with open("solve_data/realized_dispatch.csv", 'w') as realfile:
-            realfile.write("period,step\n")
-            for period, realized_time in realized_time_list.items():
-                if any(t[1] == period for t in self.state.solve.realized_periods.get(solve, [])):
-                    for i in realized_time:
-                        realfile.write(period+","+i[0]+"\n")
-
-    def write_fix_storage_timesteps(self, active_time_list, solve):
-        """
-        write the timesteps to where the storage is fixed for included solves
-        """
-        with open("solve_data/fix_storage_timesteps.csv", 'w') as realfile:
-            realfile.write("period,step\n")
-            for period, active_time in active_time_list.items():
-                if any(t[1] == period for t in self.state.solve.fix_storage_periods.get(solve, [])):
-                    for i in active_time:
-                        realfile.write(period+","+i[0]+"\n")
-
-    def write_delayed_durations(self,active_time_list,solve):
-        delay_duration_set = set()
-        for (entity, delay_durations) in self.state.solve.delay_durations.items():
-            if isinstance(delay_durations, list):
-                for delay_duration in delay_durations:
-                    delay_duration_set.add(str(delay_duration[0]))
-            else:
-                delay_duration_set.add(str(delay_durations))
-        with open("solve_data/delay_duration.csv", 'w') as realfile:
-            realfile.write("delay_duration\n")
-            for delay_duration in delay_duration_set:
-                realfile.write(str(delay_duration)+"\n")
-        with open("solve_data/dtt__delay_duration.csv", 'w') as realfile:
-            realfile.write("period,time_source,time_sink,delay_duration\n")
-            for period_name, time_steps in active_time_list.items():
-                for k, time_step in enumerate(time_steps):
-                    for delay_duration in delay_duration_set:
-                        if k + int(float(delay_duration)) < len(time_steps):
-                            row = ','.join([period_name, time_step[0], time_steps[k + int(float(delay_duration))][0], str(delay_duration)])
-                            realfile.write(row+"\n")
-                        elif k + int(float(delay_duration)) >= len(time_steps):
-                            row = ','.join([period_name, time_step[0], time_steps[k - len(time_steps) + int(float(delay_duration))][0], str(delay_duration)])
-                            realfile.write(row+"\n")
-
-    @staticmethod
-    def write_branch__period_relationship(period__branch, filename):
-        """
-        write the period_branch relatioship
-        """
-        with open(filename, 'w') as realfile:
-            realfile.write("period,branch\n")
-            for row in period__branch:
-                realfile.write(row[0]+","+row[1]+"\n")
-
-    def write_all_branches(self,period__branch_list, solve_branch__time_branch_list):
-        """
-        write all branches in all solves
-        """
-        branches = []
-        for solve in period__branch_list:
-                for row in period__branch_list[solve]:
-                    if row[1] not in branches:
-                        branches.append(row[1])
-        with open("solve_data/branch_all.csv", 'w') as realfile:
-            realfile.write("branch\n")
-            for branch in branches:
-                realfile.write(branch+"\n")
-
-        timeseries_names=[
-        'pbt_node_inflow.csv',
-        'pbt_node.csv',
-        'pbt_process.csv',
-        'pbt_profile.csv',
-        'pbt_process_source.csv',
-        'pbt_process_sink.csv',
-        'pbt_reserve__upDown__group.csv']
-
-        time_branches = []
-        for filename in timeseries_names:
-            with open('input/'+filename, 'r') as blk:
-                filereader = csv.reader(blk, delimiter=',')
-                headers = next(filereader)
-                while True:
-                    try:
-                        datain = next(filereader)
-                        if datain[1] not in time_branches:
-                            time_branches.append(datain[1])
-                        if datain[1] == "":
-                            self.state.logger.error("Empty branch name in timeseries: "+ filename + " , check that there is no empty row at the end of the array")
-                            sys.exit(-1)
-                    except StopIteration:
-                        break
-
-        for solve__branch in solve_branch__time_branch_list:
-            if solve__branch[1] not in time_branches:
-                time_branches.append(solve__branch[1])
-        with open("solve_data/time_branch_all.csv", 'w') as realfile:
-            realfile.write("time_branch\n")
-            for time_branch in time_branches:
-                realfile.write(time_branch+"\n")
-         
-    def write_solve_branch__time_branch_list_and_weight(self, complete_solve, active_time_list, solve_branch__time_branch_list, branch_start_time, period__branch_lists):
-        """
-        write the the weights and which one of the branches is the realized (used on the realized time and if not stochastic)
-        """
-        time_branch_weight = defaultdict()
-        if branch_start_time != None:
-            for row in self.state.solve.stochastic_branches[complete_solve]:
-                if branch_start_time[0] == row[0] and branch_start_time[1] == row[2]:
-                    time_branch_weight[row[1]] = row[4]
-
-        with open("solve_data/solve_branch_weight.csv", 'w') as realfile:
-            realfile.write("branch,p_branch_weight_input\n")
-            for solve_branch__time_branch in solve_branch__time_branch_list:
-                #the realized part always has the weight of 1
-                if (solve_branch__time_branch[0], solve_branch__time_branch[0]) in period__branch_lists:
-                    realfile.write(solve_branch__time_branch[0] +","+ '1.0'+"\n")
-                elif solve_branch__time_branch[1] in time_branch_weight.keys() and solve_branch__time_branch[0] in active_time_list.keys():
-                    realfile.write(solve_branch__time_branch[0] +","+ str(time_branch_weight[solve_branch__time_branch[1]])+"\n")
-
-        with open("solve_data/solve_branch__time_branch.csv", 'w') as realfile:
-            realfile.write("period,branch\n")
-            for solve_branch__time_branch in solve_branch__time_branch_list:
-                realfile.write(solve_branch__time_branch[0]+","+solve_branch__time_branch[1]+"\n")
-
-    def write_first_and_last_periods(self, active_time_list, period__timesets_in_this_solve, period__branch_list):
-        """
-        write first and last periods (timewise) for the solve
-        Assumes that the periods in right order in active_time_list, but gets the multiple branches as last
-        """
-        period_first_of_solve = list(active_time_list.keys())[0]
-        period_last = []
-        period_last.append(list(active_time_list.keys())[-1])
-        time_step_last = active_time_list[period_last[0]][-1][0]
-
-        for period in active_time_list.keys():
-            if active_time_list[period][-1][0] == time_step_last and period != period_last[0]:
-                period_last.append(period)
-        
-        with open("solve_data/period_last.csv", 'w') as realfile:
-            realfile.write("period\n")
-            for period in period_last:
-                realfile.write(period +"\n")
-        
-        period_first_of_solve_list = []
-        for period__branch in period__branch_list:
-            if period__branch[0] == period_first_of_solve:
-                period_first_of_solve_list.append(period__branch[1])
-        
-        with open("solve_data/period_first_of_solve.csv", 'w') as realfile:
-            realfile.write("period\n")
-            for period in period_first_of_solve_list:
-                realfile.write(period+"\n")
-
-        period_first = period__timesets_in_this_solve[0][0]
-        period_first_list = []
-        for period__branch in period__branch_list:
-            if period__branch[0] == period_first:
-                period_first_list.append(period__branch[1])
-
-        with open("solve_data/period_first.csv", 'w') as realfile:
-            realfile.write("period\n")
-            for period in period_first_list:
-                realfile.write(period+"\n")
 
     #these exist to connect timesteps from two different timelines or aggregated versions of one
     def connect_two_timelines(self,period,first_solve,second_solve, period__branch):
@@ -1676,34 +1229,34 @@ class FlexToolRunner:
                         period__timesets_with_history.append((history_period, current_timeset))
                         current_periods.add(history_period)
 
-            self.write_full_timelines(self.state.timeline.stochastic_timesteps[solve], period__timesets_with_history, self.state.timeline.timesets__timeline, self.state.timeline.timelines, 'solve_data/steps_in_timeline.csv')
-            self.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
-            self.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete = True)
-            self.write_step_jump(jump_lists[solve])
-            self.write_timesets(self.state.solve.timesets_used_by_solves, self.state.timeline.timesets__timeline)
+            solve_writers.write_full_timelines(self.state.timeline.stochastic_timesteps[solve], period__timesets_with_history, self.state.timeline.timesets__timeline, self.state.timeline.timelines, 'solve_data/steps_in_timeline.csv')
+            solve_writers.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
+            solve_writers.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete=True)
+            solve_writers.write_step_jump(jump_lists[solve])
+            solve_writers.write_timesets(self.state.solve.timesets_used_by_solves, self.state.timeline.timesets__timeline)
             self.state.logger.info("Creating period data")
-            self.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], 'solve_data/period_with_history.csv')
-            self.write_periods(complete_solve[solve], self.state.solve.realized_invest_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
+            solve_writers.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], 'solve_data/period_with_history.csv')
+            solve_writers.write_periods(complete_solve[solve], self.state.solve.realized_invest_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
             #assume that if realized_invest_periods is not defined,but the invest_periods and realized_periods are defined, use realized_periods also as the realized_invest_periods
             if not self.state.solve.realized_invest_periods[complete_solve[solve]] and self.state.solve.invest_periods[complete_solve[solve]] and self.state.solve.realized_periods[complete_solve[solve]]:
-                self.write_periods(complete_solve[solve], self.state.solve.realized_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
-            self.write_periods(complete_solve[solve], self.state.solve.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
-            self.write_years_represented(period__branch_lists[solve], self.state.solve.solve_period_years_represented[complete_solve[solve]],'solve_data/p_years_represented.csv')
-            self.write_period_years(period__branch_lists[solve], self.state.solve.solve_period_years_represented[complete_solve[solve]],'solve_data/p_discount_years.csv')
-            self.write_currentSolve(solve, 'solve_data/solve_current.csv')
-            self.write_hole_multiplier(solve, 'solve_data/solve_hole_multiplier.csv')
-            self.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
-            self.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
-            self.write_last_realized_step(active_time_lists[solve], complete_solve[solve], 'solve_data/last_realized_timestep.csv')
+                solve_writers.write_periods(complete_solve[solve], self.state.solve.realized_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
+            solve_writers.write_periods(complete_solve[solve], self.state.solve.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
+            solve_writers.write_years_represented(period__branch_lists[solve], self.state.solve.solve_period_years_represented[complete_solve[solve]], 'solve_data/p_years_represented.csv')
+            solve_writers.write_period_years(period__branch_lists[solve], self.state.solve.solve_period_years_represented[complete_solve[solve]], 'solve_data/p_discount_years.csv')
+            solve_writers.write_current_solve(solve, 'solve_data/solve_current.csv')
+            solve_writers.write_hole_multiplier(solve, self.state.solve.hole_multipliers, 'solve_data/solve_hole_multiplier.csv')
+            solve_writers.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
+            solve_writers.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
+            solve_writers.write_last_realized_step(active_time_lists[solve], complete_solve[solve], self.state.solve.realized_periods.get(complete_solve[solve], []), 'solve_data/last_realized_timestep.csv')
             self.state.logger.info("Create realized timeline")
-            self.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
-            self.write_fix_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
-            self.write_delayed_durations(active_time_lists[solve], complete_solve[solve])
+            solve_writers.write_realized_dispatch(realized_time_lists[solve], complete_solve[solve], self.state.solve.realized_periods.get(complete_solve[solve], []))
+            solve_writers.write_fix_storage_timesteps(fix_storage_time_lists[solve], complete_solve[solve], self.state.solve.fix_storage_periods.get(complete_solve[solve], []))
+            solve_writers.write_delayed_durations(active_time_lists[solve], complete_solve[solve], self.state.solve.delay_durations)
             self.state.logger.info("Possible stochastics")
-            self.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
-            self.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve])
-            self.write_solve_branch__time_branch_list_and_weight(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve])
-            self.write_first_and_last_periods(active_time_lists[solve], self.state.solve.timesets_used_by_solves[complete_solve[solve]], period__branch_lists[solve])
+            solve_writers.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
+            solve_writers.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve], self.state.logger)
+            solve_writers.write_branch_weights_and_map(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve], self.state.solve.stochastic_branches)
+            solve_writers.write_first_and_last_periods(active_time_lists[solve], self.state.solve.timesets_used_by_solves[complete_solve[solve]], period__branch_lists[solve])
             separate_period_and_timeseries_data(self.state.timeline.timelines, self.state.solve.timesets_used_by_solves)
 
             #check if the upper level fixes storages
@@ -1737,16 +1290,16 @@ class FlexToolRunner:
                 shutil.copy("solve_data/fix_storage_price_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_price.csv")
                 shutil.copy("solve_data/fix_storage_usage_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_usage.csv")
 
-            self.write_solve_status(first_of_nested_level,last_of_nested_level, nested = True)
+            solve_writers.write_solve_status(first_of_nested_level, last_of_nested_level, nested=True)
             last = i == len(solves) - 1
-            self.write_solve_status(first, last)
+            solve_writers.write_solve_status(first, last)
             if i == 0:
                 first = False
-                self.write_empty_investment_file()
-                self.write_empty_storage_fix_file()
-                self.write_headers_for_empty_output_files('solve_data/costs_discounted.csv', 'param_costs,costs_discounted')
-                self.write_headers_for_empty_output_files('solve_data/co2.csv', 'param_co2,model_wide')
-                self.write_headers_for_empty_output_files('solve_data/period_capacity.csv', 'period')
+                solve_writers.write_empty_investment_file()
+                solve_writers.write_empty_storage_fix_file()
+                solve_writers.write_headers_for_empty_output_files('solve_data/costs_discounted.csv', 'param_costs,costs_discounted')
+                solve_writers.write_headers_for_empty_output_files('solve_data/co2.csv', 'param_co2,model_wide')
+                solve_writers.write_headers_for_empty_output_files('solve_data/period_capacity.csv', 'period')
             self.state.logger.info("Starting model creation")
 
             with open("solve_data/solve_progress.csv", "a") as solve_progress:
