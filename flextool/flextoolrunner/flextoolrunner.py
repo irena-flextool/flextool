@@ -24,6 +24,7 @@ from flextool.flextoolrunner.timeline_config import (
     make_step_jump,
     separate_period_and_timeseries_data,
 )
+from flextool.flextoolrunner.runner_state import PathConfig, RunnerState
 
 #return_codes
 #0 : Success
@@ -37,13 +38,7 @@ class FlexToolRunner:
     """
 
     def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None):
-        self.logger = logging.getLogger(__name__)
-#        logger.basicConfig(
-#            stream=sys.stderr,
-#            level=logging.DEBUG,
-#            format='%(asctime)s %(levelname)s: %(message)s',
-#            datefmt='%Y-%m-%d %H:%M:%S',
-#        )
+        logger = logging.getLogger(__name__)
         translation = {39: None}
         # delete highs.log from previous run
         if os.path.exists("./HiGHS.log"):
@@ -51,16 +46,14 @@ class FlexToolRunner:
         # make a directory for solve data
         if not os.path.exists("./solve_data"):
             os.makedirs("./solve_data")
-        if flextool_dir is None:
-            self.flextool_dir = Path(__file__).parent.parent.parent / "flextool"
-        if bin_dir is None:
-            self.bin_dir = Path(__file__).parent.parent.parent / "bin"
-        if root_dir is None:
-            self.root_dir = Path(__file__).parent.parent.parent
-        if output_path is None:
-            self.output_path = Path(__file__).parent.parent.parent
-        else:
-            self.output_path = output_path
+        # Build PathConfig
+        _default_root = Path(__file__).parent.parent.parent
+        paths = PathConfig(
+            flextool_dir=Path(flextool_dir) if flextool_dir is not None else _default_root / "flextool",
+            bin_dir=Path(bin_dir) if bin_dir is not None else _default_root / "bin",
+            root_dir=Path(root_dir) if root_dir is not None else _default_root,
+            output_path=Path(output_path) if output_path is not None else _default_root,
+        )
         # read the data in
         # open connection to input db
         if scenario_name:
@@ -71,61 +64,27 @@ class FlexToolRunner:
             else:
                 scen_names = db.get_scenario_items()
                 if len(scen_names) == 0:
-                    self.logger.error("No scenario found")
+                    logger.error("No scenario found")
                     sys.exit(-1)
                 scenario_name=scen_names[0]['name']
-            self.logger.info(" Work dir: " + str(self.root_dir) + "\nDB URL: " + str(db.sa_url) + "\nScenario name: " + scenario_name + "\nOutput path: " + str(self.output_path))
+            logger.info(" Work dir: " + str(paths.root_dir) + "\nDB URL: " + str(db.sa_url) + "\nScenario name: " + scenario_name + "\nOutput path: " + str(paths.output_path))
             if len(db.get_scenario_alternative_items(scenario_name=scenario_name)) == 0:
-                self.logger.error("No alternatives in the scenario, i.e. empty scenario.")
+                logger.error("No alternatives in the scenario, i.e. empty scenario.")
                 sys.exit(-1)
-            
+
             db.fetch_all("parameter_value")
-            check_version(db=db, logger=self.logger)
+            check_version(db=db, logger=logger)
             # Solve-level fields — delegated to SolveConfig
-            self.solve = SolveConfig.load_from_db(db=db, logger=self.logger)
+            solve = SolveConfig.load_from_db(db=db, logger=logger)
             # Timeline-level fields — delegated to TimelineConfig
-            self.timeline = TimelineConfig.load_from_db(db=db, logger=self.logger)
+            timeline = TimelineConfig.load_from_db(db=db, logger=logger)
 
         # Post-DB initialization of timeline
-        self.timeline.create_assumptive_parts(self.solve)
-        self.timeline.create_timeline_from_timestep_duration()
+        timeline.create_assumptive_parts(solve)
+        timeline.create_timeline_from_timestep_duration()
 
-        # Aliases for backward compatibility with methods that still live in this file
-        # (these reference the SAME mutable objects, so mutations propagate both ways)
-        # -- solve aliases --
-        self.model = self.solve.model
-        self.model_solve = self.solve.model_solve
-        self.solve_modes = self.solve.solve_modes
-        self.roll_counter = self.solve.roll_counter
-        self.rolling_times = self.solve.rolling_times
-        self.highs_presolve = self.solve.highs_presolve
-        self.highs_method = self.solve.highs_method
-        self.highs_parallel = self.solve.highs_parallel
-        self.solvers = self.solve.solvers
-        self.solver_precommand = self.solve.solver_precommand
-        self.solver_arguments = self.solve.solver_arguments
-        self.solve_period_years_represented = self.solve.solve_period_years_represented
-        self.hole_multipliers = self.solve.hole_multipliers
-        self.timesets_used_by_solves = self.solve.timesets_used_by_solves
-        self.contains_solves = self.solve.contains_solves
-        self.stochastic_branches = self.solve.stochastic_branches
-        self.invest_periods = self.solve.invest_periods
-        self.realized_periods = self.solve.realized_periods
-        self.realized_invest_periods = self.solve.realized_invest_periods
-        self.fix_storage_periods = self.solve.fix_storage_periods
-        self.periods_available = self.solve.periods_available
-        self.delay_durations = self.solve.delay_durations
-        self.first_of_complete_solve = self.solve.first_of_complete_solve
-        self.last_of_solve = self.solve.last_of_solve
-        self.real_solves = self.solve.real_solves
-        # -- timeline aliases --
-        self.timelines = self.timeline.timelines
-        self.timesets = self.timeline.timesets
-        self.timesets__timeline = self.timeline.timesets__timeline
-        self.timeset_durations = self.timeline.timeset_durations
-        self.new_step_durations = self.timeline.new_step_durations
-        self.stochastic_timesteps = self.timeline.stochastic_timesteps
-        self.original_timeline = self.timeline.original_timeline
+        # Assemble RunnerState — the single cross-cutting state container
+        self.state = RunnerState(paths=paths, solve=solve, timeline=timeline, logger=logger)
 
 
 
@@ -196,8 +155,8 @@ class FlexToolRunner:
     def write_hole_multiplier(self, solve, filename):
         with open(filename, 'w') as holefile:
             holefile.write("solve,p_hole_multiplier\n")
-            if self.hole_multipliers[solve]:
-                holefile.write(solve + "," + self.hole_multipliers[solve] + "\n")
+            if self.state.solve.hole_multipliers[solve]:
+                holefile.write(solve + "," + self.state.solve.hole_multipliers[solve] + "\n")
 
 
     def write_period_years(self, stochastic_branches, years_represented, filename):
@@ -228,13 +187,13 @@ class FlexToolRunner:
         timer_in_model_run = time.perf_counter()
 
         try:
-            solver = self.solvers[current_solve]
+            solver = self.state.solve.solvers[current_solve]
         except KeyError:
-            self.logger.warning(f"No solver defined for {current_solve}. Defaulting to highs.")
+            self.state.logger.warning(f"No solver defined for {current_solve}. Defaulting to highs.")
             solver = "highs"
         if sys.platform.startswith("linux"):
-            glpsol_file = str(self.bin_dir / "glpsol")
-            highs_file = str(self.bin_dir / "highs")
+            glpsol_file = str(self.state.paths.bin_dir / "glpsol")
+            highs_file = str(self.state.paths.bin_dir / "highs")
             if os.path.exists(glpsol_file):
                 current_permissions = os.stat(glpsol_file).st_mode & 0o777
                 if current_permissions != 0o755:
@@ -244,15 +203,15 @@ class FlexToolRunner:
                 if current_permissions != 0o755:
                     os.chmod(highs_file, 0o755)
         elif sys.platform.startswith("win32"):
-            glpsol_file = str(self.bin_dir / "glpsol.exe")
-            highs_file = str(self.bin_dir / "highs.exe")
-        flextool_model_file = str(self.flextool_dir / "flextool.mod")
-        flextool_base_data_file = str(self.flextool_dir / "flextool_base.dat")
-        glp_solution_file = str(self.root_dir / "glpsol_solution.txt")
-        mps_file = str(self.root_dir / "flextool.mps")
-        highs_option_file = str(self.bin_dir / "highs.opt")
-        cplex_sol_file = str(self.root_dir / "cplex.sol")
-        flextool_sol_file = str(self.root_dir / "flextool.sol")
+            glpsol_file = str(self.state.paths.bin_dir / "glpsol.exe")
+            highs_file = str(self.state.paths.bin_dir / "highs.exe")
+        flextool_model_file = str(self.state.paths.flextool_dir / "flextool.mod")
+        flextool_base_data_file = str(self.state.paths.flextool_dir / "flextool_base.dat")
+        glp_solution_file = str(self.state.paths.root_dir / "glpsol_solution.txt")
+        mps_file = str(self.state.paths.root_dir / "flextool.mps")
+        highs_option_file = str(self.state.paths.bin_dir / "highs.opt")
+        cplex_sol_file = str(self.state.paths.root_dir / "cplex.sol")
+        flextool_sol_file = str(self.state.paths.root_dir / "flextool.sol")
         if solver == "glpsol":
             with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
                 p_model_file.write("phase\nread\n")
@@ -262,17 +221,17 @@ class FlexToolRunner:
                 if returncode != 0:
                     sys.exit(returncode)
             except Exception as e:
-                self.logger.exception(f"Error occurred: {e}")
+                self.state.logger.exception(f"Error occurred: {e}")
                 sys.exit(1)
             if returncode != 0:
-                self.logger.error(f'glpsol failed: {returncode}')
+                self.state.logger.error(f'glpsol failed: {returncode}')
                 sys.exit(returncode)
             
             #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
             with open('glpsol_solution.txt','r') as inf_file:
                 inf_content = inf_file.read() 
                 if 'INFEASIBLE' in inf_content:
-                    self.logger.error(f"The model is infeasible. Check the constraints.")
+                    self.state.logger.error(f"The model is infeasible. Check the constraints.")
                     sys.exit(1)
 
             timing = time.perf_counter() - timer_in_model_run
@@ -295,7 +254,7 @@ class FlexToolRunner:
             with open(mps_file, 'r') as mps_file_handle:
                 mps_content = mps_file_handle.read() 
                 if 'Columns:    0' in mps_content:
-                    self.logger.error(f"The problem has no columns. Check that the model has nodes with entity alternative: true")
+                    self.state.logger.error(f"The problem has no columns. Check that the model has nodes with entity alternative: true")
                     sys.exit(-1)
 
             timing = time.perf_counter() - timer_in_model_run
@@ -306,12 +265,12 @@ class FlexToolRunner:
 
             if solver == "highs":
                 highs_step2 = [highs_file, mps_file, f"--options_file={highs_option_file}"] + \
-                              [''.join(['--presolve='] + [self.highs_presolve.get(current_solve, "on")])] + \
-                              [''.join(['--solver='] + [self.highs_method.get(current_solve, "choose")])] + \
-                              [''.join(['--parallel='] + [self.highs_parallel.get(current_solve, "off")])]
+                              [''.join(['--presolve='] + [self.state.solve.highs_presolve.get(current_solve, "on")])] + \
+                              [''.join(['--solver='] + [self.state.solve.highs_method.get(current_solve, "choose")])] + \
+                              [''.join(['--parallel='] + [self.state.solve.highs_parallel.get(current_solve, "off")])]
                 completed = subprocess.run(highs_step2)
                 if completed.returncode != 0:
-                    self.logger.error(f'Highs solver failed: {completed.returncode}')
+                    self.state.logger.error(f'Highs solver failed: {completed.returncode}')
                     sys.exit(completed.returncode)
                 print("HiGHS solved the problem\n")
                 
@@ -319,7 +278,7 @@ class FlexToolRunner:
                 with open('HiGHS.log','r') as inf_file:
                     inf_content = inf_file.read() 
                     if 'Infeasible' in inf_content:
-                        self.logger.error(f"The model is infeasible. Check the constraints.")
+                        self.state.logger.error(f"The model is infeasible. Check the constraints.")
                         sys.exit(1)
             
                 timing = time.perf_counter() - timer_in_model_run
@@ -331,34 +290,34 @@ class FlexToolRunner:
             elif solver == "cplex": #or gurobi
                 with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
                     p_model_file.write("phase\nread\n")
-                if current_solve not in self.solver_precommand.keys():
+                if current_solve not in self.state.solve.solver_precommand.keys():
                     if solver == "cplex":
-                        if current_solve not in self.solver_arguments.keys():
+                        if current_solve not in self.state.solve.solver_arguments.keys():
                             cplex_step = ['cplex', '-c', 'read', mps_file, 'opt', 'write', cplex_sol_file, 'quit']
                         else:
                             cplex_step = ['cplex', '-c', 'read', mps_file]
-                            cplex_step += self.solver_arguments[current_solve]
+                            cplex_step += self.state.solve.solver_arguments[current_solve]
                             cplex_step += ['opt', 'write', cplex_sol_file, 'quit']
 
                         completed = subprocess.run(cplex_step)
                         if completed.returncode != 0:
-                            self.logger.error(f'Cplex solver failed: {completed.returncode}')
+                            self.state.logger.error(f'Cplex solver failed: {completed.returncode}')
                             sys.exit(completed.returncode) 
                         
                         completed = self.cplex_to_glpsol(cplex_sol_file, flextool_sol_file)
                 else:
-                    s_wrapper = self.solver_precommand[current_solve]
+                    s_wrapper = self.state.solve.solver_precommand[current_solve]
                     if solver == "cplex":
-                        if current_solve not in self.solver_arguments.keys():
+                        if current_solve not in self.state.solve.solver_arguments.keys():
                             cplex_step = [s_wrapper, 'cplex', '-c', 'read', mps_file,'opt', 'write', cplex_sol_file, 'quit']
                         else:
                             cplex_step = [s_wrapper, 'cplex', '-c', 'read', mps_file]
-                            cplex_step += self.solver_arguments[current_solve]
+                            cplex_step += self.state.solve.solver_arguments[current_solve]
                             cplex_step += ['opt', 'write', cplex_sol_file, 'quit']
 
                         completed = subprocess.run(cplex_step)
                         if completed.returncode != 0:
-                            self.logger.error(f'Cplex solver failed: {completed.returncode}')
+                            self.state.logger.error(f'Cplex solver failed: {completed.returncode}')
                             sys.exit(completed.returncode) 
                         
                         completed = self.cplex_to_glpsol(cplex_sol_file, flextool_sol_file)
@@ -385,7 +344,7 @@ class FlexToolRunner:
             if returncode != 0:
                 sys.exit(returncode)
         else:
-            self.logger.error(f"Unknown solver '{solver}'. Currently supported options: highs, glpsol, cplex.")
+            self.state.logger.error(f"Unknown solver '{solver}'. Currently supported options: highs, glpsol, cplex.")
             sys.exit(-1)
         return returncode
 
@@ -456,8 +415,8 @@ class FlexToolRunner:
         
         process.wait()
         
-        if process.returncode != 0 and self.logger:
-            self.logger.error(f'glpsol failed with exit code: {process.returncode}')
+        if process.returncode != 0 and self.state.logger:
+            self.state.logger.error(f'glpsol failed with exit code: {process.returncode}')
         
         return process.returncode
 
@@ -466,7 +425,7 @@ class FlexToolRunner:
         try:
             tree = ET.parse(cplexfile)
         except (OSError):
-            self.logger.error('The CPLEX solver does not produce a solution file if the problem is infeasible. Check the constraints, more info at cplex.log')
+            self.state.logger.error('The CPLEX solver does not produce a solution file if the problem is infeasible. Check the constraints, more info at cplex.log')
             sys.exit(-1)
         root = tree.getroot()
 
@@ -553,7 +512,7 @@ class FlexToolRunner:
                 
                 glpsol_file.write("e o f")
         else:
-            self.logger.error(f"Optimality could not be reached. Check the flextool.sol file for more")
+            self.state.logger.error(f"Optimality could not be reached. Check the flextool.sol file for more")
             sys.exit(1)
         
         return 0
@@ -653,7 +612,7 @@ class FlexToolRunner:
             out = []
             has_realized_period = False
             for period_name, period in realized_timeline.items():
-                if any(t[1] == period_name for t in self.realized_periods.get(solve, [])):
+                if any(t[1] == period_name for t in self.state.solve.realized_periods.get(solve, [])):
                     last_realized_period = (period_name, period)
                     has_realized_period = True
             if has_realized_period: 
@@ -756,7 +715,7 @@ class FlexToolRunner:
         with open("solve_data/realized_dispatch.csv", 'w') as realfile:
             realfile.write("period,step\n")
             for period, realized_time in realized_time_list.items():
-                if any(t[1] == period for t in self.realized_periods.get(solve, [])):
+                if any(t[1] == period for t in self.state.solve.realized_periods.get(solve, [])):
                     for i in realized_time:
                         realfile.write(period+","+i[0]+"\n")
 
@@ -767,13 +726,13 @@ class FlexToolRunner:
         with open("solve_data/fix_storage_timesteps.csv", 'w') as realfile:
             realfile.write("period,step\n")
             for period, active_time in active_time_list.items():
-                if any(t[1] == period for t in self.fix_storage_periods.get(solve, [])):
+                if any(t[1] == period for t in self.state.solve.fix_storage_periods.get(solve, [])):
                     for i in active_time:
                         realfile.write(period+","+i[0]+"\n")
 
     def write_delayed_durations(self,active_time_list,solve):
         delay_duration_set = set()
-        for (entity, delay_durations) in self.delay_durations.items():
+        for (entity, delay_durations) in self.state.solve.delay_durations.items():
             if isinstance(delay_durations, list):
                 for delay_duration in delay_durations:
                     delay_duration_set.add(str(delay_duration[0]))
@@ -839,7 +798,7 @@ class FlexToolRunner:
                         if datain[1] not in time_branches:
                             time_branches.append(datain[1])
                         if datain[1] == "":
-                            self.logger.error("Empty branch name in timeseries: "+ filename + " , check that there is no empty row at the end of the array")
+                            self.state.logger.error("Empty branch name in timeseries: "+ filename + " , check that there is no empty row at the end of the array")
                             sys.exit(-1)
                     except StopIteration:
                         break
@@ -858,7 +817,7 @@ class FlexToolRunner:
         """
         time_branch_weight = defaultdict()
         if branch_start_time != None:
-            for row in self.stochastic_branches[complete_solve]:
+            for row in self.state.solve.stochastic_branches[complete_solve]:
                 if branch_start_time[0] == row[0] and branch_start_time[1] == row[2]:
                     time_branch_weight[row[1]] = row[4]
 
@@ -918,8 +877,8 @@ class FlexToolRunner:
 
     #these exist to connect timesteps from two different timelines or aggregated versions of one
     def connect_two_timelines(self,period,first_solve,second_solve, period__branch):
-        first_period_timesets = self.timesets_used_by_solves[first_solve]
-        second_period_timesets = self.timesets_used_by_solves[second_solve]
+        first_period_timesets = self.state.solve.timesets_used_by_solves[first_solve]
+        second_period_timesets = self.state.solve.timesets_used_by_solves[second_solve]
         real_period = None
         for row in period__branch:
             if row[1] == period:
@@ -938,17 +897,17 @@ class FlexToolRunner:
         if second_timeset is None:
             raise ValueError(f"Could not find second_timeset for real_period={real_period} in second_period_timesets={second_period_timesets}")
 
-        first_timeline = self.timesets__timeline[first_timeset]
-        second_timeline = self.timesets__timeline[second_timeset]
+        first_timeline = self.state.timeline.timesets__timeline[first_timeset]
+        second_timeline = self.state.timeline.timesets__timeline[second_timeset]
 
         first_timeline_duration_from_start = OrderedDict()
         second_timeline_duration_from_start = OrderedDict()
         counter = 0
-        for timestep in self.timelines[first_timeline]:
+        for timestep in self.state.timeline.timelines[first_timeline]:
             first_timeline_duration_from_start[timestep[0]] = counter
             counter += float(timestep[1])
         counter = 0
-        for timestep in self.timelines[second_timeline]:
+        for timestep in self.state.timeline.timelines[second_timeline]:
             second_timeline_duration_from_start[timestep[0]] = counter
             counter += float(timestep[1])
     
@@ -990,7 +949,7 @@ class FlexToolRunner:
         period_to_real = {row[1]: row[0] for row in period__branch}
 
         # Get the periods that exist in the upper solve's timesets
-        upper_period_timesets = self.timesets_used_by_solves[upper_solve]
+        upper_period_timesets = self.state.solve.timesets_used_by_solves[upper_solve]
         upper_periods = {pt[0] for pt in upper_period_timesets}
 
         matching_map = OrderedDict()
@@ -1088,7 +1047,7 @@ class FlexToolRunner:
                             duration_counter += float(step[2])
                             last_index=[period,i]
         if started == False:
-            self.logger.error("Start point not found")
+            self.state.logger.error("Start point not found")
             sys.exit(-1)
         # if there is start of the roll but not end, the end is the last index of the active time
         diff = len(starts)-len(horizons)
@@ -1101,8 +1060,8 @@ class FlexToolRunner:
         for index, roll_start in enumerate(starts): 
             active = OrderedDict()
             realized = OrderedDict()
-            solve_name= solve+"_roll_" + str(self.roll_counter[solve])
-            self.roll_counter[solve]+=1
+            solve_name= solve+"_roll_" + str(self.state.solve.roll_counter[solve])
+            self.state.solve.roll_counter[solve]+=1
             solves.append(solve_name) 
             if roll_start[0]==horizons[index][0]: #if the whole roll is in the same period
                 active[roll_start[0]] = full_active_time_list[roll_start[0]][roll_start[1]:horizons[index][1]+1]
@@ -1213,7 +1172,7 @@ class FlexToolRunner:
         realized_time_lists = OrderedDict()
         parent_roll_lists = OrderedDict()
 
-        rolling_times = self.rolling_times[solve]  # [jump, horizon, duration]
+        rolling_times = self.state.solve.rolling_times[solve]  # [jump, horizon, duration]
         if duration == -1:
             duration = float(rolling_times[2])
 
@@ -1243,16 +1202,16 @@ class FlexToolRunner:
 
         # Mark first solve of this complete solve (for state start constraints)
         if parent_info.roll is not None:
-            if parent_info.roll in self.first_of_complete_solve:
-                self.first_of_complete_solve.append(roll_solves[0])
+            if parent_info.roll in self.state.solve.first_of_complete_solve:
+                self.state.solve.first_of_complete_solve.append(roll_solves[0])
         else:
-            self.first_of_complete_solve.append(roll_solves[0])
+            self.state.solve.first_of_complete_solve.append(roll_solves[0])
 
-        self.last_of_solve.append(roll_solves[-1])
+        self.state.solve.last_of_solve.append(roll_solves[-1])
 
         # Process contained solves
-        if solve in self.contains_solves:
-            contain_solves = self.contains_solves[solve]
+        if solve in self.state.solve.contains_solves:
+            contain_solves = self.state.solve.contains_solves[solve]
             if len(contain_solves) > 1:
                 logging.error("More than one solve in a rolling solve, not managed")
                 sys.exit(-1)
@@ -1324,18 +1283,18 @@ class FlexToolRunner:
 
         # Get fix_storage and realized time lists from class attributes
         invest_time_lists[solve] = self._filter_time_list_by_periods(
-            full_active_time_list, self.invest_periods, solve)
+            full_active_time_list, self.state.solve.invest_periods, solve)
         fix_storage_time_lists[solve] = self._filter_time_list_by_periods(
-            full_active_time_list, self.fix_storage_periods, solve)
+            full_active_time_list, self.state.solve.fix_storage_periods, solve)
         realized_time_lists[solve] = self._filter_time_list_by_periods(
-            full_active_time_list, self.realized_periods, solve)
+            full_active_time_list, self.state.solve.realized_periods, solve)
 
-        self.first_of_complete_solve.append(solve)
-        self.last_of_solve.append(solve)
+        self.state.solve.first_of_complete_solve.append(solve)
+        self.state.solve.last_of_solve.append(solve)
 
         # Process contained solves
-        if solve in self.contains_solves:
-            contain_solves = self.contains_solves[solve]
+        if solve in self.state.solve.contains_solves:
+            contain_solves = self.state.solve.contains_solves[solve]
 
             # Get parent's scope: union of fix_storage and realized periods
             parent_scope_periods = (set(fix_storage_time_lists[solve].keys()) |
@@ -1377,39 +1336,39 @@ class FlexToolRunner:
                      realized_time_lists, parent_roll_lists)
         """
         new_name = solve
-        if new_name not in self.real_solves:
-            self.real_solves.append(new_name)
+        if new_name not in self.state.solve.real_solves:
+            self.state.solve.real_solves.append(new_name)
 
         if parent_info.solve:
-            joint_current_solve_periods = list(set(self.invest_periods[solve] + self.fix_storage_periods[solve] + self.realized_periods[solve]))
+            joint_current_solve_periods = list(set(self.state.solve.invest_periods[solve] + self.state.solve.fix_storage_periods[solve] + self.state.solve.realized_periods[solve]))
             current_solve_periods = [t[0] for t in joint_current_solve_periods]
             for current_solve_period in current_solve_periods:
-                joint_parent_periods = list(set(self.invest_periods[parent_info.solve] + self.fix_storage_periods[parent_info.solve] + self.realized_periods[parent_info.solve]))
+                joint_parent_periods = list(set(self.state.solve.invest_periods[parent_info.solve] + self.state.solve.fix_storage_periods[parent_info.solve] + self.state.solve.realized_periods[parent_info.solve]))
                 parent_period = set([t[0] for t in joint_parent_periods])
                 if current_solve_period in parent_period:
                     new_name = solve + "_" + str(current_solve_period)
-                    self.solve.duplicate_solve(solve, new_name, update_model_solves=False)
-                    self.solve_period_years_represented[new_name] = self.solve_period_years_represented[solve]
+                    self.state.solve.duplicate_solve(solve, new_name, update_model_solves=False)
+                    self.state.solve.solve_period_years_represented[new_name] = self.state.solve.solve_period_years_represented[solve]
 
                     new_period_timeset_list = []
-                    for solve2, period__timeset_list in list(self.timesets_used_by_solves.items()):
+                    for solve2, period__timeset_list in list(self.state.solve.timesets_used_by_solves.items()):
                         if solve2 == solve:
                             for period__timeset in period__timeset_list:
                                 if period__timeset[0] == current_solve_period:
                                     new_period_timeset_list.append(period__timeset)
-                    if new_name not in self.timesets_used_by_solves.keys():
-                        self.timesets_used_by_solves[new_name] = new_period_timeset_list
+                    if new_name not in self.state.solve.timesets_used_by_solves.keys():
+                        self.state.solve.timesets_used_by_solves[new_name] = new_period_timeset_list
                     else:
                         for item in new_period_timeset_list:
-                            if item not in self.timesets_used_by_solves[new_name]:
-                                self.timesets_used_by_solves[new_name].append(item)
+                            if item not in self.state.solve.timesets_used_by_solves[new_name]:
+                                self.state.solve.timesets_used_by_solves[new_name].append(item)
                     # There should be only one parent 'period_from'
                     break
 
         # Get full active time list for this solve (all timesteps it could use)
         full_active_time_list_own = get_active_time(
-            new_name, self.timesets_used_by_solves, self.timeset_durations,
-            self.timelines, self.timesets__timeline)
+            new_name, self.state.solve.timesets_used_by_solves, self.state.timeline.timeset_durations,
+            self.state.timeline.timelines, self.state.timeline.timesets__timeline)
 
         # If this is a child solve, constrain it to parent's scope
         if not parent_scope_periods:
@@ -1421,7 +1380,7 @@ class FlexToolRunner:
                 full_active_time_list_own, parent_scope_periods)
 
         # Determine solve mode
-        solve_mode = self.solve_modes.get(new_name, "single_solve")
+        solve_mode = self.state.solve.solve_modes.get(new_name, "single_solve")
         if solve_mode == "rolling_window":
             # Process as rolling window solve
             complete_solve_name = solve
@@ -1484,7 +1443,7 @@ class FlexToolRunner:
                 if first_step[1] == row[2] and "yes" == row[3]:
                     found_start = True
             if found_start == False and len(info) != 0:
-                self.logger.error("A realized start time of the solve cannot be found from the stochastic_branches parameter. "+
+                self.state.logger.error("A realized start time of the solve cannot be found from the stochastic_branches parameter. "+
                               "Check that stochastic_branches has a realized : yes, branch for the start of the solve" +
                                "and that the possible rolling_jump matches with the branch starts")
                 sys.exit(-1)
@@ -1532,7 +1491,7 @@ class FlexToolRunner:
 
                                 # Get timesteps for stochastic tracking
                                 for i in active_time[0:]:
-                                    self.stochastic_timesteps[solve].append((solve_branch, i[0]))
+                                    self.state.timeline.stochastic_timesteps[solve].append((solve_branch, i[0]))
                             break
                 else:
                     # If the jump is longer than the period (continuation after branching)
@@ -1542,7 +1501,7 @@ class FlexToolRunner:
                         period__branch_lists[solve].append((period, solve_branch))
                         solve_branch__time_branch_lists[solve].append((solve_branch, branch))
                         for i in active_time_list[period]:
-                             self.stochastic_timesteps[solve].append((solve_branch, i[0]))
+                             self.state.timeline.stochastic_timesteps[solve].append((solve_branch, i[0]))
 
                 # Before branching occurs, copy periods as-is
                 if not branched:
@@ -1567,7 +1526,7 @@ class FlexToolRunner:
                             found += 1
                             solve_branch__time_branch_lists[solve].append((period, row[1]))
                 if (branch_start_time_lists[solve] != None and found == 0) or found > 1:
-                    self.logger.error("Each period should have one and only one realized branch. Found: " + str(found) + "\n")
+                    self.state.logger.error("Each period should have one and only one realized branch. Found: " + str(found) + "\n")
                     sys.exit(-1)
 
             # Update the time lists for this solve
@@ -1609,12 +1568,12 @@ class FlexToolRunner:
         except FileExistsError:
             print("output_plots folder existed")
 
-        if not self.model_solve:
-            self.logger.error("No model. Make sure the 'model' class defines solves [Array].")
+        if not self.state.solve.model_solve:
+            self.state.logger.error("No model. Make sure the 'model' class defines solves [Array].")
             sys.exit(-1)
-        solves = next(iter(self.model_solve.values()))
+        solves = next(iter(self.state.solve.model_solve.values()))
         if not solves:
-            self.logger.error("No solves in model.")
+            self.state.logger.error("No solves in model.")
             sys.exit(-1)
         
         for solve in solves:
@@ -1644,46 +1603,46 @@ class FlexToolRunner:
                 if not timesteps:
                     del realized_time_lists[solve][period]
 
-        for solve in self.real_solves:
+        for solve in self.state.solve.real_solves:
             #check that period__years_represented has only periods included in the solve
             new_years_represented = []
-            for period__year in self.solve_period_years_represented[solve]:
-                if any(period__year[0] == period__timeset[0] for period__timeset in self.timesets_used_by_solves[solve]):
+            for period__year in self.state.solve.solve_period_years_represented[solve]:
+                if any(period__year[0] == period__timeset[0] for period__timeset in self.state.solve.timesets_used_by_solves[solve]):
                     new_years_represented.append(period__year)
-            self.solve_period_years_represented[solve] = new_years_represented
+            self.state.solve.solve_period_years_represented[solve] = new_years_represented
             # get period_history from earlier solves
-            for solve_2 in self.real_solves:
+            for solve_2 in self.state.solve.real_solves:
                 if solve_2 == solve:
                     break
                 # Combine all period tuples for solve_2 from all period dicts
                 all_period_tuples = (
-                    self.realized_periods.get(solve_2, []) +
-                    self.invest_periods.get(solve_2, []) +
-                    self.fix_storage_periods.get(solve_2, []) +
-                    self.realized_invest_periods.get(solve_2, [])
+                    self.state.solve.realized_periods.get(solve_2, []) +
+                    self.state.solve.invest_periods.get(solve_2, []) +
+                    self.state.solve.fix_storage_periods.get(solve_2, []) +
+                    self.state.solve.realized_invest_periods.get(solve_2, [])
                 )
                 for period_tuple in all_period_tuples:
-                    this_solve = self.solve_period_years_represented[solve_2]
+                    this_solve = self.state.solve.solve_period_years_represented[solve_2]
                     for period in this_solve:
                         if period[0] == period_tuple[0] and not any(period[0] == sublist[0] for sublist in solve_period_history[solve]):
                             solve_period_history[solve].append((period[0], period[1]))
             # get period_history from this solve
-            for period__year in self.solve_period_years_represented[solve]:
+            for period__year in self.state.solve.solve_period_years_represented[solve]:
                 if not any(period__year[0]== sublist[0] for sublist in solve_period_history[solve]):
                     solve_period_history[solve].append((period__year[0], period__year[1]))
             #if not defined, all the periods have the value 1
-            if not self.solve_period_years_represented[solve]:
-                for period__timeset in self.timesets_used_by_solves[solve]:
+            if not self.state.solve.solve_period_years_represented[solve]:
+                for period__timeset in self.state.solve.timesets_used_by_solves[solve]:
                     if not any(period__timeset[0]== sublist[0] for sublist in solve_period_history[solve]):
                         solve_period_history[solve].append((period__timeset[0], 1))
 
         period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, fix_storage_time_lists, realized_time_lists, branch_start_time_lists = \
-            self.create_stochastic_periods(self.stochastic_branches, all_solves, complete_solve, active_time_lists, fix_storage_time_lists, realized_time_lists)
+            self.create_stochastic_periods(self.state.solve.stochastic_branches, all_solves, complete_solve, active_time_lists, fix_storage_time_lists, realized_time_lists)
 
         for solve in active_time_lists.keys():
             for period in active_time_lists[solve]:
                 if (period,period) in period__branch_lists[solve] and not any(period== sublist[0] for sublist in solve_period_history[complete_solve[solve]]):
-                    self.logger.error(f"The years_represented is defined, but not to all of the periods ({period}) in the solve")
+                    self.state.logger.error(f"The years_represented is defined, but not to all of the periods ({period}) in the solve")
                     sys.exit(-1)
 
         timing = time.perf_counter() - timer
@@ -1698,11 +1657,11 @@ class FlexToolRunner:
         for i, solve in enumerate(all_solves):
             timer_in_solve = time.perf_counter()
 
-            self.logger.info("Creating timelines for solve " + solve + " (" + str(i) + ")")
-            complete_active_time_lists = get_active_time(complete_solve[solve], self.timesets_used_by_solves, self.timeset_durations, self.timelines, self.timesets__timeline)
+            self.state.logger.info("Creating timelines for solve " + solve + " (" + str(i) + ")")
+            complete_active_time_lists = get_active_time(complete_solve[solve], self.state.solve.timesets_used_by_solves, self.state.timeline.timeset_durations, self.state.timeline.timelines, self.state.timeline.timesets__timeline)
 
             # Build a combined period__timeset list that includes history periods
-            period__timesets_with_history = list(self.timesets_used_by_solves[complete_solve[solve]])
+            period__timesets_with_history = list(self.state.solve.timesets_used_by_solves[complete_solve[solve]])
             current_periods = {pt[0] for pt in period__timesets_with_history}
 
             # Determine the timeset to use for history periods (use the timeset from the current solve)
@@ -1717,63 +1676,63 @@ class FlexToolRunner:
                         period__timesets_with_history.append((history_period, current_timeset))
                         current_periods.add(history_period)
 
-            self.write_full_timelines(self.stochastic_timesteps[solve], period__timesets_with_history, self.timesets__timeline, self.timelines, 'solve_data/steps_in_timeline.csv')
+            self.write_full_timelines(self.state.timeline.stochastic_timesteps[solve], period__timesets_with_history, self.state.timeline.timesets__timeline, self.state.timeline.timelines, 'solve_data/steps_in_timeline.csv')
             self.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
             self.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete = True)
             self.write_step_jump(jump_lists[solve])
-            self.write_timesets(self.timesets_used_by_solves, self.timesets__timeline)
-            self.logger.info("Creating period data")
+            self.write_timesets(self.state.solve.timesets_used_by_solves, self.state.timeline.timesets__timeline)
+            self.state.logger.info("Creating period data")
             self.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], 'solve_data/period_with_history.csv')
-            self.write_periods(complete_solve[solve], self.realized_invest_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
+            self.write_periods(complete_solve[solve], self.state.solve.realized_invest_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
             #assume that if realized_invest_periods is not defined,but the invest_periods and realized_periods are defined, use realized_periods also as the realized_invest_periods
-            if not self.realized_invest_periods[complete_solve[solve]] and self.invest_periods[complete_solve[solve]] and self.realized_periods[complete_solve[solve]]:
-                self.write_periods(complete_solve[solve], self.realized_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
-            self.write_periods(complete_solve[solve], self.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
-            self.write_years_represented(period__branch_lists[solve], self.solve_period_years_represented[complete_solve[solve]],'solve_data/p_years_represented.csv')
-            self.write_period_years(period__branch_lists[solve], self.solve_period_years_represented[complete_solve[solve]],'solve_data/p_discount_years.csv')
+            if not self.state.solve.realized_invest_periods[complete_solve[solve]] and self.state.solve.invest_periods[complete_solve[solve]] and self.state.solve.realized_periods[complete_solve[solve]]:
+                self.write_periods(complete_solve[solve], self.state.solve.realized_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
+            self.write_periods(complete_solve[solve], self.state.solve.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
+            self.write_years_represented(period__branch_lists[solve], self.state.solve.solve_period_years_represented[complete_solve[solve]],'solve_data/p_years_represented.csv')
+            self.write_period_years(period__branch_lists[solve], self.state.solve.solve_period_years_represented[complete_solve[solve]],'solve_data/p_discount_years.csv')
             self.write_currentSolve(solve, 'solve_data/solve_current.csv')
             self.write_hole_multiplier(solve, 'solve_data/solve_hole_multiplier.csv')
             self.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
             self.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
             self.write_last_realized_step(active_time_lists[solve], complete_solve[solve], 'solve_data/last_realized_timestep.csv')
-            self.logger.info("Create realized timeline")
+            self.state.logger.info("Create realized timeline")
             self.write_realized_dispatch(realized_time_lists[solve],complete_solve[solve])
             self.write_fix_storage_timesteps(fix_storage_time_lists[solve],complete_solve[solve])
             self.write_delayed_durations(active_time_lists[solve], complete_solve[solve])
-            self.logger.info("Possible stochastics")
+            self.state.logger.info("Possible stochastics")
             self.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
             self.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve])
             self.write_solve_branch__time_branch_list_and_weight(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve])
-            self.write_first_and_last_periods(active_time_lists[solve], self.timesets_used_by_solves[complete_solve[solve]], period__branch_lists[solve])
-            separate_period_and_timeseries_data(self.timelines, self.timesets_used_by_solves)
+            self.write_first_and_last_periods(active_time_lists[solve], self.state.solve.timesets_used_by_solves[complete_solve[solve]], period__branch_lists[solve])
+            separate_period_and_timeseries_data(self.state.timeline.timelines, self.state.solve.timesets_used_by_solves)
 
             #check if the upper level fixes storages
-            if [complete_solve[solve]] in self.contains_solves.values() and complete_solve[parent_roll[solve]] in self.fix_storage_periods:  # check that the parent_roll exists and has storage fixing
+            if [complete_solve[solve]] in self.state.solve.contains_solves.values() and complete_solve[parent_roll[solve]] in self.state.solve.fix_storage_periods:  # check that the parent_roll exists and has storage fixing
                 storage_fix_values_exist = True
             else:
                 storage_fix_values_exist = False
             if storage_fix_values_exist:
-                self.logger.info("Nested timeline matching")
+                self.state.logger.info("Nested timeline matching")
                 self.write_timeline_matching_map(active_time_lists[parent_roll[solve]], active_time_lists[solve], complete_solve[parent_roll[solve]], complete_solve[solve], period__branch_lists[solve])
             else:
                 with open("solve_data/timeline_matching_map.csv", 'w') as realfile:
                     realfile.write("period,step,upper_step\n")
             #if timeline created from new step_duration, all timeseries have to be averaged or summed for the new timestep
             if previous_complete_solve != complete_solve[solve]:
-                self.logger.info("Aggregating timeline and parameters for the new step size")
-                self.timeline.create_averaged_timeseries(complete_solve[solve], self.solve, self.logger)
+                self.state.logger.info("Aggregating timeline and parameters for the new step size")
+                self.state.timeline.create_averaged_timeseries(complete_solve[solve], self.state.solve, self.state.logger)
             previous_complete_solve = complete_solve[solve]
-            if solve in self.first_of_complete_solve:
+            if solve in self.state.solve.first_of_complete_solve:
                 first_of_nested_level = True
             else:
                 first_of_nested_level = False
-            if solve in self.last_of_solve:
+            if solve in self.state.solve.last_of_solve:
                 last_of_nested_level = True
             else:
                 last_of_nested_level = False
             #if multiple storage solve levels, get the storage fix of the upper level, (not the fix of the previous roll):
             if storage_fix_values_exist:
-                self.logger.info("Fetching storage parameters from the upper solve")
+                self.state.logger.info("Fetching storage parameters from the upper solve")
                 shutil.copy("solve_data/fix_storage_quantity_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_quantity.csv")
                 shutil.copy("solve_data/fix_storage_price_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_price.csv")
                 shutil.copy("solve_data/fix_storage_usage_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_usage.csv")
@@ -1788,33 +1747,33 @@ class FlexToolRunner:
                 self.write_headers_for_empty_output_files('solve_data/costs_discounted.csv', 'param_costs,costs_discounted')
                 self.write_headers_for_empty_output_files('solve_data/co2.csv', 'param_co2,model_wide')
                 self.write_headers_for_empty_output_files('solve_data/period_capacity.csv', 'period')
-            self.logger.info("Starting model creation")
+            self.state.logger.info("Starting model creation")
 
             with open("solve_data/solve_progress.csv", "a") as solve_progress:
                 solve_progress.write(',,' + solve + ',' + str(round(time.perf_counter() - timer_in_solve,4)))
             
             exit_status = self.model_run(complete_solve[solve])
             if exit_status == 0:
-                self.logger.info('Success!')
+                self.state.logger.info('Success!')
                 print("-------------------------------------------------------------------------------------------\n\n")
             else:
-                self.logger.error(f'Error: {exit_status}')
+                self.state.logger.error(f'Error: {exit_status}')
                 sys.exit(-1)
 
             #if multiple storage solve levels, save the storage fix of this level:
-            if complete_solve[solve] in self.fix_storage_periods:
+            if complete_solve[solve] in self.state.solve.fix_storage_periods:
                 shutil.copy("solve_data/fix_storage_quantity.csv","solve_data/fix_storage_quantity_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_price.csv", "solve_data/fix_storage_price_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_usage.csv","solve_data/fix_storage_usage_"+ complete_solve[solve]+".csv")
 
-        if len(self.model_solve) > 1:
-            self.logger.error(
+        if len(self.state.solve.model_solve) > 1:
+            self.state.logger.error(
                 f'Trying to run more than one model - not supported. The results of the first model are retained.')
             sys.exit(-1)
         return 0
 
     def write_input(self, input_db_url, scenario_name=None) -> None:
-        input_writer.write_input(input_db_url, scenario_name, self.logger)
+        input_writer.write_input(input_db_url, scenario_name, self.state.logger)
 
 
 def main():
