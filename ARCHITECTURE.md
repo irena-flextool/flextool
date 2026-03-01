@@ -54,7 +54,8 @@ flextool/
 │   ├── config.py                      PlotConfig dataclass, DIMENSION_RULES, PLOT_FIELD_NAMES
 │   ├── legend_helpers.py              Legend sizing, label formatting, show/hide logic
 │   ├── axis_helpers.py                Axis formatting, smart xticks, scale/label helpers
-│   └── subplot_helpers.py             Grid layout, unique-level extraction, subplot data slicing
+│   ├── subplot_helpers.py             Grid layout, unique-level extraction, subplot data slicing
+│   └── plot_bars_detail.py            Bar rendering: _plot_grouped_bars, _plot_stacked_bars, _plot_simple_bars
 ├── update_flextool/
 │   ├── update_flextool.py             Git pull + project migration
 │   ├── migrate_database.py            Schema migration to latest version
