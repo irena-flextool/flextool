@@ -1,3 +1,14 @@
-"""Plotting: matplotlib-based visualization for FlexTool results."""
-from flextool.plot_outputs.plot_functions import plot_dict_of_dataframes
+"""
+Plot Outputs Module
+===================
+
+Entry point : orchestrator.plot_dict_of_dataframes()
+Config      : config.PlotConfig, config.DIMENSION_RULES
+Line plots  : plot_lines
+Bar charts  : plot_bars  (orchestration), plot_bars_detail (rendering)
+Shared util : subplot_helpers, axis_helpers, legend_helpers, format_helpers
+Performance : perf
+"""
+from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
+
 __all__ = ['plot_dict_of_dataframes']
