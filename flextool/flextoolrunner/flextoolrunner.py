@@ -16,6 +16,13 @@ from pathlib import Path
 from collections import OrderedDict, namedtuple
 from collections import defaultdict
 
+from flextool.flextoolrunner.db_reader import (
+    check_version,
+    entities_to_dict,
+    get_single_entities,
+    params_to_dict,
+)
+
 #return_codes
 #0 : Success
 #-1: Failure (Defined in the Toolbox)
@@ -71,36 +78,36 @@ class FlexToolRunner:
                 sys.exit(-1)
             
             db.fetch_all("parameter_value")
-            self.check_version(db=db)
-            self.timelines = self.params_to_dict(db=db, cl="timeline", par="timestep_duration", mode="defaultdict")
-            self.model = self.get_single_entities(db=db, entity_class_name="model")
-            self.model_solve = self.params_to_dict(db=db, cl="model", par="solves", mode="defaultdict")
+            check_version(db=db, logger=self.logger)
+            self.timelines = params_to_dict(db=db, cl="timeline", par="timestep_duration", mode="defaultdict")
+            self.model = get_single_entities(db=db, entity_class_name="model")
+            self.model_solve = params_to_dict(db=db, cl="model", par="solves", mode="defaultdict")
             # In case no model has been defined and there is only one model entity in the database, then use that:
-            solves_temp = self.get_single_entities(db=db, entity_class_name='solve')
+            solves_temp = get_single_entities(db=db, entity_class_name='solve')
             if len(self.model_solve) == 0 and len(solves_temp) == 1:
                 self.model_solve['flextool'] = [solves_temp[0]]
             # Continue assignments.
-            self.solve_modes = self.params_to_dict(db=db, cl="solve", par="solve_mode", mode="dict")
+            self.solve_modes = params_to_dict(db=db, cl="solve", par="solve_mode", mode="dict")
             self.roll_counter = self.make_roll_counter()
-            self.highs_presolve = self.params_to_dict(db=db, cl="solve", par="highs_presolve", mode="dict")
-            self.highs_method = self.params_to_dict(db=db, cl="solve", par="highs_method", mode="dict")
-            self.highs_parallel = self.params_to_dict(db=db, cl="solve", par="highs_parallel", mode="dict")
-            self.solve_period_years_represented = self.params_to_dict(db=db, cl="solve", par="years_represented", mode="defaultdict")
-            self.solvers = self.params_to_dict(db=db, cl="solve", par="solver", mode="dict")
-            self.timesets = self.get_single_entities(db=db, entity_class_name="timeset")
-            self.timeset_durations = self.params_to_dict(db=db, cl="timeset", par="timeset_duration", mode="defaultdict")
-            self.timesets__timeline = self.params_to_dict(db=db, cl="timeset", par = "timeline", mode="defaultdict")
-            self.stochastic_branches = self.params_to_dict(db=db, cl="solve", par="stochastic_branches", mode="defaultdict")
-            self.solver_precommand = self.params_to_dict(db=db, cl="solve", par="solver_precommand", mode="dict")
-            self.solver_arguments = self.params_to_dict(db=db, cl="solve", par="solver_arguments", mode="defaultdict")
-            self.contains_solves = self.params_to_dict(db=db, cl="solve", par="contains_solves", mode="defaultdict", str_to_list=True)
-            self.hole_multipliers = self.params_to_dict(db=db, cl="solve", par="timeline_hole_multiplier", mode="defaultdict")
-            self.new_step_durations = self.params_to_dict(db=db, cl="timeset", par="new_stepduration", mode="dict")
-            self.delay_durations = self.params_to_dict(db=db, cl="unit", par="delay", mode="dict")
+            self.highs_presolve = params_to_dict(db=db, cl="solve", par="highs_presolve", mode="dict")
+            self.highs_method = params_to_dict(db=db, cl="solve", par="highs_method", mode="dict")
+            self.highs_parallel = params_to_dict(db=db, cl="solve", par="highs_parallel", mode="dict")
+            self.solve_period_years_represented = params_to_dict(db=db, cl="solve", par="years_represented", mode="defaultdict")
+            self.solvers = params_to_dict(db=db, cl="solve", par="solver", mode="dict")
+            self.timesets = get_single_entities(db=db, entity_class_name="timeset")
+            self.timeset_durations = params_to_dict(db=db, cl="timeset", par="timeset_duration", mode="defaultdict")
+            self.timesets__timeline = params_to_dict(db=db, cl="timeset", par="timeline", mode="defaultdict")
+            self.stochastic_branches = params_to_dict(db=db, cl="solve", par="stochastic_branches", mode="defaultdict")
+            self.solver_precommand = params_to_dict(db=db, cl="solve", par="solver_precommand", mode="dict")
+            self.solver_arguments = params_to_dict(db=db, cl="solve", par="solver_arguments", mode="defaultdict")
+            self.contains_solves = params_to_dict(db=db, cl="solve", par="contains_solves", mode="defaultdict", str_to_list=True)
+            self.hole_multipliers = params_to_dict(db=db, cl="solve", par="timeline_hole_multiplier", mode="defaultdict")
+            self.new_step_durations = params_to_dict(db=db, cl="timeset", par="new_stepduration", mode="dict")
+            self.delay_durations = params_to_dict(db=db, cl="unit", par="delay", mode="dict")
             # Rolling parameter is packaged from three parameters
-            rolling_duration = self.params_to_dict(db=db, cl="solve", par="rolling_duration", mode="dict")
-            rolling_solve_horizon = self.params_to_dict(db=db, cl="solve", par="rolling_solve_horizon", mode="dict")
-            rolling_solve_jump = self.params_to_dict(db=db, cl="solve", par="rolling_solve_jump", mode="dict")
+            rolling_duration = params_to_dict(db=db, cl="solve", par="rolling_duration", mode="dict")
+            rolling_solve_horizon = params_to_dict(db=db, cl="solve", par="rolling_solve_horizon", mode="dict")
+            rolling_solve_jump = params_to_dict(db=db, cl="solve", par="rolling_solve_jump", mode="dict")
             self.rolling_times = defaultdict(list)
             all_keys = list(set(rolling_duration) | set(rolling_solve_horizon) | set(rolling_solve_jump))
             for i, var in enumerate([rolling_solve_jump, rolling_solve_horizon, rolling_duration]):
@@ -120,7 +127,7 @@ class FlexToolRunner:
             self.realized_periods = self.periods_to_tuples(db=db, cl="solve", par="realized_periods")
             self.realized_invest_periods = self.periods_to_tuples(db=db, cl="solve", par="realized_invest_periods")
             self.fix_storage_periods = self.periods_to_tuples(db=db, cl="solve", par="fix_storage_periods")
-            self.periods_available = self.params_to_dict(db=db, cl="model", par="periods_available", mode="dict")
+            self.periods_available = params_to_dict(db=db, cl="model", par="periods_available", mode="dict")
 
         self.create_assumptive_timestructure_parts()
         self.stochastic_timesteps = defaultdict(list)
@@ -201,30 +208,6 @@ class FlexToolRunner:
                                 timesets_used_by_solves[param["entity_name"]].append((param_value.indexes[i],
                                                                                     param_value.values[i]))
         return timesets_used_by_solves
-
-    def get_single_entities(self, db, entity_class_name):
-        """
-        Get all entities of a given class from the database.
-        :param db: Database object
-        :param entity_class_name: Name of the entity class
-        :return: List of entities
-        """
-        return [entity["entity_byname"][0] for entity in db.find_entities(entity_class_name=entity_class_name)]
-
-    def check_version(self, db):
-        db_version_item = db.get_parameter_definition_item(entity_class_name="model",
-                                                           name="version")
-        if not db_version_item:
-            self.logger.error("No version information found in the FlexTool input database, check you have a correct database.")
-            sys.exit(-1)
-        database_version = api.from_database(db_version_item["default_value"], db_version_item["default_type"])
-        tool_version = 25.0
-        if float(database_version) < tool_version:
-            self.logger.error(
-                "The input database is in an older version than the tool.\nPlease migrate the database to the new version:\n- Make sure FlexTool python environment is activated\n- cd to flextool directory\n- run command: python migrate_database.py path_to_database\nwhere path_to_database is replaced by the filepath of your current input database")
-            sys.exit(-1)
-
-
 
     def duplicate_solve(self, old_solve, new_name, first_level_flag=True):
         if new_name not in self.model_solve.values() and new_name not in self.contains_solves.values():
@@ -2395,57 +2378,6 @@ class FlexToolRunner:
                 f'Trying to run more than one model - not supported. The results of the first model are retained.')
             sys.exit(-1)
         return 0
-
-    def entities_to_dict(self, db, cl, mode):
-        entities = db.find_entities(entity_class_name=cl)
-        if mode == "defaultdict":
-            result = defaultdict(list)
-        elif mode == "dict":
-            result = dict()
-        for entity in entities:
-            if len(entity["entity_byname"]) > 1:
-                result[entity["entity_byname"][0]] = list(entity["entity_byname"][1:])
-            else:
-                raise ValueError("Only one dimension in the entity, cannot make into a dict in entities_to_dict")
-        return result
-
-
-    def params_to_dict(self, db, cl, par, mode, str_to_list=False):
-        all_params = db.find_parameter_values(entity_class_name=cl,
-                                                 parameter_definition_name=par)
-        if mode == "defaultdict":
-            result = defaultdict(list)
-        elif mode == "dict":
-            result = dict()
-        elif mode == "list":
-            result = []
-        for param in all_params:
-            param_value = api.from_database(param["value"], param["type"])
-            if mode == "defaultdict" or mode == "dict":
-                if isinstance(param_value, api.Map):
-                    if isinstance(param_value.values[0], float):
-                        result[param["entity_name"]] = list(zip(list(param_value.indexes), list(map(float, param_value.values))))
-                    elif isinstance(param_value.values[0], str):
-                        result[param["entity_name"]] = list(zip(list(param_value.indexes), param_value.values))
-                    elif isinstance(param_value.values[0], api.Map):
-                        result[param["entity_name"]] = api.convert_map_to_table(param_value)
-                    else:
-                        raise TypeError("params_to_dict function does not handle other values than floats and strings")
-                elif isinstance(param_value, api.Array):
-                    result[param["entity_name"]] = param_value.values
-                elif isinstance(param_value, float):
-                    result[param["entity_name"]] = str(param_value)
-                elif isinstance(param_value, str):
-                    if str_to_list:
-                        result[param["entity_name"]] = [param_value]
-                    else:
-                        result[param["entity_name"]] = param_value
-            elif mode == "list":
-                if isinstance(param_value, float):
-                    result.append([param["entity_name"], param_value])
-                elif isinstance(param_value, str):
-                    result.append([param["entity_name"], param_value])
-        return result
 
     def write_input(self, input_db_url, scenario_name=None):
         if scenario_name:
