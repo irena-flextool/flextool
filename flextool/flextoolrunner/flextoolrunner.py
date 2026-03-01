@@ -15,7 +15,6 @@ from spinedb_api import DatabaseMapping
 from pathlib import Path
 from collections import OrderedDict, namedtuple
 from collections import defaultdict
-from types import SimpleNamespace
 
 #return_codes
 #0 : Success
@@ -2160,119 +2159,7 @@ class FlexToolRunner:
             active_time_lists[solve] = new_active_time_list
             jump_lists[solve] = self.make_step_jump(new_active_time_list, period__branch_lists[solve], solve_branch__time_branch_lists[solve])
 
-        return period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, fix_storage_time_lists, realized_time_lists, branch_start_time_lists 
-   
-    def periodic_postprocess(self,groupby_map, method = None, arithmetic = "sum"):
-        for key, group in list(groupby_map.items()):
-            if method == "timewise":
-                filepath = 'solve_data/' + key + '__t.csv'
-            else:
-                filepath = 'solve_data/' + key + '.csv'
-            if os.path.exists(filepath):
-                #get the relationship indicators from the start of the file
-                if group[1]>1:
-                    relationship_start_df=pd.read_csv(filepath, header = 0, nrows=group[1]-1)
-                    if method == "timewise":
-                        relationship_start_df.drop(["time"],axis = 1, inplace=True)
-                    timestep_df = pd.read_csv(filepath,header = 0,skiprows=range(1,group[1]))
-                else:
-                    timestep_df = pd.read_csv(filepath,header = 0)
-                if method == "timewise":
-                    timestep_df.drop(["time"],axis = 1, inplace=True)
-                
-                #create a df with only group,solve,period cols, where the solve is the first of the group,period combo
-                solve_period = timestep_df.filter(items= group[0] +["solve","period"])
-                solve_first = solve_period.groupby(group[0] +["period"]).first().reset_index()
-                cols = list(solve_first.columns)
-                a,b = cols.index('period'),cols.index('solve')
-                cols[a], cols[b] = cols[b], cols[a]
-                solve_first= solve_first[cols]
-                
-                #group_by with group and period, sum numeric columns, other columns are removed
-                if arithmetic == "sum":
-                    if not timestep_df.empty:
-                        modified= timestep_df.groupby(group[0]+["period"],group_keys=False).sum(numeric_only=True).reset_index()
-                    else:
-                        modified = timestep_df
-                else:
-                    if not timestep_df.empty:
-                        modified = timestep_df.groupby(group[0]+["period"],group_keys=False).mean(numeric_only=True).reset_index()
-                    else:
-                        modified = timestep_df
-                #combine with the solve name df
-                combined = pd.merge(solve_first,modified)
-                for col in combined.select_dtypes(include=['float']).columns:
-                    combined[col] = combined[col].apply(lambda x: round(x,6))
-                #put the relationship indicators back to the start of the file
-                if group[1]>1:
-                    combined = pd.concat([relationship_start_df,combined])
-
-                if arithmetic == "sum":
-                    combined.to_csv('solve_data/' + key + '.csv',index=False, float_format= "%.6g")
-                else:
-                    combined.to_csv('solve_data/' + key + '_average.csv',index=False, float_format= "%.6g")
-
-    def combine_result_tables(self, inputfile1, inputfile2, outputfile, combine_headers = None, move_column = []):
-        input1 = pd.read_csv(inputfile1,header = 0)
-        input2 = pd.read_csv(inputfile2,header = 0)
-        combined = pd.concat([input1,input2])
-        #move columns to desired locations
-        for column in move_column:
-            name = combined.columns[column[0]]
-            col = combined.pop(name)
-            combined.insert(column[1],name,col)
-        combined.to_csv(outputfile, index= False, float_format= "%.6g")
-    
-    def divide_column(self,inputfile,div_col_ind,to_cols_ind, remove = True):
-        df = pd.read_csv(inputfile,header = 0)
-        to_cols = list(df.columns[to_cols_ind])
-        div_col = df.columns[div_col_ind]
-        for i in to_cols:
-            df[i]= df[i]/df[div_col]
-        if remove:
-            df = df.drop(div_col, axis = 1)
-        df.to_csv(inputfile, index= False,float_format= "%.6g")
-    
-    def divide_group_with_another(self,inputfile, row_start_ind, from_col_ind, remove_cols_ind, remove = True):
-        #assumption is that the all the rows of the first group are before any of the second
-        #the postprocess groupping does this
-        
-        if row_start_ind != 1:
-            #the relationship information is removed so that the datatype would be float not str
-            relationship_start_df=pd.read_csv(inputfile, header = 0, nrows=row_start_ind-1)
-            df = pd.read_csv(inputfile,header = 0, skiprows=range(1,row_start_ind))
-        else:
-            df = pd.read_csv(inputfile,header = 0)
-        # In case there no data for this has been output, the processing needs to be skipped
-        if df.empty:
-            return
-        from_col = df.columns[from_col_ind]
-        
-        rows = list(df.index)
-        group_len = int(len(rows)/2) #should always be divisable by 2
-        for row in rows: 
-            if row<group_len:
-                df.loc[row,from_col:] = df.loc[row,from_col:].div(df.iloc[row+group_len][from_col:])
-        #remove divider rows
-        remove_rows=[]
-        for row in rows:
-            if row>=group_len:
-                remove_rows.append(row)
-        if remove:
-            df = df.drop(remove_rows, axis = 0)
-        #remove indicator column
-        remove_cols = list(df.columns[remove_cols_ind])
-        for i in remove_cols:
-            df = df.drop(i, axis = 1)
-
-        for col in df.select_dtypes(include=['float']).columns:
-            df[col] = df[col].apply(lambda x: round(x,6))
-
-        #put the relationship back to the top
-        if row_start_ind != 1:
-            df = pd.concat([relationship_start_df,df])
-        df.to_csv(inputfile, index= False,float_format= "%.6g")
-
+        return period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, fix_storage_time_lists, realized_time_lists, branch_start_time_lists
 
     def run_model(self):
         """
@@ -2502,50 +2389,6 @@ class FlexToolRunner:
                 shutil.copy("solve_data/fix_storage_quantity.csv","solve_data/fix_storage_quantity_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_price.csv", "solve_data/fix_storage_price_"+ complete_solve[solve]+".csv")
                 shutil.copy("solve_data/fix_storage_usage.csv","solve_data/fix_storage_usage_"+ complete_solve[solve]+".csv")
-
-        #produce periodic data as post-process for rolling window solves
-        results_post_processed = False
-        for solve in complete_solve.keys():
-            solve_mode = self.solve_modes.get(complete_solve[solve], 'single_solve')
-            if solve_mode == "rolling_window":
-                results_post_processed = True
-        if results_post_processed:
-            #[[group by], relation dimensions]
-            #sums the solves with same period
-            period_only = {
-            "group__process__node__period": [[],1],
-            "node__period": [["node"],1],
-            "unit__inputNode__period": [[],2],
-            "unit__outputNode__period": [[],2],
-            "connection_to_first_node__period": [[],3],
-            "connection_to_second_node__period": [[],3],
-            "connection__period": [[],3],
-            "unit_cf__inputNode__period": [[],2],
-            "unit_cf__outputNode__period": [[],2],
-            "connection_cf__period":[[],3],
-            "process__period_co2": [["class","process"],1],
-            "unit_startup__period": [[],1],
-            }
-            #sums the timesteps of all solves in the period
-            #used when some other calculation is needed
-            timewise_groupby = {
-            "annualized_dispatch_costs__period": [[],1],
-            "group_node__period": [["group"],1],
-            "unit_curtailment_share__outputNode__period": [["type"],2]
-            }
-            #average of all timesteps of all solves in the period
-            timewise_average_groupby = {
-            "process__reserve__upDown__node__period": [[],6],
-            "unit_online__period": [[],1],
-            }
-
-            self.periodic_postprocess(period_only, method = "periodic", arithmetic= "sum")
-            self.periodic_postprocess(timewise_groupby, method = "timewise", arithmetic= "sum")
-            self.periodic_postprocess(timewise_average_groupby, method = "timewise", arithmetic= "average")
-            #self.combine_result_tables("output/annualized_investment_costs__period.csv","output/annualized_dispatch_costs__period.csv", "output/annualized_costs__period.csv")
-            #self.divide_column("output/group_node__period.csv",div_col_ind = 3, to_cols_ind=[5,6,7,8], remove = True)
-            #self.divide_group_with_another("output/unit_curtailment_share__outputNode__period.csv", row_start_ind= 2, from_col_ind = 3 ,remove_cols_ind = [0], remove = True)
-            #os.remove("output/annualized_dispatch_costs__period.csv")
 
         if len(self.model_solve) > 1:
             self.logger.error(
