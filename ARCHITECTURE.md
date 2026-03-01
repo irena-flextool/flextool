@@ -56,7 +56,8 @@ flextool/
 │   ├── axis_helpers.py                Axis formatting, smart xticks, scale/label helpers
 │   ├── subplot_helpers.py             Grid layout, unique-level extraction, subplot data slicing
 │   ├── plot_bars_detail.py            Bar rendering: _plot_grouped_bars, _plot_stacked_bars, _plot_simple_bars
-│   └── plot_bars.py                   Bar chart orchestration: plot_rowbars_stack_groupbars()
+│   ├── plot_bars.py                   Bar chart orchestration: plot_rowbars_stack_groupbars()
+│   └── plot_lines.py                  Line/stacked-area plots: plot_dt_sub_lines(), plot_dt_stack_sub()
 ├── update_flextool/
 │   ├── update_flextool.py             Git pull + project migration
 │   ├── migrate_database.py            Schema migration to latest version
