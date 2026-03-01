@@ -137,14 +137,9 @@ def create_or_update_dispatch_config(
     dict
         The configuration dictionary
     """
-    # Import here to avoid circular dependency (dispatch_data not yet extracted)
-    from flextool.scenario_comparison.scenario_comparison import prepare_dispatch_data
+    from flextool.scenario_comparison.dispatch_data import prepare_dispatch_data
 
     config_path = Path(plot_dir) / 'config.yaml'
-
-    # Convert to dicts for calling prepare_dispatch_data (not yet refactored)
-    combined_dfs = results.to_dict()
-    combined_mapping_dfs = {k: v for k, v in vars(mappings).items() if v is not None}
 
     # Get available data from parquet
     available_nodes: set[str] = set()
@@ -242,7 +237,7 @@ def create_or_update_dispatch_config(
         for scenario in active_scenario_names:
             for node_group in sorted(available_node_groups):
                 df_sample, _ = prepare_dispatch_data(
-                    combined_dfs, combined_mapping_dfs, scenario, node_group
+                    results, mappings, scenario, node_group
                 )
                 if df_sample is None or df_sample.empty:
                     continue
