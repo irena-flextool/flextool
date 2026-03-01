@@ -10,9 +10,7 @@ from flextool.scenario_comparison.config_builder import (
 )
 from flextool.scenario_comparison.data_models import DispatchMappings
 from flextool.scenario_comparison.dispatch_plots import create_dispatch_plots
-from flextool.scenario_comparison.scenario_comparison import (
-    create_basic_plots,
-)
+from flextool.scenario_comparison.summary_plots import create_basic_plots
 from flextool.plot_outputs.plot_functions import plot_dict_of_dataframes
 import os
 import yaml
@@ -197,7 +195,7 @@ def main():
             if dispatch_config:
                 print("\nGenerating summary plots...")
                 create_basic_plots(
-                    combined_dfs, group_node_df, dispatch_config, plot_dir,
+                    results, group_node_df, dispatch_config, plot_dir,
                     scenarios=get_scenarios_from_config(dispatch_config),
                     show_plot=show_plots
                 )
