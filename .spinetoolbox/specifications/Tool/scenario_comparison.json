@@ -3,8 +3,19 @@
     "tooltype": "python",
     "includes": [
         "flextool/cli/cmd_scenario_results.py",
-        "flextool/plot_functions.py",
-        "templates/default_comparison_plots.yaml"
+        "templates/default_comparison_plots.yaml",
+        "flextool/scenario_comparison/dispatch_plots.py",
+        "flextool/scenario_comparison/dispatch_mappings.py",
+        "flextool/scenario_comparison/scenario_comparison.py",
+        "flextool/scenario_comparison/config_builder.py",
+        "flextool/scenario_comparison/config_io.py",
+        "flextool/scenario_comparison/dispatch_data.py",
+        "flextool/scenario_comparison/summary_plots.py",
+        "flextool/scenario_comparison/__init__.py",
+        "flextool/scenario_comparison/data_models.py",
+        "flextool/scenario_comparison/orchestrator.py",
+        "flextool/scenario_comparison/db_reader.py",
+        "flextool/scenario_comparison/constants.py"
     ],
     "description": "",
     "inputfiles": [],

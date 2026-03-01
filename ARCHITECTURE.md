@@ -2,7 +2,7 @@
 
 ## Project Purpose
 
-FlexTool is an energy and power systems optimization model (IRENA FlexTool). It reads input data from a Spine database, generates a linear programming (LP) model, solves it using HiGHS, and writes results to parquet files, Excel, CSV, and plots.
+FlexTool is an energy and power systems optimization model (IRENA FlexTool). It reads input data from a Spine database, generates a linear programming (LP) model, solves it using HiGHS, and writes results to parquet files, Excel, CSV, and plots. Input database can be optionally populated from tabular input files (Excel or ods).
 
 ## Module Map
 

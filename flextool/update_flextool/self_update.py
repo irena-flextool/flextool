@@ -1,10 +1,9 @@
-import argparse
 import json
 import os
 import subprocess
 import shutil
 try: 
-    from spinedb_api import import_data, DatabaseMapping, SpineDBAPIError
+    from spinedb_api import import_data, DatabaseMapping
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
 from spinedb_api.exception import NothingToCommit

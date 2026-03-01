@@ -2,7 +2,9 @@
     "name": "migrate_database",
     "tooltype": "python",
     "includes": [
-        "flextool/cli/cmd_migrate_database.py"
+        "flextool/cli/cmd_migrate_database.py",
+        "flextool/update_flextool/db_migration.py",
+        "flextool/update_flextool/__init__.py"
     ],
     "description": "Update/migrate the active input database to the latest version. Take a backup if unsure (there is no going back).",
     "inputfiles": [],

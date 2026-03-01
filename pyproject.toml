@@ -25,5 +25,5 @@ packages = [
     "flextool.plot_outputs",
     "flextool.update_flextool",
     "flextool.helpers",
-    "flextool.create_scenarios",
+    "flextool.scenario_comparison",
 ]

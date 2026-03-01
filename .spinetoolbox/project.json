@@ -424,8 +424,8 @@
         "FlexTool": {
             "type": "Tool",
             "description": "",
-            "x": 5.220089446316834,
-            "y": -51.66129163990142,
+            "x": 6.2363732624713375,
+            "y": -53.69385927221042,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": [
@@ -476,7 +476,7 @@
         "Read input spreadsheet": {
             "type": "Tool",
             "description": "",
-            "x": -323.6245796511347,
+            "x": -322.6082958349802,
             "y": -85.3407554373215,
             "specification": "Read tabular data",
             "execute_in_work": false,
