@@ -48,7 +48,8 @@ flextool/
 │   ├── write_outputs.py               ALL_OUTPUTS list + orchestrator + __main__
 │   └── result_writer.py               Backward-compat shim (re-exports write_outputs)
 ├── plot_outputs/
-│   ├── plot_functions.py              Core matplotlib plotting functions
+│   ├── orchestrator.py                plot_dict_of_dataframes() entry point, _plan_file_splits()
+│   ├── plot_functions.py              Backward-compat shim (re-exports orchestrator)
 │   ├── perf.py                        Timing utilities (PERF_STATS, time_block, print_perf_summary)
 │   ├── format_helpers.py              Value formatters, filename generation, chunking utilities
 │   ├── config.py                      PlotConfig dataclass, DIMENSION_RULES, PLOT_FIELD_NAMES
