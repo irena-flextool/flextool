@@ -4,11 +4,14 @@ from spinedb_api.filters.alternative_filter import alternative_filter_config
 from spinedb_api.filters.tools import append_filter_config
 from flextool.scenario_comparison.db_reader import get_scenario_results
 from flextool.scenario_comparison.dispatch_mappings import combine_dispatch_mappings
-from flextool.scenario_comparison.scenario_comparison import (
+from flextool.scenario_comparison.config_builder import (
     create_or_update_dispatch_config,
+    get_scenarios_from_config,
+)
+from flextool.scenario_comparison.data_models import DispatchMappings
+from flextool.scenario_comparison.scenario_comparison import (
     create_dispatch_plots,
     create_basic_plots,
-    get_scenarios_from_config,
 )
 from flextool.plot_outputs.plot_functions import plot_dict_of_dataframes
 import os
@@ -156,6 +159,7 @@ def main():
             mappings = combine_dispatch_mappings(scenario_folders, args.parquet_subdir)
             combined_mapping_dfs = {k: v for k, v in vars(mappings).items() if v is not None}  # dict view until downstream functions accept DispatchMappings
         else:
+            mappings = DispatchMappings()
             combined_mapping_dfs = {}
 
         # Derive group_node_df for summary plots (needs 'scenario' as column)
@@ -168,7 +172,7 @@ def main():
         dispatch_config = None
         if args.dispatch_plots or args.basic_plots or args.all_plots:
             dispatch_config = create_or_update_dispatch_config(
-                plot_dir, combined_dfs, scenarios, combined_mapping_dfs
+                plot_dir, results, scenarios, mappings
             )
 
         # Generate original comparison plots (from default_comparison_plots.yaml)
