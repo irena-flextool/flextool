@@ -23,6 +23,7 @@ from flextool.flextoolrunner.db_reader import (
     params_to_dict,
 )
 from flextool.flextoolrunner import input_writer
+from flextool.flextoolrunner.solve_config import SolveConfig
 
 #return_codes
 #0 : Success
@@ -80,169 +81,49 @@ class FlexToolRunner:
             
             db.fetch_all("parameter_value")
             check_version(db=db, logger=self.logger)
+            # Timeline-level fields (will move to TimelineConfig in T05)
             self.timelines = params_to_dict(db=db, cl="timeline", par="timestep_duration", mode="defaultdict")
-            self.model = get_single_entities(db=db, entity_class_name="model")
-            self.model_solve = params_to_dict(db=db, cl="model", par="solves", mode="defaultdict")
-            # In case no model has been defined and there is only one model entity in the database, then use that:
-            solves_temp = get_single_entities(db=db, entity_class_name='solve')
-            if len(self.model_solve) == 0 and len(solves_temp) == 1:
-                self.model_solve['flextool'] = [solves_temp[0]]
-            # Continue assignments.
-            self.solve_modes = params_to_dict(db=db, cl="solve", par="solve_mode", mode="dict")
-            self.roll_counter = self.make_roll_counter()
-            self.highs_presolve = params_to_dict(db=db, cl="solve", par="highs_presolve", mode="dict")
-            self.highs_method = params_to_dict(db=db, cl="solve", par="highs_method", mode="dict")
-            self.highs_parallel = params_to_dict(db=db, cl="solve", par="highs_parallel", mode="dict")
-            self.solve_period_years_represented = params_to_dict(db=db, cl="solve", par="years_represented", mode="defaultdict")
-            self.solvers = params_to_dict(db=db, cl="solve", par="solver", mode="dict")
             self.timesets = get_single_entities(db=db, entity_class_name="timeset")
             self.timeset_durations = params_to_dict(db=db, cl="timeset", par="timeset_duration", mode="defaultdict")
             self.timesets__timeline = params_to_dict(db=db, cl="timeset", par="timeline", mode="defaultdict")
-            self.stochastic_branches = params_to_dict(db=db, cl="solve", par="stochastic_branches", mode="defaultdict")
-            self.solver_precommand = params_to_dict(db=db, cl="solve", par="solver_precommand", mode="dict")
-            self.solver_arguments = params_to_dict(db=db, cl="solve", par="solver_arguments", mode="defaultdict")
-            self.contains_solves = params_to_dict(db=db, cl="solve", par="contains_solves", mode="defaultdict", str_to_list=True)
-            self.hole_multipliers = params_to_dict(db=db, cl="solve", par="timeline_hole_multiplier", mode="defaultdict")
             self.new_step_durations = params_to_dict(db=db, cl="timeset", par="new_stepduration", mode="dict")
-            self.delay_durations = params_to_dict(db=db, cl="unit", par="delay", mode="dict")
-            # Rolling parameter is packaged from three parameters
-            rolling_duration = params_to_dict(db=db, cl="solve", par="rolling_duration", mode="dict")
-            rolling_solve_horizon = params_to_dict(db=db, cl="solve", par="rolling_solve_horizon", mode="dict")
-            rolling_solve_jump = params_to_dict(db=db, cl="solve", par="rolling_solve_jump", mode="dict")
-            self.rolling_times = defaultdict(list)
-            all_keys = list(set(rolling_duration) | set(rolling_solve_horizon) | set(rolling_solve_jump))
-            for i, var in enumerate([rolling_solve_jump, rolling_solve_horizon, rolling_duration]):
-                for key in all_keys:
-                    if key in var:
-                        self.rolling_times[key].append(var[key])
-                    else:
-                        if i == 0:
-                            self.rolling_times[key].append(0)
-                        if i == 1:
-                            self.rolling_times[key].append(0)
-                        if i == 2:
-                            self.rolling_times[key].append(-1)  # If rolling_duration is not given, assume -1
-            self.timesets_used_by_solves = self.get_period_timesets(db=db)
+            # Solve-level fields — delegated to SolveConfig
+            self.solve = SolveConfig.load_from_db(db=db, logger=self.logger)
 
-            self.invest_periods = self.periods_to_tuples(db=db, cl="solve", par="invest_periods")
-            self.realized_periods = self.periods_to_tuples(db=db, cl="solve", par="realized_periods")
-            self.realized_invest_periods = self.periods_to_tuples(db=db, cl="solve", par="realized_invest_periods")
-            self.fix_storage_periods = self.periods_to_tuples(db=db, cl="solve", par="fix_storage_periods")
-            self.periods_available = params_to_dict(db=db, cl="model", par="periods_available", mode="dict")
+        # Aliases for backward compatibility with methods that still live in this file
+        # (these reference the SAME mutable objects, so mutations propagate both ways)
+        self.model = self.solve.model
+        self.model_solve = self.solve.model_solve
+        self.solve_modes = self.solve.solve_modes
+        self.roll_counter = self.solve.roll_counter
+        self.rolling_times = self.solve.rolling_times
+        self.highs_presolve = self.solve.highs_presolve
+        self.highs_method = self.solve.highs_method
+        self.highs_parallel = self.solve.highs_parallel
+        self.solvers = self.solve.solvers
+        self.solver_precommand = self.solve.solver_precommand
+        self.solver_arguments = self.solve.solver_arguments
+        self.solve_period_years_represented = self.solve.solve_period_years_represented
+        self.hole_multipliers = self.solve.hole_multipliers
+        self.timesets_used_by_solves = self.solve.timesets_used_by_solves
+        self.contains_solves = self.solve.contains_solves
+        self.stochastic_branches = self.solve.stochastic_branches
+        self.invest_periods = self.solve.invest_periods
+        self.realized_periods = self.solve.realized_periods
+        self.realized_invest_periods = self.solve.realized_invest_periods
+        self.fix_storage_periods = self.solve.fix_storage_periods
+        self.periods_available = self.solve.periods_available
+        self.delay_durations = self.solve.delay_durations
 
         self.create_assumptive_timestructure_parts()
         self.stochastic_timesteps = defaultdict(list)
         self.original_timeline = defaultdict()
         self.create_timeline_from_timestep_duration()
-        self.first_of_complete_solve = []
-        self.last_of_solve = []
-        self.real_solves = []  # Use list to preserve solve execution order (important for history building)
+        self.first_of_complete_solve = self.solve.first_of_complete_solve
+        self.last_of_solve = self.solve.last_of_solve
+        self.real_solves = self.solve.real_solves
         #self.write_full_timelines(self.timelines, 'steps.csv')
 
-
-
-    def periods_to_tuples(self, db, cl, par):
-        """
-        Read period parameters from database and return as dict of tuples.
-
-        Returns:
-            defaultdict(list) where key is solve name and value is list of
-            (period_from, period_included) tuples.
-        """
-        entities = db.find_entities(entity_class_name=cl)
-        params = db.find_parameter_values(entity_class_name=cl,
-                                            parameter_definition_name=par)
-        result_dict = defaultdict(list)
-        for entity in entities:
-            for param in params:
-                if param["entity_name"] == entity["name"]:
-                    param_value = api.from_database(param["value"], param["type"])
-
-                    for (i, row) in enumerate(param_value.values):
-                        if isinstance(param_value.values[i], api.Map):
-                            for (j, row2) in enumerate(row.values):
-                                if isinstance(param_value.values[j], api.Map):
-                                    new_name = param["entity_name"] + "_" + param_value.indexes[i]
-                                    self.duplicate_solve(param["entity_name"], new_name)
-                                    result_dict[new_name].append((param_value.indexes[i], param_value.values[i].indexes[j]))
-
-                                    new_period_timeset_list = []
-                                    for solve, period__timeset_list in list(self.timesets_used_by_solves.items()):
-                                        if solve == param["entity_name"]:
-                                            for period__timeset in period__timeset_list:
-                                                if period__timeset[0] == param_value.values[i].indexes[j]:
-                                                    new_period_timeset_list.append(period__timeset)
-                                    if new_name not in self.timesets_used_by_solves.keys():
-                                        self.timesets_used_by_solves[new_name] = new_period_timeset_list
-                                    else:
-                                        for item in new_period_timeset_list:
-                                            if item not in self.timesets_used_by_solves[new_name]:
-                                                self.timesets_used_by_solves[new_name].append(item)
-                                else:
-                                    raise ValueError(f'periods_to_tuple function handles only arrays or 2d maps: {entity}, {param}')
-                        else:
-                            result_dict[param["entity_name"]].append((row, row))
-        return result_dict
-
-
-
-    def get_period_timesets(self, db):
-        entities = db.find_entities(entity_class_name="solve")
-        params = db.find_parameter_values(entity_class_name="solve",
-                                            parameter_definition_name="period_timeset")
-        timesets_used_by_solves = defaultdict(list)
-
-        solves_in_model = [item for sublist in
-                           list(self.model_solve.values()) + list(self.contains_solves.values()) for item in sublist]
-        for entity in entities:
-            if entity["name"] in solves_in_model:
-                for param in params:
-                    if param["entity_name"] == entity["name"]:
-                        param_value = api.from_database(param["value"], param["type"])
-                        for (i, row) in enumerate(param_value.indexes):
-                            if isinstance(param_value.values[i], api.Map):
-                                new_name = param["entity_name"] + "_" + param_value.indexes[i]
-                                self.duplicate_solve(param["entity_name"], new_name)
-                                timesets_used_by_solves[new_name].append((param_value.values[i].indexes[i],
-                                                                            param_value.values[i].values[i]))
-                            else:
-                                timesets_used_by_solves[param["entity_name"]].append((param_value.indexes[i],
-                                                                                    param_value.values[i]))
-        return timesets_used_by_solves
-
-    def duplicate_solve(self, old_solve, new_name, first_level_flag=True):
-        if new_name not in self.model_solve.values() and new_name not in self.contains_solves.values():
-            dup_map_list=[
-                self.solve_modes,
-                self.roll_counter,
-                self.highs_presolve,
-                self.highs_method,
-                self.highs_parallel,
-                self.solve_period_years_represented,
-                self.solvers,
-                self.solver_precommand,
-                self.solver_arguments,
-                self.contains_solves,
-                self.rolling_times,
-            ]
-            for dup_map in dup_map_list:
-                if old_solve in dup_map.keys():
-                    dup_map[new_name]=dup_map[old_solve]
-            if first_level_flag:
-                for model, solves in list(self.model_solve.items()):
-                    if old_solve in solves:
-                        solves.remove(old_solve)
-                    if new_name not in solves:
-                        solves.append(new_name)
-                    self.model_solve[model] = solves
-
-
-    def make_roll_counter(self):
-        roll_counter_map={}
-        for key, mode in list(self.solve_modes.items()):
-            if mode == "rolling_window":
-                roll_counter_map[key] = 0
-        return roll_counter_map
 
 
     def create_timeline_from_timestep_duration(self):
@@ -1955,7 +1836,7 @@ class FlexToolRunner:
                 parent_period = set([t[0] for t in joint_parent_periods])
                 if current_solve_period in parent_period:
                     new_name = solve + "_" + str(current_solve_period)
-                    self.duplicate_solve(solve, new_name, first_level_flag=False)
+                    self.solve.duplicate_solve(solve, new_name, update_model_solves=False)
                     self.solve_period_years_represented[new_name] = self.solve_period_years_represented[solve]
 
                     new_period_timeset_list = []
