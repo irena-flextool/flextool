@@ -1,10 +1,8 @@
 import time
-import subprocess
 import logging
 import copy
 import sys
 import os
-import xml.etree.ElementTree as ET
 import pandas as pd
 import shutil
 import spinedb_api as api
@@ -25,6 +23,7 @@ from flextool.flextoolrunner.timeline_config import (
     separate_period_and_timeseries_data,
 )
 from flextool.flextoolrunner.runner_state import PathConfig, RunnerState
+from flextool.flextoolrunner.solver_runner import SolverRunner
 
 #return_codes
 #0 : Success
@@ -88,344 +87,6 @@ class FlexToolRunner:
 
 
 
-    def model_run(self, current_solve):
-        """
-        run the model executable once
-        :return the output of glpsol:
-        """
-
-        timer_in_model_run = time.perf_counter()
-
-        try:
-            solver = self.state.solve.solvers[current_solve]
-        except KeyError:
-            self.state.logger.warning(f"No solver defined for {current_solve}. Defaulting to highs.")
-            solver = "highs"
-        if sys.platform.startswith("linux"):
-            glpsol_file = str(self.state.paths.bin_dir / "glpsol")
-            highs_file = str(self.state.paths.bin_dir / "highs")
-            if os.path.exists(glpsol_file):
-                current_permissions = os.stat(glpsol_file).st_mode & 0o777
-                if current_permissions != 0o755:
-                    os.chmod(glpsol_file, 0o755)
-            if os.path.exists(highs_file):
-                current_permissions = os.stat(highs_file).st_mode & 0o777
-                if current_permissions != 0o755:
-                    os.chmod(highs_file, 0o755)
-        elif sys.platform.startswith("win32"):
-            glpsol_file = str(self.state.paths.bin_dir / "glpsol.exe")
-            highs_file = str(self.state.paths.bin_dir / "highs.exe")
-        flextool_model_file = str(self.state.paths.flextool_dir / "flextool.mod")
-        flextool_base_data_file = str(self.state.paths.flextool_dir / "flextool_base.dat")
-        glp_solution_file = str(self.state.paths.root_dir / "glpsol_solution.txt")
-        mps_file = str(self.state.paths.root_dir / "flextool.mps")
-        highs_option_file = str(self.state.paths.bin_dir / "highs.opt")
-        cplex_sol_file = str(self.state.paths.root_dir / "cplex.sol")
-        flextool_sol_file = str(self.state.paths.root_dir / "flextool.sol")
-        if solver == "glpsol":
-            with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
-                p_model_file.write("phase\nread\n")
-            only_glpsol = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '--cbg','-w', glp_solution_file]
-            try:
-                returncode = self.run_glpsol(only_glpsol)
-                if returncode != 0:
-                    sys.exit(returncode)
-            except Exception as e:
-                self.state.logger.exception(f"Error occurred: {e}")
-                sys.exit(1)
-            if returncode != 0:
-                self.state.logger.error(f'glpsol failed: {returncode}')
-                sys.exit(returncode)
-            
-            #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
-            with open('glpsol_solution.txt','r') as inf_file:
-                inf_content = inf_file.read() 
-                if 'INFEASIBLE' in inf_content:
-                    self.state.logger.error(f"The model is infeasible. Check the constraints.")
-                    sys.exit(1)
-
-            timing = time.perf_counter() - timer_in_model_run
-            print(f"--- Solve with GLPSOL: {timing:.4f} seconds ---")
-            with open("solve_data/solve_progress.csv", "a") as solve_progress:
-                solve_progress.write(',,' + str(round(timing,4)) + ',')
-            timer_in_model_run = timer_in_model_run + timing
-
-        elif solver == "highs" or solver == "cplex":
-            with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
-                p_model_file.write("phase\nread\n")
-
-            highs_step1 = [glpsol_file, '--check', '--model', flextool_model_file, '-d', flextool_base_data_file,
-                           '--wfreemps', mps_file]
-            returncode = self.run_glpsol(highs_step1)
-            if returncode != 0:
-                sys.exit(returncode)
-
-            #check if the problem has columns(nodes)
-            with open(mps_file, 'r') as mps_file_handle:
-                mps_content = mps_file_handle.read() 
-                if 'Columns:    0' in mps_content:
-                    self.state.logger.error(f"The problem has no columns. Check that the model has nodes with entity alternative: true")
-                    sys.exit(-1)
-
-            timing = time.perf_counter() - timer_in_model_run
-            print(f"--- GLPSOL created sol file: {timing:.4f} seconds ---\n")
-            with open("solve_data/solve_progress.csv", "a") as solve_progress:
-                solve_progress.write(',' + str(round(timing,4)))
-            timer_in_model_run = timer_in_model_run + timing
-
-            if solver == "highs":
-                highs_step2 = [highs_file, mps_file, f"--options_file={highs_option_file}"] + \
-                              [''.join(['--presolve='] + [self.state.solve.highs_presolve.get(current_solve, "on")])] + \
-                              [''.join(['--solver='] + [self.state.solve.highs_method.get(current_solve, "choose")])] + \
-                              [''.join(['--parallel='] + [self.state.solve.highs_parallel.get(current_solve, "off")])]
-                completed = subprocess.run(highs_step2)
-                if completed.returncode != 0:
-                    self.state.logger.error(f'Highs solver failed: {completed.returncode}')
-                    sys.exit(completed.returncode)
-                print("HiGHS solved the problem\n")
-                
-                #checking if solution is infeasible. This is quite clumsy way of doing this, but the solvers do not give infeasible exitstatus
-                with open('HiGHS.log','r') as inf_file:
-                    inf_content = inf_file.read() 
-                    if 'Infeasible' in inf_content:
-                        self.state.logger.error(f"The model is infeasible. Check the constraints.")
-                        sys.exit(1)
-            
-                timing = time.perf_counter() - timer_in_model_run
-                print(f"--- Solver (HiGHS): {timing:.4f} seconds ---\n")
-                with open("solve_data/solve_progress.csv", "a") as solve_progress:
-                    solve_progress.write(',' + str(round(timing,4)))
-                timer_in_model_run = timer_in_model_run + timing
-
-            elif solver == "cplex": #or gurobi
-                with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
-                    p_model_file.write("phase\nread\n")
-                if current_solve not in self.state.solve.solver_precommand.keys():
-                    if solver == "cplex":
-                        if current_solve not in self.state.solve.solver_arguments.keys():
-                            cplex_step = ['cplex', '-c', 'read', mps_file, 'opt', 'write', cplex_sol_file, 'quit']
-                        else:
-                            cplex_step = ['cplex', '-c', 'read', mps_file]
-                            cplex_step += self.state.solve.solver_arguments[current_solve]
-                            cplex_step += ['opt', 'write', cplex_sol_file, 'quit']
-
-                        completed = subprocess.run(cplex_step)
-                        if completed.returncode != 0:
-                            self.state.logger.error(f'Cplex solver failed: {completed.returncode}')
-                            sys.exit(completed.returncode) 
-                        
-                        completed = self.cplex_to_glpsol(cplex_sol_file, flextool_sol_file)
-                else:
-                    s_wrapper = self.state.solve.solver_precommand[current_solve]
-                    if solver == "cplex":
-                        if current_solve not in self.state.solve.solver_arguments.keys():
-                            cplex_step = [s_wrapper, 'cplex', '-c', 'read', mps_file,'opt', 'write', cplex_sol_file, 'quit']
-                        else:
-                            cplex_step = [s_wrapper, 'cplex', '-c', 'read', mps_file]
-                            cplex_step += self.state.solve.solver_arguments[current_solve]
-                            cplex_step += ['opt', 'write', cplex_sol_file, 'quit']
-
-                        completed = subprocess.run(cplex_step)
-                        if completed.returncode != 0:
-                            self.state.logger.error(f'Cplex solver failed: {completed.returncode}')
-                            sys.exit(completed.returncode) 
-                        
-                        completed = self.cplex_to_glpsol(cplex_sol_file, flextool_sol_file)
-
-                timing = time.perf_counter() - timer_in_model_run
-                print(f"--- Solver (CPLEX or Gurobi): {timing:.4f} seconds ---\n")
-                with open("solve_data/solve_progress.csv", "a") as solve_progress:
-                    solve_progress.write(',' + str(round(timing,4)))
-                timer_in_model_run = timer_in_model_run + timing
-
-            with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
-                p_model_file.write("phase\nwrite\n")
-
-            highs_step3 = [glpsol_file, '--model', flextool_model_file, '-d', flextool_base_data_file, '-r',
-                        flextool_sol_file]
-            returncode = self.run_glpsol(highs_step3)
-
-            timing = time.perf_counter() - timer_in_model_run
-            print(f"\n--- GLPSOL wrote outputs: {timing:.4f} seconds ---\n")
-            with open("solve_data/solve_progress.csv", "a") as solve_progress:
-                solve_progress.write(',' + str(round(timing,4)) + '\n')
-            timer_in_model_run = timer_in_model_run + timing
-
-            if returncode != 0:
-                sys.exit(returncode)
-        else:
-            self.state.logger.error(f"Unknown solver '{solver}'. Currently supported options: highs, glpsol, cplex.")
-            sys.exit(-1)
-        return returncode
-
-    def run_glpsol(self, command_args):
-        """
-        Run glpsol with filtered output.
-        
-        Args:
-            command_args: List of command arguments (e.g., [glpsol_file, '--model', ...])
-        
-        Returns:
-            returncode: Process exit code
-        """
-        process = subprocess.Popen(command_args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-        
-        buffer = []
-        previous = False
-        counter = 0
-        already_stripped_end_of_line = True
-        
-        for line in process.stdout:
-            if line.startswith('Reading data...'):
-                continue
-            
-            # Take not if Generating has been followed by Display statement
-            if line.startswith('Timer - '):
-                if already_stripped_end_of_line:
-                    print(line.rstrip(), end='  ')
-                else:
-                    print('\n' + line.rstrip(), end='  ')
-                counter = 0
-                continue
-
-            if line.startswith('Generating ') or line.startswith('Write '):
-                previous = 'generate'
-                counter += 1
-                already_stripped_end_of_line = False
-                if line.startswith('Generating '):
-                    if command_args[5] == '-r':
-                        continue
-                    line = line.replace('Generating ', '  ').rstrip()
-                elif line.startswith('Write '):
-                    line = line.replace('Write ', '  ').rstrip()
-                if counter == 3:
-                    line = line + '\n'
-                    counter = 0
-                    already_stripped_end_of_line = True
-                print(line, end='')
-                continue
-
-            if line.startswith('Checking'):
-                if line.startswith('Checking:'):
-                    previous = 'check'
-                    buffer = [line]
-            elif previous == 'check':
-                buffer.append(line)
-                if 'error' in line.lower() or 'failed' in line.lower() or 'assertion' in line.lower():
-                    output = '\n' + ''.join(buffer)
-                    output = output.replace('Checking (line', ' (flextool/flextool.mod line')
-                    print(output)
-                    buffer = []
-                    previous = False
-                elif line.strip() == '' or (not line.startswith(' ') and not line.startswith('Created')):
-                    buffer = []
-                    previous = False
-            else:
-                print(line, end='')
-        
-        process.wait()
-        
-        if process.returncode != 0 and self.state.logger:
-            self.state.logger.error(f'glpsol failed with exit code: {process.returncode}')
-        
-        return process.returncode
-
-    def cplex_to_glpsol(self,cplexfile,solutionfile): 
-        
-        try:
-            tree = ET.parse(cplexfile)
-        except (OSError):
-            self.state.logger.error('The CPLEX solver does not produce a solution file if the problem is infeasible. Check the constraints, more info at cplex.log')
-            sys.exit(-1)
-        root = tree.getroot()
-
-        if root.find('header').get('solutionStatusString') == "optimal":
-            with open(solutionfile,'w') as glpsol_file:
-                
-                obj = root.find('header').get('objectiveValue')
-
-                for constraint in root.iter('constraint'):
-                    rows = constraint.get('index')
-                rows = int(rows) + 2
-
-                for variable in root.iter('variable'):
-                    col = variable.get('index')
-                col = int(col) + 1
-                
-                glpsol_file.write("s bas "+str(rows)+" "+str(col)+" f f "+obj+"\n")
-                
-                #For some reason the glpsol constraint the first variable row to be the objective function value.
-                #This is not stated anywhere in the glpk documentation
-                glpsol_file.write("i 1 b "+obj+" 0\n")
-            
-                for constraint in root.iter("constraint"):
-                    slack = constraint.get('slack')
-                    index = int(constraint.get('index')) + 2
-                    status = constraint.get('status')
-                    dual = constraint.get('dual')
-                    
-                    if status == "BS":
-                        status = 'b'
-                    elif status == "LL":
-                        status = 'l'
-                    elif status == "UL":
-                        status = 'u'
-                    
-                    glpsol_file.write("i"+" "+str(index)+" "+status+" "+slack+" "+dual+"\n")
-
-                for variable in root.iter('variable'):
-                    val = variable.get('value')
-                    index = int(variable.get('index')) +1
-                    status = variable.get('status')
-                    reduced = variable.get('reducedCost')
-                    
-                    if status == "BS":
-                        status = 'b'
-                    elif status == "LL":
-                        status = 'l'
-                    elif status == "UL":
-                        status = 'u'
-
-                    glpsol_file.write("j"+" "+str(index)+" "+status+" "+val+" "+reduced+"\n")
-                
-                glpsol_file.write("e o f")
-        elif root.find('header').get('solutionStatusString') == "integer optimal solution":
-            with open(solutionfile,'w') as glpsol_file:
-                
-                obj = root.find('header').get('objectiveValue')
-
-                for constraint in root.iter('constraint'):
-                    rows = constraint.get('index')
-                rows = int(rows) + 2
-
-                for variable in root.iter('variable'):
-                    col = variable.get('index')
-                col = int(col) + 1
-                
-                glpsol_file.write("s mip "+str(rows)+" "+str(col)+" o "+obj+"\n")
-                
-                #For some reason the glpsol requires the first constraint row to be the objective function value.
-                #This is not stated anywhere in the glpk documentation
-                glpsol_file.write("i 1 "+obj+"\n")
-            
-                for constraint in root.iter("constraint"):
-                    slack = constraint.get('slack')
-                    index = int(constraint.get('index')) + 2
-                    
-                    glpsol_file.write("i"+" "+str(index)+" "+slack+"\n")
-
-                for variable in root.iter('variable'):
-                    val = variable.get('value')
-                    index = int(variable.get('index')) +1
-
-                    glpsol_file.write("j"+" "+str(index)+" "+val+"\n")
-                
-                glpsol_file.write("e o f")
-        else:
-            self.state.logger.error(f"Optimality could not be reached. Check the flextool.sol file for more")
-            sys.exit(1)
-        
-        return 0
 
 
     #these exist to connect timesteps from two different timelines or aggregated versions of one
@@ -1205,6 +866,7 @@ class FlexToolRunner:
                 'setup2,total_obj_cost2,balance2,reserves2,rest2,constraints2,r_solution,w_raw,w_capacity,glpsol_output,\n')
         timer = timer + timing
 
+        solver = SolverRunner(self.state)
         first = True
         previous_complete_solve = None
         for i, solve in enumerate(all_solves):
@@ -1305,7 +967,7 @@ class FlexToolRunner:
             with open("solve_data/solve_progress.csv", "a") as solve_progress:
                 solve_progress.write(',,' + solve + ',' + str(round(time.perf_counter() - timer_in_solve,4)))
             
-            exit_status = self.model_run(complete_solve[solve])
+            exit_status = solver.run(complete_solve[solve])
             if exit_status == 0:
                 self.state.logger.info('Success!')
                 print("-------------------------------------------------------------------------------------------\n\n")
