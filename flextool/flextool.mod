@@ -4357,7 +4357,7 @@ if p_model['solveFirst'] then {
   }
 
   # period - all periods (ordered)
-  printf "solve,period\n" > "output_raw/set_period.csv";
+  if p_model["solveFirst"] == 1 then printf "solve,period\n" > "output_raw/set_period.csv";
   for {s in solve_current, d in period} {
       printf "%s,%s\n", s, d >> "output_raw/set_period.csv";
   }

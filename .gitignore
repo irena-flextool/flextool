@@ -23,3 +23,5 @@ input/
 output/
 solve_data/
 flextool-venv/
+specs/
+test/expected/

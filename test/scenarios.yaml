@@ -4,16 +4,116 @@
 # golden files in test/expected/<scenario>/.
 #
 # CSV filenames come from the filenames: section of templates/default_plots.yaml.
-# Keep the list focused — 2-3 files that directly exercise what the scenario tests.
 #
 # To add a new scenario:
 #   1. Add an entry here
 #   2. Run: pytest test/ --regenerate <scenario>
 #   3. Inspect test/expected/<scenario>/ and commit
 
+# --- Barebone ---
+- scenario: base
+  csvs:
+    - node__d.csv
+    - costs__dt.csv
+    - summary_solve.csv
+    - slack__upward__node_state__dt.csv
+
+- scenario: scale_to_peak_flow
+  csvs:
+    - node__d.csv
+    - node__dt.csv
+    - summary_solve.csv
+
+- scenario: capacity_margin
+  csvs:
+    - slack__capacity_margin__d.csv
+    - summary_solve.csv
+
+- scenario: fullYear
+  csvs:
+    - summary_solve.csv
+
+- scenario: fullYear_roll
+  csvs:
+    - summary_solve.csv
+
+# --- Basic thermal dispatch ---
+
 - scenario: coal
   csvs:
     - unit__outputNode__dt.csv
+    - costs__dt.csv
+
+- scenario: coal_chp
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit__inputNode__dt.csv
+    - costs__dt.csv
+
+- scenario: coal_co2_limit
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs__dt.csv
+    - co2.csv
+
+- scenario: coal_co2_price
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs__dt.csv
+    - co2.csv
+
+- scenario: coal_min_load
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_online__dt.csv
+
+- scenario: coal_min_load_MIP_wind
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_online__dt.csv
+    - costs__dt.csv
+
+- scenario: coal_min_load_wind
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_online__dt.csv
+    - costs__dt.csv
+
+- scenario: coal_ramp_limit
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_ramp__outputNode__dt.csv
+
+- scenario: coal_retire
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - costs__dt.csv
+
+- scenario: coal_unit_size_MIP_wind
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_online__dt.csv
+    - costs__dt.csv
+
+- scenario: coal_wind_ev
+  csvs:
+    - unit__outputNode__dt.csv
+    - node_state__dt.csv
+    - costs__dt.csv
+
+- scenario: coal_wind_inertia
+  csvs:
+    - unit__outputNode__dt.csv
+    - group_inertia__dt.csv
+    - costs__dt.csv
+
+# --- Wind / battery / storage ---
+
+- scenario: wind
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_outputNode_VRE_potential__dt.csv
     - costs__dt.csv
 
 - scenario: wind_battery
@@ -22,22 +122,255 @@
     - node_state__dt.csv
     - costs__dt.csv
 
-- scenario: coal_co2_price
+- scenario: wind_battery_invest
   csvs:
     - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
     - costs__dt.csv
 
-- scenario: coal_min_load
+- scenario: wind_battery_invest_lifetime_choice
   csvs:
     - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - costs__dt.csv
+
+- scenario: wind_battery_invest_lifetime_renew
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - costs__dt.csv
+
+- scenario: wind_battery_invest_lifetime_renew_4solve
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - costs__dt.csv
+
+# --- Network scenarios ---
 
 - scenario: network_coal_wind
   csvs:
     - unit__outputNode__dt.csv
     - node__dt.csv
+    - connection__dt.csv
     - costs__dt.csv
 
-- scenario: wind_battery_invest
+- scenario: network_all_tech
   csvs:
     - unit__outputNode__dt.csv
+    - node__dt.csv
+    - connection__dt.csv
+    - costs__dt.csv
+
+- scenario: network_coal_wind_battery_co2_fullYear_availability
+  csvs:
+    - unit__outputNode__dt.csv
+    - node_state__dt.csv
+    - connection__dt.csv
+    - co2.csv
+    - costs__dt.csv
+
+- scenario: network_coal_wind_battery_invest_cumulative
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - node_state__dt.csv
+    - connection__dt.csv
+    - costs__dt.csv
+
+- scenario: network_coal_wind_capacity_margin
+  csvs:
+    - unit__outputNode__dt.csv
+    - connection__dt.csv
+    - slack__capacity_margin__d.csv
+    - costs__dt.csv
+
+- scenario: network_coal_wind_reserve
+  csvs:
+    - unit__outputNode__dt.csv
+    - connection__dt.csv
+    - process__reserve__upDown__node__dt.csv
+    - costs__dt.csv
+
+- scenario: network_coal_wind_reserve_co2_capacity_margin
+  csvs:
+    - unit__outputNode__dt.csv
+    - connection__dt.csv
+    - process__reserve__upDown__node__dt.csv
+    - slack__capacity_margin__d.csv
+    - co2.csv
+    - costs__dt.csv
+
+- scenario: network_coal_wind_reserve_n_1
+  csvs:
+    - unit__outputNode__dt.csv
+    - connection__dt.csv
+    - process__reserve__upDown__node__dt.csv
+    - costs__dt.csv
+
+- scenario: network_wind_coal_battery_fullYear_invest
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - node_state__dt.csv
+    - connection__dt.csv
+    - costs__dt.csv
+
+# --- Demand response ---
+
+- scenario: dr_decrease_demand
+  csvs:
+    - unit__outputNode__dt.csv
+    - node__dt.csv
+    - costs__dt.csv
+
+- scenario: dr_increase_demand
+  csvs:
+    - unit__outputNode__dt.csv
+    - node__dt.csv
+    - costs__dt.csv
+
+- scenario: dr_shift_demand
+  csvs:
+    - unit__outputNode__dt.csv
+    - node__dt.csv
+    - costs__dt.csv
+
+# --- Multi-year / multi-period ---
+
+- scenario: multi_year
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+- scenario: multi_year_one_solve
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+- scenario: multi_year_one_solve_battery
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - node_state__dt.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+- scenario: multi_year_one_solve_co2_limit
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - co2.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+- scenario: multi_fullYear_battery
+  csvs:
+    - unit__outputNode__dt.csv
+    - node_state__dt.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+- scenario: multi_fullYear_battery_nested_24h_invest_one_solve
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - node_state__dt.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+- scenario: multi_fullYear_battery_nested_multi_invest
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - node_state__dt.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+- scenario: multi_fullYear_battery_nested_sample_invest_one_solve
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - node_state__dt.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+- scenario: y2020_2029_1x10y
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+- scenario: y2020_2029_2x5y
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+# --- Full year / rolling ---
+
+- scenario: 5weeks_invest_fullYear_dispatch_coal_wind
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - costs__dt.csv
+
+
+# --- Water / hydro ---
+
+- scenario: water_pump
+  csvs:
+    - unit__outputNode__dt.csv
+    - node_state__dt.csv
+    - costs__dt.csv
+
+- scenario: water_pump_delayed
+  csvs:
+    - unit__outputNode__dt.csv
+    - node_state__dt.csv
+    - costs__dt.csv
+
+# --- Special ---
+
+- scenario: fusion
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs__dt.csv
+
+- scenario: aggregate_outputs_network_coal_wind_chp
+  csvs:
+    - unit__outputNode__dt.csv
+    - group_flows__dt.csv
+    - connection__dt.csv
+    - costs__dt.csv
+
+# --- Comprehensive / base ---
+
+- scenario: all
+  csvs:
+    - unit__outputNode__dt.csv
+    - node__dt.csv
+    - costs__dt.csv
+
+- scenario: test_a_lot
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - node__dt.csv
+    - connection__dt.csv
+    - costs__dt.csv
+    - costs_discounted.csv
+
+- scenario: test_a_lot_but_not_multi_year
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_capacity__d.csv
+    - node__dt.csv
+    - connection__dt.csv
     - costs__dt.csv

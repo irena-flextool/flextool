@@ -13,11 +13,11 @@ import csv
 import logging
 import math
 import shutil
-import sys
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from flextool.flextoolrunner.db_reader import get_single_entities, params_to_dict
+from flextool.flextoolrunner.db_reader import DictMode, get_single_entities, params_to_dict
+from flextool.flextoolrunner.runner_state import ActiveTimeEntry, FlexToolConfigError
 
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
@@ -71,19 +71,19 @@ class TimelineConfig:
     def load_from_db(cls, db: DatabaseMapping, logger: logging.Logger) -> TimelineConfig:
         """Read all timeline-level parameters from *db* and return a TimelineConfig."""
         timelines: defaultdict = params_to_dict(
-            db=db, cl="timeline", par="timestep_duration", mode="defaultdict"
+            db=db, cl="timeline", par="timestep_duration", mode=DictMode.DEFAULTDICT
         )
         timesets: list = get_single_entities(
             db=db, entity_class_name="timeset"
         )
         timeset_durations: defaultdict = params_to_dict(
-            db=db, cl="timeset", par="timeset_duration", mode="defaultdict"
+            db=db, cl="timeset", par="timeset_duration", mode=DictMode.DEFAULTDICT
         )
         timesets__timeline: defaultdict = params_to_dict(
-            db=db, cl="timeset", par="timeline", mode="defaultdict"
+            db=db, cl="timeset", par="timeline", mode=DictMode.DEFAULTDICT
         )
         new_step_durations: dict = params_to_dict(
-            db=db, cl="timeset", par="new_stepduration", mode="dict"
+            db=db, cl="timeset", par="new_stepduration", mode=DictMode.DICT
         )
         return cls(
             timelines=timelines,
@@ -166,12 +166,13 @@ class TimelineConfig:
                 if len(self.timelines) == 1:
                     self.timesets__timeline[timeset_name] = list(self.timelines.keys())[0]
                 elif len(self.timelines) > 1:
-                    logging.getLogger(__name__).error(
+                    message = (
                         "More than one timeline available and FlexTool does not know which "
                         "ones to use. Please use 'timeline' parameter of 'timeset' class to "
                         "define which timelines are part of the timeset(s) in the model instance"
                     )
-                    sys.exit(-1)
+                    logging.getLogger(__name__).error(message)
+                    raise FlexToolConfigError(message)
 
         # If model:solves does not exist and only one solve exists, use that
         if not solve_config.model_solve:
@@ -180,12 +181,13 @@ class TimelineConfig:
                 if len(solve_config.timesets_used_by_solves) == 1:
                     solve = list(solve_config.timesets_used_by_solves.keys())[0]
                 elif len(solve_config.timesets_used_by_solves) > 1:
-                    logging.getLogger(__name__).error(
+                    message = (
                         "Data contains multiple solve entities and FlexTool does not know "
                         "which to use. Please use 'solves' parameter of 'model' class to "
                         "inform which solves are to be included in the model instance."
                     )
-                    sys.exit(-1)
+                    logging.getLogger(__name__).error(message)
+                    raise FlexToolConfigError(message)
                 all_solves_in_periods = (
                     set(solve_config.realized_periods.keys())
                     | set(solve_config.invest_periods.keys())
@@ -193,22 +195,24 @@ class TimelineConfig:
                 for solve_name in all_solves_in_periods:
                     if solve:
                         if solve_name != solve:
-                            logging.getLogger(__name__).error(
+                            message = (
                                 "Data contains multiple solve entities and FlexTool does not "
                                 "know which to use. Please use 'solves' parameter of 'model' "
                                 "class to inform which solves are to be included in the model "
                                 "instance."
                             )
-                            sys.exit(-1)
+                            logging.getLogger(__name__).error(message)
+                            raise FlexToolConfigError(message)
                     else:
                         solve = solve_name
                 solve_config.model_solve[solve_config.model[0]] = [solve]
             else:
-                logging.getLogger(__name__).error(
+                message = (
                     "More than one model entity found in the database and FlexTool does "
                     "not know which to use."
                 )
-                sys.exit(-1)
+                logging.getLogger(__name__).error(message)
+                raise FlexToolConfigError(message)
 
         # If no solve entity for model:solves, create a solve entity with all available periods
         for model, solves in solve_config.model_solve.items():
@@ -222,13 +226,14 @@ class TimelineConfig:
                         for period in solve_config.periods_available[model]:
                             solve_config.realized_periods[solve].append((period, period))
                     else:
-                        logging.getLogger(__name__).error(
+                        message = (
                             f"The solve {solve} in the model: solves array does not have any "
                             f"periods defined: (period_timeset, realized_periods, invest_periods)\n"
                             f"Alternatively add periods_available to the model to create simple "
                             f"full timelines for those periods"
                         )
-                        sys.exit(-1)
+                        logging.getLogger(__name__).error(message)
+                        raise FlexToolConfigError(message)
 
         # If solve:period_timeset does not exist and only one timeset exists
         for solve in list(solve_config.model_solve.values())[0]:
@@ -243,13 +248,14 @@ class TimelineConfig:
                         period__timeset_list.append((period_tuple[1], timeset_name))
                     solve_config.timesets_used_by_solves[solve] = period__timeset_list
                 else:
-                    logging.getLogger(__name__).error(
+                    message = (
                         "More than one timeset available and FlexTool does not know which "
                         "ones to use. Please use 'period_timeset' parameter of 'solve' class "
                         "to define which periods and which timesets are part of the solve(s) "
                         "in the model instance"
                     )
-                    sys.exit(-1)
+                    logging.getLogger(__name__).error(message)
+                    raise FlexToolConfigError(message)
 
         # If realized/invest/nested solves do not exist but period__timeset exists
         for solve in list(solve_config.model_solve.values())[0]:
@@ -313,11 +319,12 @@ class TimelineConfig:
                 timeline = self.timesets__timeline[timeset]
                 if timeline not in timelines_list:
                     if len(timelines_list) != 0:
-                        logger.error(
+                        message = (
                             "Error: More than one timeline in the solve or the same timeline "
                             "with different step durations in different timesets"
                         )
-                        sys.exit(-1)
+                        logger.error(message)
+                        raise FlexToolConfigError(message)
                     timelines_list.append(timeline)
             for timeseries in timeseries_map:
                 with open('input/' + timeseries, 'r') as blk:
@@ -346,12 +353,13 @@ class TimelineConfig:
                                         for i in range(timeline_step_duration - 1):
                                             datain = next(filereader)
                                             if datain[0:time_index] != params:
-                                                logger.error(
+                                                message = (
                                                     "Cannot find the same timesteps in input "
                                                     "data as in timeline for file  "
                                                     + timeseries + " after " + row[-1]
                                                 )
-                                                sys.exit(-1)
+                                                logger.error(message)
+                                                raise FlexToolConfigError(message)
                                             values.append(float(datain[time_index + 1]))
 
                                     if timeseries_map[timeseries] == "average":
@@ -387,7 +395,7 @@ class TimelineConfig:
                                             row.append(new_index)
                                             row.append(datain[time_index + 1])
                                             filewriter.writerow(row)
-                            except Exception:
+                            except StopIteration:
                                 break
             # Constrain inflow to a longer step size
             node__inflow: list[list[str]] = []
@@ -399,7 +407,7 @@ class TimelineConfig:
                         datain = next(filereader)
                         if datain[1] == 'inflow':
                             node__inflow.append([datain[0], datain[2]])
-                    except Exception:
+                    except StopIteration:
                         break
             with open('solve_data/pt_node_inflow.csv', 'a', newline='') as blk:
                 filewriter = csv.writer(blk, delimiter=',')
@@ -453,7 +461,7 @@ def get_active_time(
                     for step in range(int(float(duration))):
                         if idx + step < len(timeline_data):
                             entry = timeline_data[idx + step]
-                            active_time[period].append((entry[0], idx + step, entry[1]))
+                            active_time[period].append(ActiveTimeEntry(timestep=entry[0], index=idx + step, duration=entry[1]))
                     break
 
     if not active_time:
@@ -468,7 +476,7 @@ def get_active_time(
 
 
 def make_step_jump(
-    active_time_list: OrderedDict,
+    active_time_list: dict,
     period__branch: list[tuple],
     solve_branch__time_branch_list: list[tuple],
 ) -> list[tuple]:
@@ -493,19 +501,19 @@ def make_step_jump(
         for i, step in enumerate(reversed(active_time)):
             j = period_last - i - 1
             if j > 0:
-                jump = active_time[j][1] - active_time[j - 1][1]
+                jump = active_time[j].index - active_time[j - 1].index
                 if jump > 1:
                     step_lengths.insert(
                         period_start_pos,
-                        (period, step[0], active_time[j - 1][0], active_time[block_last][0],
-                         period, active_time[j - 1][0], jump),
+                        (period, step.timestep, active_time[j - 1].timestep, active_time[block_last].timestep,
+                         period, active_time[j - 1].timestep, jump),
                     )
                     block_last = j - 1
                 else:
                     step_lengths.insert(
                         period_start_pos,
-                        (period, step[0], active_time[j - 1][0], active_time[j - 1][0],
-                         period, active_time[j - 1][0], jump),
+                        (period, step.timestep, active_time[j - 1].timestep, active_time[j - 1].timestep,
+                         period, active_time[j - 1].timestep, jump),
                     )
             else:
                 if (period, period) not in period__branch:
@@ -516,18 +524,18 @@ def make_step_jump(
                         (original_period, original_period) in period__branch
                         and original_period in active_time_list
                     ):
-                        jump = active_time[j][1] - active_time[-1][1]
+                        jump = active_time[j].index - active_time[-1].index
                         step_lengths.insert(
                             period_start_pos,
-                            (period, step[0], active_time[j - 1][0], active_time[block_last][0],
-                             period, active_time_list[period][-1][0], jump),
+                            (period, step.timestep, active_time[j - 1].timestep, active_time[block_last].timestep,
+                             period, active_time_list[period][-1].timestep, jump),
                         )
                     elif (original_period, original_period) in period__branch:
-                        jump = active_time[j][1] - active_time[-1][1]
+                        jump = active_time[j].index - active_time[-1].index
                         step_lengths.insert(
                             period_start_pos,
-                            (period, step[0], active_time[j - 1][0], active_time[block_last][0],
-                             period, active_time_list[period][-1][0], jump),
+                            (period, step.timestep, active_time[j - 1].timestep, active_time[block_last].timestep,
+                             period, active_time_list[period][-1].timestep, jump),
                         )
                     else:
                         for sb_tb in solve_branch__time_branch_list:
@@ -547,19 +555,19 @@ def make_step_jump(
                             else:
                                 if solve_period == period:
                                     past = True
-                        jump = active_time[j][1] - active_time_list[previous_period_with_branch][-1][1]
+                        jump = active_time[j].index - active_time_list[previous_period_with_branch][-1].index
                         step_lengths.insert(
                             period_start_pos,
-                            (period, step[0], active_time[j - 1][0], active_time[block_last][0],
+                            (period, step.timestep, active_time[j - 1].timestep, active_time[block_last].timestep,
                              previous_period_with_branch,
-                             active_time_list[previous_period_with_branch][-1][0], jump),
+                             active_time_list[previous_period_with_branch][-1].timestep, jump),
                         )
                 else:
-                    jump = active_time[j][1] - active_time_list[previous_period_name][-1][1]
+                    jump = active_time[j].index - active_time_list[previous_period_name][-1].index
                     step_lengths.insert(
                         period_start_pos,
-                        (period, step[0], active_time[j - 1][0], active_time[block_last][0],
-                         previous_period_name, active_time_list[previous_period_name][-1][0],
+                        (period, step.timestep, active_time[j - 1].timestep, active_time[block_last].timestep,
+                         previous_period_name, active_time_list[previous_period_name][-1].timestep,
                          jump),
                     )
     return step_lengths

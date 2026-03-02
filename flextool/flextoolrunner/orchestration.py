@@ -6,11 +6,10 @@ Entry point: run_model(state, solver) -> int
 import copy
 import os
 import shutil
-import sys
 import time
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 
-from flextool.flextoolrunner.runner_state import RunnerState
+from flextool.flextoolrunner.runner_state import RunnerState, FlexToolConfigError, FlexToolSolveError, SolveResult
 from flextool.flextoolrunner.solver_runner import SolverRunner
 from flextool.flextoolrunner.rolling_solver import RollingSolver, ParentSolveInfo
 from flextool.flextoolrunner.stochastic import StochasticSolver
@@ -30,16 +29,20 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         solver: SolverRunner instance for invoking external solver binaries.
 
     Returns:
-        0 on success; calls sys.exit(-1) on failure.
+        0 on success.
+
+    Raises:
+        FlexToolConfigError: On configuration/data errors.
+        FlexToolSolveError: On solver execution errors.
     """
-    active_time_lists: OrderedDict = OrderedDict()
-    jump_lists: OrderedDict = OrderedDict()
+    active_time_lists: dict = {}
+    jump_lists: dict = {}
     solve_period_history: defaultdict[str, list] = defaultdict(list)
-    fix_storage_time_lists: OrderedDict = OrderedDict()
-    realized_time_lists: OrderedDict = OrderedDict()
-    complete_solve: OrderedDict = OrderedDict()
-    parent_roll: OrderedDict = OrderedDict()
-    period__branch_lists: OrderedDict = OrderedDict()
+    fix_storage_time_lists: dict = {}
+    realized_time_lists: dict = {}
+    complete_solve: dict = {}
+    parent_roll: dict = {}
+    period__branch_lists: dict = {}
     branch_start_time_lists: defaultdict = defaultdict()
     all_solves: list = []
 
@@ -48,49 +51,51 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
     try:
         os.mkdir('solve_data')
     except FileExistsError:
-        print("solve_data folder existed")
+        state.logger.debug("solve_data folder existed")
     try:
         os.mkdir('output_raw')
     except FileExistsError:
-        print("output_raw folder existed")
+        state.logger.debug("output_raw folder existed")
     try:
         os.mkdir('output_plots')
     except FileExistsError:
-        print("output_plots folder existed")
+        state.logger.debug("output_plots folder existed")
 
     if not state.solve.model_solve:
-        state.logger.error("No model. Make sure the 'model' class defines solves [Array].")
-        sys.exit(-1)
+        message = "No model. Make sure the 'model' class defines solves [Array]."
+        state.logger.error(message)
+        raise FlexToolConfigError(message)
     solves = next(iter(state.solve.model_solve.values()))
     if not solves:
-        state.logger.error("No solves in model.")
-        sys.exit(-1)
+        message = "No solves in model."
+        state.logger.error(message)
+        raise FlexToolConfigError(message)
 
     rolling_solver = RollingSolver(state)
     for solve in solves:
         # Create ParentSolveInfo for top-level solve (no parent)
         parent_info = ParentSolveInfo(solve=None, roll=None)
-        solve_solves, solve_complete_solve, solve_active_time_lists, solve_fix_storage_time_lists, solve_realized_time_lists, solve_parent_roll = rolling_solver.define_solve_recursive(solve, parent_info, None, None, -1)
-        all_solves += solve_solves
-        complete_solve.update(solve_complete_solve)
-        parent_roll.update(solve_parent_roll)
-        active_time_lists.update(solve_active_time_lists)
-        fix_storage_time_lists.update(solve_fix_storage_time_lists)
-        realized_time_lists.update(copy.deepcopy(solve_realized_time_lists))
+        result = rolling_solver.define_solve_recursive(solve, parent_info, None, None, -1)
+        all_solves += result.solves
+        complete_solve.update(result.complete_solves)
+        parent_roll.update(result.parent_roll_lists)
+        active_time_lists.update(result.active_time_lists)
+        fix_storage_time_lists.update(result.fix_storage_time_lists)
+        realized_time_lists.update(copy.deepcopy(result.realized_time_lists))
 
     # Leave only one realized timestep for each timestep in each period
-    already_realized_timesteps: OrderedDict = OrderedDict()
+    already_realized_timesteps: dict = {}
     for solve, realized_time_list in reversed(realized_time_lists.items()):
-        for period, timesteps in realized_time_list.items():
+        for period, timesteps in list(realized_time_list.items()):
             if period not in already_realized_timesteps.keys():
                 already_realized_timesteps[period] = []
             for i, timestep in enumerate(timesteps):
                 # If a timestep is found, then assume that all the rest of the timesteps are overlapping (can this fail?)
-                if timestep[0] in already_realized_timesteps[period]:
+                if timestep.timestep in already_realized_timesteps[period]:
                     del realized_time_lists[solve][period][i:]
                     break
                 else:
-                    already_realized_timesteps[period].append(timestep[0])
+                    already_realized_timesteps[period].append(timestep.timestep)
             if not timesteps:
                 del realized_time_lists[solve][period]
 
@@ -134,11 +139,12 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
     for solve in active_time_lists.keys():
         for period in active_time_lists[solve]:
             if (period,period) in period__branch_lists[solve] and not any(period== sublist[0] for sublist in solve_period_history[complete_solve[solve]]):
-                state.logger.error(f"The years_represented is defined, but not to all of the periods ({period}) in the solve")
-                sys.exit(-1)
+                message = f"The years_represented is defined, but not to all of the periods ({period}) in the solve"
+                state.logger.error(message)
+                raise FlexToolConfigError(message)
 
     timing = time.perf_counter() - timer
-    print(f"--- Pre-processing of data: {timing:.4f} seconds ---")
+    state.logger.info(f"--- Pre-processing of data: {timing:.4f} seconds ---")
     with open("solve_data/solve_progress.csv", "a") as solve_progress:
         solve_progress.write(',,solve,write_solve_input,setup,total_obj_cost,balance,reserves,rest,constraints,glpsol_input,solver,' \
             'setup2,total_obj_cost2,balance2,reserves2,rest2,constraints2,r_solution,w_raw,w_capacity,glpsol_output,\n')
@@ -247,10 +253,11 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         exit_status = solver.run(complete_solve[solve])
         if exit_status == 0:
             state.logger.info('Success!')
-            print("-------------------------------------------------------------------------------------------\n\n")
+            state.logger.info("-------------------------------------------------------------------------------------------")
         else:
-            state.logger.error(f'Error: {exit_status}')
-            sys.exit(-1)
+            message = f'Error: {exit_status}'
+            state.logger.error(message)
+            raise FlexToolSolveError(message)
 
         #if multiple storage solve levels, save the storage fix of this level:
         if complete_solve[solve] in state.solve.fix_storage_periods:
@@ -259,7 +266,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
             shutil.copy("solve_data/fix_storage_usage.csv","solve_data/fix_storage_usage_"+ complete_solve[solve]+".csv")
 
     if len(state.solve.model_solve) > 1:
-        state.logger.error(
-            f'Trying to run more than one model - not supported. The results of the first model are retained.')
-        sys.exit(-1)
+        message = 'Trying to run more than one model - not supported. The results of the first model are retained.'
+        state.logger.error(message)
+        raise FlexToolConfigError(message)
     return 0

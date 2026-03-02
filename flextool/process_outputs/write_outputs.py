@@ -516,7 +516,13 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                     if isinstance(df, (pd.MultiIndex, pd.Index)):
                         df = df.to_frame(index=False)
                     if 'solve' not in df.index.names and 'period' in df.index.names:
-                        df.index = df.index.join(s.solve_period)
+                        if 'time' in df.index.names:
+                            # Use per-timestep mapping for dispatch data (correct per-roll solve names)
+                            df.index = df.index.join(s.solve_period_time)
+                        else:
+                            # For period-only data, use solve_period but deduplicate to avoid many-to-many
+                            unique_solve_period = s.solve_period[~s.solve_period.droplevel('solve').duplicated(keep='last')]
+                            df.index = df.index.join(unique_solve_period)
                         names = list(df.index.names)
                         solve_pos = names.index('solve')
                         period_pos = names.index('period')

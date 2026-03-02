@@ -9,16 +9,32 @@ are also initialised here and mutated during the solve loop.
 from __future__ import annotations
 
 import logging
-import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import spinedb_api as api
 
-from flextool.flextoolrunner.db_reader import get_single_entities, params_to_dict
+from flextool.flextoolrunner.db_reader import DictMode, get_single_entities, params_to_dict
 
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
+
+
+@dataclass
+class HiGHSConfig:
+    """HiGHS solver option overrides."""
+    presolve: dict[str, str]
+    method: dict[str, str]
+    parallel: dict[str, str]
+
+
+@dataclass
+class SolverSettings:
+    """Solver selection and invocation settings."""
+    solvers: dict[str, str]
+    precommand: dict[str, str]
+    arguments: defaultdict[str, list]
 
 
 class SolveConfig:
@@ -36,14 +52,10 @@ class SolveConfig:
         solve → current rolling-window counter.
     rolling_times : defaultdict[str, list]
         solve → [jump, horizon, duration].
-    highs_presolve, highs_method, highs_parallel : dict[str, str]
-        HiGHS solver option overrides.
-    solvers : dict[str, str]
-        solve → solver name.
-    solver_precommand : dict[str, str]
-        solve → wrapper command prefix.
-    solver_arguments : defaultdict[str, list]
-        solve → extra solver argument tokens.
+    highs : HiGHSConfig
+        HiGHS solver option overrides (presolve, method, parallel).
+    solver_settings : SolverSettings
+        Solver selection and invocation settings (solvers, precommand, arguments).
     solve_period_years_represented : defaultdict[str, list]
         solve → [[period, years], …].
     hole_multipliers : defaultdict[str, str]
@@ -77,12 +89,8 @@ class SolveConfig:
         model_solve: defaultdict,
         solve_modes: dict,
         rolling_times: defaultdict,
-        highs_presolve: dict,
-        highs_method: dict,
-        highs_parallel: dict,
-        solvers: dict,
-        solver_precommand: dict,
-        solver_arguments: defaultdict,
+        highs: HiGHSConfig,
+        solver_settings: SolverSettings,
         solve_period_years_represented: defaultdict,
         hole_multipliers: defaultdict,
         contains_solves: defaultdict,
@@ -96,12 +104,8 @@ class SolveConfig:
         self.model_solve = model_solve
         self.solve_modes = solve_modes
         self.rolling_times = rolling_times
-        self.highs_presolve = highs_presolve
-        self.highs_method = highs_method
-        self.highs_parallel = highs_parallel
-        self.solvers = solvers
-        self.solver_precommand = solver_precommand
-        self.solver_arguments = solver_arguments
+        self.highs = highs
+        self.solver_settings = solver_settings
         self.solve_period_years_represented = solve_period_years_represented
         self.hole_multipliers = hole_multipliers
         self.contains_solves = contains_solves
@@ -139,7 +143,7 @@ class SolveConfig:
         """
         model = get_single_entities(db=db, entity_class_name="model")
         model_solve: defaultdict = params_to_dict(
-            db=db, cl="model", par="solves", mode="defaultdict"
+            db=db, cl="model", par="solves", mode=DictMode.DEFAULTDICT
         )
         # If no model:solves defined and only one solve exists, wire it up automatically
         solves_temp = get_single_entities(db=db, entity_class_name="solve")
@@ -147,52 +151,52 @@ class SolveConfig:
             model_solve["flextool"] = [solves_temp[0]]
 
         solve_modes: dict = params_to_dict(
-            db=db, cl="solve", par="solve_mode", mode="dict"
+            db=db, cl="solve", par="solve_mode", mode=DictMode.DICT
         )
         highs_presolve: dict = params_to_dict(
-            db=db, cl="solve", par="highs_presolve", mode="dict"
+            db=db, cl="solve", par="highs_presolve", mode=DictMode.DICT
         )
         highs_method: dict = params_to_dict(
-            db=db, cl="solve", par="highs_method", mode="dict"
+            db=db, cl="solve", par="highs_method", mode=DictMode.DICT
         )
         highs_parallel: dict = params_to_dict(
-            db=db, cl="solve", par="highs_parallel", mode="dict"
+            db=db, cl="solve", par="highs_parallel", mode=DictMode.DICT
         )
         solve_period_years_represented: defaultdict = params_to_dict(
-            db=db, cl="solve", par="years_represented", mode="defaultdict"
+            db=db, cl="solve", par="years_represented", mode=DictMode.DEFAULTDICT
         )
-        solvers: dict = params_to_dict(db=db, cl="solve", par="solver", mode="dict")
+        solvers: dict = params_to_dict(db=db, cl="solve", par="solver", mode=DictMode.DICT)
         solver_precommand: dict = params_to_dict(
-            db=db, cl="solve", par="solver_precommand", mode="dict"
+            db=db, cl="solve", par="solver_precommand", mode=DictMode.DICT
         )
         solver_arguments: defaultdict = params_to_dict(
-            db=db, cl="solve", par="solver_arguments", mode="defaultdict"
+            db=db, cl="solve", par="solver_arguments", mode=DictMode.DEFAULTDICT
         )
         stochastic_branches: defaultdict = params_to_dict(
-            db=db, cl="solve", par="stochastic_branches", mode="defaultdict"
+            db=db, cl="solve", par="stochastic_branches", mode=DictMode.DEFAULTDICT
         )
         contains_solves: defaultdict = params_to_dict(
-            db=db, cl="solve", par="contains_solves", mode="defaultdict", str_to_list=True
+            db=db, cl="solve", par="contains_solves", mode=DictMode.DEFAULTDICT, str_to_list=True
         )
         hole_multipliers: defaultdict = params_to_dict(
-            db=db, cl="solve", par="timeline_hole_multiplier", mode="defaultdict"
+            db=db, cl="solve", par="timeline_hole_multiplier", mode=DictMode.DEFAULTDICT
         )
         delay_durations: dict = params_to_dict(
-            db=db, cl="unit", par="delay", mode="dict"
+            db=db, cl="unit", par="delay", mode=DictMode.DICT
         )
         periods_available: dict = params_to_dict(
-            db=db, cl="model", par="periods_available", mode="dict"
+            db=db, cl="model", par="periods_available", mode=DictMode.DICT
         )
 
         # S02: Simplified rolling_times assembly (replaced the convoluted enumerate loop)
         rolling_duration: dict = params_to_dict(
-            db=db, cl="solve", par="rolling_duration", mode="dict"
+            db=db, cl="solve", par="rolling_duration", mode=DictMode.DICT
         )
         rolling_solve_horizon: dict = params_to_dict(
-            db=db, cl="solve", par="rolling_solve_horizon", mode="dict"
+            db=db, cl="solve", par="rolling_solve_horizon", mode=DictMode.DICT
         )
         rolling_solve_jump: dict = params_to_dict(
-            db=db, cl="solve", par="rolling_solve_jump", mode="dict"
+            db=db, cl="solve", par="rolling_solve_jump", mode=DictMode.DICT
         )
         all_keys = set(rolling_duration) | set(rolling_solve_horizon) | set(rolling_solve_jump)
         rolling_times: defaultdict = defaultdict(
@@ -207,17 +211,24 @@ class SolveConfig:
             },
         )
 
+        highs = HiGHSConfig(
+            presolve=highs_presolve,
+            method=highs_method,
+            parallel=highs_parallel,
+        )
+        solver_settings = SolverSettings(
+            solvers=solvers,
+            precommand=solver_precommand,
+            arguments=solver_arguments,
+        )
+
         obj = cls(
             model=model,
             model_solve=model_solve,
             solve_modes=solve_modes,
             rolling_times=rolling_times,
-            highs_presolve=highs_presolve,
-            highs_method=highs_method,
-            highs_parallel=highs_parallel,
-            solvers=solvers,
-            solver_precommand=solver_precommand,
-            solver_arguments=solver_arguments,
+            highs=highs,
+            solver_settings=solver_settings,
             solve_period_years_represented=solve_period_years_represented,
             hole_multipliers=hole_multipliers,
             contains_solves=contains_solves,
@@ -308,13 +319,13 @@ class SolveConfig:
             dup_map_list = [
                 self.solve_modes,
                 self.roll_counter,
-                self.highs_presolve,
-                self.highs_method,
-                self.highs_parallel,
+                self.highs.presolve,
+                self.highs.method,
+                self.highs.parallel,
                 self.solve_period_years_represented,
-                self.solvers,
-                self.solver_precommand,
-                self.solver_arguments,
+                self.solver_settings.solvers,
+                self.solver_settings.precommand,
+                self.solver_settings.arguments,
                 self.contains_solves,
                 self.rolling_times,
             ]

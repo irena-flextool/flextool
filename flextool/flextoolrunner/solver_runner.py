@@ -16,7 +16,7 @@ import time
 import xml.etree.ElementTree as ET
 from typing import IO
 
-from flextool.flextoolrunner.runner_state import RunnerState
+from flextool.flextoolrunner.runner_state import RunnerState, FlexToolSolveError
 
 
 class SolverRunner:
@@ -35,7 +35,7 @@ class SolverRunner:
         timer_in_model_run = time.perf_counter()
 
         try:
-            solver = self.state.solve.solvers[current_solve]
+            solver = self.state.solve.solver_settings.solvers[current_solve]
         except KeyError:
             self.logger.warning(f"No solver defined for {current_solve}. Defaulting to highs.")
             solver = "highs"
@@ -62,10 +62,9 @@ class SolverRunner:
                 flextool_sol_file, timer_in_model_run,
             )
         else:
-            self.logger.error(
-                f"Unknown solver '{solver}'. Currently supported options: highs, glpsol, cplex."
-            )
-            sys.exit(-1)
+            message = f"Unknown solver '{solver}'. Currently supported options: highs, glpsol, cplex."
+            self.logger.error(message)
+            raise FlexToolSolveError(message)
 
         return returncode
 
@@ -110,23 +109,27 @@ class SolverRunner:
         try:
             returncode = self._run_glpsol(only_glpsol)
             if returncode != 0:
-                sys.exit(returncode)
+                raise FlexToolSolveError(f"glpsol failed with exit code: {returncode}")
+        except FlexToolSolveError:
+            raise
         except Exception as e:
             self.logger.exception(f"Error occurred: {e}")
-            sys.exit(1)
+            raise FlexToolSolveError(f"Error occurred: {e}") from e
         if returncode != 0:
-            self.logger.error(f'glpsol failed: {returncode}')
-            sys.exit(returncode)
+            message = f'glpsol failed: {returncode}'
+            self.logger.error(message)
+            raise FlexToolSolveError(message)
 
         # Check if solution is infeasible
         with open('glpsol_solution.txt', 'r') as inf_file:
             inf_content = inf_file.read()
             if 'INFEASIBLE' in inf_content:
-                self.logger.error("The model is infeasible. Check the constraints.")
-                sys.exit(1)
+                message = "The model is infeasible. Check the constraints."
+                self.logger.error(message)
+                raise FlexToolSolveError(message)
 
         timing = time.perf_counter() - timer_start
-        print(f"--- Solve with GLPSOL: {timing:.4f} seconds ---")
+        self.logger.info(f"--- Solve with GLPSOL: {timing:.4f} seconds ---")
         with open("solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write(',,' + str(round(timing, 4)) + ',')
 
@@ -159,20 +162,21 @@ class SolverRunner:
         ]
         returncode = self._run_glpsol(highs_step1)
         if returncode != 0:
-            sys.exit(returncode)
+            raise FlexToolSolveError(f"glpsol MPS generation failed with exit code: {returncode}")
 
         # Check if the problem has columns (nodes)
         with open(mps_file, 'r') as mps_file_handle:
             mps_content = mps_file_handle.read()
             if 'Columns:    0' in mps_content:
-                self.logger.error(
+                message = (
                     "The problem has no columns. Check that the model has nodes "
                     "with entity alternative: true"
                 )
-                sys.exit(-1)
+                self.logger.error(message)
+                raise FlexToolSolveError(message)
 
         timing = time.perf_counter() - timer_in_model_run
-        print(f"--- GLPSOL created sol file: {timing:.4f} seconds ---\n")
+        self.logger.info(f"--- GLPSOL created sol file: {timing:.4f} seconds ---")
         with open("solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write(',' + str(round(timing, 4)))
         timer_in_model_run = timer_in_model_run + timing
@@ -181,7 +185,7 @@ class SolverRunner:
         if solver == "highs":
             self._run_highs(current_solve, highs_file, mps_file, highs_option_file)
             timing = time.perf_counter() - timer_in_model_run
-            print(f"--- Solver (HiGHS): {timing:.4f} seconds ---\n")
+            self.logger.info(f"--- Solver (HiGHS): {timing:.4f} seconds ---")
             with open("solve_data/solve_progress.csv", "a") as solve_progress:
                 solve_progress.write(',' + str(round(timing, 4)))
             timer_in_model_run = timer_in_model_run + timing
@@ -191,7 +195,7 @@ class SolverRunner:
                 p_model_file.write("phase\nread\n")
             self._run_cplex(current_solve, mps_file, cplex_sol_file, flextool_sol_file)
             timing = time.perf_counter() - timer_in_model_run
-            print(f"--- Solver (CPLEX or Gurobi): {timing:.4f} seconds ---\n")
+            self.logger.info(f"--- Solver (CPLEX or Gurobi): {timing:.4f} seconds ---")
             with open("solve_data/solve_progress.csv", "a") as solve_progress:
                 solve_progress.write(',' + str(round(timing, 4)))
             timer_in_model_run = timer_in_model_run + timing
@@ -207,12 +211,12 @@ class SolverRunner:
         returncode = self._run_glpsol(highs_step3)
 
         timing = time.perf_counter() - timer_in_model_run
-        print(f"\n--- GLPSOL wrote outputs: {timing:.4f} seconds ---\n")
+        self.logger.info(f"--- GLPSOL wrote outputs: {timing:.4f} seconds ---")
         with open("solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write(',' + str(round(timing, 4)) + '\n')
 
         if returncode != 0:
-            sys.exit(returncode)
+            raise FlexToolSolveError(f"glpsol output writing failed with exit code: {returncode}")
 
         return returncode
 
@@ -226,22 +230,24 @@ class SolverRunner:
         """Run HiGHS solver on an MPS file."""
         highs_step2 = [
             highs_file, mps_file, f"--options_file={highs_option_file}",
-            f"--presolve={self.state.solve.highs_presolve.get(current_solve, 'on')}",
-            f"--solver={self.state.solve.highs_method.get(current_solve, 'choose')}",
-            f"--parallel={self.state.solve.highs_parallel.get(current_solve, 'off')}",
+            f"--presolve={self.state.solve.highs.presolve.get(current_solve, 'on')}",
+            f"--solver={self.state.solve.highs.method.get(current_solve, 'choose')}",
+            f"--parallel={self.state.solve.highs.parallel.get(current_solve, 'off')}",
         ]
         completed = subprocess.run(highs_step2)
         if completed.returncode != 0:
-            self.logger.error(f'Highs solver failed: {completed.returncode}')
-            sys.exit(completed.returncode)
-        print("HiGHS solved the problem\n")
+            message = f'Highs solver failed: {completed.returncode}'
+            self.logger.error(message)
+            raise FlexToolSolveError(message)
+        self.logger.info("HiGHS solved the problem")
 
         # Check if solution is infeasible
         with open('HiGHS.log', 'r') as inf_file:
             inf_content = inf_file.read()
             if 'Infeasible' in inf_content:
-                self.logger.error("The model is infeasible. Check the constraints.")
-                sys.exit(1)
+                message = "The model is infeasible. Check the constraints."
+                self.logger.error(message)
+                raise FlexToolSolveError(message)
 
     def _run_cplex(
         self,
@@ -253,17 +259,18 @@ class SolverRunner:
         """Run CPLEX solver on an MPS file.  (S10: consolidated precommand handling)"""
         # Build the CPLEX command once
         cplex_cmd: list[str] = ['cplex', '-c', 'read', mps_file]
-        if current_solve in self.state.solve.solver_arguments:
-            cplex_cmd += self.state.solve.solver_arguments[current_solve]
+        if current_solve in self.state.solve.solver_settings.arguments:
+            cplex_cmd += self.state.solve.solver_settings.arguments[current_solve]
         cplex_cmd += ['opt', 'write', cplex_sol_file, 'quit']
         # Conditionally prepend wrapper
-        if current_solve in self.state.solve.solver_precommand:
-            cplex_cmd = [self.state.solve.solver_precommand[current_solve]] + cplex_cmd
+        if current_solve in self.state.solve.solver_settings.precommand:
+            cplex_cmd = [self.state.solve.solver_settings.precommand[current_solve]] + cplex_cmd
 
         completed = subprocess.run(cplex_cmd)
         if completed.returncode != 0:
-            self.logger.error(f'Cplex solver failed: {completed.returncode}')
-            sys.exit(completed.returncode)
+            message = f'Cplex solver failed: {completed.returncode}'
+            self.logger.error(message)
+            raise FlexToolSolveError(message)
 
         self._cplex_to_glpsol(cplex_sol_file, flextool_sol_file)
 
@@ -351,11 +358,12 @@ class SolverRunner:
         try:
             tree = ET.parse(cplexfile)
         except OSError:
-            self.logger.error(
+            message = (
                 'The CPLEX solver does not produce a solution file if the problem '
                 'is infeasible. Check the constraints, more info at cplex.log'
             )
-            sys.exit(-1)
+            self.logger.error(message)
+            raise FlexToolSolveError(message)
         root = tree.getroot()
 
         status = root.find('header').get('solutionStatusString')
@@ -364,10 +372,9 @@ class SolverRunner:
         elif status == "integer optimal solution":
             self._write_glpsol_solution(root, solutionfile, is_mip=True)
         else:
-            self.logger.error(
-                "Optimality could not be reached. Check the flextool.sol file for more"
-            )
-            sys.exit(1)
+            message = "Optimality could not be reached. Check the flextool.sol file for more"
+            self.logger.error(message)
+            raise FlexToolSolveError(message)
 
         return 0
 

@@ -8,10 +8,9 @@ create_rolling_solves for the full call chain.
 """
 
 import logging
-import sys
-from collections import OrderedDict, namedtuple
+from collections import namedtuple
 
-from flextool.flextoolrunner.runner_state import RunnerState
+from flextool.flextoolrunner.runner_state import RunnerState, FlexToolConfigError, SolveResult
 from flextool.flextoolrunner.stochastic import StochasticSolver
 from flextool.flextoolrunner.timeline_config import get_active_time
 
@@ -27,20 +26,20 @@ class RollingSolver:
     def create_rolling_solves(
         self,
         solve: str,
-        full_active_time_list: OrderedDict,
+        full_active_time_list: dict,
         jump: float,
         horizon: float,
         start: list | None = None,
         duration: float = -1,
-    ) -> tuple[list[str], OrderedDict, OrderedDict]:
+    ) -> tuple[list[str], dict, dict]:
         """
         Splits the solve into an overlapping sequence of solves ("rolls").
 
         Returns:
             Tuple of (solves, active_time_lists, realized_time_lists)
         """
-        active_time_lists: OrderedDict = OrderedDict()
-        realized_time_lists: OrderedDict = OrderedDict()
+        active_time_lists: dict = dict()
+        realized_time_lists: dict = dict()
         solves: list[str] = []
         starts: list[list] = []
         jumps: list[list] = []
@@ -68,21 +67,22 @@ class RollingSolver:
                         if horizon_counter >= float(horizon):
                             horizons.append(last_index)
                             horizon_counter -= float(jump)
-                        horizon_counter += float(step[2])
-                        jump_counter += float(step[2])
-                        duration_counter += float(step[2])
+                        horizon_counter += float(step.duration)
+                        jump_counter += float(step.duration)
+                        duration_counter += float(step.duration)
                         last_index = [period, i]
                     else:
-                        if start is None or (start == [period, step[0]]):
+                        if start is None or (start == [period, step.timestep]):
                             starts.append([period, i])
                             started = True
-                            horizon_counter += float(step[2])
-                            jump_counter += float(step[2])
-                            duration_counter += float(step[2])
+                            horizon_counter += float(step.duration)
+                            jump_counter += float(step.duration)
+                            duration_counter += float(step.duration)
                             last_index = [period, i]
         if not started:
-            self.logger.error("Start point not found")
-            sys.exit(-1)
+            message = "Start point not found"
+            self.logger.error(message)
+            raise FlexToolConfigError(message)
         # if there is start of the roll but not end, the end is the last index of the active time
         diff = len(starts) - len(horizons)
         for i in range(0, diff):
@@ -92,8 +92,8 @@ class RollingSolver:
             jumps.append(last_index)
         # create the active and realized timesteps from the start and end time indexes
         for index, roll_start in enumerate(starts):
-            active: OrderedDict = OrderedDict()
-            realized: OrderedDict = OrderedDict()
+            active: dict = dict()
+            realized: dict = dict()
             solve_name = solve + "_roll_" + str(self.state.solve.roll_counter[solve])
             self.state.solve.roll_counter[solve] += 1
             solves.append(solve_name)
@@ -131,23 +131,23 @@ class RollingSolver:
 
     @staticmethod
     def _filter_time_list_by_periods(
-        full_time_list: OrderedDict,
+        full_time_list: dict,
         period_dict: dict,
         solve_name: str,
-    ) -> OrderedDict:
+    ) -> dict:
         """
         Filter a time list to include only periods that are in the given period dict.
 
         Args:
-            full_time_list: OrderedDict of {period: [(timestep, idx, value), ...]}
+            full_time_list: dict of {period: [(timestep, idx, value), ...]}
             period_dict: dict where key is solve name and value is list of
                         (period_from, period_included) tuples
             solve_name: Name of the solve to filter for
 
         Returns:
-            OrderedDict with only the matching periods
+            dict with only the matching periods
         """
-        filtered: OrderedDict = OrderedDict()
+        filtered: dict = dict()
         for period_tuple in period_dict.get(solve_name, []):
             period = period_tuple[1]  # period_included
             if period in full_time_list:
@@ -155,13 +155,13 @@ class RollingSolver:
         return filtered
 
     @staticmethod
-    def _get_periods_from_parent_time_list(parent_time_list: OrderedDict) -> set[str]:
+    def _get_periods_from_parent_time_list(parent_time_list: dict) -> set[str]:
         """
         Extract the set of periods that exist in the parent's time list.
         Used to constrain child solves to only timesteps within parent's scope.
 
         Args:
-            parent_time_list: OrderedDict of {period: [(timestep, idx, value), ...]}
+            parent_time_list: dict of {period: [(timestep, idx, value), ...]}
 
         Returns:
             Set of period names
@@ -170,20 +170,20 @@ class RollingSolver:
 
     @staticmethod
     def _filter_time_list_by_parent_scope(
-        child_time_list: OrderedDict,
+        child_time_list: dict,
         parent_periods: set[str],
-    ) -> OrderedDict:
+    ) -> dict:
         """
         Filter child solve's time list to only include periods that exist in parent.
 
         Args:
-            child_time_list: OrderedDict of {period: [(timestep, idx, value), ...]}
+            child_time_list: dict of {period: [(timestep, idx, value), ...]}
             parent_periods: Set of period names from parent
 
         Returns:
-            OrderedDict with only periods that exist in parent
+            dict with only periods that exist in parent
         """
-        filtered: OrderedDict = OrderedDict()
+        filtered: dict = dict()
         for period, timesteps in child_time_list.items():
             if period in parent_periods:
                 filtered[period] = timesteps
@@ -193,11 +193,11 @@ class RollingSolver:
         self,
         solve: str,
         complete_solve_name: str,
-        full_active_time_list: OrderedDict,
+        full_active_time_list: dict,
         parent_info: ParentSolveInfo,
         start: list | None,
         duration: float,
-    ) -> tuple[list, OrderedDict, OrderedDict, OrderedDict, OrderedDict, OrderedDict]:
+    ) -> SolveResult:
         """
         Handle rolling window solve logic, creating multiple roll solves.
 
@@ -210,15 +210,15 @@ class RollingSolver:
             duration: Duration constraint from parent
 
         Returns:
-            Tuple of (solves, complete_solves, active_time_lists, fix_storage_time_lists,
-                     realized_time_lists, parent_roll_lists)
+            SolveResult with solves, complete_solves, active_time_lists,
+            fix_storage_time_lists, realized_time_lists, parent_roll_lists.
         """
         solves: list[str] = []
-        complete_solves: OrderedDict = OrderedDict()
-        active_time_lists: OrderedDict = OrderedDict()
-        fix_storage_time_lists: OrderedDict = OrderedDict()
-        realized_time_lists: OrderedDict = OrderedDict()
-        parent_roll_lists: OrderedDict = OrderedDict()
+        complete_solves: dict = dict()
+        active_time_lists: dict = dict()
+        fix_storage_time_lists: dict = dict()
+        realized_time_lists: dict = dict()
+        parent_roll_lists: dict = dict()
 
         rolling_times = self.state.solve.rolling_times[solve]  # [jump, horizon, duration]
         if duration == -1:
@@ -261,8 +261,9 @@ class RollingSolver:
         if solve in self.state.solve.contains_solves:
             contain_solves = self.state.solve.contains_solves[solve]
             if len(contain_solves) > 1:
-                logging.error("More than one solve in a rolling solve, not managed")
-                sys.exit(-1)
+                message = "More than one solve in a rolling solve, not managed"
+                logging.error(message)
+                raise FlexToolConfigError(message)
 
             contains_solve = contain_solves[0]
 
@@ -273,7 +274,7 @@ class RollingSolver:
                 # Child should start at first timestep of this roll
                 if index != 0:
                     first_period = list(roll_active_time_lists[roll_name].keys())[0]
-                    first_timestep = roll_active_time_lists[roll_name][first_period][0][0]
+                    first_timestep = roll_active_time_lists[roll_name][first_period][0].timestep
                     child_start = [first_period, first_timestep]
                 else:
                     child_start = None
@@ -286,30 +287,35 @@ class RollingSolver:
 
                 # Recursively process child solve
                 child_parent_info = ParentSolveInfo(solve=solve, roll=roll_name)
-                (child_solves, child_complete_solves, child_active_time_lists,
-                 child_fix_storage_time_lists, child_realized_time_lists,
-                 child_parent_roll_lists) = self.define_solve_recursive(
+                child = self.define_solve_recursive(
                     contains_solve, child_parent_info, parent_realized_periods,
                     child_start, child_duration)
 
-                solves += child_solves
-                complete_solves.update(child_complete_solves)
-                parent_roll_lists.update(child_parent_roll_lists)
-                active_time_lists.update(child_active_time_lists)
-                fix_storage_time_lists.update(child_fix_storage_time_lists)
-                realized_time_lists.update(child_realized_time_lists)
+                solves += child.solves
+                complete_solves.update(child.complete_solves)
+                parent_roll_lists.update(child.parent_roll_lists)
+                active_time_lists.update(child.active_time_lists)
+                fix_storage_time_lists.update(child.fix_storage_time_lists)
+                realized_time_lists.update(child.realized_time_lists)
         else:
             solves += roll_solves
 
-        return (solves, complete_solves, active_time_lists, fix_storage_time_lists,
-                realized_time_lists, parent_roll_lists)
+        return SolveResult(
+            solves=solves,
+            complete_solves=complete_solves,
+            active_time_lists=active_time_lists,
+            fix_storage_time_lists=fix_storage_time_lists,
+            realized_time_lists=realized_time_lists,
+            parent_roll_lists=parent_roll_lists,
+        )
 
     def _process_single_solve(
         self,
         solve: str,
-        full_active_time_list: OrderedDict,
+        full_active_time_list: dict,
         parent_info: ParentSolveInfo,
-    ) -> tuple[list, OrderedDict, OrderedDict, OrderedDict, OrderedDict, OrderedDict]:
+        complete_solve_name: str | None = None,
+    ) -> SolveResult:
         """
         Handle single (non-rolling) solve logic.
 
@@ -317,20 +323,27 @@ class RollingSolver:
             solve: Name of the solve
             full_active_time_list: Full time list for this solve
             parent_info: ParentSolveInfo namedtuple
+            complete_solve_name: Original (un-renamed) solve name for complete_solves
+                mapping. When a solve is renamed (e.g. storage_fullYear_6h →
+                storage_fullYear_6h_p2020), this keeps the mapping pointing to the
+                original name which is in real_solves and has solve_period_history.
 
         Returns:
-            Tuple of (solves, complete_solves, active_time_lists, fix_storage_time_lists,
-                     realized_time_lists, parent_roll_lists)
+            SolveResult with solves, complete_solves, active_time_lists,
+            fix_storage_time_lists, realized_time_lists, parent_roll_lists.
         """
-        solves: list[str] = [solve]
-        complete_solves: OrderedDict = OrderedDict()
-        active_time_lists: OrderedDict = OrderedDict()
-        invest_time_lists: OrderedDict = OrderedDict()
-        fix_storage_time_lists: OrderedDict = OrderedDict()
-        realized_time_lists: OrderedDict = OrderedDict()
-        parent_roll_lists: OrderedDict = OrderedDict()
+        if complete_solve_name is None:
+            complete_solve_name = solve
 
-        complete_solves[solve] = solve
+        solves: list[str] = [solve]
+        complete_solves: dict = dict()
+        active_time_lists: dict = dict()
+        invest_time_lists: dict = dict()
+        fix_storage_time_lists: dict = dict()
+        realized_time_lists: dict = dict()
+        parent_roll_lists: dict = dict()
+
+        complete_solves[solve] = complete_solve_name
         parent_roll_lists[solve] = parent_info.roll
         active_time_lists[solve] = full_active_time_list
 
@@ -349,26 +362,41 @@ class RollingSolver:
         if solve in self.state.solve.contains_solves:
             contain_solves = self.state.solve.contains_solves[solve]
 
-            # Get parent's scope: union of fix_storage and realized periods
+            # Get parent's scope: union of fix_storage, realized, and realized_invest periods.
+            # Invest solves only have invest/realized_invest periods (not fix_storage/realized),
+            # so realized_invest_periods is needed to provide scope for their children.
+            realized_invest_time_list = self._filter_time_list_by_periods(
+                full_active_time_list, self.state.solve.realized_invest_periods, solve)
             parent_scope_periods = (set(fix_storage_time_lists[solve].keys()) |
-                                    set(realized_time_lists[solve].keys()))
+                                    set(realized_time_lists[solve].keys()) |
+                                    set(realized_invest_time_list.keys()))
+
+            # Fallback: when a solve was renamed (e.g. storage_fullYear_6h_p2020),
+            # its period attributes aren't copied by duplicate_solve, leaving scope
+            # empty. Use the solve's own active periods as scope in that case.
+            if not parent_scope_periods:
+                parent_scope_periods = set(full_active_time_list.keys())
 
             for contain_solve in contain_solves:
                 child_parent_info = ParentSolveInfo(solve=solve, roll=solve)
-                (child_solves, child_complete_solves, child_active_time_lists,
-                 child_fix_storage_time_lists, child_realized_time_lists,
-                 child_parent_roll_lists) = self.define_solve_recursive(
+                child = self.define_solve_recursive(
                     contain_solve, child_parent_info, parent_scope_periods, None, -1)
 
-                solves += child_solves
-                complete_solves.update(child_complete_solves)
-                parent_roll_lists.update(child_parent_roll_lists)
-                active_time_lists.update(child_active_time_lists)
-                fix_storage_time_lists.update(child_fix_storage_time_lists)
-                realized_time_lists.update(child_realized_time_lists)
+                solves += child.solves
+                complete_solves.update(child.complete_solves)
+                parent_roll_lists.update(child.parent_roll_lists)
+                active_time_lists.update(child.active_time_lists)
+                fix_storage_time_lists.update(child.fix_storage_time_lists)
+                realized_time_lists.update(child.realized_time_lists)
 
-        return (solves, complete_solves, active_time_lists, fix_storage_time_lists,
-                realized_time_lists, parent_roll_lists)
+        return SolveResult(
+            solves=solves,
+            complete_solves=complete_solves,
+            active_time_lists=active_time_lists,
+            fix_storage_time_lists=fix_storage_time_lists,
+            realized_time_lists=realized_time_lists,
+            parent_roll_lists=parent_roll_lists,
+        )
 
     def define_solve_recursive(
         self,
@@ -377,7 +405,7 @@ class RollingSolver:
         parent_scope_periods: set[str] | None = None,
         start: list | None = None,
         duration: float = -1,
-    ) -> tuple[list, OrderedDict, OrderedDict, OrderedDict, OrderedDict, OrderedDict]:
+    ) -> SolveResult:
         """
         Recursively define solve structure and determine time period mappings.
 
@@ -391,8 +419,8 @@ class RollingSolver:
             duration: Duration constraint from parent (for child solves)
 
         Returns:
-            Tuple of (solves, complete_solves, active_time_lists, fix_storage_time_lists,
-                     realized_time_lists, parent_roll_lists)
+            SolveResult with solves, complete_solves, active_time_lists,
+            fix_storage_time_lists, realized_time_lists, parent_roll_lists.
         """
         new_name = solve
         if new_name not in self.state.solve.real_solves:
@@ -401,28 +429,32 @@ class RollingSolver:
         if parent_info.solve:
             joint_current_solve_periods = list(set(self.state.solve.invest_periods[solve] + self.state.solve.fix_storage_periods[solve] + self.state.solve.realized_periods[solve]))
             current_solve_periods = [t[0] for t in joint_current_solve_periods]
-            for current_solve_period in current_solve_periods:
-                joint_parent_periods = list(set(self.state.solve.invest_periods[parent_info.solve] + self.state.solve.fix_storage_periods[parent_info.solve] + self.state.solve.realized_periods[parent_info.solve]))
-                parent_period = set([t[0] for t in joint_parent_periods])
-                if current_solve_period in parent_period:
-                    new_name = solve + "_" + str(current_solve_period)
-                    self.state.solve.duplicate_solve(solve, new_name, update_model_solves=False)
-                    self.state.solve.solve_period_years_represented[new_name] = self.state.solve.solve_period_years_represented[solve]
+            joint_parent_periods = list(set(self.state.solve.invest_periods[parent_info.solve] + self.state.solve.fix_storage_periods[parent_info.solve] + self.state.solve.realized_periods[parent_info.solve]))
+            parent_period = set([t[0] for t in joint_parent_periods])
+            # Find which child periods overlap with the parent
+            matching_periods = [p for p in current_solve_periods if p in parent_period]
+            if len(matching_periods) == 1:
+                # Single matching period (rolling-window parent): rename child to per-period solve
+                current_solve_period = matching_periods[0]
+                new_name = solve + "_" + str(current_solve_period)
+                self.state.solve.duplicate_solve(solve, new_name, update_model_solves=False)
+                self.state.solve.solve_period_years_represented[new_name] = self.state.solve.solve_period_years_represented[solve]
 
-                    new_period_timeset_list = []
-                    for solve2, period__timeset_list in list(self.state.solve.timesets_used_by_solves.items()):
-                        if solve2 == solve:
-                            for period__timeset in period__timeset_list:
-                                if period__timeset[0] == current_solve_period:
-                                    new_period_timeset_list.append(period__timeset)
-                    if new_name not in self.state.solve.timesets_used_by_solves.keys():
-                        self.state.solve.timesets_used_by_solves[new_name] = new_period_timeset_list
-                    else:
-                        for item in new_period_timeset_list:
-                            if item not in self.state.solve.timesets_used_by_solves[new_name]:
-                                self.state.solve.timesets_used_by_solves[new_name].append(item)
-                    # There should be only one parent 'period_from'
-                    break
+                new_period_timeset_list = []
+                for solve2, period__timeset_list in list(self.state.solve.timesets_used_by_solves.items()):
+                    if solve2 == solve:
+                        for period__timeset in period__timeset_list:
+                            if period__timeset[0] == current_solve_period:
+                                new_period_timeset_list.append(period__timeset)
+                if new_name not in self.state.solve.timesets_used_by_solves.keys():
+                    self.state.solve.timesets_used_by_solves[new_name] = new_period_timeset_list
+                else:
+                    for item in new_period_timeset_list:
+                        if item not in self.state.solve.timesets_used_by_solves[new_name]:
+                            self.state.solve.timesets_used_by_solves[new_name].append(item)
+            # When multiple periods match (single-solve parent with multiple periods),
+            # keep the original solve name and all its timesets — the active time
+            # will be filtered by parent scope later.
 
         # Get full active time list for this solve (all timesteps it could use)
         full_active_time_list_own = get_active_time(
@@ -447,5 +479,9 @@ class RollingSolver:
                 new_name, complete_solve_name, full_active_time_list,
                 parent_info, start, duration)
         else:
-            # Process as single solve
-            return self._process_single_solve(new_name, full_active_time_list, parent_info)
+            # Process as single solve — pass original name as complete_solve_name
+            # so renamed solves (e.g. storage_fullYear_6h_p2020) map back to the
+            # original which is in real_solves with proper solve_period_history.
+            return self._process_single_solve(
+                new_name, full_active_time_list, parent_info,
+                complete_solve_name=solve)

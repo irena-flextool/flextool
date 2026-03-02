@@ -11,6 +11,8 @@ or modify scenarios. See test/README.md for the full workflow.
 """
 from __future__ import annotations
 
+import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -36,6 +38,20 @@ def _load_scenarios() -> list[tuple[str, list[str]]]:
     with open(TEST_DIR / "scenarios.yaml") as f:
         entries = yaml.safe_load(f)
     return [(e["scenario"], e["csvs"]) for e in entries]
+
+
+# CSVs with non-standard formatting that pd.read_csv cannot parse.
+# These are compared as plain text instead.
+_FREEFORM_CSVS = {"summary_solve.csv"}
+
+
+def _is_freeform_csv(csv_name: str) -> bool:
+    return csv_name in _FREEFORM_CSVS
+
+
+def _strip_timestamps(text: str) -> str:
+    """Remove run-specific timestamps so freeform CSVs can be compared across runs."""
+    return re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2}", "<TIMESTAMP>", text)
 
 
 SCENARIOS = _load_scenarios()
@@ -83,7 +99,10 @@ def test_scenario(
             )
             expected_path = EXPECTED_DIR / scenario / csv_name
             expected_path.parent.mkdir(parents=True, exist_ok=True)
-            round_for_comparison(pd.read_csv(actual_path)).to_csv(expected_path, index=False)
+            if _is_freeform_csv(csv_name):
+                shutil.copy2(actual_path, expected_path)
+            else:
+                round_for_comparison(pd.read_csv(actual_path)).to_csv(expected_path, index=False)
         pytest.skip(f"Regenerated {len(csvs)} file(s) for scenario '{scenario}'")
     else:
         for csv_name in csvs:
@@ -99,12 +118,19 @@ def test_scenario(
                 f"Generate it with: pytest test/ --regenerate {scenario}"
             )
 
-            actual = round_for_comparison(pd.read_csv(actual_path))
-            expected = round_for_comparison(pd.read_csv(expected_path))
-            pd.testing.assert_frame_equal(
-                actual,
-                expected,
-                check_exact=False,
-                rtol=1e-4,
-                obj=f"{scenario}/{csv_name}",
-            )
+            if _is_freeform_csv(csv_name):
+                actual_text = _strip_timestamps(actual_path.read_text())
+                expected_text = _strip_timestamps(expected_path.read_text())
+                assert actual_text == expected_text, (
+                    f"{scenario}/{csv_name} content differs from expected"
+                )
+            else:
+                actual = round_for_comparison(pd.read_csv(actual_path))
+                expected = round_for_comparison(pd.read_csv(expected_path))
+                pd.testing.assert_frame_equal(
+                    actual,
+                    expected,
+                    check_exact=False,
+                    rtol=1e-4,
+                    obj=f"{scenario}/{csv_name}",
+                )
