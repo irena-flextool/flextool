@@ -326,6 +326,12 @@ class TimelineConfig:
                         logger.error(message)
                         raise FlexToolConfigError(message)
                     timelines_list.append(timeline)
+            # Pre-build timeline duration lookup for O(1) access per row
+            timeline_duration_lookup: dict[str, int] = {}
+            for timeline in timelines_list:
+                new_timeline = self.timelines[timeline]
+                for timeline_row in new_timeline:
+                    timeline_duration_lookup[timeline_row[0]] = int(float(timeline_row[1]))
             for timeseries in timeseries_map:
                 with open('input/' + timeseries, 'r') as blk:
                     filereader = csv.reader(blk, delimiter=',')
@@ -337,13 +343,7 @@ class TimelineConfig:
                         while True:
                             try:
                                 datain = next(filereader)
-                                timeline_step_duration = None
-                                for timeline in timelines_list:
-                                    new_timeline = self.timelines[timeline]
-                                    for timeline_row in new_timeline:
-                                        if timeline_row[0] == datain[time_index]:
-                                            timeline_step_duration = int(float(timeline_row[1]))
-                                            break
+                                timeline_step_duration = timeline_duration_lookup.get(datain[time_index])
                                 if timeline_step_duration is not None:
                                     values: list[float] = []
                                     params = datain[0:time_index]
@@ -448,6 +448,9 @@ def get_active_time(
             "the alternative is included in the scenario."
         )
 
+    # Pre-build index for O(1) timestep-to-position lookup per timeline
+    timeline_index_cache: dict[str, dict[str, int]] = {}
+
     for period, timeset_id in timesets_used_by_solves[current_solve]:
         timeline_id = timesets__timelines.get(timeset_id)
         if not timeline_id:
@@ -455,14 +458,19 @@ def get_active_time(
         timeline_data = timelines.get(timeline_id, [])
         if not timeline_data:
             continue
+        # Build index for this timeline if not yet cached
+        if timeline_id not in timeline_index_cache:
+            timeline_index_cache[timeline_id] = {
+                time_val: idx for idx, (time_val, _) in enumerate(timeline_data)
+            }
+        time_val_to_idx = timeline_index_cache[timeline_id]
         for start_time, duration in timesets[timeset_id]:
-            for idx, (time_val, value) in enumerate(timeline_data):
-                if time_val == start_time:
-                    for step in range(int(float(duration))):
-                        if idx + step < len(timeline_data):
-                            entry = timeline_data[idx + step]
-                            active_time[period].append(ActiveTimeEntry(timestep=entry[0], index=idx + step, duration=entry[1]))
-                    break
+            idx = time_val_to_idx.get(start_time)
+            if idx is not None:
+                for step in range(int(float(duration))):
+                    if idx + step < len(timeline_data):
+                        entry = timeline_data[idx + step]
+                        active_time[period].append(ActiveTimeEntry(timestep=entry[0], index=idx + step, duration=entry[1]))
 
     if not active_time:
         raise ValueError(

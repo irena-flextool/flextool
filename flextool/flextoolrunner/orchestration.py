@@ -11,7 +11,7 @@ from collections import defaultdict
 
 from flextool.flextoolrunner.runner_state import RunnerState, FlexToolConfigError, FlexToolSolveError, SolveResult
 from flextool.flextoolrunner.solver_runner import SolverRunner
-from flextool.flextoolrunner.rolling_solver import RollingSolver, ParentSolveInfo
+from flextool.flextoolrunner.recursive_solves import RecursiveSolveBuilder, ParentSolveInfo
 from flextool.flextoolrunner.stochastic import StochasticSolver
 from flextool.flextoolrunner.timeline_config import get_active_time, separate_period_and_timeseries_data
 from flextool.flextoolrunner import solve_writers
@@ -21,7 +21,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
     """Run the full solve loop.
 
     Reads the solve configuration, builds the solve execution order via
-    RollingSolver, applies stochastic branching, then for each solve writes
+    RecursiveSolveBuilder, applies stochastic branching, then for each solve writes
     the required CSV files and invokes the solver.
 
     Args:
@@ -71,11 +71,11 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         state.logger.error(message)
         raise FlexToolConfigError(message)
 
-    rolling_solver = RollingSolver(state)
+    solve_builder = RecursiveSolveBuilder(state)
     for solve in solves:
         # Create ParentSolveInfo for top-level solve (no parent)
         parent_info = ParentSolveInfo(solve=None, roll=None)
-        result = rolling_solver.define_solve_recursive(solve, parent_info, None, None, -1)
+        result = solve_builder.define_solve_recursive(solve, parent_info, None, None, -1)
         all_solves += result.solves
         complete_solve.update(result.complete_solves)
         parent_roll.update(result.parent_roll_lists)
@@ -84,53 +84,62 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         realized_time_lists.update(copy.deepcopy(result.realized_time_lists))
 
     # Leave only one realized timestep for each timestep in each period
-    already_realized_timesteps: dict = {}
+    already_realized_timesteps: dict[str, set[str]] = {}
     for solve, realized_time_list in reversed(realized_time_lists.items()):
         for period, timesteps in list(realized_time_list.items()):
-            if period not in already_realized_timesteps.keys():
-                already_realized_timesteps[period] = []
+            if period not in already_realized_timesteps:
+                already_realized_timesteps[period] = set()
             for i, timestep in enumerate(timesteps):
                 # If a timestep is found, then assume that all the rest of the timesteps are overlapping (can this fail?)
                 if timestep.timestep in already_realized_timesteps[period]:
                     del realized_time_lists[solve][period][i:]
                     break
                 else:
-                    already_realized_timesteps[period].append(timestep.timestep)
+                    already_realized_timesteps[period].add(timestep.timestep)
             if not timesteps:
                 del realized_time_lists[solve][period]
 
+    # Build period history incrementally instead of O(N²) predecessor scanning
+    cumulative_contributions: list[tuple[str, float]] = []
+    cumulative_period_names: set[str] = set()
+
     for solve in state.solve.real_solves:
         #check that period__years_represented has only periods included in the solve
-        new_years_represented = []
-        for period__year in state.solve.solve_period_years_represented[solve]:
-            if any(period__year[0] == period__timeset[0] for period__timeset in state.solve.timesets_used_by_solves[solve]):
-                new_years_represented.append(period__year)
-        state.solve.solve_period_years_represented[solve] = new_years_represented
-        # get period_history from earlier solves
-        for solve_2 in state.solve.real_solves:
-            if solve_2 == solve:
-                break
-            # Combine all period tuples for solve_2 from all period dicts
-            all_period_tuples = (
-                state.solve.realized_periods.get(solve_2, []) +
-                state.solve.invest_periods.get(solve_2, []) +
-                state.solve.fix_storage_periods.get(solve_2, []) +
-                state.solve.realized_invest_periods.get(solve_2, [])
-            )
-            for period_tuple in all_period_tuples:
-                this_solve = state.solve.solve_period_years_represented[solve_2]
-                for period in this_solve:
-                    if period[0] == period_tuple[0] and not any(period[0] == sublist[0] for sublist in solve_period_history[solve]):
-                        solve_period_history[solve].append((period[0], period[1]))
+        timeset_periods = {pt[0] for pt in state.solve.timesets_used_by_solves[solve]}
+        state.solve.solve_period_years_represented[solve] = [
+            py for py in state.solve.solve_period_years_represented[solve]
+            if py[0] in timeset_periods
+        ]
+        # get period_history from earlier solves (already accumulated)
+        history_period_names: set[str] = set()
+        for period_name, years in cumulative_contributions:
+            if period_name not in history_period_names:
+                solve_period_history[solve].append((period_name, years))
+                history_period_names.add(period_name)
         # get period_history from this solve
         for period__year in state.solve.solve_period_years_represented[solve]:
-            if not any(period__year[0]== sublist[0] for sublist in solve_period_history[solve]):
+            if period__year[0] not in history_period_names:
                 solve_period_history[solve].append((period__year[0], period__year[1]))
+                history_period_names.add(period__year[0])
         #if not defined, all the periods have the value 1
         if not state.solve.solve_period_years_represented[solve]:
             for period__timeset in state.solve.timesets_used_by_solves[solve]:
-                if not any(period__timeset[0]== sublist[0] for sublist in solve_period_history[solve]):
+                if period__timeset[0] not in history_period_names:
                     solve_period_history[solve].append((period__timeset[0], 1))
+                    history_period_names.add(period__timeset[0])
+        # Compute this solve's contributions and add to cumulative for next solves
+        period_dict_names = {
+            t[0] for t in (
+                state.solve.realized_periods.get(solve, []) +
+                state.solve.invest_periods.get(solve, []) +
+                state.solve.fix_storage_periods.get(solve, []) +
+                state.solve.realized_invest_periods.get(solve, [])
+            )
+        }
+        for period in state.solve.solve_period_years_represented[solve]:
+            if period[0] in period_dict_names and period[0] not in cumulative_period_names:
+                cumulative_contributions.append((period[0], period[1]))
+                cumulative_period_names.add(period[0])
 
     stochastic_solver = StochasticSolver(state)
     period__branch_lists, solve_branch__time_branch_lists, active_time_lists, jump_lists, fix_storage_time_lists, realized_time_lists, branch_start_time_lists = \
@@ -150,13 +159,19 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
             'setup2,total_obj_cost2,balance2,reserves2,rest2,constraints2,r_solution,w_raw,w_capacity,glpsol_output,\n')
     timer = timer + timing
 
+    separate_period_and_timeseries_data(state.timeline.timelines, state.solve.timesets_used_by_solves)
+
     first = True
     previous_complete_solve = None
+    cached_complete_active_time_lists: dict = {}
     for i, solve in enumerate(all_solves):
         timer_in_solve = time.perf_counter()
 
         state.logger.info("Creating timelines for solve " + solve + " (" + str(i) + ")")
-        complete_active_time_lists = get_active_time(complete_solve[solve], state.solve.timesets_used_by_solves, state.timeline.timeset_durations, state.timeline.timelines, state.timeline.timesets__timeline)
+        cs = complete_solve[solve]
+        if cs not in cached_complete_active_time_lists:
+            cached_complete_active_time_lists[cs] = get_active_time(cs, state.solve.timesets_used_by_solves, state.timeline.timeset_durations, state.timeline.timelines, state.timeline.timesets__timeline)
+        complete_active_time_lists = cached_complete_active_time_lists[cs]
 
         # Build a combined period__timeset list that includes history periods
         period__timesets_with_history = list(state.solve.timesets_used_by_solves[complete_solve[solve]])
@@ -202,7 +217,6 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         solve_writers.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve], state.logger)
         solve_writers.write_branch_weights_and_map(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve], state.solve.stochastic_branches)
         solve_writers.write_first_and_last_periods(active_time_lists[solve], state.solve.timesets_used_by_solves[complete_solve[solve]], period__branch_lists[solve])
-        separate_period_and_timeseries_data(state.timeline.timelines, state.solve.timesets_used_by_solves)
 
         #check if the upper level fixes storages
         if [complete_solve[solve]] in state.solve.contains_solves.values() and complete_solve[parent_roll[solve]] in state.solve.fix_storage_periods:  # check that the parent_roll exists and has storage fixing

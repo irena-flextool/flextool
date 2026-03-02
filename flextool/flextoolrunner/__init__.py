@@ -9,7 +9,7 @@ State objects: runner_state.py (RunnerState, PathConfig)
                solve_config.py (SolveConfig — all solve-level parameters)
                timeline_config.py (TimelineConfig — all timeline definitions)
 
-Solve logic  : rolling_solver.py (RollingSolver — rolling/nested/recursive solve structure)
+Solve logic  : recursive_solves.py (RecursiveSolveBuilder — rolling/nested/recursive solve structure)
                stochastic.py (StochasticSolver — stochastic branch handling)
                orchestration.py (run_model — the main solve loop)
 

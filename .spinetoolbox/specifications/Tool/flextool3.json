@@ -66,12 +66,12 @@
         "flextool/flextoolrunner/input_writer.py",
         "flextool/flextoolrunner/solve_config.py",
         "flextool/flextoolrunner/solve_writers.py",
-        "flextool/flextoolrunner/rolling_solver.py",
         "flextool/flextoolrunner/flextoolrunner.py",
         "flextool/flextoolrunner/__init__.py",
         "flextool/flextoolrunner/db_reader.py",
         "flextool/flextoolrunner/solver_runner.py",
-        "flextool/flextoolrunner/timeline_config.py"
+        "flextool/flextoolrunner/timeline_config.py",
+        "flextool/flextoolrunner/recursive_solves.py"
     ],
     "description": "",
     "inputfiles": [],
