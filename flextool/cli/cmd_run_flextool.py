@@ -141,10 +141,10 @@ def main():
             # Create/update scenario class if it doesn't exist
             output_db.add_or_update_entity_class(name="scenario")
 
-            # Create/update parameter definition for 'folder'
+            # Create/update parameter definition for 'output_location'
             output_db.add_or_update_parameter_definition(
                 entity_class_name="scenario",
-                name="folder",
+                name="output_location",
                 description="Full path to the working directory"
             )
 
@@ -167,6 +167,12 @@ def main():
                 alternative_name=scenario_name,
                 value=value,
                 type=type_
+            )
+
+            output_db.add_or_update_parameter_definition(
+                entity_class_name="scenario",
+                name="finish_time",
+                description="Timestamp when the scenario run finished"
             )
 
             dt_value = DateTime(datetime.now())

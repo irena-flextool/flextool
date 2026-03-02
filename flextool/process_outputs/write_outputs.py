@@ -262,7 +262,13 @@ ALL_OUTPUTS = [
 def _resolve_settings(write_methods, output_config_path, active_configs, plot_rows,
                       output_location, settings_db_url, fallback_output_location):
     """Resolve output settings: explicit args > settings DB > hardcoded defaults."""
-    if settings_db_url and os.path.exists(settings_db_url.replace('sqlite:///', '')):
+    db_reachable = False
+    if settings_db_url:
+        if settings_db_url.startswith('sqlite:///'):
+            db_reachable = os.path.exists(settings_db_url.replace('sqlite:///', ''))
+        else:
+            db_reachable = True  # HTTP or other remote URLs — let DatabaseMapping handle errors
+    if db_reachable:
         with DatabaseMapping(settings_db_url) as settings_db:
             settings_entities = settings_db.get_entity_items(entity_class_name="settings")
             if len(settings_entities) == 1:
