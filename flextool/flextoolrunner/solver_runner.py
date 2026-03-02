@@ -43,11 +43,11 @@ class SolverRunner:
         glpsol_file, highs_file = self._platform_binaries()
         flextool_model_file = str(self.state.paths.flextool_dir / "flextool.mod")
         flextool_base_data_file = str(self.state.paths.flextool_dir / "flextool_base.dat")
-        glp_solution_file = str(self.state.paths.root_dir / "glpsol_solution.txt")
-        mps_file = str(self.state.paths.root_dir / "flextool.mps")
+        glp_solution_file = "glpsol_solution.txt"
+        mps_file = "flextool.mps"
         highs_option_file = str(self.state.paths.bin_dir / "highs.opt")
-        cplex_sol_file = str(self.state.paths.root_dir / "cplex.sol")
-        flextool_sol_file = str(self.state.paths.root_dir / "flextool.sol")
+        cplex_sol_file = "cplex.sol"
+        flextool_sol_file = "flextool.sol"
 
         if solver == "glpsol":
             returncode = self._run_glpsol_solver(
