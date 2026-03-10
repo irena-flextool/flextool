@@ -20,6 +20,7 @@
 #     - 'e' expands the name of the bar on the y-axis with this additional dimension
 #     - 's' stacks the dimension in bar plots or area plots
 #     - 'u' sub-plots the dimension
+#     - 'f' splits the dimension into separate files (member name appended to filename)
 #     - 'm' sums the dimension
 #     - 'a' averages the dimension
 #     - 'x' no specific role
@@ -94,14 +95,16 @@ plots:
   # Flows for units and connections
   unit_outputNode_d_ee:
     plot_name: '2.0p Flows unit to node'
-    map_dimensions_for_plots: [d_ee, m_bb]
+    map_dimensions_for_plots: [d_ee, m_sb]
+    ylabel: Node
   unit_outputNode_dt_ee:
     plot_name: '2.0t Flows unit to node'
     legend: all
     map_dimensions_for_plots: [dt_ee, tt_su]
   unit_inputNode_d_ee:
     plot_name: '2.1p Flows node to unit'
-    map_dimensions_for_plots: [d_ee, m_bu]
+    map_dimensions_for_plots: [d_ee, m_sb]
+    ylabel: Node
   unit_inputNode_dt_ee:
     plot_name: '2.1t Flows node to unit'
     legend: all
@@ -130,6 +133,7 @@ plots:
   costs_dt_p:
     default:
       plot_name: '3.1t Costs stack'
+      max_items_per_file: 12
       map_dimensions_for_plots: [dt_p, tt_s]
     chunks:
       plot_name: '3.1c Costs time chunks'
@@ -200,7 +204,7 @@ plots:
     ylabel: [MWh, MWh, MWh, MWh, MWh, percent, MWh, percent]
   nodeGroup_gd_p:
     plot_name: '6.1d NodeGroup indicators'
-    map_dimensions_for_plots: [gd_p, eb_u]  # gb_u
+    map_dimensions_for_plots: [gd_p, fb_u]  # gb_u
     subplots_per_row: 2
     axis_scale_min_max: [[], [0,1], [], [0,1], [], [0,1]]
     axis_tick_format: ['.0%',  '.0%',  '.0%',  '.0%', '5,.0f', '.0%']

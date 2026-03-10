@@ -11,6 +11,7 @@ DIMENSION_RULES: dict[str, str] = {
     's': 'stack (stacked segments)',
     'u': 'subplot (separate plot panel)',
     'l': 'line series',
+    'f': 'file (separate file per member)',
     'm': 'merge (sum and collapse)',
     'a': 'average and collapse',
 }

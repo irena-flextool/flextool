@@ -51,20 +51,31 @@ def _get_value_formatter(axis_tick_format, idx: int):
     return FuncFormatter(_fmt_with_spec)
 
 
-def generate_split_filename(base_name, plot_dir, extension, file_idx=None, needs_split=False):
-    """
-    Generate filename with appropriate suffix based on splitting needs.
+def generate_split_filename(
+    base_name: str,
+    plot_dir: str,
+    extension: str,
+    file_idx: int | None = None,
+    needs_split: bool = False,
+    file_member: str | None = None,
+) -> str:
+    """Generate filename with appropriate suffix based on splitting needs.
 
     - No splitting: base_name.extension
+    - With file_member only: base_name_member.extension
     - With splitting: base_name_01.extension, base_name_02.extension, ...
+    - With both: base_name_member_01.extension, base_name_member_02.extension, ...
 
     File index uses leading zeros for numbers < 10 (e.g., _01, _02, ..., _09, _10).
     """
+    name = base_name
+    if file_member is not None:
+        name = f'{name}_{file_member}'
     if not needs_split:
-        return f'{plot_dir}/{base_name}.{extension}'
+        return f'{plot_dir}/{name}.{extension}'
     else:
         idx_str = f'{file_idx:02d}'
-        return f'{plot_dir}/{base_name}_{idx_str}.{extension}'
+        return f'{plot_dir}/{name}_{idx_str}.{extension}'
 
 
 def split_into_chunks(items, chunk_size):

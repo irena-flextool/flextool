@@ -18,6 +18,7 @@
 #     - 'e' expands the name of the bar on the y-axis with this additional dimension
 #     - 's' stacks the dimension in bar plots or area plots
 #     - 'u' sub-plots the dimension
+#     - 'f' splits the dimension into separate files (member name appended to filename)
 #     - 'm' sums the dimension
 #     - 'a' averages the dimension
 # - time_average_duration: duration in timesteps (integer) that averages the result over chunks of chosen length
