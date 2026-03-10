@@ -122,8 +122,16 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
                     if len(line_level_names) == 1:
                         y_data = df_sub.xs(line, level=line_level_names[0], axis=1)
                     else:
-                        # For multiple line_levels, apply xs for all levels at once
-                        y_data = df_sub.xs(line, level=line_level_names, axis=1)
+                        # For multiple line_levels, apply xs sequentially per level
+                        # to avoid pandas 2.x multi-dimensional indexing error
+                        y_data = df_sub
+                        for lvl_name, lvl_val in zip(line_level_names, line):
+                            if isinstance(y_data, pd.Series):
+                                break
+                            if isinstance(y_data.columns, pd.MultiIndex):
+                                y_data = y_data.xs(lvl_val, level=lvl_name, axis=1)
+                            else:
+                                y_data = y_data[lvl_val]
                 else:
                     # Direct column selection for non-MultiIndex
                     y_data = df_sub[line]
@@ -169,7 +177,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     if output_filepath:
         plt.savefig(output_filepath, bbox_inches='tight')
     else:
-        plt.savefig(f'{plot_dir}/{plot_name}.svg', bbox_inches='tight')
+        plt.savefig(f'{plot_dir}/{plot_name}.png', bbox_inches='tight')
     plt.close(fig)
 
 
@@ -356,5 +364,5 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
     if output_filepath:
         plt.savefig(output_filepath, bbox_inches='tight')
     else:
-        plt.savefig(f'{plot_dir}/{plot_name}.svg', bbox_inches='tight')
+        plt.savefig(f'{plot_dir}/{plot_name}.png', bbox_inches='tight')
     plt.close(fig)

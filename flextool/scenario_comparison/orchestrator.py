@@ -33,6 +33,7 @@ def run(
     show_plots: bool,
     dispatch_plots: bool,
     basic_plots: bool,
+    plot_file_format: str = 'png',
 ) -> None:
     """Run the full scenario-comparison pipeline.
 
@@ -78,7 +79,7 @@ def run(
     plot_dict_of_dataframes(
         combined_dfs, plot_dir, settings['plots'],
         active_settings=active_configs, plot_rows=plot_rows,
-        delete_existing_plots=True,
+        delete_existing_plots=True, plot_file_format=plot_file_format,
     )
     print(f'\nPlotted comparison of {len(scenario_folders)} scenarios to folder: {plot_dir}')
 

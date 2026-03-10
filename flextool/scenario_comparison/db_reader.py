@@ -33,22 +33,30 @@ def read_scenario_folders(db_url: str) -> dict[str, str]:
     scenario_folders: dict[str, str] = {}
 
     with DatabaseMapping(db_url) as db_map:
+        # At the results stage, scenarios have been flattened to alternatives.
+        # Get alternative names from URL filter config (set by Spine Toolbox)
+        # or fall back to reading all alternatives from the database.
         filter_configs = db_map.get_filter_configs()
-        scenarios: list[str] = []
-        if filter_configs:
-            alternative_names = filter_configs[0]['alternatives']
-            scenarios = alternative_names
+        alternative_names: list[str] = []
+        for cfg in filter_configs:
+            if cfg.get('type') == 'alternative_filter':
+                alternative_names = cfg['alternatives']
+                break
+        if not alternative_names:
+            alternative_names = [
+                a["name"] for a in db_map.get_alternative_items()
+            ]
 
-        for scenario_name in scenarios:
+        for alt_name in alternative_names:
             param_values = db_map.get_parameter_value_items(
                 entity_class_name="scenario",
-                entity_name=scenario_name,
-                parameter_definition_name="output_location"
+                entity_name=alt_name,
+                parameter_definition_name="output_location",
             )
 
             if param_values:
                 folder_path = param_values[0]["parsed_value"]
-                scenario_folders[scenario_name] = folder_path
+                scenario_folders[alt_name] = folder_path
 
     return scenario_folders
 

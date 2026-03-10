@@ -29,6 +29,9 @@ def main():
                             help='Output methods to use (default: plot parquet excel)')
         parser.add_argument('--plot-rows', type=int, nargs=2, default=None,
                             help='First and last row to plot in time series (default: 0 167)')
+        parser.add_argument('--plot-file-format', type=str, default=None,
+                            choices=['png', 'svg'],
+                            help='File format for plot output (default: png)')
         parser.add_argument('--debug', action='store_true',
                             help='Enable debug output')
         parser.add_argument('--single-result', type=str, nargs=6,
@@ -92,7 +95,8 @@ def main():
                 plot_rows=tuple(args.plot_rows) if args.plot_rows else None,
                 debug=args.debug,
                 single_result=tuple(args.single_result) if args.single_result else None,
-                settings_db_url=args.settings_db_url
+                settings_db_url=args.settings_db_url,
+                plot_file_format=args.plot_file_format
             )
 
 if __name__ == '__main__':

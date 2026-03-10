@@ -62,6 +62,11 @@ def main() -> None:
         '--show-plots', action='store_true', default=None,
         help='Display plots interactively (in addition to saving)'
     )
+    parser.add_argument(
+        '--plot-file-format', type=str, default=None,
+        choices=['png', 'svg'],
+        help='File format for plot output (default: png)'
+    )
 
     args = parser.parse_args()
     db_url = args.db_url
@@ -74,6 +79,7 @@ def main() -> None:
     write_dispatch_xlsx = args.write_dispatch_xlsx
     write_to_ods = args.write_to_ods
     show_plots = args.show_plots
+    plot_file_format = args.plot_file_format
 
     settings_db_url = args.settings_db_url
     if settings_db_url and os.path.exists(settings_db_url.replace('sqlite:///', '')):
@@ -112,6 +118,8 @@ def main() -> None:
                     write_to_ods = bool(settings_params['write-to-ods'])
                 if show_plots is None and 'show-plots' in settings_params:
                     show_plots = bool(settings_params['show-plots'])
+                if plot_file_format is None and 'plot-file-format' in settings_params:
+                    plot_file_format = str(settings_params['plot-file-format'])
 
     # Apply hardcoded defaults for anything still unset
     if output_config_path is None:
@@ -128,6 +136,8 @@ def main() -> None:
         write_to_ods = False
     if show_plots is None:
         show_plots = False
+    if plot_file_format is None:
+        plot_file_format = 'png'
 
     # Apply alternative filters to db_url
     alternatives = args.alternatives
@@ -152,6 +162,7 @@ def main() -> None:
         show_plots=show_plots,
         dispatch_plots=do_dispatch,
         basic_plots=do_basic,
+        plot_file_format=plot_file_format,
     )
 
 

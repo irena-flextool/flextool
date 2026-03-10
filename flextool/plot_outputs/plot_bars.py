@@ -554,5 +554,5 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
     if output_filepath:
         plt.savefig(output_filepath, bbox_inches='tight')
     else:
-        plt.savefig(f'{plot_dir}/{key_name}_d.svg', bbox_inches='tight')
+        plt.savefig(f'{plot_dir}/{key_name}_d.png', bbox_inches='tight')
     plt.close(fig)

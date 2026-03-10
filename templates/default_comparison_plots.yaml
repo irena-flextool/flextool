@@ -1,4 +1,4 @@
-# FlexTool Output Configuration
+# FlexTool Output Configuration for Scenario Comparison
 #
 # Each result can have multiple configurations (user can choose which ones to plot).
 # Each result is mapped to a dict with named parameters (only non-default values need to be specified):
@@ -33,232 +33,259 @@
 # There is also filename configuration section after the plot rules (used by csv and parquet)
 
 plots:
-  CO2__:
-    plot_name: co2
-    map_dimensions_for_plots: [_, m_bm]
-  CO2_d_g:
-    plot_name: group_CO2
-    map_dimensions_for_plots: [d_sg, m_be]
-  annualized_costs_d_p:
-    default:
-      plot_name: annualized_costs
-      base_length: 10
-      xlabel: 'Millions of Currency'
-      map_dimensions_for_plots: [d_sp, e_bs]
-    sum_periods:
-      plot_name: annualized_costs
-      base_length: 10
-      map_dimensions_for_plots: [d_sp, m_gb]
-  connection_capacity_ed_p:
-    plot_name: connection_capacity
-    subplots_per_row: 4
-    base_length: 3
-    map_dimensions_for_plots: [ed_sp, bu_gu]
-  connection_cf_d_e:
-    plot_name: connection_cf
+  # Infeasibilities
+  node_slack_up_dt_e:
+    plot_name: '0.0t Loss of load (upward slack)'
+    map_dimensions_for_plots: [dt_se, tt_lu]
+  node_slack_up_d_e:
+    plot_name: '0.0p Loss of load (upward slack)'
     map_dimensions_for_plots: [d_se, b_ge]
-  connection_d_eee:
-    plot_name: connection
     xlabel: MWh
-    map_dimensions_for_plots: [d_se, u_gb]
-  connection_dt_eee:
-    plot_name: connection
-  connection_leftward_d_eee:
-    plot_name: connection_leftward
-  connection_leftward_dt_eee:
-    plot_name: connection_leftward
-  connection_losses_d_eee:
-    plot_name: connection_losses
-    ylabel: MWh
-  connection_losses_dt_eee:
-    plot_name: connection_losses
-  connection_rightward_d_eee:
-    plot_name: connection_rightward
-  connection_rightward_dt_eee:
-    plot_name: connection_rightward
-  costs_discounted_d_p:
-    plot_name: costs_discounted
-    bar_orientation: vertical
-    base_length: 6
-    map_dimensions_for_plots: [d_sp, b_es]
-  costs_discounted_p_:
-    plot_name: costs_discounted
-  costs_dt_p:
-    default:
-      plot_name: costs
-      map_dimensions_for_plots: [dt_sp, tt_us]
-    lines:
-      plot_name: costs
-      map_dimensions_for_plots: [dt_sp, tt_lm]
-    chunks:
-      plot_name: costs_chunks
-      map_dimensions_for_plots: [dt_sp, ti_lu]
-      max_subplots_per_file: 12
-      time_average_duration: 24
-  discountFactors_d_p:
-    plot_name: discount_factors
-  dual_invest_connection_d_e:
-    plot_name: connection_invest_marginal
-    map_dimensions_for_plots: [d_se, g_ub]
-  dual_invest_node_d_e:
-    plot_name: node_invest_marginal
-    map_dimensions_for_plots: [d_se, g_ub]
-  dual_invest_unit_d_e:
-    plot_name: unit_invest_marginal
-    map_dimensions_for_plots: [d_se, g_ub]
-  entity_annuity_d_p:
-    plot_name: entity_annuity
-  nodeGroup_VRE_share_d_g:
-    plot_name: nodeGroup_VRE_share
-    map_dimensions_for_plots: [d_sg, b_ge]
-  nodeGroup_VRE_share_dt_g:
-    plot_name: nodeGroup_VRE_share__dt
-    map_dimensions_for_plots: [dt_sg, tt_lu]
-  nodeGroup_flows_d_gpe:
-    plot_name: nodeGroup_flows
-    legend: all
-    bar_orientation: vertical
-    base_length: 6
-    map_dimensions_for_plots: [d_sgpe, m_eusm]
-  nodeGroup_flows_dt_gpe:
-    plot_name: nodeGroup_flows
-    legend: all
-  nodeGroup_gd_p:
-    plot_name: nodeGroup
-    subplots_per_row: 2
-    map_dimensions_for_plots: [gd_sp, ug_bu]
-  nodeGroup_gdt_p:
-    plot_name: nodeGroup
-  nodeGroup_inertia_dt_g:
-    plot_name: nodeGroup_inertia
-    map_dimensions_for_plots: [dt_sg, tt_lu]
-  nodeGroup_inertia_largest_flow_dt_g:
-    plot_name: nodeGroup_inertia_largest_flow
-  nodeGroup_slack_capacity_margin_d_g:
-    plot_name: slack__capacity_margin
-    map_dimensions_for_plots: [d_sg, b_eu]
+  node_slack_down_dt_e:
+    plot_name: '0.1t Excess load + spill (downward slack)'
+    map_dimensions_for_plots: [dt_se, tt_lu]
+  node_slack_down_d_e:
+    plot_name: '0.1p Excess load + spill (downward slack)'
+    map_dimensions_for_plots: [d_se, b_ge]
+    xlabel: MWh
+  nodeGroup_slack_reserve_dt_eeg:
+    plot_name: '0.2t Lack of reserves'
+    map_dimensions_for_plots: [dt_seeg, tt_luug]
   nodeGroup_slack_inertia_dt_g:
-    plot_name: slack__inertia_group
+    plot_name: '0.3t Lack of inertia'
     map_dimensions_for_plots: [dt_sg, tt_lu]
   nodeGroup_slack_nonsync_dt_g:
-    plot_name: slack__nonsync_group
+    plot_name: '0.4t Lack of nonsynchronous sources'
     map_dimensions_for_plots: [dt_sg, tt_lu]
-  nodeGroup_slack_reserve_dt_eeg:
-    plot_name: slack__reserve__upDown__group
-    map_dimensions_for_plots: [dt_seeg, tt_luug]
-  nodeGroup_unit_node_inertia_dt_gee:
-    plot_name: nodeGroup__unit__node_inertia
-    map_dimensions_for_plots: [dt_sgee, tt_buss]
-  node_capacity_ed_p:
-    plot_name: node_capacity
-    subplots_per_row: 4
-    base_length: 3
-    map_dimensions_for_plots: [ed_sp, be_gu]
-  node_d_ep:
-    plot_name: node
-    map_dimensions_for_plots: [d_sep, m_bes]
-  node_dt_ep:
-    plot_name: node
-  node_prices_sdt_e:
-    plot_name: node_prices
-    map_dimensions_for_plots: [sdt_se, mtt_lu]
-  node_slack_down_dt_e:
-    plot_name: slack__downward__node
-    map_dimensions_for_plots: [dt_se, tt_lu]
-  node_slack_up_dt_e:
-    plot_name: slack__upward__node
-    map_dimensions_for_plots: [dt_se, tt_lu]
-  node_state_dt_e:
-    plot_name: node_state
-    map_dimensions_for_plots: [dt_se, tt_lu]
-  process_co2_d_eeee:
-    plot_name: process__d_co2
-    map_dimensions_for_plots: [d_seeee, b_gebee]
-  process_reserve_average_d_eppe:
-    plot_name: process__reserve__upDown__node__d_average
-    map_dimensions_for_plots: [d_seppe, m_uesse]
-  process_reserve_upDown_node_dt_eppe:
-    plot_name: process__reserve__upDown__node
-  reserve_prices_mdt_ppg:
-    plot_name: reserve_price__upDown__group
-    map_dimensions_for_plots: [mdt_sppg, mtt_ullu]
-  total_inflow_d_g:
-    default:
-      plot_name: group_flows
-      bar_orientation: vertical
-      base_length: 8
-      map_dimensions_for_plots: [d_sg, b_ge]
-    sum_periods:
-      plot_name: group_flows
-      bar_orientation: vertical
-      base_length: 8
-      map_dimensions_for_plots: [d_sg, m_gb]
-  total_inflow_dt_g:
-    plot_name: group_flows
-    map_dimensions_for_plots: [dt_sg, tt_lu]
+  nodeGroup_slack_capacity_margin_d_g:
+    plot_name: '0.5p Violation of capacity margin'
+    map_dimensions_for_plots: [d_sg, b_eu]
+
+  # Curtailments
   unit_VRE_curtailment_outputNode_d_ee:
-    plot_name: unit_outputNode_VRE_curtailment
+    plot_name: '1.0p Curtail. amount'
     map_dimensions_for_plots: [d_see, b_gmm]
   unit_VRE_curtailment_outputNode_dt_ee:
-    plot_name: unit_outputNode_VRE_curtailment
+    plot_name: '1.0t Curtail. amount'
     map_dimensions_for_plots: [dt_see, tt_lmm]
-  unit_VRE_potential_outputNode_d_ee:
-    plot_name: unit_outputNode_VRE_potential
-  unit_VRE_potential_outputNode_dt_ee:
-    plot_name: unit_outputNode_VRE_potential
-  unit_capacity_ed_p:
-    plot_name: unit_capacity
-    subplots_per_row: 4
-    base_length: 3
-    map_dimensions_for_plots: [ed_sp, bu_gu]
-  unit_curtailment_outputNode_dt_ee:
-    plot_name: unit_curtailment__outputNode
   unit_curtailment_share_outputNode_d_ee:
-    plot_name: unit_outputNode_VRE_curtailment_share
+    plot_name: '1.1p Curtail. share of VRE'
     map_dimensions_for_plots: [d_see, a_gub]
   unit_curtailment_share_outputNode_dt_ee:
-    plot_name: unit_outputNode_VRE_curtailment_share
-  unit_inputNode_d_ee:
-    plot_name: unit__inputNode
-    map_dimensions_for_plots: [d_see, m_geu]
-  unit_inputNode_dt_ee:
-    plot_name: unit__inputNode
-    map_dimensions_for_plots: [dt_see, tt_luu]
-  unit_inputs_cf_d_ee:
-    plot_name: unit_cf__inputNode
-  unit_online_average_d_e:
-    plot_name: unit_online__d_average
-    map_dimensions_for_plots: [d_se, a_gb]
-  unit_online_dt_e:
-    plot_name: unit_online
-    map_dimensions_for_plots: [dt_se, tt_lu]
+    plot_name: '1.1t Curtail. share of VRE'
+
+  # Flows for units and connections
   unit_outputNode_d_ee:
-    plot_name: unit__outputNode
+    plot_name: '2.0p Flows unit to node'
     subplots_per_row: 4
     max_subplots_per_file: 16
     map_dimensions_for_plots: [d_see, m_geu]
   unit_outputNode_dt_ee:
     default:
-      plot_name: unit__outputNode
+      plot_name: '2.0t Flows unit to node'
       map_dimensions_for_plots: [dt_see, tt_luu]
       subplots_per_row: 4
       max_subplots_per_file: 16
     chunks:
-      plot_name: 'unit outputNode time chunks'
+      plot_name: '2.0c Flows unit to node time chunks'
       map_dimensions_for_plots: [dt_sp, ti_luu]
       max_subplots_per_file: 12
       time_average_duration: 24
       subplots_per_row: 4
-      max_subplots_per_file: 16
+  unit_inputNode_d_ee:
+    plot_name: '2.1p Flows node to unit'
+    map_dimensions_for_plots: [d_see, m_geu]
+  unit_inputNode_dt_ee:
+    plot_name: '2.1t Flows node to unit'
+    map_dimensions_for_plots: [dt_see, tt_luu]
+  connection_d_eee:
+    plot_name: '2.4p Flows connection'
+    xlabel: MWh
+    map_dimensions_for_plots: [d_se, u_gb]
+  connection_dt_eee:
+    plot_name: '2.5t Flows connection'
+  connection_leftward_d_eee:
+    plot_name: '2.6p Connection leftward'
+  connection_leftward_dt_eee:
+    plot_name: '2.6t Connection leftward'
+  connection_rightward_d_eee:
+    plot_name: '2.7p Connection rightward'
+  connection_rightward_dt_eee:
+    plot_name: '2.7t Connection rightward'
+
+  # Costs
+  annualized_costs_d_p:
+    default:
+      plot_name: '3.0p Costs annualized'
+      base_length: 10
+      xlabel: 'Millions of Currency'
+      map_dimensions_for_plots: [d_sp, e_bs]
+    sum_periods:
+      plot_name: '3.0s Costs annualized sum periods'
+      base_length: 10
+      map_dimensions_for_plots: [d_sp, m_gb]
+  costs_dt_p:
+    default:
+      plot_name: '3.1t Costs stack'
+      map_dimensions_for_plots: [dt_sp, tt_us]
+    lines:
+      plot_name: '3.1t Costs lines'
+      map_dimensions_for_plots: [dt_sp, tt_lm]
+    chunks:
+      plot_name: '3.1c Costs time chunks'
+      map_dimensions_for_plots: [dt_sp, ti_lu]
+      max_subplots_per_file: 12
+      time_average_duration: 24
+  costs_discounted_d_p:
+    plot_name: '3.2p Costs discounted'
+    bar_orientation: vertical
+    base_length: 6
+    map_dimensions_for_plots: [d_sp, b_es]
+  costs_discounted_p_:
+    plot_name: '3.2s Costs discounted'
+
+  # Capacities for units, nodes and connections
+  node_capacity_ed_p:
+    plot_name: '4.0d Capacity nodes'
+    subplots_per_row: 2
+    base_length: 3
+    map_dimensions_for_plots: [ed_sp, be_gu]
+  unit_capacity_ed_p:
+    plot_name: '4.1d Capacity units'
+    subplots_per_row: 2
+    base_length: 3
+    map_dimensions_for_plots: [ed_sp, be_gu]
+  connection_capacity_ed_p:
+    plot_name: '4.2d Capacity connections'
+    subplots_per_row: 2
+    base_length: 3
+    map_dimensions_for_plots: [ed_sp, be_gu]
+
+  # Emissions
+  CO2__:
+    plot_name: '5.0 Emissions CO2 total cumulative'
+    map_dimensions_for_plots: [_, m_bm]
+  CO2_d_g:
+    plot_name: '5.1d Emissions CO2 per nodeGroup'
+    map_dimensions_for_plots: [d_sg, m_be]
+  process_co2_d_eeee:
+    plot_name: '5.2d Process CO2 emissions'
+    map_dimensions_for_plots: [d_seeee, b_gebee]
+
+  # NodeGroups
+  nodeGroup_flows_d_gpe:
+    plot_name: '6.0p NodeGroup energy balance'
+    legend: all
+    bar_orientation: vertical
+    base_length: 6
+    map_dimensions_for_plots: [d_sgpe, m_eusm]
+  nodeGroup_flows_dt_gpe:
+    plot_name: '6.0t NodeGroup dispatch'
+    legend: all
+  nodeGroup_gdt_p:
+    plot_name: '6.1t NodeGroup indicators'
+  nodeGroup_gd_p:
+    plot_name: '6.1d NodeGroup indicators'
+    subplots_per_row: 2
+    map_dimensions_for_plots: [gd_sp, ug_bu]
+  nodeGroup_VRE_share_d_g:
+    plot_name: '6.2d NodeGroup VRE share'
+    map_dimensions_for_plots: [d_sg, b_ge]
+  nodeGroup_VRE_share_dt_g:
+    plot_name: '6.2t NodeGroup VRE share'
+    map_dimensions_for_plots: [dt_sg, tt_lu]
+  nodeGroup_inertia_dt_g:
+    plot_name: '6.3t NodeGroup inertia'
+    map_dimensions_for_plots: [dt_sg, tt_lu]
+  nodeGroup_inertia_largest_flow_dt_g:
+    plot_name: '6.3t NodeGroup inertia of largest flow'
+  nodeGroup_unit_node_inertia_dt_gee:
+    plot_name: '6.3t NodeGroup inertia of unit flows'
+    map_dimensions_for_plots: [dt_sgee, tt_buss]
+  total_inflow_d_g:
+    default:
+      plot_name: '6.4d NodeGroup inflow'
+      bar_orientation: vertical
+      base_length: 8
+      map_dimensions_for_plots: [d_sg, b_ge]
+    sum_periods:
+      plot_name: '6.4s NodeGroup inflow cumulative'
+      bar_orientation: vertical
+      base_length: 8
+      map_dimensions_for_plots: [d_sg, m_gb]
+  total_inflow_dt_g:
+    plot_name: '6.4t NodeGroup inflow'
+    map_dimensions_for_plots: [dt_sg, tt_lu]
+
+  # Node details
+  node_d_ep:
+    plot_name: '7.0d Node'
+    map_dimensions_for_plots: [d_sep, m_bes]
+  node_dt_ep:
+    plot_name: '7.0t Node'
+  node_prices_sdt_e:
+    plot_name: '7.1t Node prices'
+    map_dimensions_for_plots: [sdt_se, mtt_lu]
+  node_state_dt_e:
+    plot_name: '7.2t Node state'
+    map_dimensions_for_plots: [dt_se, tt_lu]
+  dual_invest_node_d_e:
+    plot_name: '7.3d Node marginal investment value'
+    map_dimensions_for_plots: [d_se, g_ub]
+
+  # Unit and connection (process) details
+  unit_inputs_cf_d_ee:
+    plot_name: '8.0d Unit cf for inputs'
   unit_outputs_cf_d_ee:
-    plot_name: unit_cf__outputNode
-  unit_ramp_inputs_dt_ee:
-    plot_name: unit_ramp__inputNode
-  unit_ramp_outputs_dt_ee:
-    plot_name: unit_ramp__outputNode
-  unit_startup_d_e:
-    plot_name: unit_startup
+    plot_name: '8.1d Unit cf for outputs'
+  unit_curtailment_outputNode_dt_ee:
+    plot_name: '8.1t Unit curtailment'
+  unit_online_dt_e:
+    plot_name: '8.2t Unit online'
+    map_dimensions_for_plots: [dt_se, tt_lu]
+  unit_online_average_d_e:
+    plot_name: '8.3d Unit online average'
     map_dimensions_for_plots: [d_se, a_gb]
+  unit_ramp_inputs_dt_ee:
+    plot_name: '8.3t Unit ramp inputs'
+  unit_ramp_outputs_dt_ee:
+    plot_name: '8.3t Unit ramp outputs'
+  unit_startup_d_e:
+    plot_name: '8.4d Unit startup'
+    map_dimensions_for_plots: [d_se, a_gb]
+  dual_invest_unit_d_e:
+    plot_name: '8.5d Unit marginal investment value'
+    map_dimensions_for_plots: [d_se, g_ub]
+  connection_losses_d_eee:
+    plot_name: '8.6d Connection losses'
+    ylabel: MWh
+  connection_losses_dt_eee:
+    plot_name: '8.6t Connection losses'
+  connection_cf_d_e:
+    plot_name: '8.7d Connection cf'
+    map_dimensions_for_plots: [d_se, b_ge]
+  dual_invest_connection_d_e:
+    plot_name: '8.8d Connection marginal investment value'
+    map_dimensions_for_plots: [d_se, g_ub]
+
+  # Extras
+  process_reserve_upDown_node_dt_eppe:
+    plot_name: '9.0t Reserve from process to node'
+  process_reserve_average_d_eppe:
+    plot_name: '9.0d Reserve from process to node average'
+    map_dimensions_for_plots: [d_seppe, m_uesse]
+  reserve_prices_mdt_ppg:
+    plot_name: '9.1t Reserve price in NodeGroups'
+    map_dimensions_for_plots: [mdt_sppg, mtt_ullu]
+  unit_VRE_potential_outputNode_d_ee:
+    plot_name: '9.2d VRE potential'
+  unit_VRE_potential_outputNode_dt_ee:
+    plot_name: '9.2t VRE potential'
+  discountFactors_d_p:
+    plot_name: '9.3d Discount factors'
+  entity_annuity_d_p:
+    plot_name: '9.4d Annuity of entities'
+
 filenames:
   annualized_costs_d_p: annualized_costs__d
   CO2__: co2

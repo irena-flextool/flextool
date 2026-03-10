@@ -260,7 +260,8 @@ ALL_OUTPUTS = [
 
 
 def _resolve_settings(write_methods, output_config_path, active_configs, plot_rows,
-                      output_location, settings_db_url, fallback_output_location):
+                      output_location, plot_file_format, settings_db_url,
+                      fallback_output_location):
     """Resolve output settings: explicit args > settings DB > hardcoded defaults."""
     db_reachable = False
     if settings_db_url:
@@ -306,6 +307,9 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
                 if output_location is None and 'output-location' in settings_params:
                     output_location = str(settings_params['output-location'])
 
+                if plot_file_format is None and 'plot-file-format' in settings_params:
+                    plot_file_format = str(settings_params['plot-file-format'])
+
     # Apply hardcoded defaults for anything still unset
     if write_methods is None:
         write_methods = ['plot', 'parquet', 'excel']
@@ -317,11 +321,13 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
         plot_rows = (0, 167)
     if output_location is None:
         output_location = fallback_output_location or ''
+    if plot_file_format is None:
+        plot_file_format = 'png'
 
-    return write_methods, output_config_path, active_configs, plot_rows, output_location
+    return write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format
 
 
-def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None):
+def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -340,9 +346,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         settings_db_url: URL of the settings database (optional, fills in unset params)
         fallback_output_location: Used as output_location if not set by caller or settings DB
     """
-    write_methods, output_config_path, active_configs, plot_rows, output_location = _resolve_settings(
+    write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format = _resolve_settings(
         write_methods, output_config_path, active_configs, plot_rows,
-        output_location, settings_db_url, fallback_output_location,
+        output_location, plot_file_format, settings_db_url, fallback_output_location,
     )
 
     logging.debug(
@@ -483,7 +489,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # Don't delete existing plots when processing single result
         delete_plots = not bool(single_result)
         results = {k: v.to_frame() if isinstance(v, pd.Series) else v for k, v in results.items()}
-        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots)
+        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format)
 
         start = log_time('Plotted figures', start)
 

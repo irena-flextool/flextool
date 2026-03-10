@@ -61,7 +61,8 @@ def _plan_file_splits(
 
 
 def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
-        active_settings=['default'], plot_rows=(0, 167), delete_existing_plots=True):
+        active_settings=['default'], plot_rows=(0, 167), delete_existing_plots=True,
+        plot_file_format='png'):
     """
     Plot dataframes from a dictionary according to key suffixes.
 
@@ -249,23 +250,31 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 level_names_before = list(df.index.names) + list(df.columns.names)
                 name_to_rule = dict(zip(level_names_before, rules))
 
-                # Move bar/line levels from columns to index
-                bar_line_levels = [i for i, c in enumerate(rules) if c in ('b', 't', 'i')]
-                pre_stack_nr_row_levels = df.index.nlevels
-                for bar_line_level in reversed(bar_line_levels):
-                    if bar_line_level >= pre_stack_nr_row_levels:
-                        df = df.stack(bar_line_level - pre_stack_nr_row_levels, future_stack=True)
-                        if isinstance(df, pd.Series):
-                            df = df.to_frame()
+                # Move bar/line levels from columns to index (batch to avoid Cartesian product)
+                nr_row = df.index.nlevels
+                col_levels_to_stack = [i - nr_row for i, c in enumerate(rules)
+                                       if c in ('b', 't', 'i') and i >= nr_row]
+                if col_levels_to_stack:
+                    df = df.stack(col_levels_to_stack, future_stack=True)
+                    if isinstance(df, pd.Series):
+                        df = df.to_frame()
 
-                # Move column-type levels from row index to columns
-                column_type_levels = [i for i, c in enumerate(rules[:df.index.nlevels])
-                                      if c in ('u', 'g', 's', 'l', 'e')]
-                for col_level in reversed(column_type_levels):
-                    if col_level < df.index.nlevels:
-                        df = df.unstack(col_level)
-                        if isinstance(df, pd.Series):
-                            df = df.to_frame()
+                # Rebuild rules to match level order after stacking
+                level_names_mid = list(df.index.names) + list(df.columns.names)
+                if (len(set(level_names_before)) == len(level_names_before)
+                        and all(n is not None for n in level_names_before)):
+                    try:
+                        rules = ''.join(name_to_rule[n] for n in level_names_mid)
+                    except KeyError:
+                        pass
+
+                # Move column-type levels from row index to columns (batch to avoid Cartesian product)
+                row_levels_to_unstack = [i for i, c in enumerate(rules[:df.index.nlevels])
+                                         if c in ('u', 'g', 's', 'l', 'e')]
+                if row_levels_to_unstack:
+                    df = df.unstack(row_levels_to_unstack)
+                    if isinstance(df, pd.Series):
+                        df = df.to_frame()
 
                 # Rebuild rules to match actual level order after stack/unstack
                 level_names_after = list(df.index.names) + list(df.columns.names)
@@ -374,7 +383,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             continue
 
                         filepath = generate_split_filename(
-                            plot_name, plot_dir, 'svg',
+                            plot_name, plot_dir, plot_file_format,
                             file_idx=file_idx, needs_split=needs_file_split
                         )
 
@@ -438,7 +447,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             continue
 
                         filepath = generate_split_filename(
-                            plot_name, plot_dir, 'svg',
+                            plot_name, plot_dir, plot_file_format,
                             file_idx=file_idx, needs_split=needs_item_split
                         )
 
