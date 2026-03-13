@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -7,60 +8,102 @@ from flextool.plot_outputs.legend_helpers import (
     estimate_legend_width, _format_legend_labels, _should_show_legend,
 )
 from flextool.plot_outputs.axis_helpers import (
-    _subplot_axis_scale, _apply_subplot_label, set_smart_xticks,
+    _subplot_axis_bounds, _apply_subplot_label, set_smart_xticks,
+    _estimate_value_nbins,
 )
 from flextool.plot_outputs.subplot_helpers import (
     _calculate_grid_layout, _get_unique_levels, _extract_subplot_data,
 )
 
 
-def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
-    rows=(0,167), subplots_per_row=3, legend_position='right',
-    xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
-    axis_scale_min_max=None, axis_tick_format=None, always_include_zero=True,
-    output_filepath=None):
-
-    # Convert level indices to level names for later use after xs operations
-    if isinstance(df_plot.columns, pd.MultiIndex):
-        line_level_names = [df_plot.columns.names[i] for i in line_levels]
+def _get_column_items(df_sub, level_names):
+    """Get unique items from column levels."""
+    is_multi = isinstance(df_sub.columns, pd.MultiIndex)
+    if is_multi:
+        if len(level_names) == 1:
+            return df_sub.columns.get_level_values(level_names[0]).unique().tolist()
+        else:
+            df_lvl = df_sub.columns.to_frame()[level_names].drop_duplicates()
+            return [tuple(row) for row in df_lvl.values]
     else:
-        # Single level index - use indices directly
-        line_level_names = line_levels
+        return df_sub.columns.unique().tolist()
 
-    # Handle empty sub_levels (single plot, no subplotting)
+
+def _filter_columns_by_items(df_sub, items, level_names):
+    """Filter DataFrame columns to only include specified items."""
+    if len(level_names) == 1:
+        mask = df_sub.columns.get_level_values(level_names[0]).isin(items)
+    else:
+        col_frame = df_sub.columns.to_frame()[level_names]
+        mask = col_frame.apply(tuple, axis=1).isin(items).values
+    return df_sub.loc[:, mask]
+
+
+def _build_effective_plots(df_plot, sub_levels, item_level_names, max_items_per_plot):
+    """Pre-expand subplots into effective_plots with item splitting."""
     subs = _get_unique_levels(df_plot.columns, sub_levels)
+    effective_plots = []
+    for sub in subs:
+        df_sub = _extract_subplot_data(df_plot, sub, sub_levels)
+        title = (
+            ' | '.join(str(v) for v in sub) if isinstance(sub, tuple)
+            else str(sub) if sub is not None else None
+        )
+        items = _get_column_items(df_sub, item_level_names)
+        if max_items_per_plot and len(items) > max_items_per_plot:
+            for i in range(0, len(items), max_items_per_plot):
+                chunk_items = items[i:i + max_items_per_plot]
+                df_chunk = _filter_columns_by_items(df_sub, chunk_items, item_level_names)
+                chunk_idx = i // max_items_per_plot + 1
+                effective_plots.append((f"{title}_{chunk_idx}", df_chunk))
+        else:
+            effective_plots.append((title, df_sub))
+    return effective_plots
 
-    # Calculate subplot grid
-    n_subs = len(subs)
+
+def _make_file_batches(effective_plots, max_subplots_per_file, output_filepath, plot_dir, plot_name):
+    """Split effective_plots into file-sized batches with filepaths."""
+    _max = max_subplots_per_file if max_subplots_per_file else len(effective_plots)
+    if len(effective_plots) <= _max:
+        return [(effective_plots, output_filepath)]
+    batches = []
+    for i in range(0, len(effective_plots), _max):
+        batch = effective_plots[i:i + _max]
+        file_idx = i // _max + 1
+        if output_filepath:
+            base, ext = os.path.splitext(output_filepath)
+            fp = f'{base}_{file_idx:02d}{ext}'
+        else:
+            fp = f'{plot_dir}/{plot_name}_{file_idx:02d}.png'
+        batches.append((batch, fp))
+    return batches
+
+
+# ---------------------------------------------------------------------------
+#  Lines
+# ---------------------------------------------------------------------------
+
+def _render_lines_figure(
+    effective_plots, plot_name, sub_levels, line_level_names, time_index,
+    subplots_per_row, legend_position,
+    xlabel, ylabel, base_width_per_col, subplot_height,
+    axis_bounds, axis_tick_format, always_include_zero_in_axis,
+    output_filepath,
+):
+    """Render one file's worth of line subplots."""
+    n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
     # Calculate legend width if needed
     legend_width = 0
     if legend_position == 'all' and n_cols > 1:
         max_legend_width = 0
-
-        for sub in subs:
-            # Extract data for this subplot
-            df_sub_temp = _extract_subplot_data(df_plot, sub, sub_levels)
-
-            # Get line labels
-            is_multiindex = isinstance(df_sub_temp.columns, pd.MultiIndex)
-            if is_multiindex:
-                if len(line_level_names) == 1:
-                    lines_temp = df_sub_temp.columns.get_level_values(line_level_names[0]).unique().tolist()
-                else:
-                    line_df = df_sub_temp.columns.to_frame()[line_level_names].drop_duplicates()
-                    lines_temp = [tuple(row) for row in line_df.values]
-            else:
-                lines_temp = df_sub_temp.columns.unique().tolist()
-
-            # Format labels
-            legend_labels = _format_legend_labels(lines_temp)
-
-            # Estimate width
+        for title, df_sub_temp in effective_plots:
+            legend_labels = _format_legend_labels(
+                _get_column_items(df_sub_temp, line_level_names)
+            )
             width = estimate_legend_width(legend_labels)
             max_legend_width = max(max_legend_width, width)
-
         legend_width = max_legend_width
 
     if legend_width > 0 and n_cols > 1:
@@ -74,56 +117,42 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     else:
         axes = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
 
-    # Adjust subplot spacing to accommodate legends
+    # Adjust subplot spacing to accommodate legends and xlabel
+    adjust_kwargs = {}
     if legend_width > 0 and n_cols > 1:
-        # wspace is the width of spacing as a fraction of average axes width
-        wspace = legend_width / base_width_per_col
-        # Calculate vertical spacing to prevent row overlap
-        # Add space for ~1.5 rows of text, normalized to subplot height
-        if xlabel:
-            hspace = 0.25 / subplot_height
-        else:
-            hspace = 0.225 / subplot_height
-        fig.subplots_adjust(wspace=wspace, hspace=hspace)
+        adjust_kwargs['wspace'] = legend_width / base_width_per_col
+    if xlabel and n_rows > 1:
+        adjust_kwargs['hspace'] = 0.5 / subplot_height
+    elif legend_width > 0 and n_cols > 1:
+        adjust_kwargs['hspace'] = 0.225 / subplot_height
+    if xlabel:
+        adjust_kwargs['bottom'] = 0.06
+    if adjust_kwargs:
+        fig.subplots_adjust(**adjust_kwargs)
 
-    # Get x-axis index (use last level if MultiIndex, otherwise use the index itself)
-    if isinstance(df_plot.index, pd.MultiIndex):
-        time_index = df_plot.index.get_level_values(-1).astype(str)
-    else:
-        time_index = df_plot.index.astype(str)
-
-    for idx, sub in enumerate(subs):
+    for idx, (eff_title, df_sub) in enumerate(effective_plots):
         ax = axes[idx]
-
-        df_sub = _extract_subplot_data(df_plot, sub, sub_levels)
 
         # Get line combinations from line_levels
         if isinstance(df_sub, pd.Series):
-            # Only one line to plot
-            ax.plot(time_index, df_sub.values, label=str(sub))
+            ax.plot(time_index, df_sub.values, label=str(eff_title))
         else:
-            # Check if columns are MultiIndex
             is_multiindex = isinstance(df_sub.columns, pd.MultiIndex)
 
             if is_multiindex:
                 if len(line_level_names) == 1:
                     lines = df_sub.columns.get_level_values(line_level_names[0]).unique().tolist()
                 else:
-                    # Join multiple levels as tuples (use names since sub_levels may have been dropped)
                     line_df = df_sub.columns.to_frame()[line_level_names].drop_duplicates()
                     lines = [tuple(row) for row in line_df.values]
             else:
-                # Single level index, just get unique column values
                 lines = df_sub.columns.unique().tolist()
 
-            # Plot each line
             for line in lines:
                 if is_multiindex:
                     if len(line_level_names) == 1:
                         y_data = df_sub.xs(line, level=line_level_names[0], axis=1)
                     else:
-                        # For multiple line_levels, apply xs sequentially per level
-                        # to avoid pandas 2.x multi-dimensional indexing error
                         y_data = df_sub
                         for lvl_name, lvl_val in zip(line_level_names, line):
                             if isinstance(y_data, pd.Series):
@@ -133,102 +162,120 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
                             else:
                                 y_data = y_data[lvl_val]
                 else:
-                    # Direct column selection for non-MultiIndex
                     y_data = df_sub[line]
 
-                # Sum if there are still multiple columns remaining
                 if isinstance(y_data, pd.DataFrame):
                     y_data = y_data.sum(axis=1)
 
                 ax.plot(time_index, y_data.values, label=str(line))
 
         # Subplot formatting
-        if sub is not None:
-            ax.set_title(str(sub), pad=2)
+        if eff_title is not None:
+            ax.set_title(str(eff_title), pad=2)
 
-        if _should_show_legend(legend_position, sub_levels, idx, n_cols, n_subs):
-            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, borderaxespad=0.1)
+        if line_level_names and _should_show_legend(legend_position, sub_levels, idx, n_cols, n_subs):
+            handles, labels_leg = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(handles, labels_leg, bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, borderaxespad=0.1)
 
         ax.grid(True, alpha=0.3)
 
         # Axis scale, formatter, and labels
         row = idx // n_cols
         col = idx % n_cols
-        if always_include_zero:
+        if always_include_zero_in_axis:
             lo, hi = ax.get_ylim()
             ax.set_ylim(min(lo, 0), max(hi, 0))
-        scale = _subplot_axis_scale(axis_scale_min_max, idx)
+        scale = _subplot_axis_bounds(axis_bounds, idx)
         if scale:
             ax.set_ylim(scale[0], scale[1])
-        ax.yaxis.set_major_locator(MaxNLocator(nbins=5, prune='upper'))
-        ax.yaxis.set_major_formatter(_get_value_formatter(axis_tick_format, idx))
+        _fmt = _get_value_formatter(axis_tick_format, idx)
+        lo, hi = ax.get_ylim()
+        ax_height = ax.get_position().height * fig.get_size_inches()[1]
+        nbins = _estimate_value_nbins(lo, hi, ax_height, _fmt, is_horizontal_axis=False)
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=nbins, prune='upper'))
+        ax.yaxis.set_major_formatter(_fmt)
         _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows)
 
-        set_smart_xticks(ax, time_index, base_width_per_col)
+        ax_width = ax.get_position().width * fig.get_size_inches()[0]
+        set_smart_xticks(ax, time_index, ax_width)
 
     # Hide unused subplots
     for idx in range(n_subs, len(axes)):
         axes[idx].set_visible(False)
 
-    # Overall title
     fig.suptitle(plot_name)
 
-    # Use provided filepath or generate default
     if output_filepath:
         plt.savefig(output_filepath, bbox_inches='tight')
     else:
-        plt.savefig(f'{plot_dir}/{plot_name}.png', bbox_inches='tight')
+        plt.savefig(f'{output_filepath}', bbox_inches='tight')
     plt.close(fig)
 
 
-def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
-        rows=(0,167), stack_element_to_split=None, subplots_per_row=3,
-        legend_position='right',
-        xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
-        axis_scale_min_max=None, axis_tick_format=None, always_include_zero=True,
-        output_filepath=None):
+def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
+    rows=(0,167), subplots_per_row=3, legend_position='right',
+    xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
+    axis_bounds=None, axis_tick_format=None, always_include_zero_in_axis=True,
+    max_items_per_plot=None, max_subplots_per_file=None, output_filepath=None):
 
-    # Convert level indices to level names for later use after xs operations
+    # Convert level indices to level names
     if isinstance(df_plot.columns, pd.MultiIndex):
-        stack_level_names = [df_plot.columns.names[i] for i in stack_levels]
+        line_level_names = [df_plot.columns.names[i] for i in line_levels]
     else:
-        # Single level index - use indices directly
-        stack_level_names = stack_levels
+        line_level_names = line_levels
 
-    # Handle empty sub_levels (single plot, no subplotting)
-    subs = _get_unique_levels(df_plot.columns, sub_levels)
+    # Get x-axis index
+    if isinstance(df_plot.index, pd.MultiIndex):
+        time_index = df_plot.index.get_level_values(-1).astype(str)
+    else:
+        time_index = df_plot.index.astype(str)
 
-    # Calculate subplot grid
-    n_subs = len(subs)
+    # Build effective_plots with item splitting
+    effective_plots = _build_effective_plots(
+        df_plot, sub_levels, line_level_names, max_items_per_plot
+    )
+    if not effective_plots:
+        return
+
+    # Split into file batches
+    for batch, batch_filepath in _make_file_batches(
+        effective_plots, max_subplots_per_file, output_filepath, plot_dir, plot_name
+    ):
+        _render_lines_figure(
+            batch, plot_name, sub_levels, line_level_names, time_index,
+            subplots_per_row, legend_position,
+            xlabel, ylabel, base_width_per_col, subplot_height,
+            axis_bounds, axis_tick_format, always_include_zero_in_axis,
+            batch_filepath,
+        )
+
+
+# ---------------------------------------------------------------------------
+#  Stacked area
+# ---------------------------------------------------------------------------
+
+def _render_stack_figure(
+    effective_plots, plot_name, sub_levels, stack_level_names, time_index,
+    subplots_per_row, legend_position,
+    xlabel, ylabel, base_width_per_col, subplot_height,
+    axis_bounds, axis_tick_format, always_include_zero_in_axis,
+    output_filepath,
+):
+    """Render one file's worth of stacked-area subplots."""
+    n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
     # Calculate legend width if needed
     legend_width = 0
     if legend_position == 'all' and n_cols > 1:
         max_legend_width = 0
-
-        for sub in subs:
-            # Extract data for this subplot
-            df_sub_temp = _extract_subplot_data(df_plot, sub, sub_levels)
-
-            # Get stack labels
-            is_multiindex = isinstance(df_sub_temp.columns, pd.MultiIndex)
-            if is_multiindex:
-                if len(stack_level_names) == 1:
-                    stacks_temp = df_sub_temp.columns.get_level_values(stack_level_names[0]).unique().tolist()
-                else:
-                    stack_df = df_sub_temp.columns.to_frame()[stack_level_names].drop_duplicates()
-                    stacks_temp = [tuple(row) for row in stack_df.values]
-            else:
-                stacks_temp = df_sub_temp.columns.unique().tolist()
-
-            # Format labels
-            legend_labels = _format_legend_labels(stacks_temp)
-
-            # Estimate width
+        for title, df_sub_temp in effective_plots:
+            legend_labels = _format_legend_labels(
+                _get_column_items(df_sub_temp, stack_level_names)
+            )
             width = estimate_legend_width(legend_labels)
             max_legend_width = max(max_legend_width, width)
-
         legend_width = max_legend_width
 
     if legend_width > 0 and n_cols > 1:
@@ -242,66 +289,46 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
     else:
         axes = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
 
-    # Calculate vertical spacing to prevent row overlap
-    # Add space for ~1.5 rows of text, normalized to subplot height
+    # Vertical spacing
+    adjust_kwargs = {}
     if xlabel:
-        hspace = 1 / subplot_height
+        adjust_kwargs['hspace'] = 1 / subplot_height
+        adjust_kwargs['bottom'] = 0.06
     else:
-        hspace = 0.7 / subplot_height
+        adjust_kwargs['hspace'] = 0.7 / subplot_height
 
-    # Adjust subplot spacing to accommodate legends
     if legend_width > 0 and n_cols > 1:
-        # wspace is the width of spacing as a fraction of average axes width
-        wspace = legend_width / base_width_per_col
-        fig.subplots_adjust(wspace=wspace, hspace=hspace)
-    else:
-        fig.subplots_adjust(hspace=hspace)
+        adjust_kwargs['wspace'] = legend_width / base_width_per_col
+    fig.subplots_adjust(**adjust_kwargs)
 
-    # Get x-axis index (use last level if MultiIndex, otherwise use the index itself)
-    if isinstance(df_plot.index, pd.MultiIndex):
-        time_index = df_plot.index.get_level_values(-1).astype(str)
-    else:
-        time_index = df_plot.index.astype(str)
-
-    for idx, sub in enumerate(subs):
+    for idx, (eff_title, df_sub) in enumerate(effective_plots):
         ax = axes[idx]
-
-        # Extract data for this subplot using xs
-        df_sub = _extract_subplot_data(df_plot, sub, sub_levels)
 
         # Get stack combinations from stack_levels
         if isinstance(df_sub, pd.Series):
-            # Only one series to plot
             df_to_plot = df_sub.to_frame()
         else:
-            # Check if columns are MultiIndex
             is_multiindex = isinstance(df_sub.columns, pd.MultiIndex)
 
             if is_multiindex:
                 if len(stack_level_names) == 1:
                     stacks = df_sub.columns.get_level_values(stack_level_names[0]).unique().tolist()
                 else:
-                    # Join multiple levels as tuples (use names since levels may have been dropped)
                     stack_df = df_sub.columns.to_frame()[stack_level_names].drop_duplicates()
                     stacks = [tuple(row) for row in stack_df.values]
             else:
-                # Single level index, just get unique column values
                 stacks = df_sub.columns.unique().tolist()
 
-            # Build DataFrame with columns for each stack element
             data_dict = {}
             for stack in stacks:
                 if is_multiindex:
                     if len(stack_level_names) == 1:
                         y_data = df_sub.xs(stack, level=stack_level_names[0], axis=1)
                     else:
-                        # For multiple stack_levels, apply xs for all levels at once
                         y_data = df_sub.xs(stack, level=stack_level_names, axis=1)
                 else:
-                    # Direct column selection for non-MultiIndex
                     y_data = df_sub[stack]
 
-                # Sum if there are still multiple columns remaining
                 if isinstance(y_data, pd.DataFrame):
                     y_data = y_data.sum(axis=1)
 
@@ -312,17 +339,16 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
         # Reset index to use time only (drop period)
         df_to_plot.index = time_index
 
-        # Split columns with both positive and negative values if requested
-        if stack_element_to_split:
-            for col_name in stack_element_to_split:
-                if col_name in df_to_plot.columns:
-                    # Create positive and negative columns using clip
-                    df_to_plot[f'{col_name}_pos'] = df_to_plot[col_name].clip(lower=0)
-                    df_to_plot[f'{col_name}_neg'] = df_to_plot[col_name].clip(upper=0)
-                    # Drop the original column
-                    df_to_plot = df_to_plot.drop(columns=[col_name])
+        # Split columns with both positive and negative values
+        for col_name in df_to_plot.columns.tolist():
+            has_pos = (df_to_plot[col_name] > 0).any()
+            has_neg = (df_to_plot[col_name] < 0).any()
+            if has_pos and has_neg:
+                df_to_plot[f'{col_name}_pos'] = df_to_plot[col_name].clip(lower=0)
+                df_to_plot[f'{col_name}_neg'] = df_to_plot[col_name].clip(upper=0)
+                df_to_plot = df_to_plot.drop(columns=[col_name])
 
-        # Create stacked area plot using pandas (handles pos/neg correctly)
+        # Create stacked area plot
         n_columns = len(df_to_plot.columns)
         colors = plt.colormaps['tab10'].colors[:n_columns]
         if n_columns > 10:
@@ -330,39 +356,83 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
         df_to_plot.plot.area(stacked=True, ax=ax, alpha=1.0, legend=False, linewidth=0, color=colors, xlabel="")
 
         # Subplot formatting
-        if sub is not None:
-            ax.set_title(str(sub), pad=2)
+        if eff_title is not None:
+            ax.set_title(str(eff_title), pad=2)
 
         if _should_show_legend(legend_position, sub_levels, idx, n_cols, n_subs):
-            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, borderaxespad=0.1)
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(handles, labels, bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, borderaxespad=0.1)
 
         ax.grid(True, alpha=0.3)
 
         # Axis scale, formatter, and labels
         row = idx // n_cols
         col = idx % n_cols
-        if always_include_zero:
+        if always_include_zero_in_axis:
             lo, hi = ax.get_ylim()
             ax.set_ylim(min(lo, 0), max(hi, 0))
-        scale = _subplot_axis_scale(axis_scale_min_max, idx)
+        scale = _subplot_axis_bounds(axis_bounds, idx)
         if scale:
             ax.set_ylim(scale[0], scale[1])
-        ax.yaxis.set_major_locator(MaxNLocator(nbins=5, prune='upper'))
-        ax.yaxis.set_major_formatter(_get_value_formatter(axis_tick_format, idx))
+        _fmt = _get_value_formatter(axis_tick_format, idx)
+        lo, hi = ax.get_ylim()
+        ax_height = ax.get_position().height * fig.get_size_inches()[1]
+        nbins = _estimate_value_nbins(lo, hi, ax_height, _fmt, is_horizontal_axis=False)
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=nbins, prune='upper'))
+        ax.yaxis.set_major_formatter(_fmt)
         _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows)
 
-        set_smart_xticks(ax, time_index, base_width_per_col)
+        ax_width = ax.get_position().width * fig.get_size_inches()[0]
+        set_smart_xticks(ax, time_index, ax_width)
 
     # Hide unused subplots
     for idx in range(n_subs, len(axes)):
         axes[idx].set_visible(False)
 
-    # Overall title
     fig.suptitle(plot_name)
 
-    # Use provided filepath or generate default
     if output_filepath:
         plt.savefig(output_filepath, bbox_inches='tight')
     else:
-        plt.savefig(f'{plot_dir}/{plot_name}.png', bbox_inches='tight')
+        plt.savefig(f'{output_filepath}', bbox_inches='tight')
     plt.close(fig)
+
+
+def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
+        rows=(0,167), subplots_per_row=3,
+        legend_position='right',
+        xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
+        axis_bounds=None, axis_tick_format=None, always_include_zero_in_axis=True,
+        max_items_per_plot=None, max_subplots_per_file=None, output_filepath=None):
+
+    # Convert level indices to level names
+    if isinstance(df_plot.columns, pd.MultiIndex):
+        stack_level_names = [df_plot.columns.names[i] for i in stack_levels]
+    else:
+        stack_level_names = stack_levels
+
+    # Get x-axis index
+    if isinstance(df_plot.index, pd.MultiIndex):
+        time_index = df_plot.index.get_level_values(-1).astype(str)
+    else:
+        time_index = df_plot.index.astype(str)
+
+    # Build effective_plots with item splitting
+    effective_plots = _build_effective_plots(
+        df_plot, sub_levels, stack_level_names, max_items_per_plot
+    )
+    if not effective_plots:
+        return
+
+    # Split into file batches
+    for batch, batch_filepath in _make_file_batches(
+        effective_plots, max_subplots_per_file, output_filepath, plot_dir, plot_name
+    ):
+        _render_stack_figure(
+            batch, plot_name, sub_levels, stack_level_names, time_index,
+            subplots_per_row, legend_position,
+            xlabel, ylabel, base_width_per_col, subplot_height,
+            axis_bounds, axis_tick_format, always_include_zero_in_axis,
+            batch_filepath,
+        )

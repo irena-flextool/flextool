@@ -1,14 +1,16 @@
-# FlexTool Output Configuration for Scenario Comparison
+# FlexTool Output Configuration
 #
 # Each result can have multiple configurations (user can choose which ones to plot).
 # Each result is mapped to a dict with named parameters (only non-default values need to be specified):
 #
 # - plot_name: Name used for plot titles
-# - map_dimensions_for_plots: [index_types, plot_type] tuple that maps dataframe dimensions to plot roles.
+# - map_dimensions_for_plots: [index_types, plot_type] tuple that maps index_types, i.e. dataframe dimensions
+#     (first row indexes and then column indexes), to plot_type roles.
 #     Omit for no plot. The first element describes the dataframe dimensions, the second how to plot them.
 #     Each character in index_types maps 1:1 to a character in plot_type. An underscore separates
-#     row index dimensions from column index dimensions in both strings.
+#     row index dimensions from column index dimensions in both strings (underscore is obligatory only for index_types).
 #     index_types characters: 'd' period, 't' time, 'e' entity, 'p' parameter, 'g' group, 's' scenario, 'm' method
+#       - please not that 'e' and 'g' will be automatically sorted - others will not be - and they are not really used in other ways, they just help to map correctly
 #     plot_type characters:
 #     - 't' marks the dimension as x-axis for line plots
 #     - 'i' average the dimension in chunks of 'time_average_duration' and make the dimension x-axis for line plots
@@ -21,17 +23,26 @@
 #     - 'f' splits the dimension into separate files (member name appended to filename)
 #     - 'm' sums the dimension
 #     - 'a' averages the dimension
-# - time_average_duration: duration in timesteps (integer) that averages the result over chunks of chosen length
+#     - 'x' no specific role
 # - subplots_per_row: Number of subplots per row (default 3)
 # - legend: Legend placement ('right', 'all', or default)
 # - bar_orientation: Orientation for bar charts only (default 'horizontal', also 'vertical')
 # - base_length: "Length" of each subplot in the orientation of the bars or height for time plots (in inches, default 4)
 # - max_subplots_per_file: Maximum subplots per file before splitting (default 9). When exceeded, creates multiple files with _1, _2, etc. suffixes
-# - max_items_per_file: Maximum items (bars for bar plots, lines for line plots) per file before splitting (default 20 for bar plots, 9 for line plots). When exceeded, creates multiple files
-# - xlabel: Label for x axis
-# - ylabel: Label for y axis
-#
-# There is also filename configuration section after the plot rules (used by csv and parquet)
+# - max_items_per_plot: Maximum items (bars, lines, or stacks) per plot/subplot (default 20 for bar plots, 9 for line plots).
+#     With subplots: splits each subplot and appends _1, _2, etc. to subplot names. Without subplots: creates multiple files
+# - time_average_duration: Duration of time blocks that are averaged (in time steps)
+# - xlabel: Label for x axis (string or list of strings for per-subplot labels)
+# - ylabel: Label for y axis (string or list of strings for per-subplot labels)
+# - axis_bounds: Fix value-axis limits. Options:
+#     'shared' — compute global min/max across all subplots and apply to all (for visual comparability)
+#     'independent' — each subplot auto-scales independently (default)
+#     Single pair [min, max] applies to all subplots
+#     List of pairs [[0,1],[],[0,100]] applies per subplot (empty entry = auto-scale)
+# - axis_tick_format: Python format spec for value-axis tick labels (default ',.0f').
+#     Single string applies to all subplots; list applies per subplot, e.g. [',.0f', '.2%']
+# - always_include_zero_in_axis: true/false (default true). Zero will always be within the axis bounds (preventing automatic behaviour where it can be hard to see the scale of the plot)
+# - skip_data_with_only_zeroes: true/false (default false). Drops all-zero columns (and all-zero rows for bar charts) before plotting
 
 plots:
   # Infeasibilities
@@ -169,9 +180,9 @@ plots:
   CO2_d_g:
     plot_name: '5.1d Emissions CO2 per nodeGroup'
     map_dimensions_for_plots: [d_sg, m_be]
-  process_co2_d_eeee:
+  process_co2_d_eee:
     plot_name: '5.2d Process CO2 emissions'
-    map_dimensions_for_plots: [d_seeee, b_gebee]
+    map_dimensions_for_plots: [d_seeee, b_gxbxx]
 
   # NodeGroups
   nodeGroup_flows_d_gpe:
@@ -203,7 +214,7 @@ plots:
   nodeGroup_unit_node_inertia_dt_gee:
     plot_name: '6.3t NodeGroup inertia of unit flows'
     map_dimensions_for_plots: [dt_sgee, tt_buss]
-  total_inflow_d_g:
+  nodeGroup_flows_d_g:
     default:
       plot_name: '6.4d NodeGroup inflow'
       bar_orientation: vertical
@@ -214,7 +225,7 @@ plots:
       bar_orientation: vertical
       base_length: 8
       map_dimensions_for_plots: [d_sg, m_gb]
-  total_inflow_dt_g:
+  nodeGroup_flows_dt_g:
     plot_name: '6.4t NodeGroup inflow'
     map_dimensions_for_plots: [dt_sg, tt_lu]
 
@@ -224,7 +235,7 @@ plots:
     map_dimensions_for_plots: [d_sep, m_bes]
   node_dt_ep:
     plot_name: '7.0t Node'
-  node_prices_sdt_e:
+  node_prices_dt_e:
     plot_name: '7.1t Node prices'
     map_dimensions_for_plots: [sdt_se, mtt_lu]
   node_state_dt_e:
@@ -275,9 +286,9 @@ plots:
   process_reserve_average_d_eppe:
     plot_name: '9.0d Reserve from process to node average'
     map_dimensions_for_plots: [d_seppe, m_uesse]
-  reserve_prices_mdt_ppg:
+  reserve_prices_dt_ppg:
     plot_name: '9.1t Reserve price in NodeGroups'
-    map_dimensions_for_plots: [mdt_sppg, mtt_ullu]
+    map_dimensions_for_plots: [sdt_sppg, mtt_ullu]
   unit_VRE_potential_outputNode_d_ee:
     plot_name: '9.2d VRE potential'
   unit_VRE_potential_outputNode_dt_ee:
@@ -309,6 +320,8 @@ filenames:
   dual_invest_unit_d_e: unit_invest_marginal__d
   entity_annuity_d_p: entity_annuity
   nodeGroup_unit_node_inertia_dt_gee: group__unit__node_inertia__dt
+  nodeGroup_flows_d_g: group_total_inflow__d
+  nodeGroup_flows_dt_g: group_total_inflow__dt
   nodeGroup_flows_d_gpe: group_flows__d
   nodeGroup_flows_dt_gpe: group_flows__dt
   nodeGroup_inertia_dt_g: group_inertia__dt
@@ -328,10 +341,12 @@ filenames:
   process_reserve_average_d_eppe: process__reserve__upDown__node__d_average
   reserve_prices_dt_ppg: reserve_price__upDown__group__dt
   nodeGroup_slack_capacity_margin_d_g: slack__capacity_margin__d
+  node_slack_down_d_e: slack__downward__node_state__d
   node_slack_down_dt_e: slack__downward__node_state__dt
   nodeGroup_slack_inertia_dt_g: slack__inertia_group__dt
   nodeGroup_slack_nonsync_dt_g: slack__nonsync_group__dt
   nodeGroup_slack_reserve_dt_eeg: slack__reserve__upDown__group__dt
+  node_slack_up_d_e: slack__upward__node_state__d
   node_slack_up_dt_e: slack__upward__node_state__dt
   unit_inputNode_d_ee: unit__inputNode__d
   unit_inputNode_dt_ee: unit__inputNode__dt

@@ -127,6 +127,7 @@ def unit_VRE_curtailment_and_potential(par, s, v, r, debug):
         # Calculate curtailment share at period level
         curtail_share_period = (curtail_period / potential_period).where(potential_period != 0, 0)
 
+        results.append((curtail_period, 'unit_curtailment_outputNode_d_ee'))
         results.append((curtail_share_period, 'unit_curtailment_share_outputNode_d_ee'))
         results.append((potential_period, 'unit_VRE_potential_outputNode_d_ee'))
 

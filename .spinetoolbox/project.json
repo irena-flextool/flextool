@@ -35,16 +35,6 @@
                 {
                     "type": "path",
                     "relative": true,
-                    "path": ".spinetoolbox/specifications/Tool/plot.json"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": ".spinetoolbox/specifications/Tool/open_summary.json"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
                     "path": ".spinetoolbox/specifications/Tool/migrate_database.json"
                 },
                 {
@@ -424,8 +414,8 @@
         "FlexTool": {
             "type": "Tool",
             "description": "",
-            "x": 8.268940894780346,
-            "y": -52.67757545605592,
+            "x": 11.3153090269304,
+            "y": -50.64666336795588,
             "specification": "FlexTool3",
             "execute_in_work": true,
             "cmd_line_args": [
@@ -570,7 +560,7 @@
         "Scenario comparison": {
             "type": "Tool",
             "description": "",
-            "x": 363.24908743005295,
+            "x": 362.2325082714022,
             "y": 33.19274664107564,
             "specification": "scenario comparison",
             "execute_in_work": false,
@@ -639,8 +629,8 @@
                 "port": null,
                 "database": {
                     "type": "path",
-                    "relative": true,
-                    "path": "test/tests.sqlite"
+                    "relative": false,
+                    "path": "/home/jkiviluo/sources/flextool-africa2/input_data.sqlite"
                 },
                 "schema": ""
             }

@@ -20,10 +20,11 @@ from flextool.plot_outputs.format_helpers import (
     generate_split_filename, split_into_chunks, _chunk_average_df,
 )
 from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config
-from flextool.plot_outputs.axis_helpers import _normalize_axis_scale
+from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
 from flextool.plot_outputs.plot_bars import plot_rowbars_stack_groupbars
 from flextool.plot_outputs.plot_lines import plot_dt_sub_lines, plot_dt_stack_sub
 
+logger = logging.getLogger(__name__)
 logging.getLogger('matplotlib.category').disabled = True
 matplotlib.rcParams['axes.spines.top'] = False
 matplotlib.rcParams['axes.spines.right'] = False
@@ -33,7 +34,7 @@ def _plan_file_splits(
     all_subs: list,
     all_items: list,
     subplot_levels: list[int],
-    max_items_per_file: int,
+    max_items_per_plot: int,
     max_subplots_per_file: int,
 ) -> list:
     """Plan how to split data into files.
@@ -43,9 +44,9 @@ def _plan_file_splits(
 
     Without subplot_levels: returns a list of item_chunks, one per file.
     """
-    needs_item_split = len(all_items) > max_items_per_file
+    needs_item_split = len(all_items) > max_items_per_plot
     item_chunks = (
-        list(split_into_chunks(all_items, max_items_per_file))
+        list(split_into_chunks(all_items, max_items_per_plot))
         if needs_item_split else [all_items]
     )
 
@@ -84,9 +85,11 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
             if os.path.isfile(file_path):
                 os.remove(file_path)
 
-    for key, df_orig in results_dict.items():
-        if key not in plot_settings:
+    for key in plot_settings:
+        if key not in results_dict:
+            logger.info(f"Plot key '{key}' not found in results — skipping")
             continue
+        df_orig = results_dict[key]
         if df_orig.empty:
             continue
 
@@ -102,8 +105,20 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                     chosen_settings.append(setting)
 
         for setting in chosen_settings:
-            # Parse raw dict into typed PlotConfig; unknown keys are silently ignored
-            cfg = PlotConfig(**{k: v for k, v in setting.items() if k in PLOT_FIELD_NAMES})
+            # Parse raw dict into typed PlotConfig; warn about unknown keys
+            # Backward compat: map old 'axis_scale_min_max' key to 'axis_bounds'
+            unknown_keys = [k for k in setting if k not in PLOT_FIELD_NAMES]
+            if unknown_keys:
+                logging.warning(
+                    f"Plot config '{key}': ignoring unknown setting(s): "
+                    f"{', '.join(repr(k) for k in unknown_keys)}"
+                )
+            filtered = {k: v for k, v in setting.items() if k in PLOT_FIELD_NAMES}
+            if 'axis_scale_min_max' in filtered and 'axis_bounds' not in filtered:
+                filtered['axis_bounds'] = filtered.pop('axis_scale_min_max')
+            elif 'axis_scale_min_max' in filtered:
+                del filtered['axis_scale_min_max']
+            cfg = PlotConfig(**filtered)
 
             map_dims = cfg.map_dimensions_for_plots
             if not map_dims or len(map_dims) < 2:
@@ -125,7 +140,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 )
 
             plot_name = cfg.plot_name or key
-            axis_scale_min_max = _normalize_axis_scale(cfg.axis_scale_min_max)
+            axis_bounds = _normalize_axis_bounds(cfg.axis_bounds)
 
             if 't' in rules and 'i' not in rules:
                 chart_type = 'time'
@@ -324,6 +339,19 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 else:
                     all_file_members = [None]  # single pass, no file-dim split
 
+                # Resolve 'shared' axis_bounds: compute global min/max from full data
+                if axis_bounds == 'shared':
+                    numeric_df = df.select_dtypes(include='number')
+                    if not numeric_df.empty:
+                        global_min = float(numeric_df.min().min())
+                        global_max = float(numeric_df.max().max())
+                        if cfg.always_include_zero_in_axis:
+                            global_min = min(global_min, 0.0)
+                            global_max = max(global_max, 0.0)
+                        axis_bounds = [(global_min, global_max)]
+                    else:
+                        axis_bounds = None
+
                 for file_member in all_file_members:
                     # --- Filter df to this file member & drop the 'f' level(s) ---
                     if file_member is not None:
@@ -386,10 +414,18 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                         sub_df = df_fm.columns.to_frame().iloc[:, fm_subplot_levels].drop_duplicates()
                         all_subs = [tuple(row) for row in sub_df.values]
 
+                    # Drop near-zero columns and rows when skip_data_with_only_zeroes is enabled
+                    if cfg.skip_data_with_only_zeroes:
+                        df_fm = df_fm.loc[:, (df_fm.abs() > 1e-6).any()]
+                        if chart_type == 'bar':
+                            df_fm = df_fm.loc[(df_fm.abs() > 1e-6).any(axis=1)]
+                        if df_fm.empty:
+                            continue
+
                     # Determine items and per-file limits
                     if chart_type == 'time':
                         default_max_items = 9
-                        max_items = cfg.max_items_per_file if cfg.max_items_per_file is not None else default_max_items
+                        max_items = cfg.max_items_per_plot if cfg.max_items_per_plot is not None else default_max_items
                         item_levels = fm_line_levels if fm_line_levels else fm_stack_levels
                         if not item_levels:
                             all_items = [None]
@@ -401,102 +437,72 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             all_items = [tuple(row) for row in item_df.values]
                     else:  # bar chart
                         default_max_items = 20
-                        max_items = cfg.max_items_per_file if cfg.max_items_per_file is not None else default_max_items
+                        max_items = cfg.max_items_per_plot if cfg.max_items_per_plot is not None else default_max_items
                         all_items = df_fm.index.tolist()
 
-                    needs_item_split = len(all_items) > max_items
-                    file_chunks = _plan_file_splits(
-                        all_subs, all_items, fm_subplot_levels, max_items, cfg.max_subplots_per_file
-                    )
-                    needs_file_split = len(file_chunks) > 1
+                    if fm_subplot_levels and chart_type == 'bar':
+                        # BAR + SUBPLOTS: send all data in one call.
+                        # The bar function handles item splitting, subplot expansion,
+                        # and file splitting (max_subplots_per_file) internally.
+                        filepath = generate_split_filename(
+                            plot_name, plot_dir, plot_file_format,
+                            file_member=member_str,
+                        )
+                        plot_rowbars_stack_groupbars(
+                            df_fm, effective_plot_name, plot_dir,
+                            fm_stack_levels, fm_expand_axis_levels,
+                            fm_subplot_levels, fm_grouped_bar_levels,
+                            subplots_per_row=cfg.subplots_per_row, legend_position=cfg.legend,
+                            xlabel=cfg.xlabel, ylabel=cfg.ylabel,
+                            bar_orientation=cfg.bar_orientation, base_bar_length=cfg.base_length,
+                            value_label=cfg.value_label, axis_bounds=axis_bounds,
+                            axis_tick_format=cfg.axis_tick_format,
+                            always_include_zero_in_axis=cfg.always_include_zero_in_axis,
+                            max_items_per_plot=max_items,
+                            max_subplots_per_file=cfg.max_subplots_per_file,
+                            output_filepath=filepath)
 
-                    if fm_subplot_levels:
-                        # STRATEGY 1: file_chunks are lists of (sub, item_chunk) pairs
-                        for file_idx, file_chunk in enumerate(file_chunks, start=1):
-                            subs_in_file = []
-                            items_in_file = set()
-                            for sub, item_chunk in file_chunk:
-                                if sub not in subs_in_file:
-                                    subs_in_file.append(sub)
-                                items_in_file.update(item_chunk if item_chunk[0] is not None else [])
-
-                            df_chunk = df_fm.copy()
-
-                            # Filter by subplots in this file
-                            if len(subs_in_file) < len(all_subs):
-                                if len(fm_subplot_levels) == 1:
-                                    level_name = df_fm.columns.names[fm_subplot_levels[0]]
-                                    mask = df_chunk.columns.get_level_values(level_name).isin(subs_in_file)
-                                    df_chunk = df_chunk.loc[:, mask]
-                                else:
-                                    col_tuples = df_chunk.columns.to_frame().iloc[:, fm_subplot_levels]
-                                    mask = col_tuples.apply(tuple, axis=1).isin(subs_in_file)
-                                    df_chunk = df_chunk.loc[:, mask.values]
-
-                            # Filter by items in this file
-                            if items_in_file and needs_item_split:
-                                if chart_type == 'bar':
-                                    df_chunk = df_chunk.loc[df_chunk.index.isin(items_in_file)]
-                                else:
-                                    if item_levels and len(item_levels) == 1:
-                                        level_name = df_fm.columns.names[item_levels[0]]
-                                        mask = df_chunk.columns.get_level_values(level_name).isin(items_in_file)
-                                        df_chunk = df_chunk.loc[:, mask]
-                                    elif item_levels:
-                                        item_level_names = [df_fm.columns.names[i] for i in item_levels]
-                                        col_tuples = df_chunk.columns.to_frame()[item_level_names]
-                                        mask = col_tuples.apply(tuple, axis=1).isin(items_in_file)
-                                        df_chunk = df_chunk.loc[:, mask.values]
-
-                            if df_chunk.empty:
-                                continue
-
-                            filepath = generate_split_filename(
-                                plot_name, plot_dir, plot_file_format,
-                                file_idx=file_idx, needs_split=needs_file_split,
-                                file_member=member_str,
-                            )
-
-                            if chart_type == 'time':
-                                if fm_stack_levels:
-                                    plot_dt_stack_sub(
-                                        df_chunk, effective_plot_name, plot_dir,
-                                        fm_stack_levels, fm_subplot_levels,
-                                        rows=plot_rows, subplots_per_row=cfg.subplots_per_row,
-                                        legend_position=cfg.legend, xlabel=cfg.xlabel, ylabel=cfg.ylabel,
-                                        base_width_per_col=6, subplot_height=cfg.base_length,
-                                        axis_scale_min_max=axis_scale_min_max,
-                                        axis_tick_format=cfg.axis_tick_format,
-                                        always_include_zero=cfg.always_include_zero,
-                                        output_filepath=filepath)
-                                else:
-                                    plot_dt_sub_lines(
-                                        df_chunk, effective_plot_name, plot_dir,
-                                        fm_subplot_levels, fm_line_levels,
-                                        rows=plot_rows, subplots_per_row=cfg.subplots_per_row,
-                                        legend_position=cfg.legend, xlabel=cfg.xlabel, ylabel=cfg.ylabel,
-                                        base_width_per_col=6, subplot_height=cfg.base_length,
-                                        axis_scale_min_max=axis_scale_min_max,
-                                        axis_tick_format=cfg.axis_tick_format,
-                                        always_include_zero=cfg.always_include_zero,
-                                        output_filepath=filepath)
-                            elif chart_type == 'bar':
-                                plot_rowbars_stack_groupbars(
-                                    df_chunk, effective_plot_name, plot_dir,
-                                    fm_stack_levels, fm_expand_axis_levels,
-                                    fm_subplot_levels, fm_grouped_bar_levels,
-                                    subplots_per_row=cfg.subplots_per_row, legend_position=cfg.legend,
-                                    xlabel=cfg.xlabel, ylabel=cfg.ylabel,
-                                    bar_orientation=cfg.bar_orientation, base_bar_length=cfg.base_length,
-                                    value_label=cfg.value_label, axis_scale_min_max=axis_scale_min_max,
-                                    axis_tick_format=cfg.axis_tick_format,
-                                    always_include_zero=cfg.always_include_zero,
-                                    output_filepath=filepath)
-                            else:
-                                raise ValueError(f'Could not interpret plot rule for {key}')
+                    elif fm_subplot_levels:
+                        # TIME + SUBPLOTS: send all data in one call.
+                        # The plot functions handle item splitting and file splitting internally.
+                        filepath = generate_split_filename(
+                            plot_name, plot_dir, plot_file_format,
+                            file_member=member_str,
+                        )
+                        if fm_stack_levels:
+                            plot_dt_stack_sub(
+                                df_fm, effective_plot_name, plot_dir,
+                                fm_stack_levels, fm_subplot_levels,
+                                rows=plot_rows, subplots_per_row=cfg.subplots_per_row,
+                                legend_position=cfg.legend, xlabel=cfg.xlabel, ylabel=cfg.ylabel,
+                                base_width_per_col=6, subplot_height=cfg.base_length,
+                                axis_bounds=axis_bounds,
+                                axis_tick_format=cfg.axis_tick_format,
+                                always_include_zero_in_axis=cfg.always_include_zero_in_axis,
+                                max_items_per_plot=max_items,
+                                max_subplots_per_file=cfg.max_subplots_per_file,
+                                output_filepath=filepath)
+                        else:
+                            plot_dt_sub_lines(
+                                df_fm, effective_plot_name, plot_dir,
+                                fm_subplot_levels, fm_line_levels,
+                                rows=plot_rows, subplots_per_row=cfg.subplots_per_row,
+                                legend_position=cfg.legend, xlabel=cfg.xlabel, ylabel=cfg.ylabel,
+                                base_width_per_col=6, subplot_height=cfg.base_length,
+                                axis_bounds=axis_bounds,
+                                axis_tick_format=cfg.axis_tick_format,
+                                always_include_zero_in_axis=cfg.always_include_zero_in_axis,
+                                max_items_per_plot=max_items,
+                                max_subplots_per_file=cfg.max_subplots_per_file,
+                                output_filepath=filepath)
 
                     else:
-                        # STRATEGY 2: file_chunks are item lists, one per file
+                        # STRATEGY 2: no subplots — split items into files
+                        needs_item_split = len(all_items) > max_items
+                        file_chunks = _plan_file_splits(
+                            all_subs, all_items, fm_subplot_levels,
+                            max_items, cfg.max_subplots_per_file
+                        )
                         for file_idx, item_chunk in enumerate(file_chunks, start=1):
                             df_chunk = df_fm.copy()
 
@@ -533,8 +539,9 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                         rows=plot_rows, legend_position=cfg.legend,
                                         xlabel=cfg.xlabel, ylabel=cfg.ylabel,
                                         base_width_per_col=6, subplot_height=cfg.base_length,
-                                        axis_scale_min_max=axis_scale_min_max,
-                                        always_include_zero=cfg.always_include_zero,
+                                        axis_bounds=axis_bounds,
+                                        axis_tick_format=cfg.axis_tick_format,
+                                        always_include_zero_in_axis=cfg.always_include_zero_in_axis,
                                         output_filepath=filepath)
                                 else:
                                     plot_dt_sub_lines(
@@ -543,8 +550,9 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                         rows=plot_rows, legend_position=cfg.legend,
                                         xlabel=cfg.xlabel, ylabel=cfg.ylabel,
                                         base_width_per_col=6, subplot_height=cfg.base_length,
-                                        axis_scale_min_max=axis_scale_min_max,
-                                        always_include_zero=cfg.always_include_zero,
+                                        axis_bounds=axis_bounds,
+                                        axis_tick_format=cfg.axis_tick_format,
+                                        always_include_zero_in_axis=cfg.always_include_zero_in_axis,
                                         output_filepath=filepath)
                             elif chart_type == 'bar':
                                 plot_rowbars_stack_groupbars(
@@ -554,8 +562,9 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                     subplots_per_row=cfg.subplots_per_row, legend_position=cfg.legend,
                                     xlabel=cfg.xlabel, ylabel=cfg.ylabel,
                                     bar_orientation=cfg.bar_orientation, base_bar_length=cfg.base_length,
-                                    value_label=cfg.value_label, axis_scale_min_max=axis_scale_min_max,
-                                    always_include_zero=cfg.always_include_zero,
+                                    value_label=cfg.value_label, axis_bounds=axis_bounds,
+                                    axis_tick_format=cfg.axis_tick_format,
+                                    always_include_zero_in_axis=cfg.always_include_zero_in_axis,
                                     output_filepath=filepath)
                             else:
                                 raise ValueError(f'Could not interpret plot rule for {key}')

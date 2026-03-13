@@ -19,7 +19,7 @@ def main():
         parser.add_argument('--active-configs', type=str, nargs='+', default=None,
                             help='Which plot configurations from config_path yaml to use (default: default)')
         parser.add_argument('--output-location', type=str, default=None,
-                            help='Directory for the root for input and output locations (default: flextool root)')
+                            help='Location for the output directories (default: flextool root), overridden by output-locations-db-url')
         parser.add_argument('--subdir', type=str, default=None,
                             help='Subdirectory for outputs (default: scenario name)')
         parser.add_argument('--read-parquet-dir', type=str, default=False,

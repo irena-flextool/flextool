@@ -125,7 +125,7 @@ def _plot_grouped_bars(
                                    label=label,
                                    color=colors[grouped_idx % len(colors)])
             if value_fmt:
-                ax.bar_label(container, fmt=value_fmt, padding=3)
+                ax.bar_label(container, fmt=lambda x: format(x, value_fmt), padding=3)
 
     # Add invisible bars for zero-value grouped bars (for legend completeness)
     for grouped_idx in range(len(grouped_bars)):
@@ -299,4 +299,4 @@ def _plot_simple_bars(
         else:  # vertical
             container = ax.bar(bar_idx, value, color='steelblue')
         if value_fmt:
-            ax.bar_label(container, fmt=value_fmt, padding=3)
+            ax.bar_label(container, fmt=lambda x: format(x, value_fmt), padding=3)

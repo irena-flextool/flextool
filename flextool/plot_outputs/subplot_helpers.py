@@ -9,6 +9,26 @@ _extract_subplot_data   Unified .xs() extraction returning always a DataFrame, n
 """
 
 import pandas as pd
+from dataclasses import dataclass
+
+
+@dataclass
+class BarLayoutParams:
+    """Pre-computed horizontal layout measurements for bar charts (inches).
+
+    Attributes:
+        bar_label_width:   Width for the longest bar tick label.
+        group_label_width: Width for the longest group label (0 if no expand_axis).
+        left_margin:       Total left margin = bar_label_width + group_label_width.
+        legend_width:      Width reserved for the legend column (0 if not needed).
+        base_bar_length:   The drawing-area width (value axis extent).
+    """
+
+    bar_label_width: float
+    group_label_width: float
+    left_margin: float
+    legend_width: float
+    base_bar_length: float
 
 
 def _calculate_grid_layout(n_subs: int, subplots_per_row: int) -> tuple[int, int]:

@@ -19,9 +19,10 @@ DIMENSION_RULES: dict[str, str] = {
 # Field names for plot settings — used by _is_single_config() to detect config dicts.
 PLOT_FIELD_NAMES = {
     'plot_name', 'map_dimensions_for_plots', 'subplots_per_row', 'legend',
-    'bar_orientation', 'base_length', 'max_subplots_per_file', 'max_items_per_file',
-    'time_average_duration', 'xlabel', 'ylabel', 'value_label', 'axis_scale_min_max',
-    'axis_tick_format', 'always_include_zero'
+    'bar_orientation', 'base_length', 'max_subplots_per_file', 'max_items_per_plot',
+    'time_average_duration', 'xlabel', 'ylabel', 'value_label', 'axis_bounds',
+    'axis_scale_min_max',  # backward compat alias for axis_bounds
+    'axis_tick_format', 'always_include_zero_in_axis', 'skip_data_with_only_zeroes'
 }
 
 
@@ -39,14 +40,15 @@ class PlotConfig:
     bar_orientation: str = 'horizontal'
     base_length: float = 4.0
     max_subplots_per_file: int = 9
-    max_items_per_file: int | None = None
+    max_items_per_plot: int | None = None
     time_average_duration: str | None = None
     xlabel: str | None = None
     ylabel: str | None = None
     value_label: str | None = None
-    axis_scale_min_max: dict | list | None = None
+    axis_bounds: dict | list | str | None = None
     axis_tick_format: str | None = None
-    always_include_zero: bool = True
+    always_include_zero_in_axis: bool = True
+    skip_data_with_only_zeroes: bool = False
 
 
 def _is_single_config(d: dict) -> bool:
