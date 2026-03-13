@@ -20,7 +20,7 @@ def estimate_legend_width(labels, title: str = '', base_width: float = 1.5) -> f
     title_len = len(str(title)) if title else 0
 
     # ~0.09 inches per character + base padding (accounts for typical 8-10pt font)
-    char_width = 0.081
+    char_width = 0.07
     label_width = max_label_len * char_width
     title_width = title_len * char_width
 

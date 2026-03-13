@@ -12,8 +12,24 @@ from flextool.plot_outputs.axis_helpers import (
     _estimate_value_nbins,
 )
 from flextool.plot_outputs.subplot_helpers import (
-    _calculate_grid_layout, _get_unique_levels, _extract_subplot_data,
+    LineLayoutParams, _calculate_grid_layout, _get_unique_levels, _extract_subplot_data,
 )
+
+
+# ── Layout constants (inches) ──
+CHAR_WIDTH = 0.081           # Approximate width per character at font-size 9 (labels)
+TICK_CHAR_WIDTH = 0.065      # Approximate width per digit character at tick font size
+LEFT_PAD = 0.1              # Left edge padding
+RIGHT_PAD = 0.2              # Right edge padding
+SUBPLOT_VPAD = 0.25          # Space above axes for subplot title
+INTER_COL_GAP = 0.2          # Horizontal gap between subplot columns
+INTER_ROW_GAP = 0.25          # Vertical gap between rows (room for x-axis tick labels of row above)
+YLABEL_WIDTH = 0.4           # Space reserved for y-axis label text
+XLABEL_HEIGHT = 0.25         # Space reserved for x-axis label text
+LEGEND_GAP = 0.15            # Gap between drawing area and legend box
+TITLE_PAD = 0.3              # Top margin for figure title
+BOTTOM_PAD = 0.35            # Bottom margin (room for x-axis tick labels)
+MIN_VALUE_LABEL_WIDTH = 0.35 # Minimum space for y-axis value tick labels
 
 
 def _get_column_items(df_sub, level_names):
@@ -80,56 +96,145 @@ def _make_file_batches(effective_plots, max_subplots_per_file, output_filepath, 
 
 
 # ---------------------------------------------------------------------------
+#  Layout computation
+# ---------------------------------------------------------------------------
+
+def _estimate_value_label_width(
+    effective_plots: list[tuple[str | None, pd.DataFrame]],
+    axis_tick_format,
+) -> float:
+    """Estimate width needed for y-axis value tick labels across all subplots."""
+    global_min = float('inf')
+    global_max = float('-inf')
+    for _, df_sub in effective_plots:
+        vals = df_sub.values
+        if len(vals) == 0:
+            continue
+        sub_min = np.nanmin(vals)
+        sub_max = np.nanmax(vals)
+        if np.isfinite(sub_min):
+            global_min = min(global_min, sub_min)
+        if np.isfinite(sub_max):
+            global_max = max(global_max, sub_max)
+
+    if not np.isfinite(global_min) or not np.isfinite(global_max):
+        return MIN_VALUE_LABEL_WIDTH
+
+    # Sample values at extremes and midpoint
+    sample_values = [global_min, global_max, 0]
+    mid = (global_min + global_max) / 2
+    if mid != global_min and mid != global_max:
+        sample_values.append(mid)
+
+    # Check a representative set of formatters (first and last subplot)
+    max_chars = 0
+    n_subs = len(effective_plots)
+    formatter_indices = set([0, n_subs - 1])
+    for idx in formatter_indices:
+        fmt = _get_value_formatter(axis_tick_format, idx)
+        for v in sample_values:
+            try:
+                chars = len(fmt(v, 0))
+            except (ValueError, TypeError):
+                chars = len(str(v))
+            max_chars = max(max_chars, chars)
+
+    width = max_chars * TICK_CHAR_WIDTH + 0.1  # padding for tick marks
+    return max(MIN_VALUE_LABEL_WIDTH, width)
+
+
+def _compute_line_layout(
+    effective_plots: list[tuple[str | None, pd.DataFrame]],
+    item_level_names: list[str],
+    legend_position: str,
+    subplots_per_row: int,
+    base_width: float,
+    subplot_height: float,
+    axis_tick_format,
+) -> LineLayoutParams:
+    """Compute layout parameters consistent across file batches.
+
+    Examines ALL effective_plots so that every file uses identical margins.
+    """
+    n_subs = len(effective_plots)
+    n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
+
+    # ── value-label width (y-axis tick labels) ──
+    value_label_width = _estimate_value_label_width(effective_plots, axis_tick_format)
+
+    # ── legend width (max across ALL subplots) ──
+    legend_width = 0.0
+    if item_level_names:
+        for _, df_sub in effective_plots:
+            legend_labels = _format_legend_labels(
+                _get_column_items(df_sub, item_level_names)
+            )
+            w = estimate_legend_width(legend_labels, base_width=0.6)
+            legend_width = max(legend_width, w)
+
+    return LineLayoutParams(
+        value_label_width=value_label_width,
+        legend_width=legend_width,
+        base_width=base_width,
+        subplot_height=subplot_height,
+    )
+
+
+# ---------------------------------------------------------------------------
 #  Lines
 # ---------------------------------------------------------------------------
 
 def _render_lines_figure(
     effective_plots, plot_name, sub_levels, line_level_names, time_index,
     subplots_per_row, legend_position,
-    xlabel, ylabel, base_width_per_col, subplot_height,
+    xlabel, ylabel,
     axis_bounds, axis_tick_format, always_include_zero_in_axis,
     output_filepath,
+    layout: LineLayoutParams,
 ):
     """Render one file's worth of line subplots."""
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
-    # Calculate legend width if needed
-    legend_width = 0
-    if legend_position == 'all' and n_cols > 1:
-        max_legend_width = 0
-        for title, df_sub_temp in effective_plots:
-            legend_labels = _format_legend_labels(
-                _get_column_items(df_sub_temp, line_level_names)
-            )
-            width = estimate_legend_width(legend_labels)
-            max_legend_width = max(max_legend_width, width)
-        legend_width = max_legend_width
+    # Only reserve space for subplot titles when at least one exists
+    has_titles = any(title is not None for title, _ in effective_plots)
+    subplot_vpad = SUBPLOT_VPAD if has_titles else 0
 
-    if legend_width > 0 and n_cols > 1:
-        total_width = base_width_per_col * n_cols + legend_width * (n_cols - 1)
-    else:
-        total_width = base_width_per_col * n_cols
+    # ── Figure sizing ──
+    cell_width = layout.value_label_width + layout.base_width
+    if layout.legend_width > 0 and legend_position == 'all' and n_cols > 1:
+        cell_width += layout.legend_width + LEGEND_GAP
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(total_width, subplot_height * n_rows))
-    if n_subs == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
+    left_edge = LEFT_PAD + (YLABEL_WIDTH if ylabel else 0)
+    total_width = left_edge + cell_width * n_cols + INTER_COL_GAP * max(0, n_cols - 1) + RIGHT_PAD
+    # For 'right' legend (or single column), add legend space once
+    if layout.legend_width > 0 and not (legend_position == 'all' and n_cols > 1):
+        total_width += layout.legend_width + LEGEND_GAP
 
-    # Adjust subplot spacing to accommodate legends and xlabel
-    adjust_kwargs = {}
-    if legend_width > 0 and n_cols > 1:
-        adjust_kwargs['wspace'] = legend_width / base_width_per_col
-    if xlabel and n_rows > 1:
-        adjust_kwargs['hspace'] = 0.5 / subplot_height
-    elif legend_width > 0 and n_cols > 1:
-        adjust_kwargs['hspace'] = 0.225 / subplot_height
-    if xlabel:
-        adjust_kwargs['bottom'] = 0.06
-    if adjust_kwargs:
-        fig.subplots_adjust(**adjust_kwargs)
+    cell_height = layout.subplot_height + subplot_vpad
+    content_height = cell_height * n_rows + INTER_ROW_GAP * max(0, n_rows - 1)
+    bottom_pad = BOTTOM_PAD + (XLABEL_HEIGHT if xlabel else 0)
+    total_height = TITLE_PAD + content_height + bottom_pad
 
+    # ── Axes placement ──
+    fig = plt.figure(figsize=(total_width, total_height))
+    axes = [None] * n_subs
+
+    y_cursor = total_height - TITLE_PAD
+    for r in range(n_rows):
+        row_top = y_cursor
+        for c in range(n_cols):
+            idx = r * n_cols + c
+            if idx >= n_subs:
+                break
+            x_left = (left_edge + c * (cell_width + INTER_COL_GAP) + layout.value_label_width) / total_width
+            ax_width = layout.base_width / total_width
+            y_bottom = (row_top - cell_height) / total_height
+            ax_height = layout.subplot_height / total_height
+            axes[idx] = fig.add_axes([x_left, y_bottom, ax_width, ax_height])
+        y_cursor -= cell_height + INTER_ROW_GAP
+
+    # ── Per-subplot rendering ──
     for idx, (eff_title, df_sub) in enumerate(effective_plots):
         ax = axes[idx]
 
@@ -176,7 +281,8 @@ def _render_lines_figure(
         if line_level_names and _should_show_legend(legend_position, sub_levels, idx, n_cols, n_subs):
             handles, labels_leg = ax.get_legend_handles_labels()
             if handles:
-                ax.legend(handles, labels_leg, bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, borderaxespad=0.1)
+                legend_x = 1 + LEGEND_GAP / layout.base_width
+                ax.legend(handles, labels_leg, bbox_to_anchor=(legend_x, 1), loc='upper left', fontsize=8, borderaxespad=0)
 
         ax.grid(True, alpha=0.3)
 
@@ -191,25 +297,24 @@ def _render_lines_figure(
             ax.set_ylim(scale[0], scale[1])
         _fmt = _get_value_formatter(axis_tick_format, idx)
         lo, hi = ax.get_ylim()
-        ax_height = ax.get_position().height * fig.get_size_inches()[1]
-        nbins = _estimate_value_nbins(lo, hi, ax_height, _fmt, is_horizontal_axis=False)
+        ax_height_inches = layout.subplot_height
+        nbins = _estimate_value_nbins(lo, hi, ax_height_inches, _fmt, is_horizontal_axis=False)
         ax.yaxis.set_major_locator(MaxNLocator(nbins=nbins, prune='upper'))
         ax.yaxis.set_major_formatter(_fmt)
         _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows)
 
-        ax_width = ax.get_position().width * fig.get_size_inches()[0]
-        set_smart_xticks(ax, time_index, ax_width)
+        ax_width_inches = layout.base_width
+        set_smart_xticks(ax, time_index, ax_width_inches)
 
-    # Hide unused subplots
-    for idx in range(n_subs, len(axes)):
-        axes[idx].set_visible(False)
+    # ── Figure title ──
+    fig_h = fig.get_size_inches()[1]
+    fig.suptitle(plot_name, y=1 - 0.14 / fig_h, va='top')
 
-    fig.suptitle(plot_name)
-
+    # ── Save (fixed layout, no bbox_inches='tight') ──
     if output_filepath:
-        plt.savefig(output_filepath, bbox_inches='tight')
+        plt.savefig(output_filepath)
     else:
-        plt.savefig(f'{output_filepath}', bbox_inches='tight')
+        plt.savefig(f'{output_filepath}')
     plt.close(fig)
 
 
@@ -238,6 +343,14 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     if not effective_plots:
         return
 
+    # Compute layout once across ALL effective_plots
+    layout = _compute_line_layout(
+        effective_plots, line_level_names,
+        legend_position, subplots_per_row,
+        base_width_per_col, subplot_height,
+        axis_tick_format,
+    )
+
     # Split into file batches
     for batch, batch_filepath in _make_file_batches(
         effective_plots, max_subplots_per_file, output_filepath, plot_dir, plot_name
@@ -245,9 +358,10 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
         _render_lines_figure(
             batch, plot_name, sub_levels, line_level_names, time_index,
             subplots_per_row, legend_position,
-            xlabel, ylabel, base_width_per_col, subplot_height,
+            xlabel, ylabel,
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
             batch_filepath,
+            layout=layout,
         )
 
 
@@ -258,49 +372,54 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
 def _render_stack_figure(
     effective_plots, plot_name, sub_levels, stack_level_names, time_index,
     subplots_per_row, legend_position,
-    xlabel, ylabel, base_width_per_col, subplot_height,
+    xlabel, ylabel,
     axis_bounds, axis_tick_format, always_include_zero_in_axis,
     output_filepath,
+    layout: LineLayoutParams,
 ):
     """Render one file's worth of stacked-area subplots."""
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
-    # Calculate legend width if needed
-    legend_width = 0
-    if legend_position == 'all' and n_cols > 1:
-        max_legend_width = 0
-        for title, df_sub_temp in effective_plots:
-            legend_labels = _format_legend_labels(
-                _get_column_items(df_sub_temp, stack_level_names)
-            )
-            width = estimate_legend_width(legend_labels)
-            max_legend_width = max(max_legend_width, width)
-        legend_width = max_legend_width
+    # Only reserve space for subplot titles when at least one exists
+    has_titles = any(title is not None for title, _ in effective_plots)
+    subplot_vpad = SUBPLOT_VPAD if has_titles else 0
 
-    if legend_width > 0 and n_cols > 1:
-        total_width = base_width_per_col * n_cols + legend_width * (n_cols - 1)
-    else:
-        total_width = base_width_per_col * n_cols
+    # ── Figure sizing ──
+    cell_width = layout.value_label_width + layout.base_width
+    if layout.legend_width > 0 and legend_position == 'all' and n_cols > 1:
+        cell_width += layout.legend_width + LEGEND_GAP
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(total_width, subplot_height * n_rows))
-    if n_subs == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
+    left_edge = LEFT_PAD + (YLABEL_WIDTH if ylabel else 0)
+    total_width = left_edge + cell_width * n_cols + INTER_COL_GAP * max(0, n_cols - 1) + RIGHT_PAD
+    # For 'right' legend (or single column), add legend space once
+    if layout.legend_width > 0 and not (legend_position == 'all' and n_cols > 1):
+        total_width += layout.legend_width + LEGEND_GAP
 
-    # Vertical spacing
-    adjust_kwargs = {}
-    if xlabel:
-        adjust_kwargs['hspace'] = 1 / subplot_height
-        adjust_kwargs['bottom'] = 0.06
-    else:
-        adjust_kwargs['hspace'] = 0.7 / subplot_height
+    cell_height = layout.subplot_height + subplot_vpad
+    content_height = cell_height * n_rows + INTER_ROW_GAP * max(0, n_rows - 1)
+    bottom_pad = BOTTOM_PAD + (XLABEL_HEIGHT if xlabel else 0)
+    total_height = TITLE_PAD + content_height + bottom_pad
 
-    if legend_width > 0 and n_cols > 1:
-        adjust_kwargs['wspace'] = legend_width / base_width_per_col
-    fig.subplots_adjust(**adjust_kwargs)
+    # ── Axes placement ──
+    fig = plt.figure(figsize=(total_width, total_height))
+    axes = [None] * n_subs
 
+    y_cursor = total_height - TITLE_PAD
+    for r in range(n_rows):
+        row_top = y_cursor
+        for c in range(n_cols):
+            idx = r * n_cols + c
+            if idx >= n_subs:
+                break
+            x_left = (left_edge + c * (cell_width + INTER_COL_GAP) + layout.value_label_width) / total_width
+            ax_width = layout.base_width / total_width
+            y_bottom = (row_top - cell_height) / total_height
+            ax_height = layout.subplot_height / total_height
+            axes[idx] = fig.add_axes([x_left, y_bottom, ax_width, ax_height])
+        y_cursor -= cell_height + INTER_ROW_GAP
+
+    # ── Per-subplot rendering ──
     for idx, (eff_title, df_sub) in enumerate(effective_plots):
         ax = axes[idx]
 
@@ -362,7 +481,8 @@ def _render_stack_figure(
         if _should_show_legend(legend_position, sub_levels, idx, n_cols, n_subs):
             handles, labels = ax.get_legend_handles_labels()
             if handles:
-                ax.legend(handles, labels, bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, borderaxespad=0.1)
+                legend_x = 1 + LEGEND_GAP / layout.base_width
+                ax.legend(handles, labels, bbox_to_anchor=(legend_x, 1), loc='upper left', fontsize=8, borderaxespad=0)
 
         ax.grid(True, alpha=0.3)
 
@@ -377,25 +497,24 @@ def _render_stack_figure(
             ax.set_ylim(scale[0], scale[1])
         _fmt = _get_value_formatter(axis_tick_format, idx)
         lo, hi = ax.get_ylim()
-        ax_height = ax.get_position().height * fig.get_size_inches()[1]
-        nbins = _estimate_value_nbins(lo, hi, ax_height, _fmt, is_horizontal_axis=False)
+        ax_height_inches = layout.subplot_height
+        nbins = _estimate_value_nbins(lo, hi, ax_height_inches, _fmt, is_horizontal_axis=False)
         ax.yaxis.set_major_locator(MaxNLocator(nbins=nbins, prune='upper'))
         ax.yaxis.set_major_formatter(_fmt)
         _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows)
 
-        ax_width = ax.get_position().width * fig.get_size_inches()[0]
-        set_smart_xticks(ax, time_index, ax_width)
+        ax_width_inches = layout.base_width
+        set_smart_xticks(ax, time_index, ax_width_inches)
 
-    # Hide unused subplots
-    for idx in range(n_subs, len(axes)):
-        axes[idx].set_visible(False)
+    # ── Figure title ──
+    fig_h = fig.get_size_inches()[1]
+    fig.suptitle(plot_name, y=1 - 0.14 / fig_h, va='top')
 
-    fig.suptitle(plot_name)
-
+    # ── Save (fixed layout, no bbox_inches='tight') ──
     if output_filepath:
-        plt.savefig(output_filepath, bbox_inches='tight')
+        plt.savefig(output_filepath)
     else:
-        plt.savefig(f'{output_filepath}', bbox_inches='tight')
+        plt.savefig(f'{output_filepath}')
     plt.close(fig)
 
 
@@ -425,6 +544,14 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
     if not effective_plots:
         return
 
+    # Compute layout once across ALL effective_plots
+    layout = _compute_line_layout(
+        effective_plots, stack_level_names,
+        legend_position, subplots_per_row,
+        base_width_per_col, subplot_height,
+        axis_tick_format,
+    )
+
     # Split into file batches
     for batch, batch_filepath in _make_file_batches(
         effective_plots, max_subplots_per_file, output_filepath, plot_dir, plot_name
@@ -432,7 +559,8 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
         _render_stack_figure(
             batch, plot_name, sub_levels, stack_level_names, time_index,
             subplots_per_row, legend_position,
-            xlabel, ylabel, base_width_per_col, subplot_height,
+            xlabel, ylabel,
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
             batch_filepath,
+            layout=layout,
         )

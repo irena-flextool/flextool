@@ -31,6 +31,22 @@ class BarLayoutParams:
     base_bar_length: float
 
 
+@dataclass
+class LineLayoutParams:
+    """Pre-computed layout measurements for line/area charts (inches).
+
+    Attributes:
+        value_label_width: Width for the longest y-axis value tick label.
+        legend_width:      Width reserved for the legend column (0 if not needed).
+        base_width:        The drawing-area width.
+        subplot_height:    The drawing-area height.
+    """
+    value_label_width: float
+    legend_width: float
+    base_width: float
+    subplot_height: float
+
+
 def _calculate_grid_layout(n_subs: int, subplots_per_row: int) -> tuple[int, int]:
     """Return (n_rows, n_cols) for a grid of n_subs subplots.
 
