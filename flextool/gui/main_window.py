@@ -23,8 +23,10 @@ from flextool.gui.input_sources import InputSourceManager
 from flextool.gui.scenario_lists import AvailableScenarioManager, ExecutedScenarioManager
 from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus
 from flextool.gui.execution_window import ExecutionWindow
+from flextool.gui.output_actions import OutputActionManager
 from flextool.gui.platform_utils import (
     open_file_in_default_app,
+    open_folder,
     open_spine_db_editor,
 )
 
@@ -57,6 +59,7 @@ class MainWindow(tk.Tk):
         self.exec_scenario_mgr: ExecutedScenarioManager | None = None
         self.execution_mgr: ExecutionManager | None = None
         self.execution_window: ExecutionWindow | None = None
+        self.output_action_mgr: OutputActionManager | None = None
         self._pending_execution_scenarios: list[ScenarioInfo] = []
 
         # ── Window sizing ────────────────────────────────────────────
@@ -204,6 +207,13 @@ class MainWindow(tk.Tk):
         )
         self.auto_comp_excel_cb.grid(row=4, column=0, sticky="w", pady=2)
 
+        # Trace auto-generate vars to save settings on toggle
+        self.auto_scen_plots_var.trace_add("write", self._on_auto_gen_toggled)
+        self.auto_scen_excels_var.trace_add("write", self._on_auto_gen_toggled)
+        self.auto_scen_csvs_var.trace_add("write", self._on_auto_gen_toggled)
+        self.auto_comp_plots_var.trace_add("write", self._on_auto_gen_toggled)
+        self.auto_comp_excel_var.trace_add("write", self._on_auto_gen_toggled)
+
         # --- Plot menu and Execution menu buttons (col 2-3, rows 7-8) ---
         self.plot_menu_btn = ttk.Button(outer, text="Plot menu", width=14)
         self.plot_menu_btn.grid(row=7, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
@@ -225,17 +235,37 @@ class MainWindow(tk.Tk):
         # "Show" for plots/csvs, "Open" for Excel
         action_labels = ["Show", "Open", "Show", "Show", "Open"]
 
-        self.output_status_labels: dict[str, ttk.Label] = {}
+        self.output_status_labels: dict[str, ttk.Button] = {}
         self.output_action_btns: dict[str, ttk.Button] = {}
 
-        for i, ((label_text, key), action_text) in enumerate(zip(output_info, action_labels)):
-            status_label = ttk.Label(
-                outer, text=f"{label_text} {STATUS_ERR}", width=16, anchor="w"
-            )
-            status_label.grid(row=2 + i, column=4, sticky="w", padx=(10, 5), pady=2)
-            self.output_status_labels[key] = status_label
+        # Map keys to their generation handler method names
+        _gen_commands: dict[str, str] = {
+            "scen_plots": "_on_gen_scen_plots",
+            "scen_excel": "_on_gen_scen_excel",
+            "scen_csvs": "_on_gen_scen_csvs",
+            "comp_plots": "_on_gen_comp_plots",
+            "comp_excel": "_on_gen_comp_excel",
+        }
+        _show_commands: dict[str, str] = {
+            "scen_plots": "_on_show_scen_plots",
+            "scen_excel": "_on_show_scen_excel",
+            "scen_csvs": "_on_show_scen_csvs",
+            "comp_plots": "_on_show_comp_plots",
+            "comp_excel": "_on_show_comp_excel",
+        }
 
-            action_btn = ttk.Button(outer, text=action_text, width=5)
+        for i, ((label_text, key), action_text) in enumerate(zip(output_info, action_labels)):
+            status_btn = ttk.Button(
+                outer, text=f"{label_text} {STATUS_ERR}", width=20,
+                command=getattr(self, _gen_commands[key]),
+            )
+            status_btn.grid(row=2 + i, column=4, sticky="w", padx=(10, 5), pady=2)
+            self.output_status_labels[key] = status_btn
+
+            action_btn = ttk.Button(
+                outer, text=action_text, width=5,
+                command=getattr(self, _show_commands[key]),
+            )
             action_btn.grid(row=2 + i, column=5, sticky="w", padx=2, pady=2)
             self.output_action_btns[key] = action_btn
 
@@ -471,6 +501,7 @@ class MainWindow(tk.Tk):
             self.execution_window.destroy()
         self.execution_window = None
         self.execution_mgr = None
+        self.output_action_mgr = None
 
         self.current_project = name
 
@@ -494,6 +525,15 @@ class MainWindow(tk.Tk):
         self.input_source_mgr = InputSourceManager(project_path, self.project_settings)
         self.avail_scenario_mgr = AvailableScenarioManager(self.project_settings)
         self.exec_scenario_mgr = ExecutedScenarioManager(project_path)
+        self.output_action_mgr = OutputActionManager(
+            project_path=project_path,
+            settings=self.project_settings,
+            on_complete=self._on_output_action_complete,
+        )
+
+        # Sync auto-generate checkboxes with loaded settings
+        self._load_auto_gen_vars()
+
         self._clear_all_lists()
         self._refresh_input_sources()
         self._refresh_executed_scenarios()
@@ -1208,3 +1248,212 @@ class MainWindow(tk.Tk):
         }
         for key, full_name in default_names.items():
             self.output_status_labels[key].configure(text=f"{full_name} {STATUS_ERR}")
+
+    # ── Auto-generate checkbox management ─────────────────────────
+
+    def _load_auto_gen_vars(self) -> None:
+        """Set auto-generate BooleanVars from the loaded project settings."""
+        s = self.project_settings
+        self.auto_scen_plots_var.set(s.auto_generate_scen_plots)
+        self.auto_scen_excels_var.set(s.auto_generate_scen_excels)
+        self.auto_scen_csvs_var.set(s.auto_generate_scen_csvs)
+        self.auto_comp_plots_var.set(s.auto_generate_comp_plots)
+        self.auto_comp_excel_var.set(s.auto_generate_comp_excel)
+
+    def _on_auto_gen_toggled(self, *_args: object) -> None:
+        """Save auto-generate settings when any checkbox is toggled."""
+        self.project_settings.auto_generate_scen_plots = self.auto_scen_plots_var.get()
+        self.project_settings.auto_generate_scen_excels = self.auto_scen_excels_var.get()
+        self.project_settings.auto_generate_scen_csvs = self.auto_scen_csvs_var.get()
+        self.project_settings.auto_generate_comp_plots = self.auto_comp_plots_var.get()
+        self.project_settings.auto_generate_comp_excel = self.auto_comp_excel_var.get()
+
+        if self.current_project:
+            project_path = get_projects_dir() / self.current_project
+            save_project_settings(project_path, self.project_settings)
+
+    # ── Output generation button handlers ─────────────────────────
+
+    def _get_checked_executed_names(self) -> list[str]:
+        """Return scenario names that are checked in the executed_tree."""
+        checked: list[str] = []
+        for item in self.executed_tree.get_children():
+            values = self.executed_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                checked.append(values[2])  # scenario_name column
+        return checked
+
+    def _ensure_output_action_mgr(self) -> OutputActionManager | None:
+        """Return the OutputActionManager, creating it if needed."""
+        if self.output_action_mgr is not None:
+            return self.output_action_mgr
+        if not self.current_project:
+            return None
+        project_path = get_projects_dir() / self.current_project
+        self.output_action_mgr = OutputActionManager(
+            project_path=project_path,
+            settings=self.project_settings,
+            on_complete=self._on_output_action_complete,
+        )
+        return self.output_action_mgr
+
+    def _on_gen_scen_plots(self) -> None:
+        """Generate plots for checked executed scenarios."""
+        names = self._get_checked_executed_names()
+        if not names:
+            messagebox.showinfo("No selection", "Please select executed scenarios first.")
+            return
+        mgr = self._ensure_output_action_mgr()
+        if mgr is None:
+            return
+        self.output_status_labels["scen_plots"].configure(state="disabled")
+        mgr.run_scenario_plots(names)
+
+    def _on_gen_scen_excel(self) -> None:
+        """Generate Excel files for checked executed scenarios."""
+        names = self._get_checked_executed_names()
+        if not names:
+            messagebox.showinfo("No selection", "Please select executed scenarios first.")
+            return
+        mgr = self._ensure_output_action_mgr()
+        if mgr is None:
+            return
+        self.output_status_labels["scen_excel"].configure(state="disabled")
+        mgr.run_scenario_excel(names)
+
+    def _on_gen_scen_csvs(self) -> None:
+        """Generate CSV files for checked executed scenarios."""
+        names = self._get_checked_executed_names()
+        if not names:
+            messagebox.showinfo("No selection", "Please select executed scenarios first.")
+            return
+        mgr = self._ensure_output_action_mgr()
+        if mgr is None:
+            return
+        self.output_status_labels["scen_csvs"].configure(state="disabled")
+        mgr.run_scenario_csvs(names)
+
+    def _on_gen_comp_plots(self) -> None:
+        """Generate comparison plots for checked executed scenarios."""
+        names = self._get_checked_executed_names()
+        if not names:
+            messagebox.showinfo("No selection", "Please select executed scenarios first.")
+            return
+        mgr = self._ensure_output_action_mgr()
+        if mgr is None:
+            return
+        self.output_status_labels["comp_plots"].configure(state="disabled")
+        mgr.run_comparison_plots(names)
+
+    def _on_gen_comp_excel(self) -> None:
+        """Generate comparison Excel for checked executed scenarios."""
+        names = self._get_checked_executed_names()
+        if not names:
+            messagebox.showinfo("No selection", "Please select executed scenarios first.")
+            return
+        mgr = self._ensure_output_action_mgr()
+        if mgr is None:
+            return
+        self.output_status_labels["comp_excel"].configure(state="disabled")
+        mgr.run_comparison_excel(names)
+
+    def _on_output_action_complete(self, action_name: str, success: bool) -> None:
+        """Callback from OutputActionManager when an action finishes.
+
+        Called from a worker thread -- schedule GUI updates via ``self.after()``.
+        """
+        self.after(0, self._handle_output_action_done, action_name, success)
+
+    def _handle_output_action_done(self, action_name: str, success: bool) -> None:
+        """Re-enable the action button and refresh output status (runs on main thread)."""
+        if action_name in self.output_status_labels:
+            self.output_status_labels[action_name].configure(state="normal")
+        self._update_output_status()
+        if not success:
+            logger.warning("Output action '%s' finished with errors", action_name)
+
+    # ── Show / Open button handlers ───────────────────────────────
+
+    def _on_show_scen_plots(self) -> None:
+        """Open the first .png from output_plots/<first_selected_scenario>/."""
+        if not self.current_project:
+            return
+        names = self._get_checked_executed_names()
+        if not names:
+            return
+        project_path = get_projects_dir() / self.current_project
+        plot_dir = project_path / "output_plots" / names[0]
+        mgr = self._ensure_output_action_mgr()
+        if mgr is None:
+            return
+        first_png = mgr.find_first_plot(plot_dir)
+        if first_png is not None:
+            try:
+                open_file_in_default_app(first_png)
+            except OSError as exc:
+                logger.warning("Could not open plot: %s", exc)
+
+    def _on_show_scen_excel(self) -> None:
+        """Open the Excel file for the first checked executed scenario."""
+        if not self.current_project:
+            return
+        names = self._get_checked_executed_names()
+        if not names:
+            return
+        mgr = self._ensure_output_action_mgr()
+        if mgr is None:
+            return
+        xlsx = mgr.find_scenario_excel(names[0])
+        if xlsx is not None:
+            try:
+                open_file_in_default_app(xlsx)
+            except OSError as exc:
+                logger.warning("Could not open Excel file: %s", exc)
+
+    def _on_show_scen_csvs(self) -> None:
+        """Open the CSV folder for the checked executed scenarios."""
+        if not self.current_project:
+            return
+        names = self._get_checked_executed_names()
+        if not names:
+            return
+        project_path = get_projects_dir() / self.current_project
+        if len(names) == 1:
+            csv_dir = project_path / "output_csv" / names[0]
+        else:
+            csv_dir = project_path / "output_csv"
+        if csv_dir.is_dir():
+            try:
+                open_folder(csv_dir)
+            except OSError as exc:
+                logger.warning("Could not open CSV folder: %s", exc)
+
+    def _on_show_comp_plots(self) -> None:
+        """Open the first .png from output_plot_comparisons/."""
+        if not self.current_project:
+            return
+        project_path = get_projects_dir() / self.current_project
+        comp_dir = project_path / "output_plot_comparisons"
+        mgr = self._ensure_output_action_mgr()
+        if mgr is None:
+            return
+        first_png = mgr.find_first_plot(comp_dir)
+        if first_png is not None:
+            try:
+                open_file_in_default_app(first_png)
+            except OSError as exc:
+                logger.warning("Could not open comparison plot: %s", exc)
+
+    def _on_show_comp_excel(self) -> None:
+        """Open the first .xlsx from output_plot_comparisons/."""
+        if not self.current_project:
+            return
+        mgr = self._ensure_output_action_mgr()
+        if mgr is None:
+            return
+        xlsx = mgr.find_comparison_excel()
+        if xlsx is not None:
+            try:
+                open_file_in_default_app(xlsx)
+            except OSError as exc:
+                logger.warning("Could not open comparison Excel: %s", exc)
