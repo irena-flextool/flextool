@@ -24,6 +24,7 @@ from flextool.gui.scenario_lists import AvailableScenarioManager, ExecutedScenar
 from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus
 from flextool.gui.execution_window import ExecutionWindow
 from flextool.gui.output_actions import OutputActionManager
+from flextool.gui.dialogs.plot_dialog import PlotDialog
 from flextool.gui.platform_utils import (
     open_file_in_default_app,
     open_folder,
@@ -215,7 +216,10 @@ class MainWindow(tk.Tk):
         self.auto_comp_excel_var.trace_add("write", self._on_auto_gen_toggled)
 
         # --- Plot menu and Execution menu buttons (col 2-3, rows 7-8) ---
-        self.plot_menu_btn = ttk.Button(outer, text="Plot menu", width=14)
+        self.plot_menu_btn = ttk.Button(
+            outer, text="Plot menu", width=14,
+            command=self._on_plot_menu,
+        )
         self.plot_menu_btn.grid(row=7, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
 
         self.execution_menu_btn = ttk.Button(
@@ -1101,6 +1105,17 @@ class MainWindow(tk.Tk):
         self._open_or_raise_execution_window()
 
     # ── Execution menu handler ───────────────────────────────────
+
+    def _on_plot_menu(self) -> None:
+        """Open the PlotDialog to configure plot settings."""
+        if not self.current_project:
+            messagebox.showinfo(
+                "No project",
+                "Please select or create a project first.",
+            )
+            return
+        project_path = get_projects_dir() / self.current_project
+        PlotDialog(self, project_path, self.project_settings)
 
     def _on_execution_menu(self) -> None:
         """Open the ExecutionWindow (or raise it if already open)."""
