@@ -25,6 +25,7 @@ from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobSt
 from flextool.gui.execution_window import ExecutionWindow
 from flextool.gui.output_actions import OutputActionManager
 from flextool.gui.dialogs.plot_dialog import PlotDialog
+from flextool.gui.error_handling import safe_callback
 from flextool.gui.platform_utils import (
     open_file_in_default_app,
     open_folder,
@@ -62,6 +63,7 @@ class MainWindow(tk.Tk):
         self.execution_window: ExecutionWindow | None = None
         self.output_action_mgr: OutputActionManager | None = None
         self._pending_execution_scenarios: list[ScenarioInfo] = []
+        self._lock_check_timer_id: str | None = None
 
         # ── Window sizing ────────────────────────────────────────────
         min_width = 1100
@@ -542,6 +544,9 @@ class MainWindow(tk.Tk):
         self._refresh_input_sources()
         self._refresh_executed_scenarios()
 
+        # Start periodic lock file checking
+        self._start_lock_check_timer()
+
     def _clear_all_lists(self) -> None:
         """Clear all treeview widgets."""
         for item in self.input_sources_tree.get_children():
@@ -565,24 +570,133 @@ class MainWindow(tk.Tk):
             )
             if not result:
                 return
-            self.execution_mgr.kill_all()
+            try:
+                self.execution_mgr.kill_all()
+            except Exception:
+                logger.exception("Error killing execution jobs during close")
+
+        # Cancel periodic lock check timer
+        if self._lock_check_timer_id is not None:
+            self.after_cancel(self._lock_check_timer_id)
+            self._lock_check_timer_id = None
 
         # Close execution window if open
-        if self.execution_window is not None and self.execution_window.winfo_exists():
-            self.execution_window.destroy()
+        if self.execution_window is not None:
+            try:
+                if self.execution_window.winfo_exists():
+                    self.execution_window.destroy()
+            except Exception:
+                pass
         self.execution_window = None
+        self.execution_mgr = None
 
+        # Save all current settings
         if self.current_project:
-            self.global_settings.recent_project = self.current_project
-            save_global_settings(get_projects_dir(), self.global_settings)
-            # Persist scenario order
-            if self.avail_scenario_mgr:
-                self.project_settings.scenario_order = (
-                    self.avail_scenario_mgr.get_order()
-                )
+            try:
+                self.global_settings.recent_project = self.current_project
+                save_global_settings(get_projects_dir(), self.global_settings)
+
+                # Persist auto-generate settings
+                self.project_settings.auto_generate_scen_plots = self.auto_scen_plots_var.get()
+                self.project_settings.auto_generate_scen_excels = self.auto_scen_excels_var.get()
+                self.project_settings.auto_generate_scen_csvs = self.auto_scen_csvs_var.get()
+                self.project_settings.auto_generate_comp_plots = self.auto_comp_plots_var.get()
+                self.project_settings.auto_generate_comp_excel = self.auto_comp_excel_var.get()
+
+                # Persist scenario order
+                if self.avail_scenario_mgr:
+                    self.project_settings.scenario_order = (
+                        self.avail_scenario_mgr.get_order()
+                    )
+
                 project_path = get_projects_dir() / self.current_project
                 save_project_settings(project_path, self.project_settings)
+            except Exception:
+                logger.exception("Error saving settings during close")
+
         self.destroy()
+
+    # ── Periodic lock file checking ───────────────────────────────────
+
+    def _start_lock_check_timer(self) -> None:
+        """Start (or restart) the periodic lock file check timer."""
+        if self._lock_check_timer_id is not None:
+            self.after_cancel(self._lock_check_timer_id)
+        self._lock_check_timer_id = self.after(5000, self._check_lock_files)
+
+    def _check_lock_files(self) -> None:
+        """Periodically check lock file status for existing input sources.
+
+        Updates the status indicator column in the input sources Treeview
+        without doing a full directory re-scan.
+        """
+        if self.input_source_mgr is None:
+            self._lock_check_timer_id = None
+            return
+
+        changed = False
+        for item in self.input_sources_tree.get_children():
+            values = self.input_sources_tree.item(item, "values")
+            if not values:
+                continue
+            source_name = values[1]
+            old_status_char = values[3]
+            filepath = self.input_source_mgr.input_dir / source_name
+
+            if not filepath.exists():
+                continue
+
+            is_locked = self.input_source_mgr._check_lock(filepath)
+            if is_locked and old_status_char != STATUS_EDITING:
+                self.input_sources_tree.set(item, "status", STATUS_EDITING)
+                changed = True
+            elif not is_locked and old_status_char == STATUS_EDITING:
+                # Lock was released -- mark as OK (will be verified on next full refresh)
+                self.input_sources_tree.set(item, "status", STATUS_OK)
+                changed = True
+
+        if changed:
+            self._update_input_button_states()
+
+        # Re-schedule
+        self._lock_check_timer_id = self.after(5000, self._check_lock_files)
+
+    # ── Button enable/disable during operations ───────────────────────
+
+    def _set_buttons_enabled(self, enabled: bool) -> None:
+        """Enable or disable major action buttons.
+
+        This is a safeguard against clicking buttons while the GUI is
+        processing an operation.
+        """
+        state = "normal" if enabled else "disabled"
+        buttons = [
+            self.add_source_btn,
+            self.edit_source_btn,
+            self.convert_source_btn,
+            self.delete_source_btn,
+            self.refresh_btn,
+            self.add_to_execution_btn,
+            self.delete_results_btn,
+            self.plot_menu_btn,
+            self.execution_menu_btn,
+        ]
+        for btn in buttons:
+            try:
+                btn.configure(state=state)
+            except Exception:
+                pass
+        # Output status buttons
+        for btn in self.output_status_labels.values():
+            try:
+                btn.configure(state=state)
+            except Exception:
+                pass
+        for btn in self.output_action_btns.values():
+            try:
+                btn.configure(state=state)
+            except Exception:
+                pass
 
     # ── Treeview checkbox toggle handlers ────────────────────────────
     # These detect a click on the "check" column and toggle the character.
@@ -781,6 +895,7 @@ class MainWindow(tk.Tk):
 
     # ── Edit button handler ─────────────────────────────────────────
 
+    @safe_callback
     def _on_edit_source(self) -> None:
         """Open the selected input source for editing."""
         if not self.input_source_mgr or not self.current_project:
@@ -825,6 +940,7 @@ class MainWindow(tk.Tk):
 
     # ── Convert button handler ──────────────────────────────────────
 
+    @safe_callback
     def _on_convert_source(self) -> None:
         """Convert the selected xlsx input source to a sqlite database."""
         if not self.input_source_mgr or not self.current_project:
@@ -911,6 +1027,7 @@ class MainWindow(tk.Tk):
 
     # ── Delete button handler ───────────────────────────────────────
 
+    @safe_callback
     def _on_delete_source(self) -> None:
         """Delete the selected input source file(s)."""
         if not self.input_source_mgr or not self.current_project:
@@ -1080,6 +1197,7 @@ class MainWindow(tk.Tk):
 
     # ── Add to execution list handler ────────────────────────────
 
+    @safe_callback
     def _on_add_to_execution(self) -> None:
         """Add checked scenarios from available_tree to the execution queue."""
         if not self.avail_scenario_mgr or not self.current_project:
@@ -1180,6 +1298,7 @@ class MainWindow(tk.Tk):
 
     # ── Delete results handler ───────────────────────────────────
 
+    @safe_callback
     def _on_delete_results(self) -> None:
         """Delete output files for checked scenarios in executed_tree."""
         if not self.exec_scenario_mgr or not self.current_project:
@@ -1312,6 +1431,7 @@ class MainWindow(tk.Tk):
         )
         return self.output_action_mgr
 
+    @safe_callback
     def _on_gen_scen_plots(self) -> None:
         """Generate plots for checked executed scenarios."""
         names = self._get_checked_executed_names()
@@ -1324,6 +1444,7 @@ class MainWindow(tk.Tk):
         self.output_status_labels["scen_plots"].configure(state="disabled")
         mgr.run_scenario_plots(names)
 
+    @safe_callback
     def _on_gen_scen_excel(self) -> None:
         """Generate Excel files for checked executed scenarios."""
         names = self._get_checked_executed_names()
@@ -1336,6 +1457,7 @@ class MainWindow(tk.Tk):
         self.output_status_labels["scen_excel"].configure(state="disabled")
         mgr.run_scenario_excel(names)
 
+    @safe_callback
     def _on_gen_scen_csvs(self) -> None:
         """Generate CSV files for checked executed scenarios."""
         names = self._get_checked_executed_names()
@@ -1348,6 +1470,7 @@ class MainWindow(tk.Tk):
         self.output_status_labels["scen_csvs"].configure(state="disabled")
         mgr.run_scenario_csvs(names)
 
+    @safe_callback
     def _on_gen_comp_plots(self) -> None:
         """Generate comparison plots for checked executed scenarios."""
         names = self._get_checked_executed_names()
@@ -1360,6 +1483,7 @@ class MainWindow(tk.Tk):
         self.output_status_labels["comp_plots"].configure(state="disabled")
         mgr.run_comparison_plots(names)
 
+    @safe_callback
     def _on_gen_comp_excel(self) -> None:
         """Generate comparison Excel for checked executed scenarios."""
         names = self._get_checked_executed_names()
@@ -1389,6 +1513,7 @@ class MainWindow(tk.Tk):
 
     # ── Show / Open button handlers ───────────────────────────────
 
+    @safe_callback
     def _on_show_scen_plots(self) -> None:
         """Open the first .png from output_plots/<first_selected_scenario>/."""
         if not self.current_project:
@@ -1408,6 +1533,7 @@ class MainWindow(tk.Tk):
             except OSError as exc:
                 logger.warning("Could not open plot: %s", exc)
 
+    @safe_callback
     def _on_show_scen_excel(self) -> None:
         """Open the Excel file for the first checked executed scenario."""
         if not self.current_project:
@@ -1425,6 +1551,7 @@ class MainWindow(tk.Tk):
             except OSError as exc:
                 logger.warning("Could not open Excel file: %s", exc)
 
+    @safe_callback
     def _on_show_scen_csvs(self) -> None:
         """Open the CSV folder for the checked executed scenarios."""
         if not self.current_project:
@@ -1443,6 +1570,7 @@ class MainWindow(tk.Tk):
             except OSError as exc:
                 logger.warning("Could not open CSV folder: %s", exc)
 
+    @safe_callback
     def _on_show_comp_plots(self) -> None:
         """Open the first .png from output_plot_comparisons/."""
         if not self.current_project:
@@ -1459,6 +1587,7 @@ class MainWindow(tk.Tk):
             except OSError as exc:
                 logger.warning("Could not open comparison plot: %s", exc)
 
+    @safe_callback
     def _on_show_comp_excel(self) -> None:
         """Open the first .xlsx from output_plot_comparisons/."""
         if not self.current_project:
