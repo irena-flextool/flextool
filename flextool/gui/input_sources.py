@@ -212,6 +212,37 @@ class InputSourceManager:
                 )
         return result
 
+    def check_db_versions(self) -> list[str]:
+        """Check and upgrade all sqlite input sources.
+
+        Delegates to :func:`~flextool.gui.db_version_check.check_and_upgrade_database`
+        for each ``.sqlite`` file in the input sources directory.
+
+        Returns a list of human-readable upgrade messages (empty if nothing
+        was upgraded).
+        """
+        all_messages: list[str] = []
+        if not self.input_dir.is_dir():
+            return all_messages
+
+        for filepath in sorted(self.input_dir.iterdir()):
+            if filepath.suffix.lower() != ".sqlite":
+                continue
+            if not filepath.is_file():
+                continue
+            try:
+                from flextool.gui.db_version_check import check_and_upgrade_database
+
+                _upgraded, messages = check_and_upgrade_database(filepath)
+                all_messages.extend(messages)
+            except Exception as exc:
+                all_messages.append(f"{filepath.name}: version check error: {exc}")
+                logger.warning(
+                    "Version check failed for %s: %s", filepath, exc, exc_info=True
+                )
+
+        return all_messages
+
     # ── Private helpers ───────────────────────────────────────────────
 
     def _read_scenarios(

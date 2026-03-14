@@ -814,6 +814,15 @@ class MainWindow(tk.Tk):
         if not self.input_source_mgr:
             return
 
+        # Check and upgrade sqlite databases before reading scenarios
+        upgrade_messages = self.input_source_mgr.check_db_versions()
+        if upgrade_messages:
+            messagebox.showinfo(
+                "Database upgrades",
+                "\n".join(upgrade_messages),
+                parent=self,
+            )
+
         sources = self.input_source_mgr.refresh()
 
         # Clear input sources tree
