@@ -21,6 +21,8 @@ from flextool.gui.settings_io import (
 from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.input_sources import InputSourceManager
 from flextool.gui.scenario_lists import AvailableScenarioManager, ExecutedScenarioManager
+from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus
+from flextool.gui.execution_window import ExecutionWindow
 from flextool.gui.platform_utils import (
     open_file_in_default_app,
     open_spine_db_editor,
@@ -53,6 +55,8 @@ class MainWindow(tk.Tk):
         self.input_source_mgr: InputSourceManager | None = None
         self.avail_scenario_mgr: AvailableScenarioManager | None = None
         self.exec_scenario_mgr: ExecutedScenarioManager | None = None
+        self.execution_mgr: ExecutionManager | None = None
+        self.execution_window: ExecutionWindow | None = None
         self._pending_execution_scenarios: list[ScenarioInfo] = []
 
         # ── Window sizing ────────────────────────────────────────────
@@ -204,7 +208,10 @@ class MainWindow(tk.Tk):
         self.plot_menu_btn = ttk.Button(outer, text="Plot menu", width=14)
         self.plot_menu_btn.grid(row=7, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
 
-        self.execution_menu_btn = ttk.Button(outer, text="Execution menu", width=14)
+        self.execution_menu_btn = ttk.Button(
+            outer, text="Execution menu", width=14,
+            command=self._on_execution_menu,
+        )
         self.execution_menu_btn.grid(row=8, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
 
         # --- Output status labels + Show/Open buttons (cols 4-5, rows 2-6) ---
@@ -448,6 +455,23 @@ class MainWindow(tk.Tk):
 
     def _switch_project(self, name: str) -> None:
         """Switch to the project with the given *name*."""
+        # Close execution window and manager from the previous project
+        if self.execution_mgr is not None and self.execution_mgr.has_pending_or_running():
+            result = messagebox.askyesno(
+                "Jobs running",
+                "There are running or pending execution jobs for the current project.\n"
+                "Kill all jobs and switch project?",
+                parent=self,
+            )
+            if not result:
+                return
+            self.execution_mgr.kill_all()
+
+        if self.execution_window is not None and self.execution_window.winfo_exists():
+            self.execution_window.destroy()
+        self.execution_window = None
+        self.execution_mgr = None
+
         self.current_project = name
 
         # Update combo
@@ -487,6 +511,23 @@ class MainWindow(tk.Tk):
 
     def _on_close(self) -> None:
         """Save state and close the application."""
+        # Warn if executions are still active
+        if self.execution_mgr is not None and self.execution_mgr.has_pending_or_running():
+            result = messagebox.askyesno(
+                "Jobs running",
+                "There are running or pending execution jobs.\n"
+                "Kill all jobs and close?",
+                parent=self,
+            )
+            if not result:
+                return
+            self.execution_mgr.kill_all()
+
+        # Close execution window if open
+        if self.execution_window is not None and self.execution_window.winfo_exists():
+            self.execution_window.destroy()
+        self.execution_window = None
+
         if self.current_project:
             self.global_settings.recent_project = self.current_project
             save_global_settings(get_projects_dir(), self.global_settings)
@@ -996,8 +1037,8 @@ class MainWindow(tk.Tk):
     # ── Add to execution list handler ────────────────────────────
 
     def _on_add_to_execution(self) -> None:
-        """Add checked scenarios from available_tree to the pending execution list."""
-        if not self.avail_scenario_mgr:
+        """Add checked scenarios from available_tree to the execution queue."""
+        if not self.avail_scenario_mgr or not self.current_project:
             return
 
         checked = self.avail_scenario_mgr.get_checked_scenarios(self.available_tree)
@@ -1008,6 +1049,79 @@ class MainWindow(tk.Tk):
         self._pending_execution_scenarios = checked
         names = [s.name for s in checked]
         logger.info("Scenarios queued for execution: %s", names)
+
+        # Create the ExecutionManager lazily
+        self._ensure_execution_mgr()
+        assert self.execution_mgr is not None
+
+        # Add jobs to the manager
+        self.execution_mgr.add_jobs(checked)
+
+        # Open the execution window (or raise it)
+        self._open_or_raise_execution_window()
+
+    # ── Execution menu handler ───────────────────────────────────
+
+    def _on_execution_menu(self) -> None:
+        """Open the ExecutionWindow (or raise it if already open)."""
+        self._ensure_execution_mgr()
+        self._open_or_raise_execution_window()
+
+    # ── Execution helpers ────────────────────────────────────────
+
+    def _ensure_execution_mgr(self) -> None:
+        """Create the ExecutionManager if it does not exist yet."""
+        if self.execution_mgr is not None:
+            return
+        if not self.current_project:
+            return
+
+        project_path = get_projects_dir() / self.current_project
+        self.execution_mgr = ExecutionManager(
+            project_path=project_path,
+            settings=self.project_settings,
+            on_status_change=self._on_job_status_change,
+            on_all_finished=self._on_all_jobs_finished,
+        )
+
+    def _open_or_raise_execution_window(self) -> None:
+        """Open a new ExecutionWindow or raise an existing one."""
+        if (
+            self.execution_window is not None
+            and self.execution_window.winfo_exists()
+        ):
+            self.execution_window.lift()
+            self.execution_window.focus_force()
+            return
+
+        if self.execution_mgr is None:
+            return
+
+        self.execution_window = ExecutionWindow(self, self.execution_mgr)
+
+    def _on_job_status_change(self, job: ExecutionJob) -> None:
+        """Callback from ExecutionManager when a job's status changes.
+
+        This is called from worker threads, so we schedule GUI updates
+        via ``self.after()``.
+        """
+        if job.status in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED):
+            self.after(0, self._refresh_executed_scenarios)
+
+        # Notify the execution window (if open)
+        if (
+            self.execution_window is not None
+            and self.execution_window.winfo_exists()
+        ):
+            self.execution_window.schedule_refresh()
+
+    def _on_all_jobs_finished(self) -> None:
+        """Callback when all execution jobs have completed.
+
+        Called from the scheduler thread -- schedule GUI updates safely.
+        """
+        self.after(0, self._refresh_executed_scenarios)
+        self.after(0, self._update_output_status)
 
     # ── Delete results handler ───────────────────────────────────
 
