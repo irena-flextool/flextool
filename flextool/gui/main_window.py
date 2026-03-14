@@ -1,7 +1,20 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox, simpledialog
+
+from flextool.gui.project_utils import (
+    create_project,
+    get_projects_dir,
+    list_projects,
+    rename_project,
+)
+from flextool.gui.settings_io import (
+    load_global_settings,
+    load_project_settings,
+    save_global_settings,
+)
+from flextool.gui.data_models import GlobalSettings, ProjectSettings
 
 # Unicode checkbox characters for Treeview checkbox simulation
 CHECK_ON = "\u2611"   # ☑
@@ -14,12 +27,16 @@ class MainWindow(tk.Tk):
     """Main application window for FlexTool GUI.
 
     All widgets are created and placed via the grid geometry manager.
-    No commands are wired -- buttons and controls are inert placeholders.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.title("FlexTool")
+
+        # ── State ──────────────────────────────────────────────────
+        self.current_project: str | None = None
+        self.global_settings = GlobalSettings()
+        self.project_settings = ProjectSettings()
 
         # ── Window sizing ────────────────────────────────────────────
         min_width = 1100
@@ -55,8 +72,13 @@ class MainWindow(tk.Tk):
 
         self.project_combo = ttk.Combobox(outer, state="readonly", width=30)
         self.project_combo.grid(row=row, column=0, sticky="w", padx=(60, 5))
+        self.project_combo.bind("<<ComboboxSelected>>", self._on_project_combo_selected)
+        self.project_combo.bind("<F2>", self._on_combo_rename)
+        self.project_combo.bind("<Double-Button-1>", self._on_combo_rename)
 
-        self.project_menu_btn = ttk.Button(outer, text="Project menu")
+        self.project_menu_btn = ttk.Button(
+            outer, text="Project menu", command=self._on_project_menu_btn
+        )
         self.project_menu_btn.grid(row=row, column=1, sticky="w", padx=5)
 
         # ── Row 1: Section headers ───────────────────────────────────
@@ -285,6 +307,148 @@ class MainWindow(tk.Tk):
             bottom_right, text="Delete selected\nresults irrevocably"
         )
         self.delete_results_btn.grid(row=0, column=0)
+
+        # ── Window close handler ─────────────────────────────────────
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # ── Startup logic ────────────────────────────────────────────
+        self._startup()
+
+    # ── Startup ──────────────────────────────────────────────────────
+
+    def _startup(self) -> None:
+        """Initialise project state on application start."""
+        projects_dir = get_projects_dir()
+        projects_dir.mkdir(parents=True, exist_ok=True)
+
+        self.global_settings = load_global_settings(projects_dir)
+        self._refresh_project_combo()
+
+        recent = self.global_settings.recent_project
+        if recent and (projects_dir / recent).is_dir():
+            self._switch_project(recent)
+        else:
+            # No valid recent project -- show project dialog after mainloop starts
+            self.after(100, self._show_project_dialog_if_needed)
+
+    def _show_project_dialog_if_needed(self) -> None:
+        """Open the ProjectDialog if no project is currently loaded."""
+        if self.current_project is not None:
+            return
+        self._open_project_dialog()
+
+    # ── Project combo events ─────────────────────────────────────────
+
+    def _refresh_project_combo(self) -> None:
+        """Repopulate the project dropdown with current project list."""
+        projects = list_projects()
+        self.project_combo["values"] = projects
+        if self.current_project and self.current_project in projects:
+            self.project_combo.set(self.current_project)
+        elif not self.current_project:
+            self.project_combo.set("")
+
+    def _on_project_combo_selected(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
+        selected = self.project_combo.get()
+        if selected and selected != self.current_project:
+            self._switch_project(selected)
+
+    def _on_combo_rename(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Trigger rename of the current project via a simple dialog."""
+        if not self.current_project:
+            messagebox.showinfo("No project", "No project is currently loaded.")
+            return
+
+        new_name = simpledialog.askstring(
+            "Rename project",
+            f"Rename '{self.current_project}' to:",
+            initialvalue=self.current_project,
+            parent=self,
+        )
+        if not new_name or new_name.strip() == self.current_project:
+            return
+        new_name = new_name.strip()
+
+        try:
+            rename_project(self.current_project, new_name)
+        except FileExistsError:
+            messagebox.showwarning(
+                "Already exists",
+                f"A project named '{new_name}' already exists.",
+            )
+            return
+        except FileNotFoundError:
+            messagebox.showerror(
+                "Not found",
+                f"Project '{self.current_project}' no longer exists.",
+            )
+            return
+        except OSError as exc:
+            messagebox.showerror("Error", str(exc))
+            return
+
+        # Update global settings if the renamed project was the recent one
+        if self.global_settings.recent_project == self.current_project:
+            self.global_settings.recent_project = new_name
+            save_global_settings(get_projects_dir(), self.global_settings)
+
+        self._switch_project(new_name)
+
+    # ── Project menu button ──────────────────────────────────────────
+
+    def _on_project_menu_btn(self) -> None:
+        self._open_project_dialog()
+
+    def _open_project_dialog(self) -> None:
+        """Open the ProjectDialog and handle its result."""
+        # Import here to avoid circular imports at module level
+        from flextool.gui.dialogs.project_dialog import ProjectDialog
+
+        dlg = ProjectDialog(self)
+        if dlg.result:
+            self._switch_project(dlg.result)
+
+    # ── Project switching ────────────────────────────────────────────
+
+    def _switch_project(self, name: str) -> None:
+        """Switch to the project with the given *name*."""
+        self.current_project = name
+
+        # Update combo
+        self._refresh_project_combo()
+        self.project_combo.set(name)
+
+        # Update window title
+        self.title(f"FlexTool \u2014 {name}")
+
+        # Save as recent
+        self.global_settings.recent_project = name
+        save_global_settings(get_projects_dir(), self.global_settings)
+
+        # Load project settings
+        projects_dir = get_projects_dir()
+        self.project_settings = load_project_settings(projects_dir / name)
+
+        # Clear all lists (actual loading is done in later tasks)
+        self._clear_all_lists()
+
+    def _clear_all_lists(self) -> None:
+        """Clear all treeview widgets."""
+        for item in self.input_sources_tree.get_children():
+            self.input_sources_tree.delete(item)
+        for item in self.available_tree.get_children():
+            self.available_tree.delete(item)
+        for item in self.executed_tree.get_children():
+            self.executed_tree.delete(item)
+
+    # ── Window close ─────────────────────────────────────────────────
+
+    def _on_close(self) -> None:
+        """Save state and close the application."""
+        if self.current_project:
+            self.global_settings.recent_project = self.current_project
+            save_global_settings(get_projects_dir(), self.global_settings)
+        self.destroy()
 
     # ── Treeview checkbox toggle handlers ────────────────────────────
     # These detect a click on the "check" column and toggle the character.
