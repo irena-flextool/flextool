@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk, messagebox, simpledialog
 
 from flextool.gui.project_utils import (
@@ -15,12 +16,14 @@ from flextool.gui.settings_io import (
     save_global_settings,
 )
 from flextool.gui.data_models import GlobalSettings, ProjectSettings
+from flextool.gui.input_sources import InputSourceManager
 
 # Unicode checkbox characters for Treeview checkbox simulation
 CHECK_ON = "\u2611"   # ☑
 CHECK_OFF = "\u2610"  # ☐
 STATUS_OK = "\u2713"  # ✓
 STATUS_ERR = "\u2717"  # ✗
+STATUS_EDITING = "\u23f3"  # ⏳
 
 
 class MainWindow(tk.Tk):
@@ -37,6 +40,7 @@ class MainWindow(tk.Tk):
         self.current_project: str | None = None
         self.global_settings = GlobalSettings()
         self.project_settings = ProjectSettings()
+        self.input_source_mgr: InputSourceManager | None = None
 
         # ── Window sizing ────────────────────────────────────────────
         min_width = 1100
@@ -123,7 +127,9 @@ class MainWindow(tk.Tk):
 
         # --- Input source buttons (col 1, rows 2-8) ---
         btn_col = 1
-        self.add_source_btn = ttk.Button(outer, text="Add", width=8)
+        self.add_source_btn = ttk.Button(
+            outer, text="Add", width=8, command=self._on_add_source
+        )
         self.add_source_btn.grid(row=2, column=btn_col, sticky="nw", padx=5, pady=2)
 
         self.edit_source_btn = ttk.Button(outer, text="Edit", width=8)
@@ -135,7 +141,9 @@ class MainWindow(tk.Tk):
         self.delete_source_btn = ttk.Button(outer, text="Delete", width=8)
         self.delete_source_btn.grid(row=6, column=btn_col, sticky="nw", padx=5, pady=2)
 
-        self.refresh_btn = ttk.Button(outer, text="Refresh", width=8)
+        self.refresh_btn = ttk.Button(
+            outer, text="Refresh", width=8, command=self._on_refresh_sources
+        )
         self.refresh_btn.grid(row=8, column=btn_col, sticky="nw", padx=5, pady=2)
 
         # --- Auto-generate checkboxes (col 2-3, rows 2-6) ---
@@ -427,10 +435,13 @@ class MainWindow(tk.Tk):
 
         # Load project settings
         projects_dir = get_projects_dir()
-        self.project_settings = load_project_settings(projects_dir / name)
+        project_path = projects_dir / name
+        self.project_settings = load_project_settings(project_path)
 
-        # Clear all lists (actual loading is done in later tasks)
+        # Create input source manager and populate treeviews
+        self.input_source_mgr = InputSourceManager(project_path, self.project_settings)
         self._clear_all_lists()
+        self._refresh_input_sources()
 
     def _clear_all_lists(self) -> None:
         """Clear all treeview widgets."""
@@ -469,6 +480,7 @@ class MainWindow(tk.Tk):
             item = tree.identify_row(event.y)
             if item:
                 self._toggle_check(tree, item, "check")
+                self._update_available_scenarios()
 
     def _on_available_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         tree = self.available_tree
@@ -491,3 +503,103 @@ class MainWindow(tk.Tk):
             item = tree.identify_row(event.y)
             if item:
                 self._toggle_check(tree, item, "check")
+
+    # ── Input source management ──────────────────────────────────────
+
+    def _on_add_source(self) -> None:
+        """Open the Add dialog and refresh sources if files were added."""
+        if not self.current_project:
+            messagebox.showinfo("No project", "No project is currently loaded.")
+            return
+
+        from flextool.gui.dialogs.add_dialog import AddDialog
+
+        project_path = get_projects_dir() / self.current_project
+        dlg = AddDialog(self, project_path)
+        if dlg.result:
+            self._refresh_input_sources()
+
+    def _on_refresh_sources(self) -> None:
+        """Refresh input sources by re-scanning the directory."""
+        if not self.input_source_mgr:
+            return
+        self._refresh_input_sources()
+
+    def _refresh_input_sources(self) -> None:
+        """Re-scan input sources and repopulate the treeview."""
+        if not self.input_source_mgr:
+            return
+
+        sources = self.input_source_mgr.refresh()
+
+        # Clear input sources tree
+        for item in self.input_sources_tree.get_children():
+            self.input_sources_tree.delete(item)
+
+        # Configure tag for error rows
+        self.input_sources_tree.tag_configure("error", background="#ffcccc")
+
+        # Populate input sources tree
+        for source in sources:
+            if source.status == "ok":
+                status_char = STATUS_OK
+            elif source.status == "editing":
+                status_char = STATUS_EDITING
+            else:
+                status_char = STATUS_ERR
+
+            tags = ("error",) if source.status == "error" else ()
+            self.input_sources_tree.insert(
+                "",
+                "end",
+                values=(CHECK_ON, source.name, source.number, status_char),
+                tags=tags,
+            )
+
+        # Update Add button appearance based on whether there are sources
+        self._update_add_button_style(len(sources) == 0)
+
+        # Update available scenarios
+        self._update_available_scenarios()
+
+    def _update_add_button_style(self, no_sources: bool) -> None:
+        """Highlight the Add button in green when there are no input sources."""
+        if no_sources:
+            # Use a custom style with green background
+            style = ttk.Style()
+            style.configure("Green.TButton", background="#90ee90")
+            self.add_source_btn.configure(style="Green.TButton")
+        else:
+            self.add_source_btn.configure(style="TButton")
+
+    def _get_selected_source_names(self) -> list[str]:
+        """Return the names of input sources whose checkboxes are checked."""
+        selected: list[str] = []
+        for item in self.input_sources_tree.get_children():
+            values = self.input_sources_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                selected.append(values[1])  # name column
+        return selected
+
+    def _update_available_scenarios(self) -> None:
+        """Repopulate the available scenarios treeview based on selected input sources."""
+        # Clear available scenarios tree
+        for item in self.available_tree.get_children():
+            self.available_tree.delete(item)
+
+        if not self.input_source_mgr:
+            return
+
+        selected_sources = self._get_selected_source_names()
+        # If nothing is selected, show all scenarios
+        if not selected_sources:
+            scenarios = self.input_source_mgr.get_all_scenarios()
+        else:
+            scenarios = self.input_source_mgr.get_all_scenarios(selected_sources)
+
+        for scenario in scenarios:
+            self.available_tree.insert(
+                "",
+                "end",
+                values=(CHECK_OFF, scenario.source_number, scenario.name),
+            )
