@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import shutil
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox, simpledialog
@@ -14,9 +16,16 @@ from flextool.gui.settings_io import (
     load_global_settings,
     load_project_settings,
     save_global_settings,
+    save_project_settings,
 )
 from flextool.gui.data_models import GlobalSettings, ProjectSettings
 from flextool.gui.input_sources import InputSourceManager
+from flextool.gui.platform_utils import (
+    open_file_in_default_app,
+    open_spine_db_editor,
+)
+
+logger = logging.getLogger(__name__)
 
 # Unicode checkbox characters for Treeview checkbox simulation
 CHECK_ON = "\u2611"   # ☑
@@ -132,13 +141,19 @@ class MainWindow(tk.Tk):
         )
         self.add_source_btn.grid(row=2, column=btn_col, sticky="nw", padx=5, pady=2)
 
-        self.edit_source_btn = ttk.Button(outer, text="Edit", width=8)
+        self.edit_source_btn = ttk.Button(
+            outer, text="Edit", width=8, command=self._on_edit_source, state="disabled"
+        )
         self.edit_source_btn.grid(row=4, column=btn_col, sticky="nw", padx=5, pady=2)
 
-        self.convert_source_btn = ttk.Button(outer, text="Convert", width=8)
+        self.convert_source_btn = ttk.Button(
+            outer, text="Convert", width=8, command=self._on_convert_source, state="disabled"
+        )
         self.convert_source_btn.grid(row=5, column=btn_col, sticky="nw", padx=5, pady=2)
 
-        self.delete_source_btn = ttk.Button(outer, text="Delete", width=8)
+        self.delete_source_btn = ttk.Button(
+            outer, text="Delete", width=8, command=self._on_delete_source, state="disabled"
+        )
         self.delete_source_btn.grid(row=6, column=btn_col, sticky="nw", padx=5, pady=2)
 
         self.refresh_btn = ttk.Button(
@@ -481,6 +496,7 @@ class MainWindow(tk.Tk):
             if item:
                 self._toggle_check(tree, item, "check")
                 self._update_available_scenarios()
+                self._update_input_button_states()
 
     def _on_available_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         tree = self.available_tree
@@ -562,6 +578,9 @@ class MainWindow(tk.Tk):
         # Update available scenarios
         self._update_available_scenarios()
 
+        # Update Edit / Convert / Delete button states
+        self._update_input_button_states()
+
     def _update_add_button_style(self, no_sources: bool) -> None:
         """Highlight the Add button in green when there are no input sources."""
         if no_sources:
@@ -603,3 +622,222 @@ class MainWindow(tk.Tk):
                 "end",
                 values=(CHECK_OFF, scenario.source_number, scenario.name),
             )
+
+    # ── Input source button state management ────────────────────────
+
+    def _get_checked_sources(self) -> list[tuple[str, str]]:
+        """Return (name, status_char) for each checked input source row."""
+        checked: list[tuple[str, str]] = []
+        for item in self.input_sources_tree.get_children():
+            values = self.input_sources_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                # values: (check, name, number, status)
+                checked.append((values[1], values[3]))
+        return checked
+
+    def _update_input_button_states(self) -> None:
+        """Enable or disable Edit, Convert, Delete based on current selection."""
+        checked = self._get_checked_sources()
+
+        # ── Edit: exactly one checked, not in editing state ──
+        if len(checked) == 1:
+            _name, status = checked[0]
+            if status == STATUS_EDITING:
+                self.edit_source_btn.configure(state="disabled")
+            else:
+                self.edit_source_btn.configure(state="normal")
+        else:
+            self.edit_source_btn.configure(state="disabled")
+
+        # ── Convert: exactly one checked, xlsx, status OK ──
+        if len(checked) == 1:
+            name, status = checked[0]
+            is_xlsx = name.lower().endswith(".xlsx")
+            if is_xlsx and status == STATUS_OK:
+                self.convert_source_btn.configure(state="normal")
+            else:
+                self.convert_source_btn.configure(state="disabled")
+        else:
+            self.convert_source_btn.configure(state="disabled")
+
+        # ── Delete: at least one checked ──
+        if checked:
+            self.delete_source_btn.configure(state="normal")
+        else:
+            self.delete_source_btn.configure(state="disabled")
+
+    # ── Edit button handler ─────────────────────────────────────────
+
+    def _on_edit_source(self) -> None:
+        """Open the selected input source for editing."""
+        if not self.input_source_mgr or not self.current_project:
+            return
+
+        checked = self._get_checked_sources()
+        if len(checked) != 1:
+            return
+
+        source_name, _status = checked[0]
+        project_path = get_projects_dir() / self.current_project
+        filepath = project_path / "input_sources" / source_name
+
+        if not filepath.exists():
+            messagebox.showerror("File not found", f"Cannot find:\n{filepath}")
+            return
+
+        ext = filepath.suffix.lower()
+        if ext in (".xlsx", ".ods"):
+            try:
+                open_file_in_default_app(filepath)
+                self.input_source_mgr.mark_as_editing(source_name)
+            except OSError as exc:
+                messagebox.showerror("Error", f"Could not open file:\n{exc}")
+                return
+        elif ext == ".sqlite":
+            db_url = f"sqlite:///{filepath}"
+            proc = open_spine_db_editor(db_url)
+            if proc is None:
+                messagebox.showinfo(
+                    "spine-db-editor not found",
+                    "The spine-db-editor command was not found on your system.\n\n"
+                    "Install it with:  pip install spine-db-editor",
+                )
+                return
+        else:
+            messagebox.showinfo("Unsupported", f"Cannot edit files of type '{ext}'.")
+            return
+
+        # Refresh to show editing status
+        self._refresh_input_sources()
+
+    # ── Convert button handler ──────────────────────────────────────
+
+    def _on_convert_source(self) -> None:
+        """Convert the selected xlsx input source to a sqlite database."""
+        if not self.input_source_mgr or not self.current_project:
+            return
+
+        checked = self._get_checked_sources()
+        if len(checked) != 1:
+            return
+
+        source_name, _status = checked[0]
+        if not source_name.lower().endswith(".xlsx"):
+            return
+
+        answer = messagebox.askokcancel(
+            "Convert to database",
+            "Are you sure you want to convert the selected xlsx input source "
+            "to a database input source? xlsx will be copied to 'converted' "
+            "folder for safekeeping.",
+        )
+        if not answer:
+            return
+
+        project_path = get_projects_dir() / self.current_project
+        input_dir = project_path / "input_sources"
+        xlsx_path = input_dir / source_name
+
+        if not xlsx_path.exists():
+            messagebox.showerror("File not found", f"Cannot find:\n{xlsx_path}")
+            return
+
+        # Determine target sqlite path
+        stem = Path(source_name).stem
+        target_sqlite = input_dir / f"{stem}.sqlite"
+        target_db_url = f"sqlite:///{target_sqlite}"
+
+        try:
+            # Import conversion utilities
+            from flextool.process_inputs.read_tabular_with_specification import (
+                TabularReader,
+            )
+            from flextool.process_inputs.write_to_input_db import (
+                write_to_flextool_input_db,
+            )
+
+            # Locate the specification JSON
+            cli_dir = Path(__file__).resolve().parent.parent / "cli"
+            json_path = str(cli_dir / ".." / "import_excel_input.json")
+
+            tabular_reader = TabularReader(json_path)
+            write_to_flextool_input_db(
+                str(xlsx_path), tabular_reader, target_db_url, input_type="excel"
+            )
+        except Exception as exc:
+            logger.error("Conversion failed: %s", exc, exc_info=True)
+            messagebox.showerror(
+                "Conversion failed",
+                f"An error occurred during conversion:\n{exc}",
+            )
+            return
+
+        # Move xlsx to converted/ folder
+        converted_dir = project_path / "converted"
+        converted_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.move(str(xlsx_path), str(converted_dir / source_name))
+        except OSError as exc:
+            messagebox.showwarning(
+                "Move failed",
+                f"Conversion succeeded but the xlsx could not be moved "
+                f"to the 'converted' folder:\n{exc}",
+            )
+
+        # Remove old xlsx from input_source_numbers if present
+        if source_name in self.project_settings.input_source_numbers:
+            del self.project_settings.input_source_numbers[source_name]
+            save_project_settings(project_path, self.project_settings)
+
+        self._refresh_input_sources()
+        messagebox.showinfo(
+            "Conversion complete",
+            f"'{source_name}' has been converted to '{stem}.sqlite'.\n"
+            f"The xlsx has been moved to the 'converted' folder.",
+        )
+
+    # ── Delete button handler ───────────────────────────────────────
+
+    def _on_delete_source(self) -> None:
+        """Delete the selected input source file(s)."""
+        if not self.input_source_mgr or not self.current_project:
+            return
+
+        checked = self._get_checked_sources()
+        if not checked:
+            return
+
+        project_path = get_projects_dir() / self.current_project
+        names = [name for name, _ in checked]
+        names_str = "\n  ".join(names)
+
+        answer = messagebox.askyesno(
+            "Delete input source",
+            f"Are you really sure you want to delete the input source?\n\n"
+            f"  {names_str}\n\n"
+            f"It will not be possible to retrieve. Another option is to move "
+            f"it to another folder from the current location at "
+            f"'projects/{self.current_project}/input_sources' manually.",
+            icon="warning",
+        )
+        if not answer:
+            return
+
+        input_dir = project_path / "input_sources"
+        for source_name in names:
+            filepath = input_dir / source_name
+            try:
+                if filepath.exists():
+                    filepath.unlink()
+            except OSError as exc:
+                messagebox.showerror(
+                    "Delete failed",
+                    f"Could not delete '{source_name}':\n{exc}",
+                )
+
+            # Remove from input_source_numbers
+            if source_name in self.project_settings.input_source_numbers:
+                del self.project_settings.input_source_numbers[source_name]
+
+        save_project_settings(project_path, self.project_settings)
+        self._refresh_input_sources()

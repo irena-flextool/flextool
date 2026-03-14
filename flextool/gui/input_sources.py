@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
 from flextool.gui.data_models import InputSourceInfo, ProjectSettings, ScenarioInfo
@@ -25,6 +26,10 @@ class InputSourceManager:
         self.settings = settings
         self.input_dir = project_path / "input_sources"
         self._sources: list[InputSourceInfo] = []
+        # Track mtimes for files opened via Edit button (Linux xlsx fallback)
+        self._last_known_mtimes: dict[str, float] = {}
+        # Track which sources were explicitly opened for editing
+        self._editing_sources: set[str] = set()
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -162,7 +167,7 @@ class InputSourceManager:
                 source.status = "error"
                 continue
 
-            # Check for lock file (stub -- Task 3b will implement)
+            # Check for lock file (editing indicator)
             if self._check_lock(filepath):
                 source.status = "editing"
                 continue
@@ -220,11 +225,72 @@ class InputSourceManager:
             return self.read_scenarios_sqlite(filepath)
         return None
 
-    @staticmethod
-    def _check_lock(filepath: Path) -> bool:
-        """Check whether a lock file exists for the given input source.
+    def mark_as_editing(self, source_name: str) -> None:
+        """Mark a source as being edited (store mtime for comparison).
 
-        This is a stub that always returns ``False``.  Task 3b will
-        implement real lock-file detection.
+        Called when the Edit button opens a file, so that subsequent
+        refreshes can detect ongoing editing via mtime comparison
+        (Linux xlsx fallback).
         """
+        filepath = self.input_dir / source_name
+        self._editing_sources.add(source_name)
+        try:
+            self._last_known_mtimes[source_name] = filepath.stat().st_mtime
+        except OSError:
+            pass
+
+    def _check_lock(self, filepath: Path) -> bool:
+        """Detect if the file is currently being edited.
+
+        For .xlsx / .ods files:
+        - Windows/macOS: check for ``~$filename`` lock file in same directory.
+        - Linux: check for ``.~lock.filename#`` (LibreOffice lock file).
+        - Linux fallback: if the file was opened via the Edit button,
+          compare ``st_mtime`` against the stored value. If mtime
+          changed, the file is still being edited.
+
+        For .sqlite files:
+        - Check for ``<filepath>-journal`` or ``<filepath>-wal`` files.
+
+        Returns ``True`` if the file appears to be in an editing state.
+        """
+        ext = filepath.suffix.lower()
+
+        if ext in (".xlsx", ".ods"):
+            parent = filepath.parent
+            name = filepath.name
+
+            # Windows / macOS Excel lock file: ~$<filename>
+            excel_lock = parent / f"~${name}"
+            if excel_lock.exists():
+                return True
+
+            # LibreOffice lock file (Linux): .~lock.<filename>#
+            libreoffice_lock = parent / f".~lock.{name}#"
+            if libreoffice_lock.exists():
+                return True
+
+            # Linux mtime-based fallback for files opened via Edit button
+            if (
+                sys.platform not in ("win32", "darwin")
+                and name in self._editing_sources
+            ):
+                try:
+                    current_mtime = filepath.stat().st_mtime
+                except OSError:
+                    return False
+                last_mtime = self._last_known_mtimes.get(name)
+                if last_mtime is not None and current_mtime != last_mtime:
+                    # mtime changed -- file was modified externally
+                    return True
+
+            return False
+
+        if ext == ".sqlite":
+            journal = filepath.parent / (filepath.name + "-journal")
+            wal = filepath.parent / (filepath.name + "-wal")
+            if journal.exists() or wal.exists():
+                return True
+            return False
+
         return False
