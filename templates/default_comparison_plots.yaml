@@ -47,15 +47,30 @@
 plots:
   # Infeasibilities
   node_slack_up_dt_e:
-    plot_name: '0.0t Loss of load (upward slack)'
-    map_dimensions_for_plots: [dt_se, tt_lu]
+    default:
+      plot_name: '0.0t Loss of load (upward slack)'
+      map_dimensions_for_plots: [dt_se, tt_lu]
+    chunks:
+      plot_name: '0.0c Loss of load weekly avg (upward slack)'
+      map_dimensions_for_plots: [dt_sp, ti_lu]
+      max_subplots_per_file: 9
+      time_average_duration: 168
+      subplots_per_row: 3
   node_slack_up_d_e:
     plot_name: '0.0p Loss of load (upward slack)'
     map_dimensions_for_plots: [d_se, b_ge]
+    max_items_per_plot: 50
     xlabel: MWh
   node_slack_down_dt_e:
-    plot_name: '0.1t Excess load + spill (downward slack)'
-    map_dimensions_for_plots: [dt_se, tt_lu]
+    default:
+      plot_name: '0.1t Excess load + spill (downward slack)'
+      map_dimensions_for_plots: [dt_se, tt_lu]
+    chunks:
+      plot_name: '0.1c Excess load + spill weekly avg (downward slack)'
+      map_dimensions_for_plots: [dt_sp, ti_lu]
+      max_subplots_per_file: 9
+      time_average_duration: 168
+      subplots_per_row: 3
   node_slack_down_d_e:
     plot_name: '0.1p Excess load + spill (downward slack)'
     map_dimensions_for_plots: [d_se, b_ge]
@@ -89,27 +104,33 @@ plots:
   # Flows for units and connections
   unit_outputNode_d_ee:
     plot_name: '2.0p Flows unit to node'
-    subplots_per_row: 4
-    max_subplots_per_file: 16
+    max_items_per_plot: 20
+    subplots_per_row: 3
+    max_subplots_per_file: 9
     map_dimensions_for_plots: [d_see, m_geu]
   unit_outputNode_dt_ee:
     default:
       plot_name: '2.0t Flows unit to node'
       map_dimensions_for_plots: [dt_see, tt_luu]
-      subplots_per_row: 4
-      max_subplots_per_file: 16
+      subplots_per_row: 3
+      max_subplots_per_file: 9
     chunks:
-      plot_name: '2.0c Flows unit to node time chunks'
+      plot_name: '2.0c Flows unit to node weekly avg'
       map_dimensions_for_plots: [dt_sp, ti_luu]
-      max_subplots_per_file: 12
-      time_average_duration: 24
-      subplots_per_row: 4
+      max_subplots_per_file: 9
+      time_average_duration: 168
+      subplots_per_row: 3
   unit_inputNode_d_ee:
     plot_name: '2.1p Flows node to unit'
     map_dimensions_for_plots: [d_see, m_geu]
+    max_items_per_plot: 20
+    subplots_per_row: 3
+    max_subplots_per_file: 9
   unit_inputNode_dt_ee:
     plot_name: '2.1t Flows node to unit'
     map_dimensions_for_plots: [dt_see, tt_luu]
+    subplots_per_row: 3
+    max_subplots_per_file: 9
   connection_d_eee:
     plot_name: '2.4p Flows connection'
     xlabel: MWh
