@@ -6,6 +6,7 @@ All write_entity / write_parameter / write_default_values calls are internal hel
 """
 import logging
 import os
+from pathlib import Path
 from typing import NamedTuple
 
 import spinedb_api as api
@@ -860,7 +861,8 @@ _DEFAULT_VALUES_SPECS: list[dict] = [
 # Entry point
 # ---------------------------------------------------------------------------
 
-def write_input(input_db_url: str, scenario_name: str | None, logger: logging.Logger) -> None:
+def write_input(input_db_url: str, scenario_name: str | None, logger: logging.Logger, work_folder: Path | None = None) -> None:
+    wf = work_folder if work_folder is not None else Path.cwd()
     if scenario_name:
         scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
     with DatabaseMapping(input_db_url) as db:
@@ -869,17 +871,21 @@ def write_input(input_db_url: str, scenario_name: str | None, logger: logging.Lo
         db.fetch_all("parameter_value")
         if scenario_name:
             api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
-        os.makedirs("input", exist_ok=True)
+        os.makedirs(wf / "input", exist_ok=True)
 
         for spec in _DEFAULT_VALUES_SPECS:
-            write_default_values(db, **spec)
+            prefixed_spec = dict(spec)
+            prefixed_spec["filename"] = str(wf / spec["filename"])
+            write_default_values(db, **prefixed_spec)
 
         for spec in _ENTITY_SPECS:
-            write_entity(db, spec.classes, spec.header, spec.filename,
+            write_entity(db, spec.classes, spec.header, str(wf / spec.filename),
                          entity_dimens=spec.entity_dimens)
 
         for spec in _PARAMETER_SPECS:
-            write_parameter(db, **spec)
+            prefixed_spec = dict(spec)
+            prefixed_spec["filename"] = str(wf / spec["filename"])
+            write_parameter(db, **prefixed_spec)
 
 
 def write_entity(

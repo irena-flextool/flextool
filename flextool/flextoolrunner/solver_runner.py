@@ -43,11 +43,12 @@ class SolverRunner:
         glpsol_file, highs_file = self._platform_binaries()
         flextool_model_file = str(self.state.paths.flextool_dir / "flextool.mod")
         flextool_base_data_file = str(self.state.paths.flextool_dir / "flextool_base.dat")
-        glp_solution_file = "glpsol_solution.txt"
-        mps_file = "flextool.mps"
+        wf = self.state.paths.work_folder
+        glp_solution_file = str(wf / "glpsol_solution.txt")
+        mps_file = str(wf / "flextool.mps")
         highs_option_file = str(self.state.paths.bin_dir / "highs.opt")
-        cplex_sol_file = "cplex.sol"
-        flextool_sol_file = "flextool.sol"
+        cplex_sol_file = str(wf / "cplex.sol")
+        flextool_sol_file = str(wf / "flextool.sol")
 
         if solver == "glpsol":
             returncode = self._run_glpsol_solver(
@@ -99,7 +100,8 @@ class SolverRunner:
         timer_start: float,
     ) -> int:
         """Run a pure-GLPSOL solve (no HiGHS/CPLEX)."""
-        with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
+        wf = self.state.paths.work_folder
+        with open(wf / "solve_data/glpsol_phase.csv", 'w') as p_model_file:
             p_model_file.write("phase\nread\n")
 
         only_glpsol = [
@@ -121,7 +123,7 @@ class SolverRunner:
             raise FlexToolSolveError(message)
 
         # Check if solution is infeasible
-        with open('glpsol_solution.txt', 'r') as inf_file:
+        with open(glp_solution_file, 'r') as inf_file:
             inf_content = inf_file.read()
             if 'INFEASIBLE' in inf_content:
                 message = "The model is infeasible. Check the constraints."
@@ -130,7 +132,7 @@ class SolverRunner:
 
         timing = time.perf_counter() - timer_start
         self.logger.info(f"--- Solve with GLPSOL: {timing:.4f} seconds ---")
-        with open("solve_data/solve_progress.csv", "a") as solve_progress:
+        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write(',,' + str(round(timing, 4)) + ',')
 
         return returncode
@@ -150,10 +152,11 @@ class SolverRunner:
         timer_start: float,
     ) -> int:
         """Run the three-phase glpsol→HiGHS/CPLEX→glpsol workflow."""
+        wf = self.state.paths.work_folder
         timer_in_model_run = timer_start
 
         # Phase 1: GLPSOL creates MPS file
-        with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
+        with open(wf / "solve_data/glpsol_phase.csv", 'w') as p_model_file:
             p_model_file.write("phase\nread\n")
 
         highs_step1 = [
@@ -177,7 +180,7 @@ class SolverRunner:
 
         timing = time.perf_counter() - timer_in_model_run
         self.logger.info(f"--- GLPSOL created sol file: {timing:.4f} seconds ---")
-        with open("solve_data/solve_progress.csv", "a") as solve_progress:
+        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write(',' + str(round(timing, 4)))
         timer_in_model_run = timer_in_model_run + timing
 
@@ -186,22 +189,22 @@ class SolverRunner:
             self._run_highs(current_solve, highs_file, mps_file, highs_option_file)
             timing = time.perf_counter() - timer_in_model_run
             self.logger.info(f"--- Solver (HiGHS): {timing:.4f} seconds ---")
-            with open("solve_data/solve_progress.csv", "a") as solve_progress:
+            with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
                 solve_progress.write(',' + str(round(timing, 4)))
             timer_in_model_run = timer_in_model_run + timing
 
         elif solver == "cplex":
-            with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
+            with open(wf / "solve_data/glpsol_phase.csv", 'w') as p_model_file:
                 p_model_file.write("phase\nread\n")
             self._run_cplex(current_solve, mps_file, cplex_sol_file, flextool_sol_file)
             timing = time.perf_counter() - timer_in_model_run
             self.logger.info(f"--- Solver (CPLEX or Gurobi): {timing:.4f} seconds ---")
-            with open("solve_data/solve_progress.csv", "a") as solve_progress:
+            with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
                 solve_progress.write(',' + str(round(timing, 4)))
             timer_in_model_run = timer_in_model_run + timing
 
         # Phase 3: GLPSOL writes outputs
-        with open("solve_data/glpsol_phase.csv", 'w') as p_model_file:
+        with open(wf / "solve_data/glpsol_phase.csv", 'w') as p_model_file:
             p_model_file.write("phase\nwrite\n")
 
         highs_step3 = [
@@ -212,7 +215,7 @@ class SolverRunner:
 
         timing = time.perf_counter() - timer_in_model_run
         self.logger.info(f"--- GLPSOL wrote outputs: {timing:.4f} seconds ---")
-        with open("solve_data/solve_progress.csv", "a") as solve_progress:
+        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write(',' + str(round(timing, 4)) + '\n')
 
         if returncode != 0:
@@ -228,13 +231,14 @@ class SolverRunner:
         highs_option_file: str,
     ) -> None:
         """Run HiGHS solver on an MPS file."""
+        wf = self.state.paths.work_folder
         highs_step2 = [
             highs_file, mps_file, f"--options_file={highs_option_file}",
             f"--presolve={self.state.solve.highs.presolve.get(current_solve, 'on')}",
             f"--solver={self.state.solve.highs.method.get(current_solve, 'choose')}",
             f"--parallel={self.state.solve.highs.parallel.get(current_solve, 'off')}",
         ]
-        completed = subprocess.run(highs_step2)
+        completed = subprocess.run(highs_step2, cwd=str(wf))
         if completed.returncode != 0:
             message = f'Highs solver failed: {completed.returncode}'
             self.logger.error(message)
@@ -242,7 +246,7 @@ class SolverRunner:
         self.logger.info("HiGHS solved the problem")
 
         # Check if solution is infeasible
-        with open('HiGHS.log', 'r') as inf_file:
+        with open(wf / 'HiGHS.log', 'r') as inf_file:
             inf_content = inf_file.read()
             if 'Infeasible' in inf_content:
                 message = "The model is infeasible. Check the constraints."
@@ -266,7 +270,7 @@ class SolverRunner:
         if current_solve in self.state.solve.solver_settings.precommand:
             cplex_cmd = [self.state.solve.solver_settings.precommand[current_solve]] + cplex_cmd
 
-        completed = subprocess.run(cplex_cmd)
+        completed = subprocess.run(cplex_cmd, cwd=str(self.state.paths.work_folder))
         if completed.returncode != 0:
             message = f'Cplex solver failed: {completed.returncode}'
             self.logger.error(message)
@@ -283,6 +287,7 @@ class SolverRunner:
         process = subprocess.Popen(
             command_args, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, bufsize=1,
+            cwd=str(self.state.paths.work_folder),
         )
 
         buffer: list[str] = []

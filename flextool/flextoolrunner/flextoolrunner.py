@@ -28,15 +28,17 @@ class FlexToolRunner:
     See ``flextool.flextoolrunner.__init__`` docstring for a full module navigation guide.
     """
 
-    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None):
+    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None):
         try:
             logger = logging.getLogger(__name__)
+            # Resolve work_folder: default to cwd for backward compatibility
+            resolved_work_folder = Path(work_folder) if work_folder is not None else Path.cwd()
             # delete highs.log from previous run
-            highs_log = Path("./HiGHS.log")
+            highs_log = resolved_work_folder / "HiGHS.log"
             if highs_log.exists():
                 highs_log.unlink()
             # make a directory for solve data
-            Path("./solve_data").mkdir(exist_ok=True)
+            (resolved_work_folder / "solve_data").mkdir(exist_ok=True)
             # Build PathConfig
             _default_root = Path(__file__).parent.parent.parent
             paths = PathConfig(
@@ -44,6 +46,7 @@ class FlexToolRunner:
                 bin_dir=Path(bin_dir) if bin_dir is not None else _default_root / "bin",
                 root_dir=Path(root_dir) if root_dir is not None else _default_root,
                 output_path=Path(output_path) if output_path is not None else _default_root,
+                work_folder=resolved_work_folder,
             )
             # read the data in
             # open connection to input db
@@ -90,7 +93,7 @@ class FlexToolRunner:
             sys.exit(-1)
 
     def write_input(self, input_db_url, scenario_name=None) -> None:
-        input_writer.write_input(input_db_url, scenario_name, self.state.logger)
+        input_writer.write_input(input_db_url, scenario_name, self.state.logger, work_folder=self.state.paths.work_folder)
 
 
 def main():

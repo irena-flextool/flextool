@@ -61,6 +61,7 @@ class PathConfig:
     bin_dir: Path
     root_dir: Path
     output_path: Path
+    work_folder: Path
 
 
 @dataclass

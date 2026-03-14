@@ -24,6 +24,7 @@ import csv
 import logging
 import sys
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 
@@ -75,10 +76,11 @@ def write_active_timelines(
                     writer.writerow([period_name, item.timestep, str(item.duration)])
 
 
-def write_step_jump(step_lengths: list[tuple[str, ...]]) -> None:
+def write_step_jump(step_lengths: list[tuple[str, ...]], work_folder: Path | None = None) -> None:
     """Write step_jump.csv according to spec."""
+    wf = work_folder if work_folder is not None else Path.cwd()
     headers = ("period", "time", "previous", "previous_within_timeset", "previous_period", "previous_within_solve", "jump")
-    with open("solve_data/step_previous.csv", 'w', newline='') as stepfile:
+    with open(wf / "solve_data/step_previous.csv", 'w', newline='') as stepfile:
         writer = csv.writer(stepfile, delimiter=',')
         writer.writerow(headers)
         writer.writerows(step_lengths)
@@ -145,12 +147,14 @@ def write_first_and_last_periods(
     active_time_list: dict[str, list[tuple[str, ...]]],
     period__timesets_in_this_solve: list[tuple[str, str]],
     period__branch_list: list[tuple[str, str]],
+    work_folder: Path | None = None,
 ) -> None:
     """Write first and last periods (timewise) for the solve.
 
     Assumes that the periods are in right order in active_time_list,
     but gets the multiple branches as last.
     """
+    wf = work_folder if work_folder is not None else Path.cwd()
     period_first_of_solve = list(active_time_list.keys())[0]
     period_last = []
     period_last.append(list(active_time_list.keys())[-1])
@@ -160,7 +164,7 @@ def write_first_and_last_periods(
         if active_time_list[period][-1].timestep == time_step_last and period != period_last[0]:
             period_last.append(period)
 
-    with open("solve_data/period_last.csv", 'w', newline='') as realfile:
+    with open(wf / "solve_data/period_last.csv", 'w', newline='') as realfile:
         writer = csv.writer(realfile)
         writer.writerow(["period"])
         for period in period_last:
@@ -171,7 +175,7 @@ def write_first_and_last_periods(
         if period__branch[0] == period_first_of_solve:
             period_first_of_solve_list.append(period__branch[1])
 
-    with open("solve_data/period_first_of_solve.csv", 'w', newline='') as realfile:
+    with open(wf / "solve_data/period_first_of_solve.csv", 'w', newline='') as realfile:
         writer = csv.writer(realfile)
         writer.writerow(["period"])
         for period in period_first_of_solve_list:
@@ -183,7 +187,7 @@ def write_first_and_last_periods(
         if period__branch[0] == period_first:
             period_first_list.append(period__branch[1])
 
-    with open("solve_data/period_first.csv", 'w', newline='') as realfile:
+    with open(wf / "solve_data/period_first.csv", 'w', newline='') as realfile:
         writer = csv.writer(realfile)
         writer.writerow(["period"])
         for period in period_first_list:
@@ -198,16 +202,18 @@ def write_solve_status(
     first_state: bool,
     last_state: bool,
     nested: bool = False,
+    work_folder: Path | None = None,
 ) -> None:
     """Write solve_first.csv with information if the current solve is the first to be run."""
+    wf = work_folder if work_folder is not None else Path.cwd()
     if not nested:
-        with open("input/p_model.csv", 'w', newline='') as p_model_file:
+        with open(wf / "input/p_model.csv", 'w', newline='') as p_model_file:
             writer = csv.writer(p_model_file)
             writer.writerow(["modelParam", "p_model"])
             writer.writerow(["solveFirst", 1 if first_state else 0])
             writer.writerow(["solveLast", 1 if last_state else 0])
     else:
-        with open("solve_data/p_nested_model.csv", 'w', newline='') as p_model_file:
+        with open(wf / "solve_data/p_nested_model.csv", 'w', newline='') as p_model_file:
             writer = csv.writer(p_model_file)
             writer.writerow(["modelParam", "p_nested_model"])
             writer.writerow(["solveFirst", 1 if first_state else 0])
@@ -308,9 +314,11 @@ def write_realized_dispatch(
     realized_time_list: dict[str, list[tuple[str, ...]]],
     solve: str,
     realized_periods: list[tuple[str, str]],
+    work_folder: Path | None = None,
 ) -> None:
     """Write the timesteps to be realized for the dispatch decisions."""
-    with open("solve_data/realized_dispatch.csv", 'w', newline='') as realfile:
+    wf = work_folder if work_folder is not None else Path.cwd()
+    with open(wf / "solve_data/realized_dispatch.csv", 'w', newline='') as realfile:
         writer = csv.writer(realfile)
         writer.writerow(["period", "step"])
         for period, realized_time in realized_time_list.items():
@@ -323,9 +331,11 @@ def write_fix_storage_timesteps(
     active_time_list: dict[str, list[tuple[str, ...]]],
     solve: str,
     fix_storage_periods: list[tuple[str, str]],
+    work_folder: Path | None = None,
 ) -> None:
     """Write the timesteps where the storage is fixed for included solves."""
-    with open("solve_data/fix_storage_timesteps.csv", 'w', newline='') as realfile:
+    wf = work_folder if work_folder is not None else Path.cwd()
+    with open(wf / "solve_data/fix_storage_timesteps.csv", 'w', newline='') as realfile:
         writer = csv.writer(realfile)
         writer.writerow(["period", "step"])
         for period, active_time in active_time_list.items():
@@ -354,14 +364,16 @@ def write_all_branches(
     period__branch_list: dict[str, list[tuple[str, str]]],
     solve_branch__time_branch_list: list[tuple[str, str]],
     logger: logging.Logger,
+    work_folder: Path | None = None,
 ) -> None:
     """Write all branches in all solves."""
+    wf = work_folder if work_folder is not None else Path.cwd()
     branches = []
     for solve in period__branch_list:
         for row in period__branch_list[solve]:
             if row[1] not in branches:
                 branches.append(row[1])
-    with open("solve_data/branch_all.csv", 'w', newline='') as realfile:
+    with open(wf / "solve_data/branch_all.csv", 'w', newline='') as realfile:
         writer = csv.writer(realfile)
         writer.writerow(["branch"])
         for branch in branches:
@@ -378,7 +390,7 @@ def write_all_branches(
 
     time_branches = []
     for filename in timeseries_names:
-        with open('input/' + filename, 'r') as blk:
+        with open(wf / 'input' / filename, 'r') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
             while True:
@@ -395,7 +407,7 @@ def write_all_branches(
     for solve__branch in solve_branch__time_branch_list:
         if solve__branch[1] not in time_branches:
             time_branches.append(solve__branch[1])
-    with open("solve_data/time_branch_all.csv", 'w', newline='') as realfile:
+    with open(wf / "solve_data/time_branch_all.csv", 'w', newline='') as realfile:
         writer = csv.writer(realfile)
         writer.writerow(["time_branch"])
         for time_branch in time_branches:
@@ -409,18 +421,20 @@ def write_branch_weights_and_map(
     branch_start_time: tuple[str, str] | None,
     period__branch_lists: list[tuple[str, str]],
     stochastic_branches: dict[str, list[Any]],
+    work_folder: Path | None = None,
 ) -> None:
     """Write the weights and which branch is realized.
 
     Renamed from write_solve_branch__time_branch_list_and_weight (S09).
     """
+    wf = work_folder if work_folder is not None else Path.cwd()
     time_branch_weight: dict[str, Any] = defaultdict()
     if branch_start_time is not None:
         for row in stochastic_branches[complete_solve]:
             if branch_start_time[0] == row[0] and branch_start_time[1] == row[2]:
                 time_branch_weight[row[1]] = row[4]
 
-    with open("solve_data/solve_branch_weight.csv", 'w', newline='') as realfile:
+    with open(wf / "solve_data/solve_branch_weight.csv", 'w', newline='') as realfile:
         writer = csv.writer(realfile)
         writer.writerow(["branch", "p_branch_weight_input"])
         for solve_branch__time_branch in solve_branch__time_branch_list:
@@ -429,7 +443,7 @@ def write_branch_weights_and_map(
             elif solve_branch__time_branch[1] in time_branch_weight.keys() and solve_branch__time_branch[0] in active_time_list.keys():
                 writer.writerow([solve_branch__time_branch[0], str(time_branch_weight[solve_branch__time_branch[1]])])
 
-    with open("solve_data/solve_branch__time_branch.csv", 'w', newline='') as realfile:
+    with open(wf / "solve_data/solve_branch__time_branch.csv", 'w', newline='') as realfile:
         writer = csv.writer(realfile)
         writer.writerow(["period", "branch"])
         for solve_branch__time_branch in solve_branch__time_branch_list:
@@ -440,31 +454,33 @@ def write_branch_weights_and_map(
 # Init / empty files
 # ---------------------------------------------------------------------------
 
-def write_empty_investment_file() -> None:
+def write_empty_investment_file(work_folder: Path | None = None) -> None:
     """Write empty p_entity_invested.csv for the first solve."""
-    with open("solve_data/p_entity_invested.csv", 'w', newline='') as firstfile:
+    wf = work_folder if work_folder is not None else Path.cwd()
+    with open(wf / "solve_data/p_entity_invested.csv", 'w', newline='') as firstfile:
         writer = csv.writer(firstfile)
         writer.writerow(["entity", "p_entity_invested"])
-    with open("solve_data/p_entity_divested.csv", 'w', newline='') as firstfile:
+    with open(wf / "solve_data/p_entity_divested.csv", 'w', newline='') as firstfile:
         writer = csv.writer(firstfile)
         writer.writerow(["entity", "p_entity_divested"])
-    with open("solve_data/p_entity_period_existing_capacity.csv", 'w', newline='') as firstfile:
+    with open(wf / "solve_data/p_entity_period_existing_capacity.csv", 'w', newline='') as firstfile:
         writer = csv.writer(firstfile)
         writer.writerow(["entity", "period", "p_entity_period_existing_capacity", "p_entity_period_invested_capacity"])
 
 
-def write_empty_storage_fix_file() -> None:
+def write_empty_storage_fix_file(work_folder: Path | None = None) -> None:
     """Write empty storage fix files."""
-    with open("solve_data/fix_storage_price.csv", 'w', newline='') as firstfile:
+    wf = work_folder if work_folder is not None else Path.cwd()
+    with open(wf / "solve_data/fix_storage_price.csv", 'w', newline='') as firstfile:
         writer = csv.writer(firstfile)
         writer.writerow(["node", " period", " step", " ndt_fix_storage_price"])
-    with open("solve_data/fix_storage_quantity.csv", 'w', newline='') as firstfile:
+    with open(wf / "solve_data/fix_storage_quantity.csv", 'w', newline='') as firstfile:
         writer = csv.writer(firstfile)
         writer.writerow(["node", " period", " step", " ndt_fix_storage_quantity"])
-    with open("solve_data/fix_storage_usage.csv", 'w', newline='') as firstfile:
+    with open(wf / "solve_data/fix_storage_usage.csv", 'w', newline='') as firstfile:
         writer = csv.writer(firstfile)
         writer.writerow(["node", " period", " step", " ndt_fix_storage_usage"])
-    with open("solve_data/p_roll_continue_state.csv", 'w', newline='') as firstfile:
+    with open(wf / "solve_data/p_roll_continue_state.csv", 'w', newline='') as firstfile:
         writer = csv.writer(firstfile)
         writer.writerow(["node", " p_roll_continue_state"])
 
@@ -483,10 +499,12 @@ def write_headers_for_empty_output_files(filename: str, header: str) -> None:
 def write_timesets(
     timesets_used_by_solves: dict[str, list[tuple[str, str]]],
     timeset__timeline: dict[str, str],
+    work_folder: Path | None = None,
 ) -> None:
     """Write timesets_in_use.csv and timeset__timeline.csv."""
+    wf = work_folder if work_folder is not None else Path.cwd()
     headers = ("solve", "period", "timesets")
-    with open("input/timesets_in_use.csv", 'w', newline='') as timesetfile:
+    with open(wf / "input/timesets_in_use.csv", 'w', newline='') as timesetfile:
         writer = csv.writer(timesetfile, delimiter=',')
         writer.writerow(headers)
         for solve, period_timeset_list in timesets_used_by_solves.items():
@@ -494,7 +512,7 @@ def write_timesets(
                 writer.writerow((solve, period, timeset))
 
     headers = ("timesets", "timeline")
-    with open("input/timesets__timeline.csv", 'w', newline='') as timesetfile:
+    with open(wf / "input/timesets__timeline.csv", 'w', newline='') as timesetfile:
         writer = csv.writer(timesetfile, delimiter=',')
         writer.writerow(headers)
         for timeset, timeline in timeset__timeline.items():
@@ -518,8 +536,10 @@ def write_delayed_durations(
     active_time_list: dict[str, list[tuple[str, ...]]],
     solve: str,
     delay_durations: dict[str, Any],
+    work_folder: Path | None = None,
 ) -> None:
     """Write delay duration data for the solve."""
+    wf = work_folder if work_folder is not None else Path.cwd()
     delay_duration_set: set[str] = set()
     for (entity, dur) in delay_durations.items():
         if isinstance(dur, list):
@@ -527,12 +547,12 @@ def write_delayed_durations(
                 delay_duration_set.add(str(delay_duration[0]))
         else:
             delay_duration_set.add(str(dur))
-    with open("solve_data/delay_duration.csv", 'w', newline='') as realfile:
+    with open(wf / "solve_data/delay_duration.csv", 'w', newline='') as realfile:
         writer = csv.writer(realfile)
         writer.writerow(["delay_duration"])
         for delay_duration in delay_duration_set:
             writer.writerow([str(delay_duration)])
-    with open("solve_data/dtt__delay_duration.csv", 'w', newline='') as realfile:
+    with open(wf / "solve_data/dtt__delay_duration.csv", 'w', newline='') as realfile:
         writer = csv.writer(realfile)
         writer.writerow(["period", "time_source", "time_sink", "delay_duration"])
         for period_name, time_steps in active_time_list.items():

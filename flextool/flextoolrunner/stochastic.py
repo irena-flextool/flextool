@@ -12,6 +12,7 @@ from __future__ import annotations
 import bisect
 import csv
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from flextool.flextoolrunner.runner_state import RunnerState, FlexToolConfigError
@@ -143,6 +144,7 @@ class StochasticSolver:
         upper_solve: str,
         lower_solve: str,
         period__branch: list[tuple[str, str]],
+        work_folder: Path | None = None,
     ) -> None:
         """Write the timeline matching map CSV for nested solve storage fixing.
 
@@ -200,7 +202,8 @@ class StochasticSolver:
 
                 matching_map[period_timestep] = previous_timestep
 
-        with open("solve_data/timeline_matching_map.csv", 'w', newline='') as realfile:
+        wf = work_folder if work_folder is not None else Path.cwd()
+        with open(wf / "solve_data/timeline_matching_map.csv", 'w', newline='') as realfile:
             writer = csv.writer(realfile)
             writer.writerow(["period", "step", "upper_step"])
             for period_timestep, upper_timestep in matching_map.items():

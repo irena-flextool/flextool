@@ -48,16 +48,17 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
 
     timer = time.perf_counter()
 
+    wf = state.paths.work_folder
     try:
-        os.mkdir('solve_data')
+        os.mkdir(wf / 'solve_data')
     except FileExistsError:
         state.logger.debug("solve_data folder existed")
     try:
-        os.mkdir('output_raw')
+        os.mkdir(wf / 'output_raw')
     except FileExistsError:
         state.logger.debug("output_raw folder existed")
     try:
-        os.mkdir('output_plots')
+        os.mkdir(wf / 'output_plots')
     except FileExistsError:
         state.logger.debug("output_plots folder existed")
 
@@ -154,7 +155,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
 
     timing = time.perf_counter() - timer
     state.logger.info(f"--- Pre-processing of data: {timing:.4f} seconds ---")
-    with open("solve_data/solve_progress.csv", "a") as solve_progress:
+    with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
         solve_progress.write(',,solve,write_solve_input,setup,total_obj_cost,balance,reserves,rest,constraints,glpsol_input,solver,' \
             'setup2,total_obj_cost2,balance2,reserves2,rest2,constraints2,r_solution,w_raw,w_capacity,glpsol_output,\n')
     timer = timer + timing
@@ -189,34 +190,34 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
                     period__timesets_with_history.append((history_period, current_timeset))
                     current_periods.add(history_period)
 
-        solve_writers.write_full_timelines(state.timeline.stochastic_timesteps[solve], period__timesets_with_history, state.timeline.timesets__timeline, state.timeline.timelines, 'solve_data/steps_in_timeline.csv')
-        solve_writers.write_active_timelines(active_time_lists[solve], 'solve_data/steps_in_use.csv')
-        solve_writers.write_active_timelines(complete_active_time_lists, 'solve_data/steps_complete_solve.csv', complete=True)
-        solve_writers.write_step_jump(jump_lists[solve])
-        solve_writers.write_timesets(state.solve.timesets_used_by_solves, state.timeline.timesets__timeline)
+        solve_writers.write_full_timelines(state.timeline.stochastic_timesteps[solve], period__timesets_with_history, state.timeline.timesets__timeline, state.timeline.timelines, str(wf / 'solve_data/steps_in_timeline.csv'))
+        solve_writers.write_active_timelines(active_time_lists[solve], str(wf / 'solve_data/steps_in_use.csv'))
+        solve_writers.write_active_timelines(complete_active_time_lists, str(wf / 'solve_data/steps_complete_solve.csv'), complete=True)
+        solve_writers.write_step_jump(jump_lists[solve], work_folder=wf)
+        solve_writers.write_timesets(state.solve.timesets_used_by_solves, state.timeline.timesets__timeline, work_folder=wf)
         state.logger.info("Creating period data")
-        solve_writers.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], 'solve_data/period_with_history.csv')
-        solve_writers.write_periods(complete_solve[solve], state.solve.realized_invest_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
+        solve_writers.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], str(wf / 'solve_data/period_with_history.csv'))
+        solve_writers.write_periods(complete_solve[solve], state.solve.realized_invest_periods, str(wf / 'solve_data/realized_invest_periods_of_current_solve.csv'))
         #assume that if realized_invest_periods is not defined,but the invest_periods and realized_periods are defined, use realized_periods also as the realized_invest_periods
         if not state.solve.realized_invest_periods[complete_solve[solve]] and state.solve.invest_periods[complete_solve[solve]] and state.solve.realized_periods[complete_solve[solve]]:
-            solve_writers.write_periods(complete_solve[solve], state.solve.realized_periods, 'solve_data/realized_invest_periods_of_current_solve.csv')
-        solve_writers.write_periods(complete_solve[solve], state.solve.invest_periods, 'solve_data/invest_periods_of_current_solve.csv')
-        solve_writers.write_years_represented(period__branch_lists[solve], state.solve.solve_period_years_represented[complete_solve[solve]], 'solve_data/p_years_represented.csv')
-        solve_writers.write_period_years(period__branch_lists[solve], state.solve.solve_period_years_represented[complete_solve[solve]], 'solve_data/p_discount_years.csv')
-        solve_writers.write_current_solve(solve, 'solve_data/solve_current.csv')
-        solve_writers.write_hole_multiplier(solve, state.solve.hole_multipliers, 'solve_data/solve_hole_multiplier.csv')
-        solve_writers.write_first_steps(active_time_lists[solve], 'solve_data/first_timesteps.csv')
-        solve_writers.write_last_steps(active_time_lists[solve], 'solve_data/last_timesteps.csv')
-        solve_writers.write_last_realized_step(active_time_lists[solve], complete_solve[solve], state.solve.realized_periods.get(complete_solve[solve], []), 'solve_data/last_realized_timestep.csv')
+            solve_writers.write_periods(complete_solve[solve], state.solve.realized_periods, str(wf / 'solve_data/realized_invest_periods_of_current_solve.csv'))
+        solve_writers.write_periods(complete_solve[solve], state.solve.invest_periods, str(wf / 'solve_data/invest_periods_of_current_solve.csv'))
+        solve_writers.write_years_represented(period__branch_lists[solve], state.solve.solve_period_years_represented[complete_solve[solve]], str(wf / 'solve_data/p_years_represented.csv'))
+        solve_writers.write_period_years(period__branch_lists[solve], state.solve.solve_period_years_represented[complete_solve[solve]], str(wf / 'solve_data/p_discount_years.csv'))
+        solve_writers.write_current_solve(solve, str(wf / 'solve_data/solve_current.csv'))
+        solve_writers.write_hole_multiplier(solve, state.solve.hole_multipliers, str(wf / 'solve_data/solve_hole_multiplier.csv'))
+        solve_writers.write_first_steps(active_time_lists[solve], str(wf / 'solve_data/first_timesteps.csv'))
+        solve_writers.write_last_steps(active_time_lists[solve], str(wf / 'solve_data/last_timesteps.csv'))
+        solve_writers.write_last_realized_step(active_time_lists[solve], complete_solve[solve], state.solve.realized_periods.get(complete_solve[solve], []), str(wf / 'solve_data/last_realized_timestep.csv'))
         state.logger.info("Create realized timeline")
-        solve_writers.write_realized_dispatch(realized_time_lists[solve], complete_solve[solve], state.solve.realized_periods.get(complete_solve[solve], []))
-        solve_writers.write_fix_storage_timesteps(fix_storage_time_lists[solve], complete_solve[solve], state.solve.fix_storage_periods.get(complete_solve[solve], []))
-        solve_writers.write_delayed_durations(active_time_lists[solve], complete_solve[solve], state.solve.delay_durations)
+        solve_writers.write_realized_dispatch(realized_time_lists[solve], complete_solve[solve], state.solve.realized_periods.get(complete_solve[solve], []), work_folder=wf)
+        solve_writers.write_fix_storage_timesteps(fix_storage_time_lists[solve], complete_solve[solve], state.solve.fix_storage_periods.get(complete_solve[solve], []), work_folder=wf)
+        solve_writers.write_delayed_durations(active_time_lists[solve], complete_solve[solve], state.solve.delay_durations, work_folder=wf)
         state.logger.info("Possible stochastics")
-        solve_writers.write_branch__period_relationship(period__branch_lists[solve], 'solve_data/period__branch.csv')
-        solve_writers.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve], state.logger)
-        solve_writers.write_branch_weights_and_map(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve], state.solve.stochastic_branches)
-        solve_writers.write_first_and_last_periods(active_time_lists[solve], state.solve.timesets_used_by_solves[complete_solve[solve]], period__branch_lists[solve])
+        solve_writers.write_branch__period_relationship(period__branch_lists[solve], str(wf / 'solve_data/period__branch.csv'))
+        solve_writers.write_all_branches(period__branch_lists, solve_branch__time_branch_lists[solve], state.logger, work_folder=wf)
+        solve_writers.write_branch_weights_and_map(complete_solve[solve], active_time_lists[solve], solve_branch__time_branch_lists[solve], branch_start_time_lists[solve], period__branch_lists[solve], state.solve.stochastic_branches, work_folder=wf)
+        solve_writers.write_first_and_last_periods(active_time_lists[solve], state.solve.timesets_used_by_solves[complete_solve[solve]], period__branch_lists[solve], work_folder=wf)
 
         #check if the upper level fixes storages
         if [complete_solve[solve]] in state.solve.contains_solves.values() and complete_solve[parent_roll[solve]] in state.solve.fix_storage_periods:  # check that the parent_roll exists and has storage fixing
@@ -225,9 +226,9 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
             storage_fix_values_exist = False
         if storage_fix_values_exist:
             state.logger.info("Nested timeline matching")
-            stochastic_solver.write_timeline_matching_map(active_time_lists[parent_roll[solve]], active_time_lists[solve], complete_solve[parent_roll[solve]], complete_solve[solve], period__branch_lists[solve])
+            stochastic_solver.write_timeline_matching_map(active_time_lists[parent_roll[solve]], active_time_lists[solve], complete_solve[parent_roll[solve]], complete_solve[solve], period__branch_lists[solve], work_folder=wf)
         else:
-            with open("solve_data/timeline_matching_map.csv", 'w') as realfile:
+            with open(wf / "solve_data/timeline_matching_map.csv", 'w') as realfile:
                 realfile.write("period,step,upper_step\n")
         #if timeline created from new step_duration, all timeseries have to be averaged or summed for the new timestep
         if previous_complete_solve != complete_solve[solve]:
@@ -245,23 +246,23 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         #if multiple storage solve levels, get the storage fix of the upper level, (not the fix of the previous roll):
         if storage_fix_values_exist:
             state.logger.info("Fetching storage parameters from the upper solve")
-            shutil.copy("solve_data/fix_storage_quantity_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_quantity.csv")
-            shutil.copy("solve_data/fix_storage_price_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_price.csv")
-            shutil.copy("solve_data/fix_storage_usage_"+ complete_solve[parent_roll[solve]]+".csv", "solve_data/fix_storage_usage.csv")
+            shutil.copy(str(wf / f"solve_data/fix_storage_quantity_{complete_solve[parent_roll[solve]]}.csv"), str(wf / "solve_data/fix_storage_quantity.csv"))
+            shutil.copy(str(wf / f"solve_data/fix_storage_price_{complete_solve[parent_roll[solve]]}.csv"), str(wf / "solve_data/fix_storage_price.csv"))
+            shutil.copy(str(wf / f"solve_data/fix_storage_usage_{complete_solve[parent_roll[solve]]}.csv"), str(wf / "solve_data/fix_storage_usage.csv"))
 
-        solve_writers.write_solve_status(first_of_nested_level, last_of_nested_level, nested=True)
+        solve_writers.write_solve_status(first_of_nested_level, last_of_nested_level, nested=True, work_folder=wf)
         last = i == len(solves) - 1
-        solve_writers.write_solve_status(first, last)
+        solve_writers.write_solve_status(first, last, work_folder=wf)
         if i == 0:
             first = False
-            solve_writers.write_empty_investment_file()
-            solve_writers.write_empty_storage_fix_file()
-            solve_writers.write_headers_for_empty_output_files('solve_data/costs_discounted.csv', 'param_costs,costs_discounted')
-            solve_writers.write_headers_for_empty_output_files('solve_data/co2.csv', 'param_co2,model_wide')
-            solve_writers.write_headers_for_empty_output_files('solve_data/period_capacity.csv', 'period')
+            solve_writers.write_empty_investment_file(work_folder=wf)
+            solve_writers.write_empty_storage_fix_file(work_folder=wf)
+            solve_writers.write_headers_for_empty_output_files(str(wf / 'solve_data/costs_discounted.csv'), 'param_costs,costs_discounted')
+            solve_writers.write_headers_for_empty_output_files(str(wf / 'solve_data/co2.csv'), 'param_co2,model_wide')
+            solve_writers.write_headers_for_empty_output_files(str(wf / 'solve_data/period_capacity.csv'), 'period')
         state.logger.info("Starting model creation")
 
-        with open("solve_data/solve_progress.csv", "a") as solve_progress:
+        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write(',,' + solve + ',' + str(round(time.perf_counter() - timer_in_solve,4)))
 
         exit_status = solver.run(complete_solve[solve])
@@ -275,9 +276,9 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
 
         #if multiple storage solve levels, save the storage fix of this level:
         if complete_solve[solve] in state.solve.fix_storage_periods:
-            shutil.copy("solve_data/fix_storage_quantity.csv","solve_data/fix_storage_quantity_"+ complete_solve[solve]+".csv")
-            shutil.copy("solve_data/fix_storage_price.csv", "solve_data/fix_storage_price_"+ complete_solve[solve]+".csv")
-            shutil.copy("solve_data/fix_storage_usage.csv","solve_data/fix_storage_usage_"+ complete_solve[solve]+".csv")
+            shutil.copy(str(wf / "solve_data/fix_storage_quantity.csv"), str(wf / f"solve_data/fix_storage_quantity_{complete_solve[solve]}.csv"))
+            shutil.copy(str(wf / "solve_data/fix_storage_price.csv"), str(wf / f"solve_data/fix_storage_price_{complete_solve[solve]}.csv"))
+            shutil.copy(str(wf / "solve_data/fix_storage_usage.csv"), str(wf / f"solve_data/fix_storage_usage_{complete_solve[solve]}.csv"))
 
     if len(state.solve.model_solve) > 1:
         message = 'Trying to run more than one model - not supported. The results of the first model are retained.'

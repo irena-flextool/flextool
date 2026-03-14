@@ -57,6 +57,9 @@ def main():
                         help='Override output location path')
     parser.add_argument('--flextool-location', default='template/flextool_location.txt',
                         help='When running in Spine Toolbox, this argument provides the location of FlexTool so outputs can be directed there (instead of work directories).')
+    parser.add_argument('--work-folder', metavar='PATH', default=None,
+                        help='Working directory for intermediate files (default: current directory). '
+                             'Enables parallel scenario execution by isolating each run.')
 
     args = parser.parse_args()
     input_db_url = args.input_db_url
@@ -64,6 +67,10 @@ def main():
     scenario_name = args.scenario_name
     DEBUG = args.debug
     output_path = Path(args.flextool_location).resolve().parent.parent
+    work_folder = Path(args.work_folder) if args.work_folder else None
+    if work_folder is not None:
+        work_folder.mkdir(parents=True, exist_ok=True)
+    wf = work_folder if work_folder is not None else Path.cwd()
 
     logging.basicConfig(
         level=logging.DEBUG if DEBUG else logging.INFO,
@@ -74,29 +81,29 @@ def main():
     timer.append(time.perf_counter())
 
     if scenario_name:
-        runner = FlexToolRunner(input_db_url, output_path, scenario_name)
+        runner = FlexToolRunner(input_db_url, output_path, scenario_name, work_folder=work_folder)
         timer.insert(0, time.perf_counter())
         print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open("solve_data/solve_progress.csv", "w") as solve_progress:
+        with open(wf / "solve_data/solve_progress.csv", "w") as solve_progress:
             solve_progress.write('scenario,' + scenario_name + '\n')
             solve_progress.write('Init time,' + str(round(timer[0] - timer[1],4)) + '\n')
         runner.write_input(input_db_url, scenario_name)
         timer.insert(0, time.perf_counter())
         print("--- Write time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open("solve_data/solve_progress.csv", "a") as solve_progress:
+        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write('Write input time,' + str(round(timer[0] - timer[1],4)) + '\n')
 
     else:
-        runner = FlexToolRunner(input_db_url, output_path)
+        runner = FlexToolRunner(input_db_url, output_path, work_folder=work_folder)
         timer.insert(0, time.perf_counter())
         print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open("solve_data/solve_progress.csv", "a") as solve_progress:
+        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write('scenario,unknown\n')
             solve_progress.write('Init time,' + str(round(timer[0] - timer[1],4)) + '\n')
         runner.write_input(input_db_url)
         timer.insert(0, time.perf_counter())
         print("--- Write time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open("solve_data/solve_progress.csv", "a") as solve_progress:
+        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write('Write all input time,' + str(round(timer[0] - timer[1],4)) + '\n')
         db_map = DatabaseMapping(input_db_url)
         scenario_name = name_from_dict(db_map.get_filter_configs()[0])
@@ -106,7 +113,7 @@ def main():
         return_code = runner.run_model()
         timer.insert(0, time.perf_counter())
         print("--- All Flextool solves time %.4s seconds ---" % (timer[0] - timer[1]))
-        with open("solve_data/solve_progress.csv", "a") as solve_progress:
+        with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write('All Flextool solves,' + str(round(timer[0] - timer[1],4)) + '\n')
     except Exception as e:
         logging.error(f"Model run failed: {str(e)}\nTraceback:\n{traceback.format_exc()}")
@@ -129,7 +136,7 @@ def main():
     
     print("\n--- Full execution time %.4s seconds ---------------------------------------" % (timer[0] - timer[-1]))
     print("--------------------------------------------------------------------------\n")
-    with open("solve_data/solve_progress.csv", "a") as solve_progress:
+    with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
         solve_progress.write('Full execution time,' + str(round(timer[0] - timer[-1],4)) + '\n')
 
     # Write scenario information to output database if provided
