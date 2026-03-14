@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 import tkinter as tk
+import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import ttk, messagebox, simpledialog
 
@@ -52,6 +53,14 @@ class MainWindow(tk.Tk):
         super().__init__()
         self.title("FlexTool")
 
+        # ── Font metrics for DPI-aware sizing ─────────────────────
+        default_font = tkfont.nametofont("TkDefaultFont")
+        self._char_width: int = default_font.measure("0")
+        self._line_height: int = default_font.metrics("linespace")
+        bold_font = default_font.copy()
+        bold_font.configure(weight="bold")
+        self._bold_font = bold_font
+
         # ── State ──────────────────────────────────────────────────
         self.current_project: str | None = None
         self.global_settings = GlobalSettings()
@@ -66,11 +75,13 @@ class MainWindow(tk.Tk):
         self._lock_check_timer_id: str | None = None
 
         # ── Window sizing ────────────────────────────────────────────
-        min_width = 1100
-        min_height = 700
+        cw = self._char_width
+        lh = self._line_height
+        min_width = cw * 110
+        min_height = lh * 35
         screen_h = self.winfo_screenheight()
         # Leave a small margin at top/bottom for taskbars
-        win_height = max(min_height, screen_h - 80)
+        win_height = max(min_height, screen_h - lh * 4)
         self.geometry(f"{min_width}x{win_height}+0+0")
         self.minsize(min_width, min_height)
 
@@ -110,10 +121,10 @@ class MainWindow(tk.Tk):
 
         # ── Row 1: Section headers ───────────────────────────────────
         row = 1
-        ttk.Label(outer, text="Input sources", font=("", 10, "bold")).grid(
+        ttk.Label(outer, text="Input sources", font=self._bold_font).grid(
             row=row, column=0, sticky="sw", pady=(10, 2)
         )
-        ttk.Label(outer, text="Auto-generate", font=("", 10, "bold")).grid(
+        ttk.Label(outer, text="Auto-generate", font=self._bold_font).grid(
             row=row, column=2, columnspan=2, sticky="sw", padx=(20, 0), pady=(10, 2)
         )
 
@@ -135,10 +146,10 @@ class MainWindow(tk.Tk):
         self.input_sources_tree.heading("name", text="Name")
         self.input_sources_tree.heading("number", text="#")
         self.input_sources_tree.heading("status", text="")
-        self.input_sources_tree.column("check", width=30, minwidth=30, stretch=False)
-        self.input_sources_tree.column("name", width=180, minwidth=100)
-        self.input_sources_tree.column("number", width=30, minwidth=30, stretch=False)
-        self.input_sources_tree.column("status", width=30, minwidth=30, stretch=False)
+        self.input_sources_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self.input_sources_tree.column("name", width=cw * 25, minwidth=cw * 12)
+        self.input_sources_tree.column("number", width=cw * 4, minwidth=cw * 3, stretch=False)
+        self.input_sources_tree.column("status", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.input_sources_tree.grid(row=0, column=0, sticky="nsew")
 
         input_scroll = ttk.Scrollbar(input_frame, orient="vertical", command=self.input_sources_tree.yview)
@@ -281,10 +292,10 @@ class MainWindow(tk.Tk):
 
         # ── Row 10: Scenario section headers ─────────────────────────
         row = 10
-        ttk.Label(outer, text="Available scenarios", font=("", 10, "bold")).grid(
+        ttk.Label(outer, text="Available scenarios", font=self._bold_font).grid(
             row=row, column=0, columnspan=2, sticky="sw", pady=(0, 2)
         )
-        ttk.Label(outer, text="Executed scenarios", font=("", 10, "bold")).grid(
+        ttk.Label(outer, text="Executed scenarios", font=self._bold_font).grid(
             row=row, column=2, columnspan=5, sticky="sw", padx=(20, 0), pady=(0, 2)
         )
 
@@ -308,9 +319,9 @@ class MainWindow(tk.Tk):
         self.available_tree.heading("check", text="")
         self.available_tree.heading("source_num", text="#")
         self.available_tree.heading("scenario_name", text="Scenario")
-        self.available_tree.column("check", width=30, minwidth=30, stretch=False)
-        self.available_tree.column("source_num", width=30, minwidth=30, stretch=False)
-        self.available_tree.column("scenario_name", width=200, minwidth=100)
+        self.available_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self.available_tree.column("source_num", width=cw * 4, minwidth=cw * 3, stretch=False)
+        self.available_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
         self.available_tree.grid(row=0, column=0, sticky="nsew")
 
         avail_scroll = ttk.Scrollbar(avail_frame, orient="vertical", command=self.available_tree.yview)
@@ -337,10 +348,10 @@ class MainWindow(tk.Tk):
         self.executed_tree.heading("source_num", text="#")
         self.executed_tree.heading("scenario_name", text="Scenario")
         self.executed_tree.heading("timestamp", text="Timestamp")
-        self.executed_tree.column("check", width=30, minwidth=30, stretch=False)
-        self.executed_tree.column("source_num", width=30, minwidth=30, stretch=False)
-        self.executed_tree.column("scenario_name", width=180, minwidth=100)
-        self.executed_tree.column("timestamp", width=130, minwidth=100)
+        self.executed_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self.executed_tree.column("source_num", width=cw * 4, minwidth=cw * 3, stretch=False)
+        self.executed_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
+        self.executed_tree.column("timestamp", width=cw * 16, minwidth=cw * 12)
         self.executed_tree.grid(row=0, column=0, sticky="nsew")
 
         exec_scroll = ttk.Scrollbar(exec_frame, orient="vertical", command=self.executed_tree.yview)

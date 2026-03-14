@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, messagebox
 
 from flextool.gui.project_utils import (
@@ -27,8 +28,13 @@ class ProjectDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
 
+        # ── Font metrics for DPI-aware sizing ──────────────────────
+        default_font = tkfont.nametofont("TkDefaultFont")
+        cw: int = default_font.measure("0")
+        lh: int = default_font.metrics("linespace")
+
         # ── Dialog size ─────────────────────────────────────────────
-        self.geometry("420x400")
+        self.geometry(f"{cw * 50}x{lh * 20}")
         self.resizable(False, False)
 
         self._rename_entry: tk.Entry | None = None

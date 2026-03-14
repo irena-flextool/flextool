@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import tkinter as tk
+import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -203,10 +204,15 @@ class PlotDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
 
+        # ── Font metrics for DPI-aware sizing ───────────────────
+        default_font = tkfont.nametofont("TkDefaultFont")
+        cw: int = default_font.measure("0")
+        lh: int = default_font.metrics("linespace")
+
         # ── Dialog size ──────────────────────────────────────────
-        self.geometry("620x520")
+        self.geometry(f"{cw * 72}x{lh * 26}")
         self.resizable(True, True)
-        self.minsize(500, 400)
+        self.minsize(cw * 58, lh * 20)
 
         self._build_widgets()
 

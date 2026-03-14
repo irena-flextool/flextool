@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 import tkinter as tk
+import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -33,8 +34,13 @@ class AddDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
 
+        # ── Font metrics for DPI-aware sizing ──────────────────────
+        default_font = tkfont.nametofont("TkDefaultFont")
+        self._cw: int = default_font.measure("0")
+        lh: int = default_font.metrics("linespace")
+
         # ── Dialog size ─────────────────────────────────────────────
-        self.geometry("480x380")
+        self.geometry(f"{self._cw * 55}x{lh * 20}")
         self.resizable(False, False)
 
         self._build_widgets()
@@ -75,7 +81,7 @@ class AddDialog(tk.Toplevel):
         self._files_label = ttk.Label(
             copy_frame,
             textvariable=self._selected_files_var,
-            wraplength=430,
+            wraplength=self._cw * 50,
             justify="left",
         )
         self._files_label.pack(fill="x", pady=(0, 4))

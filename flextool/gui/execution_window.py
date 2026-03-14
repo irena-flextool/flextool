@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, messagebox
 
 from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus
@@ -43,9 +44,16 @@ class ExecutionWindow(tk.Toplevel):
         # currently displayed job so that we only append new lines.
         self._rendered_line_count: int = 0
 
+        # ── Font metrics for DPI-aware sizing ────────────────────────
+        default_font = tkfont.nametofont("TkDefaultFont")
+        cw: int = default_font.measure("0")
+        lh: int = default_font.metrics("linespace")
+        mono_font = tkfont.nametofont("TkFixedFont")
+        self._mono_font = mono_font
+
         # ── Window sizing ────────────────────────────────────────────
-        self.geometry("900x500")
-        self.minsize(700, 400)
+        self.geometry(f"{cw * 90}x{lh * 25}")
+        self.minsize(cw * 70, lh * 20)
 
         self.columnconfigure(0, weight=0)
         self.columnconfigure(1, weight=1)
@@ -89,10 +97,10 @@ class ExecutionWindow(tk.Toplevel):
         self._job_tree.heading("scenario", text="Scenario")
         self._job_tree.heading("timestamp", text="Timestamp")
 
-        self._job_tree.column("status", width=30, minwidth=25, stretch=False)
-        self._job_tree.column("source", width=30, minwidth=25, stretch=False)
-        self._job_tree.column("scenario", width=150, minwidth=80)
-        self._job_tree.column("timestamp", width=110, minwidth=80)
+        self._job_tree.column("status", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self._job_tree.column("source", width=cw * 4, minwidth=cw * 3, stretch=False)
+        self._job_tree.column("scenario", width=cw * 20, minwidth=cw * 10, stretch=True)
+        self._job_tree.column("timestamp", width=cw * 16, minwidth=cw * 10)
 
         self._job_tree.grid(row=0, column=0, sticky="nsew")
 
@@ -112,7 +120,7 @@ class ExecutionWindow(tk.Toplevel):
             right_frame,
             state="disabled",
             wrap="none",
-            font=("Courier", 10),
+            font=self._mono_font,
         )
         self._output_text.grid(row=0, column=0, sticky="nsew")
 
