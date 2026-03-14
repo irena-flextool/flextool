@@ -38,7 +38,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.description = "Run flextool using the specified database URL. Return codes are 0: success, 1: infeasible or unbounded, -1: failure."
     parser.add_argument('input_db_url', help='Database URL to connect to (can be copied from Toolbox workflow db item')
-    parser.add_argument('output_db_url', metavar='DB_URL', help='Save information about result location to database for post-processing')
+    parser.add_argument('output_db_url', metavar='DB_URL', nargs='?', default=None, help='Save information about result location to database for post-processing')
     parser.add_argument('--settings-db-url', help='Settings for post-processing')
     parser.add_argument('--scenario-name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
     parser.add_argument('--debug', action='store_true')
