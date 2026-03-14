@@ -51,9 +51,32 @@ class ExecutionWindow(tk.Toplevel):
         mono_font = tkfont.nametofont("TkFixedFont")
         self._mono_font = mono_font
 
-        # ── Window sizing ────────────────────────────────────────────
-        self.geometry(f"{cw * 90}x{lh * 25}")
+        # ── Window sizing & positioning ────────────────────────────────
+        self._line_height = lh
         self.minsize(cw * 70, lh * 20)
+
+        # Get main window position and dimensions
+        # Note: parent is the MainWindow (tk.Tk instance)
+        # We need to call update_idletasks() on parent to get accurate geometry
+        parent.update_idletasks()
+        main_x = parent.winfo_x()
+        main_y = parent.winfo_y()
+        main_w = parent.winfo_width()
+        screen_w = parent.winfo_screenwidth()
+        screen_h = parent.winfo_screenheight()
+
+        # Account for taskbar (estimate)
+        taskbar_margin = self._line_height * 4 if hasattr(self, '_line_height') else 80
+        usable_h = screen_h - taskbar_margin
+
+        if screen_w < 1920:
+            # Small screen: full screen, overlap main window
+            self.geometry(f"{screen_w}x{usable_h}+0+0")
+        else:
+            # Large screen: right of main window, touching but not overlapping
+            exec_x = main_x + main_w
+            exec_w = max(screen_w - exec_x, 400)  # minimum 400px wide
+            self.geometry(f"{exec_w}x{usable_h}+{exec_x}+0")
 
         self.columnconfigure(0, weight=0)
         self.columnconfigure(1, weight=1)
