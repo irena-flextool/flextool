@@ -25,3 +25,4 @@ solve_data/
 flextool-venv/
 specs/
 test/expected/
+projects/

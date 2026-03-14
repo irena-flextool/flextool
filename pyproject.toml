@@ -12,8 +12,12 @@ dependencies = [
     "odfpy",
     "spinedb-api",
     "python-calamine",
-    "xlsxwriter"
+    "xlsxwriter",
+    "pyyaml"
 ]
+
+[project.scripts]
+flextool-gui = "flextool.gui.__main__:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -29,4 +33,5 @@ packages = [
     "flextool.update_flextool",
     "flextool.helpers",
     "flextool.scenario_comparison",
+    "flextool.gui",
 ]
