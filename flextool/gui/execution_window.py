@@ -40,9 +40,12 @@ class ExecutionWindow(tk.Toplevel):
 
         self._mgr = execution_mgr
         self._selected_job_id: int | None = None
-        # Track how many stdout lines we have already rendered for the
-        # currently displayed job so that we only append new lines.
-        self._rendered_line_count: int = 0
+        # Track how many stdout lines we have already displayed per job
+        # so that we only append new lines on each poll cycle.
+        self._displayed_counts: dict[int, int] = {}
+        # Guard flag to suppress <<TreeviewSelect>> events fired by
+        # programmatic selection_set inside _refresh_job_list.
+        self._refreshing_list: bool = False
 
         # ── Font metrics for DPI-aware sizing ────────────────────────
         default_font = tkfont.nametofont("TkDefaultFont")
@@ -141,11 +144,13 @@ class ExecutionWindow(tk.Toplevel):
 
         self._output_text = tk.Text(
             right_frame,
-            state="disabled",
             wrap="none",
             font=self._mono_font,
         )
         self._output_text.grid(row=0, column=0, sticky="nsew")
+        # Keep the widget editable (state='normal') so text selection and
+        # Ctrl+C work reliably on all platforms, but block keyboard input.
+        self._output_text.bind("<Key>", self._on_key_press)
 
         out_vscroll = ttk.Scrollbar(right_frame, orient="vertical", command=self._output_text.yview)
         self._output_text.configure(yscrollcommand=out_vscroll.set)
@@ -207,46 +212,60 @@ class ExecutionWindow(tk.Toplevel):
         # Remember current selection so we can restore it
         prev_selected_id = self._selected_job_id
 
-        # Clear tree
-        for item in self._job_tree.get_children():
-            self._job_tree.delete(item)
+        # Suppress <<TreeviewSelect>> events while we rebuild the tree
+        self._refreshing_list = True
+        try:
+            # Clear tree
+            for item in self._job_tree.get_children():
+                self._job_tree.delete(item)
 
-        # Repopulate
-        select_iid: str | None = None
-        for job in jobs:
-            icon = _STATUS_ICONS.get(job.status, "?")
-            ts = job.finish_timestamp if job.status in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED) else ""
-            iid = str(job.job_id)
-            self._job_tree.insert(
-                "",
-                "end",
-                iid=iid,
-                values=(icon, job.source_number, job.scenario_name, ts),
-            )
-            if job.job_id == prev_selected_id:
-                select_iid = iid
+            # Repopulate
+            select_iid: str | None = None
+            for job in jobs:
+                icon = _STATUS_ICONS.get(job.status, "?")
+                ts = job.finish_timestamp if job.status in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED) else ""
+                iid = str(job.job_id)
+                self._job_tree.insert(
+                    "",
+                    "end",
+                    iid=iid,
+                    values=(icon, job.source_number, job.scenario_name, ts),
+                )
+                if job.job_id == prev_selected_id:
+                    select_iid = iid
 
-        # Restore selection
-        if select_iid and self._job_tree.exists(select_iid):
-            self._job_tree.selection_set(select_iid)
-        elif not select_iid:
-            # Previously selected job was removed; clear output
-            self._selected_job_id = None
-            self._clear_output()
+            # Restore selection
+            if select_iid and self._job_tree.exists(select_iid):
+                self._job_tree.selection_set(select_iid)
+            elif not select_iid:
+                # Previously selected job was removed; clear output
+                self._selected_job_id = None
+                self._clear_output()
+        finally:
+            self._refreshing_list = False
 
     def _on_job_selected(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
         """Handle selection change in the job tree."""
+        # Ignore events triggered programmatically during list refresh
+        if self._refreshing_list:
+            return
+
         selection = self._job_tree.selection()
         if selection:
             try:
-                self._selected_job_id = int(selection[0])
+                new_id = int(selection[0])
             except (ValueError, IndexError):
-                self._selected_job_id = None
+                new_id = None
         else:
-            self._selected_job_id = None
+            new_id = None
 
-        # Reset rendered count so we redraw all output for the newly selected job
-        self._rendered_line_count = 0
+        if new_id == self._selected_job_id:
+            return
+
+        self._selected_job_id = new_id
+
+        # Switching to a different job: clear the text widget and reset its
+        # displayed count so all lines are re-inserted from scratch.
         self._clear_output()
         self._update_output_display()
 
@@ -254,33 +273,50 @@ class ExecutionWindow(tk.Toplevel):
     # Output display
     # ------------------------------------------------------------------
 
+    def _on_key_press(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Block keyboard input into the output text widget while still
+        allowing Ctrl+C (copy) and Ctrl+A (select all)."""
+        if event.state & 0x4 and event.keysym in ("c", "C", "a", "A"):
+            return None  # Allow the event to propagate
+        return "break"  # Suppress all other key events
+
     def _clear_output(self) -> None:
-        """Clear the output text widget."""
-        self._output_text.configure(state="normal")
+        """Clear the output text widget and reset displayed count for the
+        currently selected job."""
         self._output_text.delete("1.0", "end")
-        self._output_text.configure(state="disabled")
-        self._rendered_line_count = 0
+        if self._selected_job_id is not None:
+            self._displayed_counts[self._selected_job_id] = 0
 
     def _update_output_display(self) -> None:
-        """Append new stdout lines for the currently selected job."""
-        if self._selected_job_id is None:
+        """Append new stdout lines for the currently selected job.
+
+        Only lines that haven't been displayed yet are inserted.  If the
+        user has scrolled up to read earlier output, auto-scroll is
+        suppressed so the viewport stays put.
+        """
+        job_id = self._selected_job_id
+        if job_id is None:
             return
 
-        lines = self._mgr.get_stdout(self._selected_job_id)
+        lines = self._mgr.get_stdout(job_id)
+        already_shown = self._displayed_counts.get(job_id, 0)
         new_count = len(lines)
-        if new_count <= self._rendered_line_count:
+        if new_count <= already_shown:
             return
+
+        # Check whether the view is currently at the bottom *before*
+        # inserting new text.
+        at_bottom = self._output_text.yview()[1] >= 0.99
 
         # Append only the new lines
-        new_lines = lines[self._rendered_line_count:]
-        self._output_text.configure(state="normal")
+        new_lines = lines[already_shown:]
         for line in new_lines:
             self._output_text.insert("end", line + "\n")
-        self._output_text.configure(state="disabled")
-        self._rendered_line_count = new_count
+        self._displayed_counts[job_id] = new_count
 
-        # Auto-scroll to bottom
-        self._output_text.see("end")
+        # Auto-scroll only when the user is already at (or near) the bottom
+        if at_bottom:
+            self._output_text.see("end")
 
     # ------------------------------------------------------------------
     # Button states
