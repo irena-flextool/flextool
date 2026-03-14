@@ -388,9 +388,16 @@ class ExecutionWindow(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _on_start(self) -> None:
-        """Start executing pending jobs."""
+        """Start executing pending jobs.
+
+        After calling start(), we schedule the button-state update via
+        ``after()`` instead of calling it synchronously.  This gives the
+        scheduler thread time to start and release any initial lock
+        acquisition, avoiding a potential deadlock where the main thread
+        and the scheduler thread both contend for ``_lock``.
+        """
         self._mgr.start()
-        self._update_button_states()
+        self.after(100, self._update_button_states)
 
     def _on_kill_remove(self) -> None:
         """Kill or remove the selected job."""

@@ -160,8 +160,14 @@ class ExecutionManager:
     # ------------------------------------------------------------------
 
     def _scheduler_loop(self) -> None:
-        """Main loop of the scheduler thread."""
+        """Main loop of the scheduler thread.
+
+        The lock is only held for brief critical sections (checking state,
+        updating counters).  It is never held while spawning threads,
+        running subprocesses, sleeping, or calling callbacks.
+        """
         while True:
+            # --- brief lock: read state ---
             with self._lock:
                 if self._stopped:
                     break
@@ -176,17 +182,21 @@ class ExecutionManager:
 
                 if next_job is not None:
                     self._running_count += 1
-                    worker = threading.Thread(
-                        target=self._run_job, args=(next_job,), daemon=True
-                    )
-                    worker.start()
-                    continue  # Re-check immediately for more slots
 
                 # Check if everything is done
                 any_active = any(
                     j.status in (JobStatus.PENDING, JobStatus.RUNNING)
                     for j in self._jobs
                 )
+            # --- lock released ---
+
+            # Spawn the worker thread WITHOUT holding the lock
+            if next_job is not None:
+                worker = threading.Thread(
+                    target=self._run_job, args=(next_job,), daemon=True
+                )
+                worker.start()
+                continue  # Re-check immediately for more slots
 
             if not any_active:
                 # All jobs finished (or killed / failed)
@@ -233,13 +243,18 @@ class ExecutionManager:
                 text=True,
                 bufsize=1,
             )
+            killed = False
             with self._lock:
                 # Check if killed while we were setting up
                 if job.status == JobStatus.KILLED:
-                    proc.kill()
-                    proc.wait()
-                    return
-                job.process = proc
+                    killed = True
+                else:
+                    job.process = proc
+
+            if killed:
+                proc.kill()
+                proc.wait()
+                return
 
             # Read stdout line by line
             assert proc.stdout is not None
@@ -307,12 +322,17 @@ class ExecutionManager:
             text=True,
             bufsize=1,
         )
+        killed = False
         with self._lock:
             if job.status == JobStatus.KILLED:
-                proc.kill()
-                proc.wait()
-                return False
-            job.process = proc
+                killed = True
+            else:
+                job.process = proc
+
+        if killed:
+            proc.kill()
+            proc.wait()
+            return False
 
         assert proc.stdout is not None
         for line in proc.stdout:
