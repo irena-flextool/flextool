@@ -49,8 +49,17 @@ class MainWindow(tk.Tk):
     All widgets are created and placed via the grid geometry manager.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, initial_theme: str = "dark") -> None:
         super().__init__()
+
+        # ── Apply sv_ttk theme before any widgets are created ─────
+        import sv_ttk
+
+        if initial_theme == "light":
+            sv_ttk.set_theme("light")
+        else:
+            sv_ttk.set_theme("dark")  # "dark" and "os" both default to dark
+
         self.title("FlexTool")
 
         # ── Font metrics for DPI-aware sizing ─────────────────────
@@ -118,6 +127,17 @@ class MainWindow(tk.Tk):
             outer, text="Project menu", command=self._on_project_menu_btn
         )
         self.project_menu_btn.grid(row=row, column=1, sticky="w", padx=5)
+
+        # ── Theme radio buttons (far right of row 0) ─────────────
+        theme_frame = ttk.Frame(outer)
+        theme_frame.grid(row=row, column=4, columnspan=3, sticky="e", padx=(20, 0))
+
+        self._theme_var = tk.StringVar(value=initial_theme)
+        for text, value in [("OS theme", "os"), ("Dark", "dark"), ("Light", "light")]:
+            ttk.Radiobutton(
+                theme_frame, text=text, variable=self._theme_var,
+                value=value, command=self._on_theme_change,
+            ).pack(side="left", padx=3)
 
         # ── Row 1: Section headers ───────────────────────────────────
         row = 1
@@ -497,6 +517,15 @@ class MainWindow(tk.Tk):
         dlg = ProjectDialog(self)
         if dlg.result:
             self._switch_project(dlg.result)
+
+    # ── Theme toggle ──────────────────────────────────────────────
+
+    def _on_theme_change(self) -> None:
+        """Handle theme radio button change: save setting and inform user."""
+        new_theme = self._theme_var.get()
+        self.global_settings.theme = new_theme
+        save_global_settings(get_projects_dir(), self.global_settings)
+        messagebox.showinfo("Theme", "Restart to update theme.")
 
     # ── Project switching ────────────────────────────────────────────
 

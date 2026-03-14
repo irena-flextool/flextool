@@ -13,7 +13,8 @@ dependencies = [
     "spinedb-api",
     "python-calamine",
     "xlsxwriter",
-    "pyyaml"
+    "pyyaml",
+    "sv-ttk"
 ]
 
 [project.scripts]

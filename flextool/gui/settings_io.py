@@ -103,8 +103,13 @@ def load_global_settings(projects_dir: Path) -> GlobalSettings:
     if not isinstance(data, dict):
         return GlobalSettings()
 
+    theme = data.get("theme", "dark")
+    if theme not in ("dark", "light", "os"):
+        theme = "dark"
+
     return GlobalSettings(
         recent_project=data.get("recent_project"),
+        theme=theme,
     )
 
 

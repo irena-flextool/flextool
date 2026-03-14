@@ -37,6 +37,7 @@ class ProjectSettings:
 class GlobalSettings:
     """Global settings stored in projects/projects.yaml."""
     recent_project: str | None = None
+    theme: str = "dark"  # Valid values: "dark", "light", "os"
 
 
 @dataclass
