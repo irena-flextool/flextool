@@ -18,8 +18,9 @@ from flextool.gui.settings_io import (
     save_global_settings,
     save_project_settings,
 )
-from flextool.gui.data_models import GlobalSettings, ProjectSettings
+from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.input_sources import InputSourceManager
+from flextool.gui.scenario_lists import AvailableScenarioManager, ExecutedScenarioManager
 from flextool.gui.platform_utils import (
     open_file_in_default_app,
     open_spine_db_editor,
@@ -50,6 +51,9 @@ class MainWindow(tk.Tk):
         self.global_settings = GlobalSettings()
         self.project_settings = ProjectSettings()
         self.input_source_mgr: InputSourceManager | None = None
+        self.avail_scenario_mgr: AvailableScenarioManager | None = None
+        self.exec_scenario_mgr: ExecutedScenarioManager | None = None
+        self._pending_execution_scenarios: list[ScenarioInfo] = []
 
         # ── Window sizing ────────────────────────────────────────────
         min_width = 1100
@@ -271,6 +275,7 @@ class MainWindow(tk.Tk):
         avail_scroll.grid(row=0, column=1, sticky="ns")
 
         self.available_tree.bind("<Button-1>", self._on_available_click)
+        self.available_tree.bind("<space>", self._on_available_space)
 
         # ── Row 11: Executed scenarios Treeview ──────────────────────
         exec_frame = ttk.Frame(outer)
@@ -300,6 +305,8 @@ class MainWindow(tk.Tk):
         exec_scroll.grid(row=0, column=1, sticky="ns")
 
         self.executed_tree.bind("<Button-1>", self._on_executed_click)
+        self.executed_tree.bind("<space>", self._on_executed_space)
+        self.executed_tree.bind("<<TreeviewSelect>>", self._on_executed_selection_changed)
 
         # ── Row 12: Bottom action buttons ────────────────────────────
         row = 12
@@ -307,17 +314,22 @@ class MainWindow(tk.Tk):
         bottom_left.grid(row=row, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         self.add_to_execution_btn = ttk.Button(
-            bottom_left, text="Add selected to\nthe execution list"
+            bottom_left, text="Add selected to\nthe execution list",
+            command=self._on_add_to_execution,
         )
         self.add_to_execution_btn.grid(row=0, column=0, padx=(0, 10))
 
         move_frame = ttk.Frame(bottom_left)
         move_frame.grid(row=0, column=1, padx=10)
 
-        self.move_up_btn = ttk.Button(move_frame, text="\u25b2", width=3)
+        self.move_up_btn = ttk.Button(
+            move_frame, text="\u25b2", width=3, command=self._on_move_up
+        )
         self.move_up_btn.grid(row=0, column=1, padx=2)
 
-        self.move_down_btn = ttk.Button(move_frame, text="\u25bc", width=3)
+        self.move_down_btn = ttk.Button(
+            move_frame, text="\u25bc", width=3, command=self._on_move_down
+        )
         self.move_down_btn.grid(row=0, column=2, padx=2)
 
         self.move_label = ttk.Label(move_frame, text="Move\nselected")
@@ -327,7 +339,8 @@ class MainWindow(tk.Tk):
         bottom_right.grid(row=row, column=2, columnspan=5, sticky="e", pady=(8, 0))
 
         self.delete_results_btn = ttk.Button(
-            bottom_right, text="Delete selected\nresults irrevocably"
+            bottom_right, text="Delete selected\nresults irrevocably",
+            command=self._on_delete_results,
         )
         self.delete_results_btn.grid(row=0, column=0)
 
@@ -453,10 +466,13 @@ class MainWindow(tk.Tk):
         project_path = projects_dir / name
         self.project_settings = load_project_settings(project_path)
 
-        # Create input source manager and populate treeviews
+        # Create input source manager and scenario managers
         self.input_source_mgr = InputSourceManager(project_path, self.project_settings)
+        self.avail_scenario_mgr = AvailableScenarioManager(self.project_settings)
+        self.exec_scenario_mgr = ExecutedScenarioManager(project_path)
         self._clear_all_lists()
         self._refresh_input_sources()
+        self._refresh_executed_scenarios()
 
     def _clear_all_lists(self) -> None:
         """Clear all treeview widgets."""
@@ -474,6 +490,13 @@ class MainWindow(tk.Tk):
         if self.current_project:
             self.global_settings.recent_project = self.current_project
             save_global_settings(get_projects_dir(), self.global_settings)
+            # Persist scenario order
+            if self.avail_scenario_mgr:
+                self.project_settings.scenario_order = (
+                    self.avail_scenario_mgr.get_order()
+                )
+                project_path = get_projects_dir() / self.current_project
+                save_project_settings(project_path, self.project_settings)
         self.destroy()
 
     # ── Treeview checkbox toggle handlers ────────────────────────────
@@ -519,6 +542,7 @@ class MainWindow(tk.Tk):
             item = tree.identify_row(event.y)
             if item:
                 self._toggle_check(tree, item, "check")
+                self._update_output_status()
 
     # ── Input source management ──────────────────────────────────────
 
@@ -615,6 +639,10 @@ class MainWindow(tk.Tk):
             scenarios = self.input_source_mgr.get_all_scenarios()
         else:
             scenarios = self.input_source_mgr.get_all_scenarios(selected_sources)
+
+        # Apply persistent ordering via AvailableScenarioManager
+        if self.avail_scenario_mgr:
+            scenarios = self.avail_scenario_mgr.update_scenarios(scenarios)
 
         for scenario in scenarios:
             self.available_tree.insert(
@@ -841,3 +869,228 @@ class MainWindow(tk.Tk):
 
         save_project_settings(project_path, self.project_settings)
         self._refresh_input_sources()
+
+    # ── Space key handlers for checkbox toggling ──────────────────
+
+    def _on_available_space(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Toggle checkboxes for all selected (highlighted) items in available_tree."""
+        for item in self.available_tree.selection():
+            self._toggle_check(self.available_tree, item, "check")
+
+    def _on_executed_space(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Toggle checkboxes for all selected (highlighted) items in executed_tree."""
+        for item in self.executed_tree.selection():
+            self._toggle_check(self.executed_tree, item, "check")
+        self._update_output_status()
+
+    # ── Executed scenarios management ────────────────────────────
+
+    def _refresh_executed_scenarios(self) -> None:
+        """Scan for executed scenario results and repopulate the executed_tree."""
+        # Clear executed scenarios tree
+        for item in self.executed_tree.get_children():
+            self.executed_tree.delete(item)
+
+        if not self.exec_scenario_mgr:
+            return
+
+        executed = self.exec_scenario_mgr.scan_executed()
+
+        # Try to map source numbers from current input sources
+        source_number_map: dict[str, int] = {}
+        if self.input_source_mgr:
+            for scenario_info in self.input_source_mgr.get_all_scenarios():
+                source_number_map[scenario_info.name] = scenario_info.source_number
+
+        for info in executed:
+            src_num = source_number_map.get(info.name, info.source_number)
+            self.executed_tree.insert(
+                "",
+                "end",
+                values=(CHECK_OFF, src_num, info.name, info.timestamp),
+            )
+
+        self._update_output_status()
+
+    def _on_executed_selection_changed(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Update output status indicators when executed_tree selection changes."""
+        self._update_output_status()
+
+    # ── Move up/down handlers ────────────────────────────────────
+
+    def _on_move_up(self) -> None:
+        """Move the selected (highlighted) items in available_tree up by one."""
+        if not self.avail_scenario_mgr:
+            return
+
+        selected_items = self.available_tree.selection()
+        if not selected_items:
+            return
+
+        children = self.available_tree.get_children()
+        indices = [children.index(item) for item in selected_items]
+
+        new_indices = self.avail_scenario_mgr.move_up(indices)
+        self._repopulate_available_tree(new_indices)
+        self._save_scenario_order()
+
+    def _on_move_down(self) -> None:
+        """Move the selected (highlighted) items in available_tree down by one."""
+        if not self.avail_scenario_mgr:
+            return
+
+        selected_items = self.available_tree.selection()
+        if not selected_items:
+            return
+
+        children = self.available_tree.get_children()
+        indices = [children.index(item) for item in selected_items]
+
+        new_indices = self.avail_scenario_mgr.move_down(indices)
+        self._repopulate_available_tree(new_indices)
+        self._save_scenario_order()
+
+    def _repopulate_available_tree(self, select_indices: list[int] | None = None) -> None:
+        """Repopulate available_tree from the manager's scenario list and re-select items."""
+        if not self.avail_scenario_mgr:
+            return
+
+        # Remember which scenario keys had checkboxes checked (by source_num|name)
+        checked_keys: set[str] = set()
+        children = self.available_tree.get_children()
+        for item in children:
+            values = self.available_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                key = f"{values[1]}|{values[2]}"
+                checked_keys.add(key)
+
+        # Clear and repopulate
+        for item in self.available_tree.get_children():
+            self.available_tree.delete(item)
+
+        scenarios = self.avail_scenario_mgr.scenarios
+        for scenario in scenarios:
+            key = f"{scenario.source_number}|{scenario.name}"
+            check_char = CHECK_ON if key in checked_keys else CHECK_OFF
+            self.available_tree.insert(
+                "",
+                "end",
+                values=(check_char, scenario.source_number, scenario.name),
+            )
+
+        # Re-select items at new positions
+        if select_indices:
+            new_children = self.available_tree.get_children()
+            for idx in select_indices:
+                if 0 <= idx < len(new_children):
+                    self.available_tree.selection_add(new_children[idx])
+
+    def _save_scenario_order(self) -> None:
+        """Persist the current scenario order to project settings."""
+        if not self.avail_scenario_mgr or not self.current_project:
+            return
+        self.project_settings.scenario_order = self.avail_scenario_mgr.get_order()
+        project_path = get_projects_dir() / self.current_project
+        save_project_settings(project_path, self.project_settings)
+
+    # ── Add to execution list handler ────────────────────────────
+
+    def _on_add_to_execution(self) -> None:
+        """Add checked scenarios from available_tree to the pending execution list."""
+        if not self.avail_scenario_mgr:
+            return
+
+        checked = self.avail_scenario_mgr.get_checked_scenarios(self.available_tree)
+        if not checked:
+            logger.info("No scenarios checked for execution")
+            return
+
+        self._pending_execution_scenarios = checked
+        names = [s.name for s in checked]
+        logger.info("Scenarios queued for execution: %s", names)
+
+    # ── Delete results handler ───────────────────────────────────
+
+    def _on_delete_results(self) -> None:
+        """Delete output files for checked scenarios in executed_tree."""
+        if not self.exec_scenario_mgr or not self.current_project:
+            return
+
+        # Gather checked scenario names from the executed tree
+        checked_names: list[str] = []
+        for item in self.executed_tree.get_children():
+            values = self.executed_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                checked_names.append(values[2])  # scenario_name column
+
+        if not checked_names:
+            return
+
+        names_str = "\n  ".join(checked_names)
+        answer = messagebox.askyesno(
+            "Delete results",
+            f"Are you sure you want to permanently delete results for "
+            f"the selected scenarios?\n\n  {names_str}\n\n"
+            f"This will remove all output files "
+            f"(parquet, plots, Excel, CSV).",
+            icon="warning",
+        )
+        if not answer:
+            return
+
+        self.exec_scenario_mgr.delete_results(checked_names)
+        self._refresh_executed_scenarios()
+
+    # ── Output status indicator updates ──────────────────────────
+
+    def _update_output_status(self) -> None:
+        """Update the output status labels based on checked executed scenarios."""
+        if not self.exec_scenario_mgr:
+            self._reset_output_status()
+            return
+
+        # Gather checked scenario names from the executed tree
+        checked_names: list[str] = []
+        for item in self.executed_tree.get_children():
+            values = self.executed_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                checked_names.append(values[2])  # scenario_name column
+
+        if not checked_names:
+            self._reset_output_status()
+            return
+
+        # Check per-scenario outputs
+        outputs = self.exec_scenario_mgr.check_outputs(checked_names)
+
+        # Aggregate: all checked scenarios have the output?
+        all_have_plots = all(outputs[n]["has_plots"] for n in checked_names)
+        all_have_excel = all(outputs[n]["has_excel"] for n in checked_names)
+        all_have_csvs = all(outputs[n]["has_csvs"] for n in checked_names)
+
+        # Check comparison outputs
+        comp = self.exec_scenario_mgr.check_comparison_outputs(checked_names)
+
+        status_map = {
+            "scen_plots": ("Plot scenarios", all_have_plots),
+            "scen_excel": ("Scenarios to Excel", all_have_excel),
+            "scen_csvs": ("Scenarios to csvs", all_have_csvs),
+            "comp_plots": ("Comparison plots", comp["has_comp_plots"]),
+            "comp_excel": ("Comparison to Excel", comp["has_comp_excel"]),
+        }
+
+        for key, (full_name, has_output) in status_map.items():
+            indicator = STATUS_OK if has_output else STATUS_ERR
+            self.output_status_labels[key].configure(text=f"{full_name} {indicator}")
+
+    def _reset_output_status(self) -> None:
+        """Reset all output status labels to the default (no output) state."""
+        default_names = {
+            "scen_plots": "Plot scenarios",
+            "scen_excel": "Scenarios to Excel",
+            "scen_csvs": "Scenarios to csvs",
+            "comp_plots": "Comparison plots",
+            "comp_excel": "Comparison to Excel",
+        }
+        for key, full_name in default_names.items():
+            self.output_status_labels[key].configure(text=f"{full_name} {STATUS_ERR}")
