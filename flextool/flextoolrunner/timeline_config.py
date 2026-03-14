@@ -281,13 +281,25 @@ class TimelineConfig:
                     solve_config.solve_period_years_represented[solve].append([period, 1.0])
 
     def create_averaged_timeseries(
-        self, solve: str, solve_config: SolveConfig, logger: logging.Logger
+        self, solve: str, solve_config: SolveConfig, logger: logging.Logger,
+        work_folder: "Path | None" = None,
     ) -> None:
         """Average or sum timeseries data when step durations have been changed.
 
         If no timeset in the solve uses new_step_durations, simply copies files.
         Otherwise re-aggregates each timeseries file to match the new step size.
+
+        Args:
+            solve: Name of the current solve.
+            solve_config: Solve configuration.
+            logger: Logger instance.
+            work_folder: Optional working directory.  When provided, all
+                ``input/`` and ``solve_data/`` paths are resolved relative to
+                this folder instead of the current working directory.
         """
+        from pathlib import Path
+
+        wf = Path(work_folder) if work_folder is not None else Path.cwd()
         timeseries_map: dict[str, str] = {
             'pt_node_inflow.csv': "sum",
             'pt_commodity.csv': "average",
@@ -312,7 +324,7 @@ class TimelineConfig:
                 create = True
         if not create:
             for timeseries in timeseries_map:
-                shutil.copy('input/' + timeseries, 'solve_data/' + timeseries)
+                shutil.copy(str(wf / 'input' / timeseries), str(wf / 'solve_data' / timeseries))
         else:
             timelines_list: list[str] = []
             for period, timeset in solve_config.timesets_used_by_solves[solve]:
@@ -333,9 +345,9 @@ class TimelineConfig:
                 for timeline_row in new_timeline:
                     timeline_duration_lookup[timeline_row[0]] = int(float(timeline_row[1]))
             for timeseries in timeseries_map:
-                with open('input/' + timeseries, 'r') as blk:
+                with open(str(wf / 'input' / timeseries), 'r') as blk:
                     filereader = csv.reader(blk, delimiter=',')
-                    with open('solve_data/' + timeseries, 'w', newline='') as solve_file:
+                    with open(str(wf / 'solve_data' / timeseries), 'w', newline='') as solve_file:
                         filewriter = csv.writer(solve_file, delimiter=',')
                         headers = next(filereader)
                         filewriter.writerow(headers)
@@ -399,7 +411,7 @@ class TimelineConfig:
                                 break
             # Constrain inflow to a longer step size
             node__inflow: list[list[str]] = []
-            with open('input/p_node.csv', 'r') as blk:
+            with open(str(wf / 'input/p_node.csv'), 'r') as blk:
                 filereader = csv.reader(blk, delimiter=',')
                 _read_header = next(filereader)
                 while True:
@@ -409,7 +421,7 @@ class TimelineConfig:
                             node__inflow.append([datain[0], datain[2]])
                     except StopIteration:
                         break
-            with open('solve_data/pt_node_inflow.csv', 'a', newline='') as blk:
+            with open(str(wf / 'solve_data/pt_node_inflow.csv'), 'a', newline='') as blk:
                 filewriter = csv.writer(blk, delimiter=',')
                 for timeline in timelines_list:
                     new_timeline = self.timelines[timeline]
@@ -601,16 +613,27 @@ def make_timeset_timeline(steplist: list, start: str, length: float) -> list:
 
 
 def separate_period_and_timeseries_data(
-    timelines: dict, solve__period__timeset: dict
+    timelines: dict, solve__period__timeset: dict, work_folder: "Path | None" = None
 ) -> None:
     """Separate period data from timeseries data in pdt_*.csv input files.
 
     Writes pd_*.csv (period rows) and pt_*.csv (timeseries rows) into input/.
+
+    Args:
+        timelines: Dict of timeline data.
+        solve__period__timeset: Dict mapping solves to period/timeset pairs.
+        work_folder: Optional working directory.  When provided, all
+            ``input/`` paths are resolved relative to this folder instead of
+            the current working directory.
     """
+    from pathlib import Path
+
+    wf = Path(work_folder) if work_folder is not None else Path.cwd()
+
     inputfiles = ['pdt_commodity.csv', 'pdt_group.csv']
     for inputfile in inputfiles:
-        output_period = f'input/pd_{inputfile[4:]}'
-        output_timeseries = f'input/pt_{inputfile[4:]}'
+        output_period = str(wf / f'input/pd_{inputfile[4:]}')
+        output_timeseries = str(wf / f'input/pt_{inputfile[4:]}')
         timesteps: list[str] = []
         for timeline in list(timelines.values()):
             for step in timeline:
@@ -624,7 +647,7 @@ def separate_period_and_timeseries_data(
             period_writer = csv.writer(blk_p, delimiter=',')
             with open(output_timeseries, 'w', newline='') as blk_t:
                 timeseries_writer = csv.writer(blk_t, delimiter=',')
-                with open(f'input/{inputfile}', 'r') as blk:
+                with open(str(wf / f'input/{inputfile}'), 'r') as blk:
                     filereader = csv.reader(blk, delimiter=',')
                     headers = next(filereader)
                     timeseries_writer.writerow(headers)

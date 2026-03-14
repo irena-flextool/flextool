@@ -160,7 +160,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
             'setup2,total_obj_cost2,balance2,reserves2,rest2,constraints2,r_solution,w_raw,w_capacity,glpsol_output,\n')
     timer = timer + timing
 
-    separate_period_and_timeseries_data(state.timeline.timelines, state.solve.timesets_used_by_solves)
+    separate_period_and_timeseries_data(state.timeline.timelines, state.solve.timesets_used_by_solves, work_folder=wf)
 
     first = True
     previous_complete_solve = None
@@ -233,7 +233,7 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         #if timeline created from new step_duration, all timeseries have to be averaged or summed for the new timestep
         if previous_complete_solve != complete_solve[solve]:
             state.logger.info("Aggregating timeline and parameters for the new step size")
-            state.timeline.create_averaged_timeseries(complete_solve[solve], state.solve, state.logger)
+            state.timeline.create_averaged_timeseries(complete_solve[solve], state.solve, state.logger, work_folder=wf)
         previous_complete_solve = complete_solve[solve]
         if solve in state.solve.first_of_complete_solve:
             first_of_nested_level = True

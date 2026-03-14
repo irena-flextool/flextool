@@ -304,6 +304,10 @@ class ExecutionManager:
         assert job.xlsx_path is not None
         target_db_url = job.input_db_url  # already points to intermediate/
 
+        # Ensure the intermediate/ directory exists
+        intermediate_dir = self.project_path / "intermediate"
+        intermediate_dir.mkdir(parents=True, exist_ok=True)
+
         cmd = [
             sys.executable,
             "-m",

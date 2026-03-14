@@ -1,7 +1,43 @@
 import argparse
 import os
+from pathlib import Path
 from flextool.process_inputs.read_tabular_with_specification import TabularReader
 from flextool.process_inputs.write_to_input_db import write_to_flextool_input_db
+
+
+def _ensure_target_db_exists(target_db_url: str) -> None:
+    """Initialize the target database from the FlexTool template if it does not exist.
+
+    The ``write_to_flextool_input_db`` function opens the database with
+    ``create=False`` and expects a valid FlexTool schema (including a
+    *version* parameter).  When the caller asks us to write into a brand-new
+    sqlite file (e.g. during xlsx-to-sqlite conversion) the file won't exist
+    yet, so we must create and initialise it first.
+    """
+    if not target_db_url.startswith("sqlite:///"):
+        return  # Only handle local sqlite files
+
+    db_path = target_db_url.replace("sqlite:///", "", 1)
+    if os.path.exists(db_path):
+        return  # Already exists -- nothing to do
+
+    # Make sure the parent directory exists
+    parent = Path(db_path).parent
+    parent.mkdir(parents=True, exist_ok=True)
+
+    # Locate the FlexTool master template
+    flextool_root = Path(__file__).resolve().parent.parent.parent
+    json_template = flextool_root / "version" / "flextool_template_master.json"
+    if not json_template.exists():
+        raise FileNotFoundError(
+            f"FlexTool template not found at {json_template}. "
+            "Cannot initialize the target database."
+        )
+
+    from flextool.update_flextool.initialize_database import initialize_database
+
+    print(f"Target database does not exist. Initializing: {db_path}")
+    initialize_database(str(json_template), db_path)
 
 
 def main():
@@ -14,6 +50,9 @@ def main():
         input_group.add_argument('--csv-directory-path', help= "Input data as csv files in FlexTool format.")
 
         args = parser.parse_args()
+
+        # Initialize the target database if it doesn't exist yet
+        _ensure_target_db_exists(args.target_db_url)
 
         # Get the path to import_excel_input.json relative to this script
         script_dir = os.path.dirname(os.path.abspath(__file__))
