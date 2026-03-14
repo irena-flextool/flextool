@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+from pathlib import Path
 
 import matplotlib
 from spinedb_api import DatabaseMapping, from_database, Array
@@ -11,6 +13,7 @@ from spinedb_api.filters.alternative_filter import alternative_filter_config
 from spinedb_api.filters.tools import append_filter_config
 
 from flextool.scenario_comparison import orchestrator
+from flextool.scenario_comparison.db_reader import build_scenario_folders_from_dir
 
 
 def main() -> None:
@@ -18,8 +21,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description='Read and combine scenario results from multiple folders based on database information')
     parser.add_argument(
-        'db_url',
+        'db_url', nargs='?', default=None,
         help='Database URL containing scenario information (e.g., sqlite:///scenarios.db)')
+    parser.add_argument(
+        '--parquet-base-dir', default=None,
+        help='Base directory containing per-scenario parquet subdirectories '
+             '(alternative to db_url; requires --alternatives)')
     parser.add_argument(
         '--parquet-subdir',
         default='output_parquet',
@@ -70,6 +77,14 @@ def main() -> None:
 
     args = parser.parse_args()
     db_url = args.db_url
+    parquet_base_dir = args.parquet_base_dir
+
+    # Validate: need at least one data source
+    if db_url is None and parquet_base_dir is None:
+        parser.error('Either db_url or --parquet-base-dir must be provided')
+    # Validate: --parquet-base-dir requires --alternatives
+    if parquet_base_dir is not None and not args.alternatives:
+        parser.error('--parquet-base-dir requires --alternatives to specify scenario names')
 
     # Resolve parameters: CLI args > settings DB > hardcoded defaults
     output_config_path = args.output_config_path
@@ -139,9 +154,25 @@ def main() -> None:
     if plot_file_format is None:
         plot_file_format = 'png'
 
-    # Apply alternative filters to db_url
+    # Build scenario-to-folder mapping from either --parquet-base-dir or db_url
     alternatives = args.alternatives
-    if alternatives:
+    pre_built_folders: dict[str, str] | None = None
+    parquet_subdir = args.parquet_subdir
+
+    if parquet_base_dir is not None:
+        # Direct parquet directory mode: skip database, build mapping from filesystem
+        pre_built_folders = build_scenario_folders_from_dir(
+            Path(parquet_base_dir), alternatives
+        )
+        if not pre_built_folders:
+            print("Error: no valid scenario directories found under "
+                  f"{parquet_base_dir}", file=sys.stderr)
+            sys.exit(1)
+        # With --parquet-base-dir the parquets sit directly in base_dir/scenario/,
+        # so the extra subdirectory level is not needed.
+        parquet_subdir = ''
+    elif alternatives and db_url is not None:
+        # Database mode with alternative filters
         alternative_filter = alternative_filter_config(alternatives)
         db_url = append_filter_config(db_url, alternative_filter)
 
@@ -151,7 +182,7 @@ def main() -> None:
 
     orchestrator.run(
         db_url=db_url,
-        parquet_subdir=args.parquet_subdir,
+        parquet_subdir=parquet_subdir,
         plot_dir=args.plot_dir,
         output_config_path=output_config_path,
         active_configs=active_configs,
@@ -163,6 +194,7 @@ def main() -> None:
         dispatch_plots=do_dispatch,
         basic_plots=do_basic,
         plot_file_format=plot_file_format,
+        scenario_folders=pre_built_folders,
     )
 
 

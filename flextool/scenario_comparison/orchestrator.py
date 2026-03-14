@@ -21,7 +21,7 @@ from flextool.plot_outputs.plot_functions import plot_dict_of_dataframes
 
 
 def run(
-    db_url: str,
+    db_url: str | None,
     parquet_subdir: str,
     plot_dir: str,
     output_config_path: str,
@@ -34,17 +34,22 @@ def run(
     dispatch_plots: bool,
     basic_plots: bool,
     plot_file_format: str = 'png',
+    scenario_folders: dict[str, str] | None = None,
 ) -> None:
     """Run the full scenario-comparison pipeline.
 
     Takes already-resolved parameters (CLI > settings DB > defaults)
     and orchestrates: load data → build config → generate plots → write Excel.
+
+    When *scenario_folders* is provided the database is not queried and
+    *db_url* may be ``None``.
     """
     with open(output_config_path, 'r') as f:
         settings = yaml.safe_load(f)
 
     scenario_folders, results = get_scenario_results(
-        db_url=db_url, parquet_subdir=parquet_subdir
+        db_url=db_url, parquet_subdir=parquet_subdir,
+        scenario_folders=scenario_folders,
     )
     combined_dfs = results.to_dict()
 

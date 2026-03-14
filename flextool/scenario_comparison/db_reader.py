@@ -144,26 +144,72 @@ def combine_parquet_files(
     return combined_dfs
 
 
+def build_scenario_folders_from_dir(
+    base_dir: Path,
+    scenario_names: list[str],
+) -> dict[str, str]:
+    """Build scenario-to-folder mapping from a directory of per-scenario parquet subdirectories.
+
+    The returned mapping has the same format as :func:`read_scenario_folders`.
+    Each scenario maps to ``str(base_dir)`` so that the existing
+    ``collect_parquet_files`` / ``combine_dispatch_mappings`` helpers resolve
+    the final parquet directory as ``base_dir / scenario_name`` (when called
+    with ``output_subdir=""``).
+
+    Parameters
+    ----------
+    base_dir : Path
+        Root directory that contains one subdirectory per scenario, each
+        holding ``*.parquet`` files directly.
+    scenario_names : list[str]
+        Scenario (alternative) names whose subdirectories should be included.
+
+    Returns
+    -------
+    dict[str, str]
+        ``{"scenario_name": str(base_dir), ...}`` for every requested scenario
+        whose subdirectory exists under *base_dir*.
+    """
+    base_dir = Path(base_dir)
+    scenario_folders: dict[str, str] = {}
+    for name in scenario_names:
+        scenario_dir = base_dir / name
+        if not scenario_dir.is_dir():
+            print(f"Warning: expected scenario directory {scenario_dir} does not exist – skipping")
+            continue
+        scenario_folders[name] = str(base_dir)
+    return scenario_folders
+
+
 def get_scenario_results(
-    db_url: str,
+    db_url: str | None = None,
     parquet_subdir: str = 'output_parquet',
+    scenario_folders: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], TimeSeriesResults]:
     """Load and combine all scenario parquet files into TimeSeriesResults.
 
     Parameters
     ----------
-    db_url : str
-        Database URL containing scenario information
+    db_url : str, optional
+        Database URL containing scenario information.  Ignored when
+        *scenario_folders* is supplied.
     parquet_subdir : str
         Subdirectory within each scenario folder containing parquet files
+    scenario_folders : dict[str, str], optional
+        Pre-built scenario-name → folder-path mapping (e.g. from
+        :func:`build_scenario_folders_from_dir`).  When provided the
+        database is not queried.
 
     Returns
     -------
     tuple[dict[str, str], TimeSeriesResults]
         (scenario_folders, results) — folder mapping and combined time-series data
     """
-    print(f"Reading scenario information from {db_url}...")
-    scenario_folders = read_scenario_folders(db_url)
+    if scenario_folders is None:
+        if db_url is None:
+            raise ValueError("Either db_url or scenario_folders must be provided")
+        print(f"Reading scenario information from {db_url}...")
+        scenario_folders = read_scenario_folders(db_url)
     print(f"Found {len(scenario_folders)} scenarios: {list(scenario_folders.keys())}")
 
     print(f"\nCollecting parquet files from {parquet_subdir} subdirectories...")
