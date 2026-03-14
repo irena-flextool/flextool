@@ -94,8 +94,30 @@ class _PlotSection:
         )
 
         row = 4
-        self._cb_frame = ttk.Frame(self.frame)
-        self._cb_frame.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        # Scrollable container for config checkboxes
+        self._cb_outer = ttk.Frame(self.frame)
+        self._cb_outer.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+
+        self._cb_canvas = tk.Canvas(self._cb_outer, highlightthickness=0)
+        self._cb_scrollbar = ttk.Scrollbar(
+            self._cb_outer, orient="vertical", command=self._cb_canvas.yview,
+        )
+        self._cb_frame = ttk.Frame(self._cb_canvas)
+
+        self._cb_frame.bind(
+            "<Configure>",
+            lambda e: self._cb_canvas.configure(scrollregion=self._cb_canvas.bbox("all")),
+        )
+        self._cb_canvas_window = self._cb_canvas.create_window(
+            (0, 0), window=self._cb_frame, anchor="nw",
+        )
+        self._cb_canvas.configure(yscrollcommand=self._cb_scrollbar.set)
+
+        self._cb_canvas.pack(side="left", fill="both", expand=True)
+        # Scrollbar is packed only when needed (see _populate_checkboxes)
+
+        # Line height for sizing the canvas
+        self._lh = tkfont.nametofont("TkDefaultFont").metrics("linespace")
 
         self._config_vars: dict[str, tk.BooleanVar] = {}
         self._populate_checkboxes()
@@ -127,6 +149,8 @@ class _PlotSection:
         config_names = parse_plot_configs(self._config_path)
         if not config_names:
             ttk.Label(self._cb_frame, text="(no configs found)").pack(anchor="w")
+            self._cb_canvas.configure(height=self._lh)
+            self._cb_scrollbar.pack_forget()
             return
 
         saved_active = self._settings.active_configs
@@ -147,6 +171,51 @@ class _PlotSection:
             self._config_vars[name] = var
             cb = ttk.Checkbutton(self._cb_frame, text=name, variable=var)
             cb.pack(anchor="w")
+
+        # Set max visible height (up to 10 items) and show/hide scrollbar
+        max_visible = 10
+        visible_count = min(len(config_names), max_visible)
+        canvas_height = visible_count * self._lh
+        self._cb_canvas.configure(height=canvas_height)
+
+        if len(config_names) > max_visible:
+            self._cb_scrollbar.pack(side="right", fill="y")
+            self._bind_mousewheel(self._cb_canvas)
+        else:
+            self._cb_scrollbar.pack_forget()
+            self._unbind_mousewheel(self._cb_canvas)
+
+    def _bind_mousewheel(self, canvas: tk.Canvas) -> None:
+        """Bind mouse wheel events for scrolling the config checkbox canvas."""
+        def _on_mousewheel(event: tk.Event) -> None:  # type: ignore[type-arg]
+            canvas.yview_scroll(-1 * (event.delta // 120 or (1 if event.num == 4 else -1)), "units")
+
+        # Linux uses Button-4/5, Windows/Mac use <MouseWheel>
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        canvas.bind("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
+        canvas.bind("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
+        # Also bind on the inner frame so scrolling works when hovering over checkbuttons
+        self._cb_frame.bind("<MouseWheel>", _on_mousewheel)
+        self._cb_frame.bind("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
+        self._cb_frame.bind("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
+        # Bind on individual children as well
+        for child in self._cb_frame.winfo_children():
+            child.bind("<MouseWheel>", _on_mousewheel)
+            child.bind("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
+            child.bind("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
+
+    def _unbind_mousewheel(self, canvas: tk.Canvas) -> None:
+        """Remove mouse wheel bindings from the config checkbox canvas."""
+        canvas.unbind("<MouseWheel>")
+        canvas.unbind("<Button-4>")
+        canvas.unbind("<Button-5>")
+        self._cb_frame.unbind("<MouseWheel>")
+        self._cb_frame.unbind("<Button-4>")
+        self._cb_frame.unbind("<Button-5>")
+        for child in self._cb_frame.winfo_children():
+            child.unbind("<MouseWheel>")
+            child.unbind("<Button-4>")
+            child.unbind("<Button-5>")
 
     def _on_change_config(self) -> None:
         """Open a file chooser to select a different YAML config file."""

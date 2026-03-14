@@ -70,6 +70,11 @@ class MainWindow(tk.Tk):
         bold_font.configure(weight="bold")
         self._bold_font = bold_font
 
+        # ── Treeview row height (global) ──────────────────────────
+        style = ttk.Style()
+        row_height = self._line_height + 6
+        style.configure("Treeview", rowheight=row_height)
+
         # ── State ──────────────────────────────────────────────────
         self.current_project: str | None = None
         self.global_settings = GlobalSettings()
