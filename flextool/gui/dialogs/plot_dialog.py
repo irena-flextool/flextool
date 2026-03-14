@@ -4,9 +4,10 @@ import logging
 import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from flextool.gui.config_parser import parse_plot_configs
+from flextool.gui.dialogs.file_picker import FilePickerDialog
 from flextool.gui.data_models import PlotSettings, ProjectSettings
 from flextool.gui.project_utils import get_projects_dir
 from flextool.gui.settings_io import save_project_settings
@@ -224,19 +225,32 @@ class _PlotSection:
         if not initial_dir.is_dir():
             initial_dir = root
 
-        filepath = filedialog.askopenfilename(
-            parent=self.frame,
+        # Determine dialog size from the top-level window
+        try:
+            toplevel = self.frame.winfo_toplevel()
+            main_window_width = toplevel.winfo_width()
+            screen_height = toplevel.winfo_screenheight()
+        except Exception:
+            main_window_width = 700
+            screen_height = 800
+
+        picker = FilePickerDialog(
+            self.frame,
             title="Select plot config file",
             initialdir=str(initial_dir),
             filetypes=[
                 ("YAML files", "*.yaml *.yml"),
-                ("All files", "*.*"),
+                ("All files", "*"),
             ],
+            multiple=False,
+            width=main_window_width,
+            height=int(screen_height * 0.75),
         )
+        filepath = picker.result
         if not filepath:
             return
 
-        new_path = Path(filepath)
+        new_path = Path(filepath) if not isinstance(filepath, Path) else filepath
         if not new_path.is_file():
             messagebox.showerror(
                 "Invalid file",

@@ -5,8 +5,9 @@ import shutil
 import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
+from flextool.gui.dialogs.file_picker import FilePickerDialog
 from flextool.gui.project_utils import get_projects_dir
 
 logger = logging.getLogger(__name__)
@@ -154,20 +155,33 @@ class AddDialog(tk.Toplevel):
         if not initial_dir.is_dir():
             initial_dir = Path.home()
 
-        filepaths = filedialog.askopenfilenames(
-            parent=self,
+        # Determine dialog size from the main window
+        try:
+            root = self.winfo_toplevel()
+            main_window_width = root.winfo_width()
+            screen_height = root.winfo_screenheight()
+        except Exception:
+            main_window_width = 700
+            screen_height = 800
+
+        picker = FilePickerDialog(
+            self,
             title="Select input source files",
             initialdir=str(initial_dir),
             filetypes=[
                 ("FlexTool inputs", "*.xlsx *.ods *.sqlite"),
                 ("Excel files", "*.xlsx *.ods"),
                 ("SQLite databases", "*.sqlite"),
-                ("All files", "*.*"),
+                ("All files", "*"),
             ],
+            multiple=True,
+            width=main_window_width,
+            height=int(screen_height * 0.75),
         )
+        filepaths = picker.result
         if filepaths:
-            self._selected_file_paths = list(filepaths)
-            names = [Path(fp).name for fp in filepaths]
+            self._selected_file_paths = [str(fp) for fp in filepaths]
+            names = [fp.name for fp in filepaths]
             self._selected_files_var.set(", ".join(names))
         else:
             self._selected_file_paths = []
