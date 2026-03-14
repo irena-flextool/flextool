@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 import subprocess
@@ -79,6 +80,9 @@ class ExecutionManager:
         self._on_all_finished = on_all_finished
         self._scheduler_thread: threading.Thread | None = None
         self._comparison_scenarios: list[str] = []
+
+        # Register cleanup for when the Python process exits
+        atexit.register(self.cleanup)
 
     # ------------------------------------------------------------------
     # max_workers property
@@ -508,6 +512,24 @@ class ExecutionManager:
                     job.status = JobStatus.KILLED
                 elif job.status == JobStatus.PENDING:
                     job.status = JobStatus.KILLED
+
+    def cleanup(self) -> None:
+        """Kill all running subprocesses. Called on exit.
+
+        This method is registered with ``atexit`` so it runs when Python
+        exits normally (``sys.exit``, end of script).  It is also safe to
+        call explicitly from signal handlers or window-close callbacks --
+        the method is idempotent.
+        """
+        with self._lock:
+            self._stopped = True
+            for job in self._jobs:
+                if job.status == JobStatus.RUNNING and job.process:
+                    try:
+                        job.process.kill()
+                        job.process.wait(timeout=5)
+                    except Exception:
+                        pass
 
     def kill_job(self, job_id: int) -> None:
         """Kill a specific running job."""

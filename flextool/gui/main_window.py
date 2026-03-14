@@ -615,23 +615,28 @@ class MainWindow(tk.Tk):
             )
             if not result:
                 return
-            try:
-                self.execution_mgr.kill_all()
-            except Exception:
-                logger.exception("Error killing execution jobs during close")
+
+        # Kill all running subprocesses (cleanup is idempotent)
+        try:
+            if self.execution_mgr is not None:
+                self.execution_mgr.cleanup()
+        except Exception:
+            logger.exception("Error killing execution jobs during close")
 
         # Cancel periodic lock check timer
-        if self._lock_check_timer_id is not None:
-            self.after_cancel(self._lock_check_timer_id)
-            self._lock_check_timer_id = None
+        try:
+            if self._lock_check_timer_id is not None:
+                self.after_cancel(self._lock_check_timer_id)
+                self._lock_check_timer_id = None
+        except Exception:
+            pass
 
         # Close execution window if open
-        if self.execution_window is not None:
-            try:
-                if self.execution_window.winfo_exists():
-                    self.execution_window.destroy()
-            except Exception:
-                pass
+        try:
+            if self.execution_window is not None and self.execution_window.winfo_exists():
+                self.execution_window.destroy()
+        except Exception:
+            pass
         self.execution_window = None
         self.execution_mgr = None
 
@@ -659,7 +664,10 @@ class MainWindow(tk.Tk):
             except Exception:
                 logger.exception("Error saving settings during close")
 
-        self.destroy()
+        try:
+            self.destroy()
+        except Exception:
+            pass
 
     # ── Periodic lock file checking ───────────────────────────────────
 

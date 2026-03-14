@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import signal
 import sys
 
 
@@ -24,6 +25,31 @@ def main() -> None:
     from flextool.gui.main_window import MainWindow
 
     root = MainWindow(initial_theme=settings.theme)
+
+    # Set up signal handlers for clean shutdown (SIGINT = Ctrl+C, SIGTERM = kill)
+    def _signal_handler(signum: int, frame: object) -> None:
+        """Handle SIGINT/SIGTERM by cleaning up and exiting."""
+        try:
+            if hasattr(root, "execution_mgr") and root.execution_mgr:
+                root.execution_mgr.cleanup()
+        except Exception:
+            pass
+        try:
+            root.destroy()
+        except Exception:
+            pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
+    # Periodically yield control from tkinter's mainloop so Python can
+    # process pending signal handlers (tkinter blocks them on some platforms).
+    def _check_signals() -> None:
+        root.after(500, _check_signals)
+
+    root.after(500, _check_signals)
+
     root.mainloop()
 
 
