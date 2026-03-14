@@ -104,17 +104,27 @@ class ProjectDialog(tk.Toplevel):
         # F2 triggers inline rename
         self._project_listbox.bind("<F2>", lambda _e: self._start_inline_rename())
 
+        # Enable/disable Ok when listbox selection changes
+        self._project_listbox.bind("<<ListboxSelect>>", lambda _e: self._update_ok_state())
+
         # -- Bottom buttons --
         btn_frame = ttk.Frame(self)
         btn_frame.pack(fill="x", **pad)
 
-        self._open_btn = ttk.Button(btn_frame, text="Open project", command=self._on_open)
+        self._open_btn = ttk.Button(btn_frame, text="Ok", command=self._on_open, state="disabled")
         self._open_btn.pack(side="left")
 
         self._cancel_btn = ttk.Button(btn_frame, text="Cancel", command=self._on_cancel)
         self._cancel_btn.pack(side="right")
 
     # ── Helpers ──────────────────────────────────────────────────────
+
+    def _update_ok_state(self) -> None:
+        """Enable Ok button when a project is selected, disable otherwise."""
+        if self._project_listbox.curselection():
+            self._open_btn.configure(state="normal")
+        else:
+            self._open_btn.configure(state="disabled")
 
     def _populate_projects(self) -> None:
         """Refresh the listbox with the current project list."""
@@ -169,6 +179,7 @@ class ProjectDialog(tk.Toplevel):
         except ValueError:
             pass
         self._new_name_var.set("")
+        self._update_ok_state()
 
     def _on_open(self) -> None:
         name = self._selected_project()

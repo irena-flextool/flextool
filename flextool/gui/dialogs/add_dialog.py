@@ -137,11 +137,14 @@ class AddDialog(tk.Toplevel):
         )
         sqlite_add_btn.pack(side="right")
 
-        # ── Back to main menu button ────────────────────────────────
-        back_btn = ttk.Button(
-            self, text="Back to main menu", command=self._on_back
+        # ── Close button (bottom right) ──────────────────────────────
+        close_frame = ttk.Frame(self)
+        close_frame.pack(fill="x", padx=10, pady=(10, 10))
+
+        close_btn = ttk.Button(
+            close_frame, text="Close", command=self._on_back
         )
-        back_btn.pack(pady=(10, 10))
+        close_btn.pack(side="right")
 
     # ── Event handlers ──────────────────────────────────────────────
 
