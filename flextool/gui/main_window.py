@@ -45,6 +45,9 @@ STATUS_OK = "\u2713"  # ✓
 STATUS_ERR = "\u2717"  # ✗
 STATUS_EDITING = "\u23f3"  # ⏳
 
+# Animated spinner frames for output action progress indication
+_SPINNER_FRAMES = ["\u29d6", "\u29d7"]  # ⧖ ⧗ (hourglass variants)
+
 
 class MainWindow(tk.Tk):
     """Main application window for FlexTool GUI.
@@ -305,6 +308,8 @@ class MainWindow(tk.Tk):
 
         self.output_status_labels: dict[str, ttk.Button] = {}
         self.output_action_btns: dict[str, ttk.Button] = {}
+        self._output_spinners: dict[str, ttk.Label] = {}
+        self._spinner_timer_ids: dict[str, str] = {}
 
         # Map keys to their generation handler method names
         _gen_commands: dict[str, str] = {
@@ -336,6 +341,10 @@ class MainWindow(tk.Tk):
             )
             action_btn.grid(row=i, column=1, sticky="w", padx=2, pady=2)
             self.output_action_btns[key] = action_btn
+
+            spinner_label = ttk.Label(self.output_frame, text="  ", width=2)
+            spinner_label.grid(row=i, column=2, sticky="w", padx=(2, 0), pady=2)
+            self._output_spinners[key] = spinner_label
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
@@ -1783,70 +1792,90 @@ class MainWindow(tk.Tk):
         )
         return self.output_action_mgr
 
-    @safe_callback
-    def _on_gen_scen_plots(self) -> None:
-        """Generate plots for checked executed scenarios."""
+    def _start_output_action(self, key: str) -> list[str] | None:
+        """Common setup for output action buttons.
+
+        Returns the checked scenario names, or None if there are none or
+        the action manager is not available.
+        """
         names = self._get_checked_executed_names()
         if not names:
             messagebox.showinfo("No selection", "Please select executed scenarios first.")
-            return
+            return None
         mgr = self._ensure_output_action_mgr()
         if mgr is None:
-            return
-        self.output_status_labels["scen_plots"].configure(state="disabled")
-        mgr.run_scenario_plots(names)
+            return None
+        self.output_status_labels[key].configure(state="disabled")
+        self._start_spinner(key)
+        return names
+
+    @safe_callback
+    def _on_gen_scen_plots(self) -> None:
+        """Generate plots for checked executed scenarios."""
+        names = self._start_output_action("scen_plots")
+        if names and self.output_action_mgr:
+            self.output_action_mgr.run_scenario_plots(names)
 
     @safe_callback
     def _on_gen_scen_excel(self) -> None:
         """Generate Excel files for checked executed scenarios."""
-        names = self._get_checked_executed_names()
-        if not names:
-            messagebox.showinfo("No selection", "Please select executed scenarios first.")
-            return
-        mgr = self._ensure_output_action_mgr()
-        if mgr is None:
-            return
-        self.output_status_labels["scen_excel"].configure(state="disabled")
-        mgr.run_scenario_excel(names)
+        names = self._start_output_action("scen_excel")
+        if names and self.output_action_mgr:
+            self.output_action_mgr.run_scenario_excel(names)
 
     @safe_callback
     def _on_gen_scen_csvs(self) -> None:
         """Generate CSV files for checked executed scenarios."""
-        names = self._get_checked_executed_names()
-        if not names:
-            messagebox.showinfo("No selection", "Please select executed scenarios first.")
-            return
-        mgr = self._ensure_output_action_mgr()
-        if mgr is None:
-            return
-        self.output_status_labels["scen_csvs"].configure(state="disabled")
-        mgr.run_scenario_csvs(names)
+        names = self._start_output_action("scen_csvs")
+        if names and self.output_action_mgr:
+            self.output_action_mgr.run_scenario_csvs(names)
 
     @safe_callback
     def _on_gen_comp_plots(self) -> None:
         """Generate comparison plots for checked executed scenarios."""
-        names = self._get_checked_executed_names()
-        if not names:
-            messagebox.showinfo("No selection", "Please select executed scenarios first.")
-            return
-        mgr = self._ensure_output_action_mgr()
-        if mgr is None:
-            return
-        self.output_status_labels["comp_plots"].configure(state="disabled")
-        mgr.run_comparison_plots(names)
+        names = self._start_output_action("comp_plots")
+        if names and self.output_action_mgr:
+            self.output_action_mgr.run_comparison_plots(names)
 
     @safe_callback
     def _on_gen_comp_excel(self) -> None:
         """Generate comparison Excel for checked executed scenarios."""
-        names = self._get_checked_executed_names()
-        if not names:
-            messagebox.showinfo("No selection", "Please select executed scenarios first.")
+        names = self._start_output_action("comp_excel")
+        if names and self.output_action_mgr:
+            self.output_action_mgr.run_comparison_excel(names)
+
+    # ── Spinner animation for output actions ─────────────────────
+
+    def _start_spinner(self, key: str) -> None:
+        """Start an animated hourglass spinner next to the output action button."""
+        label = self._output_spinners.get(key)
+        if label is None:
             return
-        mgr = self._ensure_output_action_mgr()
-        if mgr is None:
+        self._animate_spinner(key, 0)
+
+    def _stop_spinner(self, key: str) -> None:
+        """Stop the animated hourglass spinner."""
+        timer_id = self._spinner_timer_ids.pop(key, None)
+        if timer_id is not None:
+            try:
+                self.after_cancel(timer_id)
+            except Exception:
+                pass
+        label = self._output_spinners.get(key)
+        if label is not None:
+            label.configure(text="  ")
+
+    def _animate_spinner(self, key: str, frame_idx: int) -> None:
+        """Update the spinner label to the next animation frame."""
+        label = self._output_spinners.get(key)
+        if label is None or not self.winfo_exists():
             return
-        self.output_status_labels["comp_excel"].configure(state="disabled")
-        mgr.run_comparison_excel(names)
+        char = _SPINNER_FRAMES[frame_idx % len(_SPINNER_FRAMES)]
+        label.configure(text=char)
+        next_idx = (frame_idx + 1) % len(_SPINNER_FRAMES)
+        self._spinner_timer_ids[key] = self.after(
+            500, self._animate_spinner, key, next_idx
+        )
 
     def _on_output_action_complete(self, action_name: str, success: bool) -> None:
         """Callback from OutputActionManager when an action finishes.
@@ -1857,6 +1886,7 @@ class MainWindow(tk.Tk):
 
     def _handle_output_action_done(self, action_name: str, success: bool) -> None:
         """Re-enable the action button and refresh output status (runs on main thread)."""
+        self._stop_spinner(action_name)
         if action_name in self.output_status_labels:
             self.output_status_labels[action_name].configure(state="normal")
         self._update_output_status()
