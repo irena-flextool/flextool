@@ -39,7 +39,7 @@ class ExecutionWindow(tk.Toplevel):
         self.transient(parent)
 
         self._mgr = execution_mgr
-        self._selected_job_id: int | None = None
+        self._viewed_job_id: int | None = None
         # Track how many stdout lines we have already displayed per job
         # so that we only append new lines on each poll cycle.
         self._displayed_counts: dict[int, int] = {}
@@ -116,7 +116,7 @@ class ExecutionWindow(tk.Toplevel):
             left_frame,
             columns=("status", "source", "scenario", "timestamp"),
             show="headings",
-            selectmode="browse",
+            selectmode="extended",
         )
         self._job_tree.heading("status", text="")
         self._job_tree.heading("source", text="#")
@@ -185,10 +185,16 @@ class ExecutionWindow(tk.Toplevel):
         ttk.Label(move_frame, text="(PgDn)").grid(row=1, column=1, padx=(0, 4))
 
         col += 1
-        self._kill_remove_btn = ttk.Button(
-            btn_frame, text="Kill / Remove selected", command=self._on_kill_remove
+        self._kill_btn = ttk.Button(
+            btn_frame, text="Kill selected", command=self._on_kill_selected
         )
-        self._kill_remove_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
+        self._kill_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
+
+        col += 1
+        self._remove_btn = ttk.Button(
+            btn_frame, text="Remove selected", command=self._on_remove_selected
+        )
+        self._remove_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
 
         col += 1
         self._wind_down_btn = ttk.Button(btn_frame, text="Wind down", command=self._on_wind_down)
@@ -260,7 +266,7 @@ class ExecutionWindow(tk.Toplevel):
         jobs = self._mgr.get_jobs()
 
         # Remember current selection so we can restore it
-        prev_selected_id = self._selected_job_id
+        prev_selection = set(self._job_tree.selection())
 
         # Suppress <<TreeviewSelect>> events while we rebuild the tree
         self._refreshing_list = True
@@ -270,7 +276,7 @@ class ExecutionWindow(tk.Toplevel):
                 self._job_tree.delete(item)
 
             # Repopulate
-            select_iid: str | None = None
+            restore_iids: list[str] = []
             for job in jobs:
                 icon = _STATUS_ICONS.get(job.status, "?")
                 ts = job.finish_timestamp if job.status in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED) else ""
@@ -281,21 +287,26 @@ class ExecutionWindow(tk.Toplevel):
                     iid=iid,
                     values=(icon, job.source_number, job.scenario_name, ts),
                 )
-                if job.job_id == prev_selected_id:
-                    select_iid = iid
+                if iid in prev_selection:
+                    restore_iids.append(iid)
 
             # Restore selection
-            if select_iid and self._job_tree.exists(select_iid):
-                self._job_tree.selection_set(select_iid)
-            elif not select_iid:
-                # Previously selected job was removed; clear output
-                self._selected_job_id = None
-                self._clear_output()
+            if restore_iids:
+                self._job_tree.selection_set(restore_iids)
+            else:
+                # All previously selected jobs were removed
+                if prev_selection:
+                    # Don't clear the output -- keep showing the last viewed log
+                    pass
         finally:
             self._refreshing_list = False
 
     def _on_job_selected(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
-        """Handle selection change in the job tree."""
+        """Handle selection change in the job tree.
+
+        With multi-select enabled, we show the log for the first selected
+        job in the progress panel.
+        """
         # Ignore events triggered programmatically during list refresh
         if self._refreshing_list:
             return
@@ -303,20 +314,22 @@ class ExecutionWindow(tk.Toplevel):
         selection = self._job_tree.selection()
         if selection:
             try:
-                new_id = int(selection[0])
+                first_id = int(selection[0])
             except (ValueError, IndexError):
-                new_id = None
+                first_id = None
         else:
-            new_id = None
+            first_id = None
 
-        if new_id == self._selected_job_id:
+        if first_id == self._viewed_job_id:
             return
 
-        self._selected_job_id = new_id
+        self._viewed_job_id = first_id
 
         # Switching to a different job: clear the text widget and reset its
         # displayed count so all lines are re-inserted from scratch.
-        self._clear_output()
+        self._output_text.delete("1.0", "end")
+        if first_id is not None:
+            self._displayed_counts[first_id] = 0
         self._update_output_display()
 
     # ------------------------------------------------------------------
@@ -330,21 +343,14 @@ class ExecutionWindow(tk.Toplevel):
             return None  # Allow the event to propagate
         return "break"  # Suppress all other key events
 
-    def _clear_output(self) -> None:
-        """Clear the output text widget and reset displayed count for the
-        currently selected job."""
-        self._output_text.delete("1.0", "end")
-        if self._selected_job_id is not None:
-            self._displayed_counts[self._selected_job_id] = 0
-
     def _update_output_display(self) -> None:
-        """Append new stdout lines for the currently selected job.
+        """Append new stdout lines for the currently viewed job.
 
         Only lines that haven't been displayed yet are inserted.  If the
         user has scrolled up to read earlier output, auto-scroll is
         suppressed so the viewport stays put.
         """
-        job_id = self._selected_job_id
+        job_id = self._viewed_job_id
         if job_id is None:
             return
 
@@ -372,6 +378,16 @@ class ExecutionWindow(tk.Toplevel):
     # Button states
     # ------------------------------------------------------------------
 
+    def _get_selected_job_ids(self) -> list[int]:
+        """Return job IDs for all selected items in the tree."""
+        ids: list[int] = []
+        for iid in self._job_tree.selection():
+            try:
+                ids.append(int(iid))
+            except (ValueError, IndexError):
+                pass
+        return ids
+
     def _update_button_states(self) -> None:
         """Enable/disable buttons based on current execution state."""
         jobs = self._mgr.get_jobs()
@@ -379,17 +395,29 @@ class ExecutionWindow(tk.Toplevel):
         has_running = any(j.status == JobStatus.RUNNING for j in jobs)
         has_pending_or_running = has_pending or has_running
 
-        # Start: enabled only if there are pending jobs and no scheduler is running
-        # (simplified: enabled when there are pending jobs)
+        selected_ids = set(self._get_selected_job_ids())
+        job_by_id = {j.job_id: j for j in jobs}
+
+        # Start: enabled only if there are pending jobs
         self._start_btn.configure(
             state="normal" if has_pending else "disabled"
         )
 
-        # Kill/Remove: enabled if something is selected
-        sel = self._job_tree.selection()
-        self._kill_remove_btn.configure(
-            state="normal" if sel else "disabled"
+        # Kill: enabled if any selected job is running or pending
+        can_kill = any(
+            job_by_id.get(jid) is not None
+            and job_by_id[jid].status in (JobStatus.RUNNING, JobStatus.PENDING)
+            for jid in selected_ids
         )
+        self._kill_btn.configure(state="normal" if can_kill else "disabled")
+
+        # Remove: enabled if any selected job is finished or killed
+        can_remove = any(
+            job_by_id.get(jid) is not None
+            and job_by_id[jid].status in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED)
+            for jid in selected_ids
+        )
+        self._remove_btn.configure(state="normal" if can_remove else "disabled")
 
         # Wind down: enabled if there are running jobs
         self._wind_down_btn.configure(
@@ -449,20 +477,40 @@ class ExecutionWindow(tk.Toplevel):
         self._mgr.start()
         self.after(100, self._update_button_states)
 
-    def _on_kill_remove(self) -> None:
-        """Kill or remove the selected job."""
-        if self._selected_job_id is None:
+    def _on_kill_selected(self) -> None:
+        """Kill all selected running or pending jobs.
+
+        Pending jobs that have not started execution are automatically
+        removed from the list.
+        """
+        selected_ids = self._get_selected_job_ids()
+        if not selected_ids:
             return
 
         jobs = self._mgr.get_jobs()
-        job = next((j for j in jobs if j.job_id == self._selected_job_id), None)
-        if job is None:
+        job_by_id = {j.job_id: j for j in jobs}
+
+        for jid in selected_ids:
+            job = job_by_id.get(jid)
+            if job is None:
+                continue
+            if job.status == JobStatus.RUNNING:
+                self._mgr.kill_job(jid)
+            elif job.status == JobStatus.PENDING:
+                # Pending jobs that were never executed: remove immediately
+                self._mgr.remove_job(jid)
+
+        self._refresh_job_list()
+        self._update_button_states()
+
+    def _on_remove_selected(self) -> None:
+        """Remove all selected finished or killed jobs from the list."""
+        selected_ids = self._get_selected_job_ids()
+        if not selected_ids:
             return
 
-        if job.status == JobStatus.RUNNING:
-            self._mgr.kill_job(job.job_id)
-        elif job.status in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED, JobStatus.PENDING):
-            self._mgr.remove_job(job.job_id)
+        for jid in selected_ids:
+            self._mgr.remove_job(jid)
 
         self._refresh_job_list()
         self._update_button_states()
@@ -473,30 +521,43 @@ class ExecutionWindow(tk.Toplevel):
         self._update_button_states()
 
     def _on_kill_all(self) -> None:
-        """Kill all running processes and cancel pending jobs."""
+        """Kill all running processes and cancel pending jobs.
+
+        Pending jobs that have not been executed are auto-removed.
+        """
+        jobs = self._mgr.get_jobs()
+        pending_ids = [j.job_id for j in jobs if j.status == JobStatus.PENDING]
+
         self._mgr.kill_all()
+
+        # Remove pending jobs (they were never executed)
+        for jid in pending_ids:
+            self._mgr.remove_job(jid)
+
         self._refresh_job_list()
         self._update_button_states()
 
     def _on_move_up(self) -> None:
         """Move the selected pending job one position earlier in the queue."""
-        if self._selected_job_id is None:
+        selected_ids = self._get_selected_job_ids()
+        if len(selected_ids) != 1:
             return
-        self._mgr.move_pending_up(self._selected_job_id)
+        self._mgr.move_pending_up(selected_ids[0])
         self._refresh_job_list()
         # Re-select the moved item
-        iid = str(self._selected_job_id)
+        iid = str(selected_ids[0])
         if self._job_tree.exists(iid):
             self._job_tree.selection_set(iid)
 
     def _on_move_down(self) -> None:
         """Move the selected pending job one position later in the queue."""
-        if self._selected_job_id is None:
+        selected_ids = self._get_selected_job_ids()
+        if len(selected_ids) != 1:
             return
-        self._mgr.move_pending_down(self._selected_job_id)
+        self._mgr.move_pending_down(selected_ids[0])
         self._refresh_job_list()
         # Re-select the moved item
-        iid = str(self._selected_job_id)
+        iid = str(selected_ids[0])
         if self._job_tree.exists(iid):
             self._job_tree.selection_set(iid)
 
