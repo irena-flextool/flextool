@@ -164,7 +164,7 @@ class MainWindow(tk.Tk):
             input_frame,
             columns=("check", "name", "number", "status"),
             show="headings",
-            selectmode="browse",
+            selectmode="extended",
             height=8,
         )
         self.input_sources_tree.heading("check", text="▽")
@@ -181,8 +181,9 @@ class MainWindow(tk.Tk):
         self.input_sources_tree.configure(yscrollcommand=input_scroll.set)
         input_scroll.grid(row=0, column=1, sticky="ns")
 
-        # Bind click for checkbox toggling
+        # Bind click for checkbox toggling (filtering) and selection change (button state)
         self.input_sources_tree.bind("<Button-1>", self._on_input_source_click)
+        self.input_sources_tree.bind("<<TreeviewSelect>>", lambda _e: self._update_input_button_states())
 
         # --- Input source buttons (col 1, rows 2-8) ---
         btn_col = 1
@@ -771,7 +772,6 @@ class MainWindow(tk.Tk):
             if item:
                 self._toggle_check(tree, item, "check")
                 self._update_available_scenarios()
-                self._update_input_button_states()
 
     def _on_available_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         tree = self.available_tree
@@ -924,13 +924,23 @@ class MainWindow(tk.Tk):
                 checked.append((values[1], values[3]))
         return checked
 
-    def _update_input_button_states(self) -> None:
-        """Enable or disable Edit, Convert, Delete based on current selection."""
-        checked = self._get_checked_sources()
+    def _get_selected_sources(self) -> list[tuple[str, str]]:
+        """Return (name, status_char) for each highlighted (selected) input source row."""
+        selected: list[tuple[str, str]] = []
+        for item in self.input_sources_tree.selection():
+            values = self.input_sources_tree.item(item, "values")
+            if values:
+                # values: (check, name, number, status)
+                selected.append((values[1], values[3]))
+        return selected
 
-        # ── Edit: exactly one checked, not in editing state ──
-        if len(checked) == 1:
-            _name, status = checked[0]
+    def _update_input_button_states(self) -> None:
+        """Enable or disable Edit, Convert, Delete based on Treeview selection (not checkboxes)."""
+        selected = self._get_selected_sources()
+
+        # ── Edit: exactly one selected, not in editing state ──
+        if len(selected) == 1:
+            _name, status = selected[0]
             if status == STATUS_EDITING:
                 self.edit_source_btn.configure(state="disabled")
             else:
@@ -938,9 +948,9 @@ class MainWindow(tk.Tk):
         else:
             self.edit_source_btn.configure(state="disabled")
 
-        # ── Convert: exactly one checked, xlsx, status OK ──
-        if len(checked) == 1:
-            name, status = checked[0]
+        # ── Convert: exactly one selected, xlsx, status OK ──
+        if len(selected) == 1:
+            name, status = selected[0]
             is_xlsx = name.lower().endswith(".xlsx")
             if is_xlsx and status == STATUS_OK:
                 self.convert_source_btn.configure(state="normal")
@@ -949,8 +959,8 @@ class MainWindow(tk.Tk):
         else:
             self.convert_source_btn.configure(state="disabled")
 
-        # ── Delete: at least one checked ──
-        if checked:
+        # ── Delete: at least one selected ──
+        if selected:
             self.delete_source_btn.configure(state="normal")
         else:
             self.delete_source_btn.configure(state="disabled")
@@ -959,15 +969,15 @@ class MainWindow(tk.Tk):
 
     @safe_callback
     def _on_edit_source(self) -> None:
-        """Open the selected input source for editing."""
+        """Open the selected (highlighted) input source for editing."""
         if not self.input_source_mgr or not self.current_project:
             return
 
-        checked = self._get_checked_sources()
-        if len(checked) != 1:
+        selected = self._get_selected_sources()
+        if len(selected) != 1:
             return
 
-        source_name, _status = checked[0]
+        source_name, _status = selected[0]
         project_path = get_projects_dir() / self.current_project
         filepath = project_path / "input_sources" / source_name
 
@@ -1004,15 +1014,15 @@ class MainWindow(tk.Tk):
 
     @safe_callback
     def _on_convert_source(self) -> None:
-        """Convert the selected xlsx input source to a sqlite database."""
+        """Convert the selected (highlighted) xlsx input source to a sqlite database."""
         if not self.input_source_mgr or not self.current_project:
             return
 
-        checked = self._get_checked_sources()
-        if len(checked) != 1:
+        selected = self._get_selected_sources()
+        if len(selected) != 1:
             return
 
-        source_name, _status = checked[0]
+        source_name, _status = selected[0]
         if not source_name.lower().endswith(".xlsx"):
             return
 
@@ -1091,16 +1101,16 @@ class MainWindow(tk.Tk):
 
     @safe_callback
     def _on_delete_source(self) -> None:
-        """Delete the selected input source file(s)."""
+        """Delete the selected (highlighted) input source file(s)."""
         if not self.input_source_mgr or not self.current_project:
             return
 
-        checked = self._get_checked_sources()
-        if not checked:
+        selected = self._get_selected_sources()
+        if not selected:
             return
 
         project_path = get_projects_dir() / self.current_project
-        names = [name for name, _ in checked]
+        names = [name for name, _ in selected]
         names_str = "\n  ".join(names)
 
         answer = messagebox.askyesno(
@@ -1362,21 +1372,21 @@ class MainWindow(tk.Tk):
 
     @safe_callback
     def _on_delete_results(self) -> None:
-        """Delete output files for checked scenarios in executed_tree."""
+        """Delete output files for selected (highlighted) scenarios in executed_tree."""
         if not self.exec_scenario_mgr or not self.current_project:
             return
 
-        # Gather checked scenario names from the executed tree
-        checked_names: list[str] = []
-        for item in self.executed_tree.get_children():
+        # Gather selected scenario names from the executed tree
+        selected_names: list[str] = []
+        for item in self.executed_tree.selection():
             values = self.executed_tree.item(item, "values")
-            if values and values[0] == CHECK_ON:
-                checked_names.append(values[2])  # scenario_name column
+            if values:
+                selected_names.append(values[2])  # scenario_name column
 
-        if not checked_names:
+        if not selected_names:
             return
 
-        names_str = "\n  ".join(checked_names)
+        names_str = "\n  ".join(selected_names)
         answer = messagebox.askyesno(
             "Delete results",
             f"Are you sure you want to permanently delete results for "
@@ -1388,7 +1398,7 @@ class MainWindow(tk.Tk):
         if not answer:
             return
 
-        self.exec_scenario_mgr.delete_results(checked_names)
+        self.exec_scenario_mgr.delete_results(selected_names)
         self._refresh_executed_scenarios()
 
     # ── Output status indicator updates ──────────────────────────
