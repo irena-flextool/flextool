@@ -165,8 +165,10 @@ class ExecutionWindow(tk.Toplevel):
         btn_frame.grid(row=2, column=0, columnspan=2, sticky="ew")
 
         col = 0
-        self._start_btn = ttk.Button(btn_frame, text="Start executions", command=self._on_start)
-        self._start_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
+        self._pause_btn = ttk.Button(
+            btn_frame, text="Pause executions", command=self._on_pause_toggle
+        )
+        self._pause_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
 
         col += 1
         move_frame = ttk.Frame(btn_frame)
@@ -195,10 +197,6 @@ class ExecutionWindow(tk.Toplevel):
             btn_frame, text="Remove selected", command=self._on_remove_selected
         )
         self._remove_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
-
-        col += 1
-        self._wind_down_btn = ttk.Button(btn_frame, text="Wind down", command=self._on_wind_down)
-        self._wind_down_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
 
         col += 1
         self._kill_all_btn = ttk.Button(btn_frame, text="Kill all", command=self._on_kill_all)
@@ -394,14 +392,20 @@ class ExecutionWindow(tk.Toplevel):
         has_pending = any(j.status == JobStatus.PENDING for j in jobs)
         has_running = any(j.status == JobStatus.RUNNING for j in jobs)
         has_pending_or_running = has_pending or has_running
+        is_paused = self._mgr.is_paused
 
         selected_ids = set(self._get_selected_job_ids())
         job_by_id = {j.job_id: j for j in jobs}
 
-        # Start: enabled only if there are pending jobs
-        self._start_btn.configure(
-            state="normal" if has_pending else "disabled"
-        )
+        # Pause/Continue toggle: enabled when there are pending or running jobs
+        if has_pending_or_running:
+            self._pause_btn.configure(state="normal")
+            if is_paused:
+                self._pause_btn.configure(text="Continue executions")
+            else:
+                self._pause_btn.configure(text="Pause executions")
+        else:
+            self._pause_btn.configure(state="disabled", text="Pause executions")
 
         # Kill: enabled if any selected job is running or pending
         can_kill = any(
@@ -418,11 +422,6 @@ class ExecutionWindow(tk.Toplevel):
             for jid in selected_ids
         )
         self._remove_btn.configure(state="normal" if can_remove else "disabled")
-
-        # Wind down: enabled if there are running jobs
-        self._wind_down_btn.configure(
-            state="normal" if has_running else "disabled"
-        )
 
         # Kill all: enabled if there are running or pending jobs
         self._kill_all_btn.configure(
@@ -465,16 +464,12 @@ class ExecutionWindow(tk.Toplevel):
     # Button handlers
     # ------------------------------------------------------------------
 
-    def _on_start(self) -> None:
-        """Start executing pending jobs.
-
-        After calling start(), we schedule the button-state update via
-        ``after()`` instead of calling it synchronously.  This gives the
-        scheduler thread time to start and release any initial lock
-        acquisition, avoiding a potential deadlock where the main thread
-        and the scheduler thread both contend for ``_lock``.
-        """
-        self._mgr.start()
+    def _on_pause_toggle(self) -> None:
+        """Toggle between pausing and continuing execution."""
+        if self._mgr.is_paused:
+            self._mgr.resume()
+        else:
+            self._mgr.pause()
         self.after(100, self._update_button_states)
 
     def _on_kill_selected(self) -> None:
@@ -513,11 +508,6 @@ class ExecutionWindow(tk.Toplevel):
             self._mgr.remove_job(jid)
 
         self._refresh_job_list()
-        self._update_button_states()
-
-    def _on_wind_down(self) -> None:
-        """Let running jobs finish but stop starting new ones."""
-        self._mgr.wind_down()
         self._update_button_states()
 
     def _on_kill_all(self) -> None:

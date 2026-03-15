@@ -520,10 +520,27 @@ class ExecutionManager:
     # Control methods
     # ------------------------------------------------------------------
 
-    def wind_down(self) -> None:
+    def pause(self) -> None:
         """Let currently running jobs finish but don't start new ones."""
         with self._lock:
             self._wind_down = True
+
+    def resume(self) -> None:
+        """Resume starting new jobs after a pause.
+
+        If the scheduler thread has exited (all jobs were done when paused),
+        a new scheduler is started.
+        """
+        with self._lock:
+            self._wind_down = False
+        # Re-launch the scheduler if it has exited
+        self.start()
+
+    @property
+    def is_paused(self) -> bool:
+        """Return True if the manager is in wind-down / paused state."""
+        with self._lock:
+            return self._wind_down
 
     def kill_all(self) -> None:
         """Kill all running jobs and cancel pending ones."""
