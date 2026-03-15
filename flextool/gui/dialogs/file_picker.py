@@ -171,6 +171,11 @@ class FilePickerDialog(tk.Toplevel):
         self._loc_entry.pack(side="left", fill="x", expand=True, padx=(5, 0))
         self._loc_entry.bind("<Return>", self._on_location_enter)
 
+        ttk.Button(
+            loc_frame, text="\u25b2", width=3,
+            command=lambda: self._navigate_to(self._current_dir.parent),
+        ).pack(side="left", padx=(4, 0))
+
         # ── Treeview ─────────────────────────────────────────────
         tree_frame = ttk.Frame(self)
         tree_frame.pack(fill="both", expand=True, **pad)
