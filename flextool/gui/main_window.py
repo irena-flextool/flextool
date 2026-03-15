@@ -167,7 +167,7 @@ class MainWindow(tk.Tk):
             selectmode="browse",
             height=8,
         )
-        self.input_sources_tree.heading("check", text="")
+        self.input_sources_tree.heading("check", text="▽")
         self.input_sources_tree.heading("name", text="Name")
         self.input_sources_tree.heading("number", text="#")
         self.input_sources_tree.heading("status", text="")
@@ -341,7 +341,7 @@ class MainWindow(tk.Tk):
             selectmode="extended",
             height=8,
         )
-        self.available_tree.heading("check", text="")
+        self.available_tree.heading("check", text="▽")
         self.available_tree.heading("source_num", text="#")
         self.available_tree.heading("scenario_name", text="Scenario")
         self.available_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
@@ -369,7 +369,7 @@ class MainWindow(tk.Tk):
             selectmode="extended",
             height=8,
         )
-        self.executed_tree.heading("check", text="")
+        self.executed_tree.heading("check", text="▽")
         self.executed_tree.heading("source_num", text="#")
         self.executed_tree.heading("scenario_name", text="Scenario")
         self.executed_tree.heading("timestamp", text="Timestamp")
@@ -393,7 +393,7 @@ class MainWindow(tk.Tk):
         bottom_left.grid(row=row, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         self.add_to_execution_btn = ttk.Button(
-            bottom_left, text="Add selected to\nthe execution list",
+            bottom_left, text="Add marked to\nthe execution list",
             command=self._on_add_to_execution,
         )
         self.add_to_execution_btn.grid(row=0, column=0, padx=(0, 10))

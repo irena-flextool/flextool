@@ -66,7 +66,7 @@ class ProjectDialog(tk.Toplevel):
         pad = dict(padx=10, pady=5)
 
         # -- New project section --
-        new_frame = ttk.LabelFrame(self, text="New project", padding=8)
+        new_frame = ttk.LabelFrame(self, text="Create an empty project", padding=8)
         new_frame.pack(fill="x", **pad)
 
         entry_row = ttk.Frame(new_frame)
@@ -111,7 +111,7 @@ class ProjectDialog(tk.Toplevel):
         btn_frame = ttk.Frame(self)
         btn_frame.pack(fill="x", **pad)
 
-        self._open_btn = ttk.Button(btn_frame, text="Ok", command=self._on_open, state="disabled")
+        self._open_btn = ttk.Button(btn_frame, text="Open the selected project", command=self._on_open, state="disabled")
         self._open_btn.pack(side="left")
 
         self._cancel_btn = ttk.Button(btn_frame, text="Cancel", command=self._on_cancel)

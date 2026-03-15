@@ -161,12 +161,15 @@ plots:
     default:
       plot_name: '3.1t Costs stack'
       map_dimensions_for_plots: [dt_sp, tt_us]
+      max_items_per_plot: 10
     lines:
       plot_name: '3.1t Costs lines'
       map_dimensions_for_plots: [dt_sp, tt_lm]
+      max_items_per_plot: 10
     chunks:
       plot_name: '3.1c Costs time chunks'
       map_dimensions_for_plots: [dt_sp, ti_lu]
+      max_items_per_plot: 10
       max_subplots_per_file: 12
       time_average_duration: 24
   costs_discounted_d_p:
