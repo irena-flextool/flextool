@@ -508,7 +508,8 @@ class MainWindow(tk.Tk):
         if recent and (projects_dir / recent).is_dir():
             self._switch_project(recent)
         else:
-            # No valid recent project -- show project dialog after mainloop starts
+            # No valid recent project -- highlight Project menu and show dialog
+            self.project_menu_btn.configure(style="Green.TButton")
             self.after(100, self._show_project_dialog_if_needed)
 
     def _show_project_dialog_if_needed(self) -> None:
@@ -620,6 +621,9 @@ class MainWindow(tk.Tk):
         self.output_action_mgr = None
 
         self.current_project = name
+
+        # Remove green highlight from Project menu button
+        self.project_menu_btn.configure(style="TButton")
 
         # Update combo
         self._refresh_project_combo()
