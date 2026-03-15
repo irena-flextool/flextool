@@ -1352,7 +1352,18 @@ class MainWindow(tk.Tk):
     # ── Executed scenarios management ────────────────────────────
 
     def _refresh_executed_scenarios(self) -> None:
-        """Scan for executed scenario results and repopulate the executed_tree."""
+        """Scan for executed scenario results and repopulate the executed_tree.
+
+        Preserves existing checkbox states so that auto-checked scenarios
+        (from ``_refresh_and_autocheck_scenario``) are not unchecked.
+        """
+        # Remember which scenarios are currently checked
+        previously_checked: set[str] = set()
+        for item in self.executed_tree.get_children():
+            values = self.executed_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                previously_checked.add(values[2])  # scenario_name
+
         # Clear executed scenarios tree
         for item in self.executed_tree.get_children():
             self.executed_tree.delete(item)
@@ -1370,10 +1381,11 @@ class MainWindow(tk.Tk):
 
         for info in executed:
             src_num = source_number_map.get(info.name, info.source_number)
+            check_char = CHECK_ON if info.name in previously_checked else CHECK_OFF
             self.executed_tree.insert(
                 "",
                 "end",
-                values=(CHECK_OFF, src_num, info.name, info.timestamp),
+                values=(check_char, src_num, info.name, info.timestamp),
             )
 
         self._update_output_status()
