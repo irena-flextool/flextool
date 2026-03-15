@@ -75,6 +75,18 @@ class MainWindow(tk.Tk):
         row_height = self._line_height + 6
         style.configure("Treeview", rowheight=row_height)
 
+        # ── Custom button styles for visual highlighting ──────────
+        style.configure("Green.TButton", background="#4CAF50")
+        style.map(
+            "Green.TButton",
+            background=[("active", "#66BB6A"), ("disabled", "#4CAF50")],
+        )
+        style.configure("Grey.TButton", foreground="#888888")
+        style.map(
+            "Grey.TButton",
+            foreground=[("active", "#888888"), ("disabled", "#888888")],
+        )
+
         # ── State ──────────────────────────────────────────────────
         self.current_project: str | None = None
         self.global_settings = GlobalSettings()
@@ -267,7 +279,13 @@ class MainWindow(tk.Tk):
         )
         self.execution_menu_btn.grid(row=8, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
 
-        # --- Output status labels + Show/Open buttons (cols 4-5, rows 2-6) ---
+        # --- Output actions LabelFrame (cols 4-5, rows 2-7) ---
+        # Positioned on the right side of the upper section
+        self.output_frame = ttk.LabelFrame(outer, text="Output actions", padding=5)
+        self.output_frame.grid(
+            row=2, column=4, rowspan=6, columnspan=2, sticky="new", padx=(10, 0), pady=2,
+        )
+
         output_info = [
             ("Scen. plots", "scen_plots"),
             ("Scen. Excel", "scen_excel"),
@@ -299,17 +317,17 @@ class MainWindow(tk.Tk):
 
         for i, ((label_text, key), action_text) in enumerate(zip(output_info, action_labels)):
             status_btn = ttk.Button(
-                outer, text=f"{label_text} {STATUS_ERR}", width=20,
+                self.output_frame, text=f"{label_text} {STATUS_ERR}", width=20,
                 command=getattr(self, _gen_commands[key]),
             )
-            status_btn.grid(row=2 + i, column=4, sticky="w", padx=(10, 5), pady=2)
+            status_btn.grid(row=i, column=0, sticky="w", padx=(0, 5), pady=2)
             self.output_status_labels[key] = status_btn
 
             action_btn = ttk.Button(
-                outer, text=action_text, width=5,
+                self.output_frame, text=action_text, width=5,
                 command=getattr(self, _show_commands[key]),
             )
-            action_btn.grid(row=2 + i, column=5, sticky="w", padx=2, pady=2)
+            action_btn.grid(row=i, column=1, sticky="w", padx=2, pady=2)
             self.output_action_btns[key] = action_btn
 
         # ── Separator ────────────────────────────────────────────────
@@ -724,6 +742,8 @@ class MainWindow(tk.Tk):
 
         if changed:
             self._update_input_button_states()
+            # Update editing source background in available scenarios
+            self._update_available_scenario_tags()
 
         # Re-schedule
         self._lock_check_timer_id = self.after(5000, self._check_lock_files)
@@ -796,6 +816,7 @@ class MainWindow(tk.Tk):
             item = tree.identify_row(event.y)
             if item:
                 self._toggle_check(tree, item, "check")
+                self._update_add_to_execution_style()
 
     def _on_executed_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         tree = self.executed_tree
@@ -882,12 +903,61 @@ class MainWindow(tk.Tk):
     def _update_add_button_style(self, no_sources: bool) -> None:
         """Highlight the Add button in green when there are no input sources."""
         if no_sources:
-            # Use a custom style with green background
-            style = ttk.Style()
-            style.configure("Green.TButton", background="#90ee90")
             self.add_source_btn.configure(style="Green.TButton")
         else:
             self.add_source_btn.configure(style="TButton")
+
+    def _update_add_to_execution_style(self) -> None:
+        """Highlight 'Add selected to execution list' green when scenarios are checked."""
+        has_checked = False
+        for item in self.available_tree.get_children():
+            values = self.available_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                has_checked = True
+                break
+        if has_checked:
+            self.add_to_execution_btn.configure(style="Green.TButton")
+        else:
+            self.add_to_execution_btn.configure(style="TButton")
+
+    def _update_execution_menu_style(self) -> None:
+        """Highlight 'Execution menu' green when there are queued/running jobs."""
+        has_active = False
+        if self.execution_mgr is not None:
+            has_active = self.execution_mgr.has_pending_or_running()
+        if has_active:
+            self.execution_menu_btn.configure(style="Green.TButton")
+        else:
+            self.execution_menu_btn.configure(style="TButton")
+
+    def _update_output_frame_style(self) -> None:
+        """Tint the output actions LabelFrame when executed scenarios are checked."""
+        has_checked = False
+        for item in self.executed_tree.get_children():
+            values = self.executed_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                has_checked = True
+                break
+        # Note: LabelFrame background styling via ttk is limited;
+        # we create distinct styles to apply/remove the tint.
+        style = ttk.Style()
+        if has_checked:
+            style.configure("Green.TLabelframe", background="#2E7D32")
+            style.configure("Green.TLabelframe.Label", background="#2E7D32")
+            self.output_frame.configure(style="Green.TLabelframe")
+        else:
+            self.output_frame.configure(style="TLabelframe")
+
+    def _refresh_and_autocheck_scenario(self, scenario_name: str) -> None:
+        """Refresh executed scenarios and auto-check the newly completed one."""
+        self._refresh_executed_scenarios()
+        # Find and check the newly completed scenario
+        for item in self.executed_tree.get_children():
+            values = self.executed_tree.item(item, "values")
+            if values and values[2] == scenario_name:
+                self.executed_tree.set(item, "check", CHECK_ON)
+                break
+        self._update_output_status()
 
     def _get_selected_source_names(self) -> list[str]:
         """Return the names of input sources whose checkboxes are checked."""
@@ -905,6 +975,7 @@ class MainWindow(tk.Tk):
             self.available_tree.delete(item)
 
         if not self.input_source_mgr:
+            self._update_add_to_execution_style()
             return
 
         selected_sources = self._get_selected_source_names()
@@ -918,12 +989,57 @@ class MainWindow(tk.Tk):
         if self.avail_scenario_mgr:
             scenarios = self.avail_scenario_mgr.update_scenarios(scenarios)
 
+        # Build a set of source numbers whose input source has editing status
+        editing_source_numbers: set[int] = set()
+        for item in self.input_sources_tree.get_children():
+            values = self.input_sources_tree.item(item, "values")
+            if values and values[3] == STATUS_EDITING:
+                try:
+                    editing_source_numbers.add(int(values[2]))
+                except (ValueError, IndexError):
+                    pass
+
+        # Configure tag for editing-source scenarios (reddish background)
+        self.available_tree.tag_configure("editing_source", background="#662222")
+
         for scenario in scenarios:
+            tags: tuple[str, ...] = ()
+            if scenario.source_number in editing_source_numbers:
+                tags = ("editing_source",)
             self.available_tree.insert(
                 "",
                 "end",
                 values=(CHECK_OFF, scenario.source_number, scenario.name),
+                tags=tags,
             )
+
+        self._update_add_to_execution_style()
+
+    def _update_available_scenario_tags(self) -> None:
+        """Update editing-source tags on existing available scenario rows without full repopulation."""
+        editing_source_numbers: set[int] = set()
+        for item in self.input_sources_tree.get_children():
+            values = self.input_sources_tree.item(item, "values")
+            if values and values[3] == STATUS_EDITING:
+                try:
+                    editing_source_numbers.add(int(values[2]))
+                except (ValueError, IndexError):
+                    pass
+
+        self.available_tree.tag_configure("editing_source", background="#662222")
+
+        for item in self.available_tree.get_children():
+            values = self.available_tree.item(item, "values")
+            if not values:
+                continue
+            try:
+                source_num = int(values[1])
+            except (ValueError, IndexError):
+                continue
+            if source_num in editing_source_numbers:
+                self.available_tree.item(item, tags=("editing_source",))
+            else:
+                self.available_tree.item(item, tags=())
 
     # ── Input source button state management ────────────────────────
 
@@ -1163,11 +1279,13 @@ class MainWindow(tk.Tk):
         """Toggle checkboxes for all selected (highlighted) items in available_tree."""
         for item in self.available_tree.selection():
             self._toggle_check(self.available_tree, item, "check")
+        self._update_add_to_execution_style()
 
     def _on_available_space(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
         """Toggle checkboxes for all selected (highlighted) items in available_tree."""
         for item in self.available_tree.selection():
             self._toggle_check(self.available_tree, item, "check")
+        self._update_add_to_execution_style()
 
     def _on_executed_space(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
         """Toggle checkboxes for all selected (highlighted) items in executed_tree."""
@@ -1260,14 +1378,29 @@ class MainWindow(tk.Tk):
         for item in self.available_tree.get_children():
             self.available_tree.delete(item)
 
+        # Build editing source number set for red background tagging
+        editing_source_numbers: set[int] = set()
+        for item in self.input_sources_tree.get_children():
+            values = self.input_sources_tree.item(item, "values")
+            if values and values[3] == STATUS_EDITING:
+                try:
+                    editing_source_numbers.add(int(values[2]))
+                except (ValueError, IndexError):
+                    pass
+        self.available_tree.tag_configure("editing_source", background="#662222")
+
         scenarios = self.avail_scenario_mgr.scenarios
         for scenario in scenarios:
             key = f"{scenario.source_number}|{scenario.name}"
             check_char = CHECK_ON if key in checked_keys else CHECK_OFF
+            tags: tuple[str, ...] = ()
+            if scenario.source_number in editing_source_numbers:
+                tags = ("editing_source",)
             self.available_tree.insert(
                 "",
                 "end",
                 values=(check_char, scenario.source_number, scenario.name),
+                tags=tags,
             )
 
         # Re-select items at new positions
@@ -1276,6 +1409,8 @@ class MainWindow(tk.Tk):
             for idx in select_indices:
                 if 0 <= idx < len(new_children):
                     self.available_tree.selection_add(new_children[idx])
+
+        self._update_add_to_execution_style()
 
     def _save_scenario_order(self) -> None:
         """Persist the current scenario order to project settings."""
@@ -1298,6 +1433,31 @@ class MainWindow(tk.Tk):
             logger.info("No scenarios checked for execution")
             return
 
+        # Check if any checked scenarios come from editing sources (Change 5)
+        editing_source_numbers: set[int] = set()
+        for item in self.input_sources_tree.get_children():
+            values = self.input_sources_tree.item(item, "values")
+            if values and values[3] == STATUS_EDITING:
+                try:
+                    editing_source_numbers.add(int(values[2]))
+                except (ValueError, IndexError):
+                    pass
+
+        editing_scenarios = [
+            s for s in checked if s.source_number in editing_source_numbers
+        ]
+        if editing_scenarios:
+            names_str = ", ".join(s.name for s in editing_scenarios)
+            result = messagebox.askyesno(
+                "Unsaved changes",
+                f"Some selected scenarios come from input sources with "
+                f"unsaved changes:\n\n  {names_str}\n\n"
+                f"Continue anyway?",
+                parent=self,
+            )
+            if not result:
+                return
+
         self._pending_execution_scenarios = checked
         names = [s.name for s in checked]
         logger.info("Scenarios queued for execution: %s", names)
@@ -1308,6 +1468,9 @@ class MainWindow(tk.Tk):
 
         # Add jobs to the manager
         self.execution_mgr.add_jobs(checked)
+
+        # Update execution menu button highlight (Change 3)
+        self._update_execution_menu_style()
 
         # Open the execution window (or raise it)
         self._open_or_raise_execution_window()
@@ -1368,8 +1531,13 @@ class MainWindow(tk.Tk):
         This is called from worker threads, so we schedule GUI updates
         via ``self.after()``.
         """
-        if job.status in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED):
+        if job.status == JobStatus.SUCCESS:
+            self.after(0, self._refresh_and_autocheck_scenario, job.scenario_name)
+        elif job.status in (JobStatus.FAILED, JobStatus.KILLED):
             self.after(0, self._refresh_executed_scenarios)
+
+        # Update execution menu button highlight (Change 3)
+        self.after(0, self._update_execution_menu_style)
 
         # Notify the execution window (if open)
         if (
@@ -1385,6 +1553,7 @@ class MainWindow(tk.Tk):
         """
         self.after(0, self._refresh_executed_scenarios)
         self.after(0, self._update_output_status)
+        self.after(0, self._update_execution_menu_style)
 
     # ── Delete results handler ───────────────────────────────────
 
@@ -1425,6 +1594,7 @@ class MainWindow(tk.Tk):
         """Update the output status labels based on checked executed scenarios."""
         if not self.exec_scenario_mgr:
             self._reset_output_status()
+            self._update_output_frame_style()
             return
 
         # Gather checked scenario names from the executed tree
@@ -1436,6 +1606,7 @@ class MainWindow(tk.Tk):
 
         if not checked_names:
             self._reset_output_status()
+            self._update_output_frame_style()
             return
 
         # Check per-scenario outputs
@@ -1460,6 +1631,13 @@ class MainWindow(tk.Tk):
         for key, (full_name, has_output) in status_map.items():
             indicator = STATUS_OK if has_output else STATUS_ERR
             self.output_status_labels[key].configure(text=f"{full_name} {indicator}")
+            # Grey out Show/Open buttons when no output exists (Change 4)
+            if has_output:
+                self.output_action_btns[key].configure(style="TButton")
+            else:
+                self.output_action_btns[key].configure(style="Grey.TButton")
+
+        self._update_output_frame_style()
 
     def _reset_output_status(self) -> None:
         """Reset all output status labels to the default (no output) state."""
@@ -1472,6 +1650,8 @@ class MainWindow(tk.Tk):
         }
         for key, full_name in default_names.items():
             self.output_status_labels[key].configure(text=f"{full_name} {STATUS_ERR}")
+            # Grey out Show/Open buttons when no output (Change 4)
+            self.output_action_btns[key].configure(style="Grey.TButton")
 
     # ── Auto-generate checkbox management ─────────────────────────
 
