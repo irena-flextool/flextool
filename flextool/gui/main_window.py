@@ -283,10 +283,14 @@ class MainWindow(tk.Tk):
         self.execution_menu_btn.grid(row=8, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
 
         # --- Output actions LabelFrame (col 5, rows 2-8, right-aligned, above executed scenarios) ---
-        self.output_frame = ttk.LabelFrame(outer, text="Output actions", padding=5)
+        # Use tk.LabelFrame (not ttk) so that background color changes apply
+        # uniformly to the entire frame interior, not just the label row.
+        self.output_frame = tk.LabelFrame(outer, text="Output actions", padx=5, pady=5)
         self.output_frame.grid(
             row=2, column=5, rowspan=7, sticky="se", padx=(10, 0), pady=2,
         )
+        # Store default bg so we can revert the green tint later
+        self._output_frame_default_bg = self.output_frame.cget("background")
 
 
         output_info = [
@@ -974,15 +978,10 @@ class MainWindow(tk.Tk):
             if values and values[0] == CHECK_ON:
                 has_checked = True
                 break
-        # Note: LabelFrame background styling via ttk is limited;
-        # we create distinct styles to apply/remove the tint.
-        style = ttk.Style()
         if has_checked:
-            style.configure("Green.TLabelframe", background="#2E7D32")
-            style.configure("Green.TLabelframe.Label", background="#2E7D32")
-            self.output_frame.configure(style="Green.TLabelframe")
+            self.output_frame.configure(bg="#2E7D32")
         else:
-            self.output_frame.configure(style="TLabelframe")
+            self.output_frame.configure(bg=self._output_frame_default_bg)
 
     def _refresh_and_autocheck_scenario(self, scenario_name: str) -> None:
         """Refresh executed scenarios and auto-check the newly completed one."""
