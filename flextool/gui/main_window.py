@@ -290,7 +290,7 @@ class MainWindow(tk.Tk):
         # uniformly to the entire frame interior, not just the label row.
         # Pull the background color from the ttk theme so it matches dark/light mode.
         theme_bg = style.lookup("TFrame", "background") or self.cget("background")
-        theme_fg = style.lookup("TLabel", "foreground") or self.cget("foreground")
+        theme_fg = style.lookup("TLabel", "foreground") or "white"
         self.output_frame = tk.LabelFrame(
             outer, text="Output actions", padx=5, pady=5,
             bg=theme_bg, fg=theme_fg,
