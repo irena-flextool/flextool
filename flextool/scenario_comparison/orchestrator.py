@@ -113,10 +113,8 @@ def run(
 
     # Write to Excel (combined results)
     if write_to_xlsx:
-        excel_dir = 'output_excel_comparison'
-        os.makedirs(excel_dir, exist_ok=True)
         filename = 'compare_' + str(len(scenario_folders)) + '_scens.xlsx'
-        excel_path = os.path.join(excel_dir, filename)
+        excel_path = os.path.join(plot_dir, filename)
         with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
             used_names: set[str] = set()
             for name, df in combined_dfs.items():
