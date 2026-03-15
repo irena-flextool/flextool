@@ -128,11 +128,10 @@ class MainWindow(tk.Tk):
         # Let columns with treeviews expand.
         outer.columnconfigure(0, weight=1)   # input sources / available scenarios
         outer.columnconfigure(1, weight=0)   # buttons column
-        outer.columnconfigure(2, weight=1)   # executed scenarios start
-        outer.columnconfigure(3, weight=0)   # auto-generate / plot & exec menus
-        outer.columnconfigure(4, weight=0)   # executed scenarios continued
-        outer.columnconfigure(5, weight=0)   # output actions frame
-        outer.columnconfigure(6, weight=0)   # output actions frame continued
+        outer.columnconfigure(2, weight=0)   # auto-generate / plot & exec menus
+        outer.columnconfigure(3, weight=0)   # auto-generate continued
+        outer.columnconfigure(4, weight=0)   # output actions frame (right-aligned)
+        outer.columnconfigure(5, weight=1)   # executed scenarios (lower section)
 
         # ── Row 0: Project selector ──────────────────────────────────
         row = 0
@@ -151,7 +150,7 @@ class MainWindow(tk.Tk):
 
         # ── Theme radio buttons (far right of row 0) ─────────────
         theme_frame = ttk.Frame(outer)
-        theme_frame.grid(row=row, column=4, columnspan=3, sticky="e", padx=(20, 0))
+        theme_frame.grid(row=row, column=3, columnspan=2, sticky="e", padx=(20, 0))
 
         self._theme_var = tk.StringVar(value=initial_theme)
         for text, value in [("OS theme", "os"), ("Dark", "dark"), ("Light", "light")]:
@@ -283,9 +282,11 @@ class MainWindow(tk.Tk):
         )
         self.execution_menu_btn.grid(row=8, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
 
-        # --- Output actions LabelFrame ---
-        # Will be placed next to "Executed scenarios" (row 10-11) later in layout
+        # --- Output actions LabelFrame (col 4, rows 2-8, right-aligned, above executed scenarios) ---
         self.output_frame = ttk.LabelFrame(outer, text="Output actions", padding=5)
+        self.output_frame.grid(
+            row=2, column=4, rowspan=7, sticky="nse", padx=(10, 0), pady=2,
+        )
 
         output_info = [
             ("Scen. plots", "scen_plots"),
@@ -333,7 +334,7 @@ class MainWindow(tk.Tk):
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
-        sep.grid(row=9, column=0, columnspan=7, sticky="ew", pady=10)
+        sep.grid(row=9, column=0, columnspan=6, sticky="ew", pady=10)
 
         # ── Row 10: Scenario section headers ─────────────────────────
         row = 10
@@ -341,11 +342,7 @@ class MainWindow(tk.Tk):
             row=row, column=0, columnspan=2, sticky="sw", pady=(0, 2)
         )
         ttk.Label(outer, text="Executed scenarios", font=self._bold_font).grid(
-            row=row, column=2, columnspan=3, sticky="sw", padx=(20, 0), pady=(0, 2)
-        )
-        # Place output actions LabelFrame right-aligned, next to executed scenarios
-        self.output_frame.grid(
-            row=row, column=5, rowspan=2, columnspan=2, sticky="nsew", padx=(10, 0), pady=0,
+            row=row, column=2, columnspan=4, sticky="sw", padx=(20, 0), pady=(0, 2)
         )
 
         # ── Row 11: Available scenarios Treeview ─────────────────────
@@ -382,7 +379,7 @@ class MainWindow(tk.Tk):
 
         # ── Row 11: Executed scenarios Treeview ──────────────────────
         exec_frame = ttk.Frame(outer)
-        exec_frame.grid(row=row, column=2, columnspan=3, sticky="nsew", padx=(20, 0))
+        exec_frame.grid(row=row, column=2, columnspan=4, sticky="nsew", padx=(20, 0))
         exec_frame.columnconfigure(0, weight=1)
         exec_frame.rowconfigure(0, weight=1)
 
