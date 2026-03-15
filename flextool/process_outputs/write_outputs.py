@@ -327,7 +327,7 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
     return write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format
 
 
-def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None):
+def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -345,6 +345,8 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                        for processing a single result. Overrides config file.
         settings_db_url: URL of the settings database (optional, fills in unset params)
         fallback_output_location: Used as output_location if not set by caller or settings DB
+        raw_output_dir: Path to the directory containing solver raw output CSV files
+            (default: 'output_raw' relative to CWD)
     """
     write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format = _resolve_settings(
         write_methods, output_config_path, active_configs, plot_rows,
@@ -426,7 +428,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
     # Read original raw outputs from FlexTool
     else:
-        par, s, v = _read_outputs('output_raw')
+        par, s, v = _read_outputs(raw_output_dir or 'output_raw')
         start = log_time("Read flextool outputs", start)
 
         # Pre-process results to be closer to what needed for output writing

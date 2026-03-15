@@ -121,24 +121,18 @@ def main():
     
     # If successful and requested, write outputs
     if return_code == 0:
-        # Change to work folder so write_outputs can find 'output_raw/'
-        # which was created by the solver relative to its cwd (work_folder).
-        original_cwd = os.getcwd()
-        os.chdir(str(wf))
-        try:
-            write_outputs(
-                scenario_name=scenario_name,
-                output_location=args.output_location,
-                subdir=scenario_name,
-                output_config_path=args.output_config,
-                active_configs=args.active_configs,
-                write_methods=args.write_methods,
-                plot_rows=tuple(args.plot_rows) if args.plot_rows else None,
-                settings_db_url=settings_db_url,
-                fallback_output_location=str(output_path),
-            )
-        finally:
-            os.chdir(original_cwd)
+        write_outputs(
+            scenario_name=scenario_name,
+            output_location=args.output_location,
+            subdir=scenario_name,
+            output_config_path=args.output_config,
+            active_configs=args.active_configs,
+            write_methods=args.write_methods,
+            plot_rows=tuple(args.plot_rows) if args.plot_rows else None,
+            settings_db_url=settings_db_url,
+            fallback_output_location=str(output_path),
+            raw_output_dir=str(wf / 'output_raw'),
+        )
         timer.insert(0, time.perf_counter())
     
     print("\n--- Full execution time %.4s seconds ---------------------------------------" % (timer[0] - timer[-1]))

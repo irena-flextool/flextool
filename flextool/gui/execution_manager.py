@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -235,10 +236,24 @@ class ExecutionManager:
 
             # Step 2: Build and run the main FlexTool command
             work_folder = self.project_path / "work" / job.scenario_name
+
+            # Clean work folder so re-executions start fresh
+            if work_folder.exists():
+                shutil.rmtree(work_folder, ignore_errors=True)
             work_folder.mkdir(parents=True, exist_ok=True)
 
             cmd = self._build_run_command(job, work_folder)
-            logger.info("Running job %d (%s): %s", job.job_id, job.scenario_name, " ".join(cmd))
+            cmd_str = " ".join(cmd)
+            logger.info("Running job %d (%s): %s", job.job_id, job.scenario_name, cmd_str)
+
+            # Log the CLI command as the first line in the progress output
+            with self._lock:
+                job.stdout_lines.append(cmd_str)
+                job.stdout_lines.append("")
+            self._notify_status_change(job)
+
+            # Run from flextool root so relative paths (templates/, etc.) work
+            flextool_root = Path(__file__).resolve().parent.parent.parent
 
             proc = subprocess.Popen(
                 cmd,
@@ -246,6 +261,7 @@ class ExecutionManager:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                cwd=str(flextool_root),
             )
             killed = False
             with self._lock:
@@ -323,12 +339,15 @@ class ExecutionManager:
 
         logger.info("xlsx conversion for job %d: %s", job.job_id, " ".join(cmd))
 
+        flextool_root = Path(__file__).resolve().parent.parent.parent
+
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            cwd=str(flextool_root),
         )
         killed = False
         with self._lock:
@@ -477,6 +496,8 @@ class ExecutionManager:
 
         logger.info("Running post-execution comparison: %s", " ".join(cmd))
 
+        flextool_root = Path(__file__).resolve().parent.parent.parent
+
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -484,6 +505,7 @@ class ExecutionManager:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                cwd=str(flextool_root),
             )
             assert proc.stdout is not None
             for line in proc.stdout:
