@@ -32,6 +32,7 @@ from flextool.gui.platform_utils import (
     open_folder,
     open_spine_db_editor,
 )
+from flextool.gui.db_editor_integration import DbEditorManager
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ class MainWindow(tk.Tk):
         self.output_action_mgr: OutputActionManager | None = None
         self._pending_execution_scenarios: list[ScenarioInfo] = []
         self._lock_check_timer_id: str | None = None
+        self.db_editor_mgr = DbEditorManager()
 
         # ── Window sizing ────────────────────────────────────────────
         cw = self._char_width
@@ -760,6 +762,13 @@ class MainWindow(tk.Tk):
                 continue
 
             is_locked = self.input_source_mgr._check_lock(filepath)
+            # For sqlite files, also check if a tracked editor process is running
+            if (
+                not is_locked
+                and source_name.lower().endswith(".sqlite")
+                and self.db_editor_mgr.is_editor_running(source_name)
+            ):
+                is_locked = True
             if is_locked and old_status_char != STATUS_EDITING:
                 self.input_sources_tree.set(item, "status", STATUS_EDITING)
                 changed = True
@@ -1152,7 +1161,7 @@ class MainWindow(tk.Tk):
                 return
         elif ext == ".sqlite":
             db_url = f"sqlite:///{filepath}"
-            proc = open_spine_db_editor(db_url)
+            proc = self.db_editor_mgr.open_database(db_url, source_name)
             if proc is None:
                 messagebox.showinfo(
                     "spine-db-editor not found",
@@ -1465,11 +1474,24 @@ class MainWindow(tk.Tk):
         editing_source_numbers: set[int] = set()
         for item in self.input_sources_tree.get_children():
             values = self.input_sources_tree.item(item, "values")
-            if values and values[3] == STATUS_EDITING:
+            if not values:
+                continue
+            source_name = values[1]
+            # Existing check: treeview status column shows editing
+            if values[3] == STATUS_EDITING:
                 try:
                     editing_source_numbers.add(int(values[2]))
                 except (ValueError, IndexError):
                     pass
+                continue
+            # Enhanced check: sqlite sources with a running editor process
+            if source_name.lower().endswith(".sqlite") and self.input_source_mgr:
+                filepath = self.input_source_mgr.input_dir / source_name
+                if self.db_editor_mgr.has_uncommitted_changes(filepath):
+                    try:
+                        editing_source_numbers.add(int(values[2]))
+                    except (ValueError, IndexError):
+                        pass
 
         editing_scenarios = [
             s for s in checked if s.source_number in editing_source_numbers
@@ -1478,8 +1500,9 @@ class MainWindow(tk.Tk):
             names_str = ", ".join(s.name for s in editing_scenarios)
             result = messagebox.askyesno(
                 "Unsaved changes",
-                f"Some selected scenarios come from input sources with "
-                f"unsaved changes:\n\n  {names_str}\n\n"
+                f"Some selected scenarios come from input sources that "
+                f"may have unsaved changes (DB editor still open):\n\n"
+                f"  {names_str}\n\n"
                 f"Continue anyway?",
                 parent=self,
             )
