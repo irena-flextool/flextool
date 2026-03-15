@@ -288,12 +288,18 @@ class MainWindow(tk.Tk):
         # --- Output actions LabelFrame (col 5, rows 2-8, right-aligned, above executed scenarios) ---
         # Use tk.LabelFrame (not ttk) so that background color changes apply
         # uniformly to the entire frame interior, not just the label row.
-        self.output_frame = tk.LabelFrame(outer, text="Output actions", padx=5, pady=5)
+        # Pull the background color from the ttk theme so it matches dark/light mode.
+        theme_bg = style.lookup("TFrame", "background") or self.cget("background")
+        theme_fg = style.lookup("TLabel", "foreground") or self.cget("foreground")
+        self.output_frame = tk.LabelFrame(
+            outer, text="Output actions", padx=5, pady=5,
+            bg=theme_bg, fg=theme_fg,
+        )
         self.output_frame.grid(
             row=2, column=5, rowspan=7, sticky="se", padx=(10, 0), pady=2,
         )
         # Store default bg so we can revert the green tint later
-        self._output_frame_default_bg = self.output_frame.cget("background")
+        self._output_frame_default_bg = theme_bg
 
 
         output_info = [
@@ -976,11 +982,11 @@ class MainWindow(tk.Tk):
             self.add_to_execution_btn.configure(style="TButton")
 
     def _update_execution_menu_style(self) -> None:
-        """Highlight 'Execution menu' green when there are queued/running jobs."""
-        has_active = False
+        """Highlight 'Execution menu' green when there are jobs on the execution list."""
+        has_jobs = False
         if self.execution_mgr is not None:
-            has_active = self.execution_mgr.has_pending_or_running()
-        if has_active:
+            has_jobs = len(self.execution_mgr.get_jobs()) > 0
+        if has_jobs:
             self.execution_menu_btn.configure(style="Green.TButton")
         else:
             self.execution_menu_btn.configure(style="TButton")
@@ -1557,10 +1563,11 @@ class MainWindow(tk.Tk):
         self._ensure_execution_mgr()
         assert self.execution_mgr is not None
 
-        # Add jobs to the manager
+        # Add jobs to the manager and start execution automatically
         self.execution_mgr.add_jobs(checked)
+        self.execution_mgr.start()
 
-        # Update execution menu button highlight (Change 3)
+        # Update execution menu button highlight
         self._update_execution_menu_style()
 
         # Open the execution window (or raise it)
