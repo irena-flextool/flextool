@@ -150,7 +150,7 @@ class MainWindow(tk.Tk):
 
         # ── Theme radio buttons (far right of row 0) ─────────────
         theme_frame = ttk.Frame(outer)
-        theme_frame.grid(row=row, column=3, columnspan=2, sticky="e", padx=(20, 0))
+        theme_frame.grid(row=row, column=3, columnspan=3, sticky="e", padx=(20, 0))
 
         self._theme_var = tk.StringVar(value=initial_theme)
         for text, value in [("OS theme", "os"), ("Dark", "dark"), ("Light", "light")]:
@@ -282,11 +282,12 @@ class MainWindow(tk.Tk):
         )
         self.execution_menu_btn.grid(row=8, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
 
-        # --- Output actions LabelFrame (col 4, rows 2-8, right-aligned, above executed scenarios) ---
+        # --- Output actions LabelFrame (col 5, rows 2-8, right-aligned, above executed scenarios) ---
         self.output_frame = ttk.LabelFrame(outer, text="Output actions", padding=5)
         self.output_frame.grid(
-            row=2, column=4, rowspan=7, sticky="nse", padx=(10, 0), pady=2,
+            row=2, column=5, rowspan=7, sticky="se", padx=(10, 0), pady=2,
         )
+
 
         output_info = [
             ("Scen. plots", "scen_plots"),
