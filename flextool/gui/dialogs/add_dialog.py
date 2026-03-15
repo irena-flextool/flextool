@@ -73,26 +73,12 @@ class AddDialog(tk.Toplevel):
         copy_frame = ttk.LabelFrame(self, text="Copy to project", padding=8)
         copy_frame.pack(fill="x", **pad)
 
-        self._selected_files_var = tk.StringVar(value="No files selected")
-        choose_btn = ttk.Button(
-            copy_frame, text="Choose file dialog...", command=self._on_choose_files
-        )
-        choose_btn.pack(fill="x", pady=(0, 4))
-
-        self._files_label = ttk.Label(
+        choose_copy_btn = ttk.Button(
             copy_frame,
-            textvariable=self._selected_files_var,
-            wraplength=self._cw * 50,
-            justify="left",
+            text="Choose and copy files...",
+            command=self._on_choose_and_copy,
         )
-        self._files_label.pack(fill="x", pady=(0, 4))
-
-        self._copy_btn = ttk.Button(
-            copy_frame, text="Copy", command=self._on_copy
-        )
-        self._copy_btn.pack(anchor="e")
-
-        self._selected_file_paths: list[str] = []
+        choose_copy_btn.pack(fill="x")
 
         # ── Add FlexTool input Excel section ────────────────────────
         xlsx_frame = ttk.LabelFrame(
@@ -138,9 +124,9 @@ class AddDialog(tk.Toplevel):
         )
         sqlite_add_btn.pack(side="right")
 
-        # ── Close button (bottom right) ──────────────────────────────
+        # ── Close button (very bottom) ───────────────────────────────
         close_frame = ttk.Frame(self)
-        close_frame.pack(fill="x", padx=10, pady=(10, 10))
+        close_frame.pack(fill="x", side="bottom", padx=10, pady=(15, 10))
 
         close_btn = ttk.Button(
             close_frame, text="Close", command=self._on_back
@@ -149,8 +135,8 @@ class AddDialog(tk.Toplevel):
 
     # ── Event handlers ──────────────────────────────────────────────
 
-    def _on_choose_files(self) -> None:
-        """Open a file chooser for xlsx/sqlite files."""
+    def _on_choose_and_copy(self) -> None:
+        """Open a file chooser and immediately copy selected files."""
         initial_dir = self._flextool_root
         if not initial_dir.is_dir():
             initial_dir = Path.home()
@@ -179,28 +165,14 @@ class AddDialog(tk.Toplevel):
             height=int(screen_height * 0.75),
         )
         filepaths = picker.result
-        if filepaths:
-            self._selected_file_paths = [str(fp) for fp in filepaths]
-            names = [fp.name for fp in filepaths]
-            self._selected_files_var.set(", ".join(names))
-        else:
-            self._selected_file_paths = []
-            self._selected_files_var.set("No files selected")
-
-    def _on_copy(self) -> None:
-        """Copy selected files to the input_sources directory."""
-        if not self._selected_file_paths:
-            messagebox.showinfo(
-                "No files",
-                "Please choose files first.",
-                parent=self,
-            )
+        if not filepaths:
             return
 
+        # Copy files immediately
         errors: list[str] = []
-        copied = 0
-        for fp_str in self._selected_file_paths:
-            fp = Path(fp_str)
+        copied_names: list[str] = []
+        for fp in filepaths:
+            fp = Path(fp)
             dest = self._input_dir / fp.name
             if dest.exists():
                 overwrite = messagebox.askyesno(
@@ -213,7 +185,7 @@ class AddDialog(tk.Toplevel):
                     continue
             try:
                 shutil.copy2(str(fp), str(dest))
-                copied += 1
+                copied_names.append(fp.name)
             except OSError as exc:
                 errors.append(f"{fp.name}: {exc}")
                 logger.error("Failed to copy %s: %s", fp, exc)
@@ -227,8 +199,8 @@ class AddDialog(tk.Toplevel):
 
         # Check and upgrade any copied sqlite databases
         upgrade_messages: list[str] = []
-        for fp_str in self._selected_file_paths:
-            fp = Path(fp_str)
+        for fp in filepaths:
+            fp = Path(fp)
             if fp.suffix.lower() == ".sqlite":
                 dest = self._input_dir / fp.name
                 if dest.exists():
@@ -247,9 +219,12 @@ class AddDialog(tk.Toplevel):
                             "Version check failed for %s: %s", dest, exc, exc_info=True
                         )
 
-        if copied > 0:
+        if copied_names:
             self.result = True
-            done_text = f"Copied {copied} file(s) to input_sources."
+            file_list = "\n".join(f"  - {name}" for name in copied_names)
+            done_text = (
+                f"Done — copied {len(copied_names)} file(s):\n{file_list}"
+            )
             if upgrade_messages:
                 done_text += "\n\n" + "\n".join(upgrade_messages)
             messagebox.showinfo(
@@ -257,10 +232,6 @@ class AddDialog(tk.Toplevel):
                 done_text,
                 parent=self,
             )
-
-        # Reset selection
-        self._selected_file_paths = []
-        self._selected_files_var.set("No files selected")
 
     def _on_add_xlsx(self) -> None:
         """Copy the example xlsx template to input_sources."""
