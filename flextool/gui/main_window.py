@@ -461,6 +461,8 @@ class MainWindow(tk.Tk):
         self.bind_all("<Alt-Key-a>", lambda e: self._on_add_to_execution())
         self.bind_all("<Prior>", lambda e: self._on_move_up())
         self.bind_all("<Next>", lambda e: self._on_move_down())
+        self.bind_all("<Control-Key-a>", self._on_ctrl_a)
+        self.bind_all("<Control-Key-A>", self._on_ctrl_a)
 
         # ── Window close handler ─────────────────────────────────────
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1311,6 +1313,21 @@ class MainWindow(tk.Tk):
 
         save_project_settings(project_path, self.project_settings)
         self._refresh_input_sources()
+
+    # ── Ctrl-A select all ────────────────────────────────────────
+
+    def _on_ctrl_a(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Select all items in the focused Treeview, if any."""
+        widget = event.widget
+        # Walk up to find the Treeview that contains the focused widget
+        while widget is not None:
+            if isinstance(widget, ttk.Treeview):
+                children = widget.get_children()
+                if children:
+                    widget.selection_set(children)
+                return "break"
+            widget = getattr(widget, "master", None)
+        return None
 
     # ── Space key handlers for checkbox toggling ──────────────────
 
