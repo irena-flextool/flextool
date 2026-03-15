@@ -164,22 +164,50 @@ class ExecutionWindow(tk.Toplevel):
         btn_frame = ttk.Frame(self, padding=(10, 5, 10, 10))
         btn_frame.grid(row=2, column=0, columnspan=2, sticky="ew")
 
+        col = 0
         self._start_btn = ttk.Button(btn_frame, text="Start executions", command=self._on_start)
-        self._start_btn.pack(side="left", padx=(0, 10))
+        self._start_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
 
+        col += 1
+        move_frame = ttk.Frame(btn_frame)
+        move_frame.grid(row=0, column=col, rowspan=2, padx=(0, 10))
+
+        self._move_up_btn = ttk.Button(
+            move_frame, text="\u25b2", width=3, command=self._on_move_up
+        )
+        self._move_up_btn.grid(row=0, column=0, padx=(0, 2))
+        ttk.Label(move_frame, text="(PgUp)").grid(row=0, column=1, padx=(0, 4))
+
+        self._move_down_btn = ttk.Button(
+            move_frame, text="\u25bc", width=3, command=self._on_move_down
+        )
+        self._move_down_btn.grid(row=1, column=0, padx=(0, 2))
+        ttk.Label(move_frame, text="(PgDn)").grid(row=1, column=1, padx=(0, 4))
+
+        col += 1
         self._kill_remove_btn = ttk.Button(
             btn_frame, text="Kill / Remove selected", command=self._on_kill_remove
         )
-        self._kill_remove_btn.pack(side="left", padx=(0, 10))
+        self._kill_remove_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
 
+        col += 1
         self._wind_down_btn = ttk.Button(btn_frame, text="Wind down", command=self._on_wind_down)
-        self._wind_down_btn.pack(side="left", padx=(0, 10))
+        self._wind_down_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
 
+        col += 1
         self._kill_all_btn = ttk.Button(btn_frame, text="Kill all", command=self._on_kill_all)
-        self._kill_all_btn.pack(side="left", padx=(0, 10))
+        self._kill_all_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
 
+        col += 1
+        btn_frame.columnconfigure(col, weight=1)  # spacer to push Close right
+
+        col += 1
         self._close_btn = ttk.Button(btn_frame, text="Close", command=self._on_close_attempt)
-        self._close_btn.pack(side="right")
+        self._close_btn.grid(row=0, column=col, rowspan=2, sticky="ns")
+
+        # ── Keyboard shortcuts for move ──────────────────────────────
+        self.bind("<Prior>", lambda e: self._on_move_up())
+        self.bind("<Next>", lambda e: self._on_move_down())
 
         # ── Window close handler ─────────────────────────────────────
         self.protocol("WM_DELETE_WINDOW", self._on_close_attempt)
@@ -427,6 +455,28 @@ class ExecutionWindow(tk.Toplevel):
         self._mgr.kill_all()
         self._refresh_job_list()
         self._update_button_states()
+
+    def _on_move_up(self) -> None:
+        """Move the selected pending job one position earlier in the queue."""
+        if self._selected_job_id is None:
+            return
+        self._mgr.move_pending_up(self._selected_job_id)
+        self._refresh_job_list()
+        # Re-select the moved item
+        iid = str(self._selected_job_id)
+        if self._job_tree.exists(iid):
+            self._job_tree.selection_set(iid)
+
+    def _on_move_down(self) -> None:
+        """Move the selected pending job one position later in the queue."""
+        if self._selected_job_id is None:
+            return
+        self._mgr.move_pending_down(self._selected_job_id)
+        self._refresh_job_list()
+        # Re-select the moved item
+        iid = str(self._selected_job_id)
+        if self._job_tree.exists(iid):
+            self._job_tree.selection_set(iid)
 
     def _on_close_attempt(self) -> None:
         """Handle the close button or window manager close request."""

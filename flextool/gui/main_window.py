@@ -393,27 +393,34 @@ class MainWindow(tk.Tk):
         bottom_left = ttk.Frame(outer)
         bottom_left.grid(row=row, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
+        self.check_btn = ttk.Button(
+            bottom_left, text="Check\n[Alt-C]",
+            command=self._on_check_selected,
+        )
+        self.check_btn.grid(row=0, column=0, padx=(0, 10))
+
         self.add_to_execution_btn = ttk.Button(
-            bottom_left, text="Add marked to\nthe execution list",
+            bottom_left, text="Add selected to the\nexecution list [Alt-A]",
             command=self._on_add_to_execution,
         )
-        self.add_to_execution_btn.grid(row=0, column=0, padx=(0, 10))
+        self.add_to_execution_btn.grid(row=0, column=1, padx=(0, 10))
 
         move_frame = ttk.Frame(bottom_left)
-        move_frame.grid(row=0, column=1, padx=10)
+        move_frame.grid(row=0, column=2, padx=10)
 
         self.move_up_btn = ttk.Button(
             move_frame, text="\u25b2", width=3, command=self._on_move_up
         )
-        self.move_up_btn.grid(row=0, column=1, padx=2)
+        self.move_up_btn.grid(row=0, column=0, padx=(0, 2))
+
+        ttk.Label(move_frame, text="(PgUp)").grid(row=0, column=1, padx=(0, 4))
 
         self.move_down_btn = ttk.Button(
             move_frame, text="\u25bc", width=3, command=self._on_move_down
         )
-        self.move_down_btn.grid(row=0, column=2, padx=2)
+        self.move_down_btn.grid(row=1, column=0, padx=(0, 2))
 
-        self.move_label = ttk.Label(move_frame, text="Move\nselected")
-        self.move_label.grid(row=0, column=0, padx=(0, 4))
+        ttk.Label(move_frame, text="(PgDn)").grid(row=1, column=1, padx=(0, 4))
 
         bottom_right = ttk.Frame(outer)
         bottom_right.grid(row=row, column=2, columnspan=5, sticky="e", pady=(8, 0))
@@ -423,6 +430,12 @@ class MainWindow(tk.Tk):
             command=self._on_delete_results,
         )
         self.delete_results_btn.grid(row=0, column=0)
+
+        # ── Keyboard shortcuts ──────────────────────────────────────
+        self.bind_all("<Alt-Key-c>", lambda e: self._on_check_selected())
+        self.bind_all("<Alt-Key-a>", lambda e: self._on_add_to_execution())
+        self.bind_all("<Prior>", lambda e: self._on_move_up())
+        self.bind_all("<Next>", lambda e: self._on_move_down())
 
         # ── Window close handler ─────────────────────────────────────
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1145,6 +1158,11 @@ class MainWindow(tk.Tk):
         self._refresh_input_sources()
 
     # ── Space key handlers for checkbox toggling ──────────────────
+
+    def _on_check_selected(self) -> None:
+        """Toggle checkboxes for all selected (highlighted) items in available_tree."""
+        for item in self.available_tree.selection():
+            self._toggle_check(self.available_tree, item, "check")
 
     def _on_available_space(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
         """Toggle checkboxes for all selected (highlighted) items in available_tree."""
