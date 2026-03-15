@@ -36,8 +36,10 @@ from flextool.gui.platform_utils import (
 logger = logging.getLogger(__name__)
 
 # Unicode checkbox characters for Treeview checkbox simulation
-CHECK_ON = "\u2611"   # ☑
-CHECK_OFF = "\u2610"  # ☐
+# Using geometric shapes (U+25A1 / U+25A3) which render noticeably larger
+# than ballot box characters at the same font size.
+CHECK_ON = "\u25a3"   # ▣
+CHECK_OFF = "\u25a1"  # □
 STATUS_OK = "\u2713"  # ✓
 STATUS_ERR = "\u2717"  # ✗
 STATUS_EDITING = "\u23f3"  # ⏳
@@ -190,8 +192,8 @@ class MainWindow(tk.Tk):
         self.input_sources_tree.grid(row=0, column=0, sticky="nsew")
 
         input_scroll = ttk.Scrollbar(input_frame, orient="vertical", command=self.input_sources_tree.yview)
-        self.input_sources_tree.configure(yscrollcommand=input_scroll.set)
         input_scroll.grid(row=0, column=1, sticky="ns")
+        self._setup_autohide_scrollbar(self.input_sources_tree, input_scroll)
 
         # Bind click for checkbox toggling (filtering) and selection change (button state)
         self.input_sources_tree.bind("<Button-1>", self._on_input_source_click)
@@ -369,8 +371,8 @@ class MainWindow(tk.Tk):
         self.available_tree.grid(row=0, column=0, sticky="nsew")
 
         avail_scroll = ttk.Scrollbar(avail_frame, orient="vertical", command=self.available_tree.yview)
-        self.available_tree.configure(yscrollcommand=avail_scroll.set)
         avail_scroll.grid(row=0, column=1, sticky="ns")
+        self._setup_autohide_scrollbar(self.available_tree, avail_scroll)
 
         self.available_tree.bind("<Button-1>", self._on_available_click)
         self.available_tree.bind("<space>", self._on_available_space)
@@ -399,8 +401,8 @@ class MainWindow(tk.Tk):
         self.executed_tree.grid(row=0, column=0, sticky="nsew")
 
         exec_scroll = ttk.Scrollbar(exec_frame, orient="vertical", command=self.executed_tree.yview)
-        self.executed_tree.configure(yscrollcommand=exec_scroll.set)
         exec_scroll.grid(row=0, column=1, sticky="ns")
+        self._setup_autohide_scrollbar(self.executed_tree, exec_scroll)
 
         self.executed_tree.bind("<Button-1>", self._on_executed_click)
         self.executed_tree.bind("<space>", self._on_executed_space)
@@ -460,6 +462,32 @@ class MainWindow(tk.Tk):
 
         # ── Startup logic ────────────────────────────────────────────
         self._startup()
+
+    # ── Auto-hide scrollbar helper ──────────────────────────────────
+
+    @staticmethod
+    def _setup_autohide_scrollbar(
+        tree: ttk.Treeview,
+        scrollbar: ttk.Scrollbar,
+    ) -> None:
+        """Configure *scrollbar* to appear only when *tree* content overflows.
+
+        The scrollbar must already be placed via ``grid()``.  Its grid
+        configuration is captured once so that ``grid_remove()`` /
+        ``grid(**info)`` can toggle visibility without losing placement.
+        """
+        grid_info: dict = scrollbar.grid_info()
+
+        def _on_scroll_set(first: str, last: str) -> None:
+            scrollbar.set(first, last)
+            if float(first) <= 0.0 and float(last) >= 1.0:
+                scrollbar.grid_remove()
+            else:
+                scrollbar.grid(**grid_info)
+
+        tree.configure(yscrollcommand=_on_scroll_set)
+        # Hide immediately if nothing to scroll yet
+        scrollbar.grid_remove()
 
     # ── Startup ──────────────────────────────────────────────────────
 

@@ -131,8 +131,8 @@ class ExecutionWindow(tk.Toplevel):
         self._job_tree.grid(row=0, column=0, sticky="nsew")
 
         job_scroll = ttk.Scrollbar(left_frame, orient="vertical", command=self._job_tree.yview)
-        self._job_tree.configure(yscrollcommand=job_scroll.set)
         job_scroll.grid(row=0, column=1, sticky="ns")
+        self._setup_autohide_scrollbar(self._job_tree, job_scroll)
 
         self._job_tree.bind("<<TreeviewSelect>>", self._on_job_selected)
 
@@ -216,6 +216,28 @@ class ExecutionWindow(tk.Toplevel):
         self._refresh_job_list()
         self._update_button_states()
         self._poll_updates()
+
+    # ------------------------------------------------------------------
+    # Auto-hide scrollbar helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _setup_autohide_scrollbar(
+        tree: ttk.Treeview,
+        scrollbar: ttk.Scrollbar,
+    ) -> None:
+        """Configure *scrollbar* to appear only when *tree* content overflows."""
+        grid_info: dict = scrollbar.grid_info()
+
+        def _on_scroll_set(first: str, last: str) -> None:
+            scrollbar.set(first, last)
+            if float(first) <= 0.0 and float(last) >= 1.0:
+                scrollbar.grid_remove()
+            else:
+                scrollbar.grid(**grid_info)
+
+        tree.configure(yscrollcommand=_on_scroll_set)
+        scrollbar.grid_remove()
 
     # ------------------------------------------------------------------
     # Max workers

@@ -11,8 +11,10 @@ from flextool.gui.data_models import ExecutedScenarioInfo, ProjectSettings, Scen
 logger = logging.getLogger(__name__)
 
 # Unicode checkbox characters (mirrors main_window.py constants)
-CHECK_ON = "\u2611"   # ☑
-CHECK_OFF = "\u2610"  # ☐
+# Using geometric shapes (U+25A1 / U+25A3) which render noticeably larger
+# than ballot box characters at the same font size.
+CHECK_ON = "\u25a3"   # ▣
+CHECK_OFF = "\u25a1"  # □
 
 
 class AvailableScenarioManager:
