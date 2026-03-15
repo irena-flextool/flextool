@@ -201,6 +201,7 @@ class MainWindow(tk.Tk):
 
         # Bind click for checkbox toggling (filtering) and selection change (button state)
         self.input_sources_tree.bind("<Button-1>", self._on_input_source_click)
+        self.input_sources_tree.bind("<B1-Motion>", self._on_tree_drag_select)
         self.input_sources_tree.bind("<<TreeviewSelect>>", lambda _e: self._update_input_button_states())
 
         # --- Input source buttons (col 1, rows 2-8) ---
@@ -338,19 +339,19 @@ class MainWindow(tk.Tk):
                 self.output_frame, text=f"{label_text} {STATUS_ERR}", width=20,
                 command=getattr(self, _gen_commands[key]),
             )
-            status_btn.grid(row=i, column=0, sticky="w", padx=(0, 5), pady=2)
+            status_btn.grid(row=i, column=0, sticky="w", padx=(0, 2), pady=2)
             self.output_status_labels[key] = status_btn
+
+            spinner_label = ttk.Label(self.output_frame, text="  ", width=2, anchor="center")
+            spinner_label.grid(row=i, column=1, padx=2, pady=2)
+            self._output_spinners[key] = spinner_label
 
             action_btn = ttk.Button(
                 self.output_frame, text=action_text, width=5,
                 command=getattr(self, _show_commands[key]),
             )
-            action_btn.grid(row=i, column=1, sticky="w", padx=2, pady=2)
+            action_btn.grid(row=i, column=2, sticky="w", padx=(2, 0), pady=2)
             self.output_action_btns[key] = action_btn
-
-            spinner_label = ttk.Label(self.output_frame, text="  ", width=2)
-            spinner_label.grid(row=i, column=2, sticky="w", padx=(2, 0), pady=2)
-            self._output_spinners[key] = spinner_label
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
@@ -395,6 +396,7 @@ class MainWindow(tk.Tk):
         self._setup_autohide_scrollbar(self.available_tree, avail_scroll)
 
         self.available_tree.bind("<Button-1>", self._on_available_click)
+        self.available_tree.bind("<B1-Motion>", self._on_tree_drag_select)
         self.available_tree.bind("<space>", self._on_available_space)
 
         # ── Row 11: Executed scenarios Treeview ──────────────────────
@@ -425,6 +427,7 @@ class MainWindow(tk.Tk):
         self._setup_autohide_scrollbar(self.executed_tree, exec_scroll)
 
         self.executed_tree.bind("<Button-1>", self._on_executed_click)
+        self.executed_tree.bind("<B1-Motion>", self._on_tree_drag_select)
         self.executed_tree.bind("<space>", self._on_executed_space)
         self.executed_tree.bind("<<TreeviewSelect>>", self._on_executed_selection_changed)
 
@@ -845,6 +848,17 @@ class MainWindow(tk.Tk):
                 btn.configure(state=state)
             except Exception:
                 pass
+
+    # ── Drag-to-select for Treeviews ────────────────────────────────
+
+    def _on_tree_drag_select(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Extend selection to the item under the cursor during B1 drag."""
+        tree = event.widget
+        if not isinstance(tree, ttk.Treeview):
+            return
+        item = tree.identify_row(event.y)
+        if item:
+            tree.selection_add(item)
 
     # ── Treeview checkbox toggle handlers ────────────────────────────
     # These detect a click on the "check" column and toggle the character.

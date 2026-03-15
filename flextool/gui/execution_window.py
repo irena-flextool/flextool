@@ -103,6 +103,9 @@ class ExecutionWindow(tk.Toplevel):
             command=self._on_max_workers_changed,
         )
         self._max_workers_spin.pack(side="left")
+        # Sync on Enter key and focus-out (command only fires on arrow clicks)
+        self._max_workers_spin.bind("<Return>", lambda e: self._on_max_workers_changed())
+        self._max_workers_spin.bind("<FocusOut>", lambda e: self._on_max_workers_changed())
         # Also sync the spinbox to the current manager value
         self._max_workers_var.set(self._mgr.max_workers)
 
@@ -135,6 +138,7 @@ class ExecutionWindow(tk.Toplevel):
         self._setup_autohide_scrollbar(self._job_tree, job_scroll)
 
         self._job_tree.bind("<<TreeviewSelect>>", self._on_job_selected)
+        self._job_tree.bind("<B1-Motion>", self._on_drag_select)
 
         # ── Progress panel (right) ───────────────────────────────────
         right_frame = ttk.LabelFrame(self, text="Progress", padding=5)
@@ -242,6 +246,16 @@ class ExecutionWindow(tk.Toplevel):
 
         tree.configure(yscrollcommand=_on_scroll_set)
         scrollbar.grid_remove()
+
+    # ------------------------------------------------------------------
+    # Drag-to-select
+    # ------------------------------------------------------------------
+
+    def _on_drag_select(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Extend selection to the item under the cursor during B1 drag."""
+        item = self._job_tree.identify_row(event.y)
+        if item:
+            self._job_tree.selection_add(item)
 
     # ------------------------------------------------------------------
     # Max workers
