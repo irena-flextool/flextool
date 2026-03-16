@@ -423,9 +423,16 @@ class ExecutionManager:
         if single.config_file:
             cmd.extend(["--output-config", single.config_file])
 
-        # Active configs
-        if single.active_configs:
-            cmd.extend(["--active-configs", *single.active_configs])
+        # Active configs — pass all available if none explicitly set
+        active = single.active_configs
+        if not active:
+            from flextool.gui.config_parser import parse_plot_configs
+            config_file = single.config_file or "templates/default_plots.yaml"
+            config_path = Path(config_file)
+            if not config_path.is_absolute():
+                config_path = Path(__file__).resolve().parent.parent.parent / config_file
+            active = parse_plot_configs(config_path) or ["default"]
+        cmd.extend(["--active-configs", *active])
 
         # Plot rows (start_time .. start_time + duration - 1)
         if single.duration > 0:
@@ -480,8 +487,15 @@ class ExecutionManager:
         if comp.config_file:
             cmd.extend(["--output-config-path", comp.config_file])
 
-        if comp.active_configs:
-            cmd.extend(["--active-configs", *comp.active_configs])
+        active = comp.active_configs
+        if not active:
+            from flextool.gui.config_parser import parse_plot_configs
+            config_file = comp.config_file or "templates/default_comparison_plots.yaml"
+            config_path = Path(config_file)
+            if not config_path.is_absolute():
+                config_path = Path(__file__).resolve().parent.parent.parent / config_file
+            active = parse_plot_configs(config_path) or ["default"]
+        cmd.extend(["--active-configs", *active])
 
         if comp.duration > 0:
             first_row = comp.start_time

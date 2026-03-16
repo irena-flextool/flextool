@@ -9,8 +9,10 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-from flextool.gui.data_models import ProjectSettings
+from flextool.gui.config_parser import parse_plot_configs
+from flextool.gui.data_models import PlotSettings, ProjectSettings
 from flextool.gui.platform_utils import open_file_in_default_app
+from flextool.gui.project_utils import get_projects_dir
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +209,22 @@ class OutputActionManager:
         return xlsxs[0] if xlsxs else None
 
     # ------------------------------------------------------------------
+    # Config helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_active_configs(ps: PlotSettings, default_config: str) -> list[str]:
+        """Return active configs from settings, or all configs from the file if empty."""
+        if ps.active_configs:
+            return ps.active_configs
+        # No active configs set — read all available from the config file
+        config_file = ps.config_file or default_config
+        config_path = Path(config_file)
+        if not config_path.is_absolute():
+            config_path = get_projects_dir().parent / config_file
+        return parse_plot_configs(config_path) or ["default"]
+
+    # ------------------------------------------------------------------
     # Command builders
     # ------------------------------------------------------------------
 
@@ -235,8 +253,8 @@ class OutputActionManager:
         if single.config_file:
             cmd.extend(["--config-path", single.config_file])
 
-        if single.active_configs:
-            cmd.extend(["--active-configs", *single.active_configs])
+        active = self._resolve_active_configs(single, "templates/default_plots.yaml")
+        cmd.extend(["--active-configs", *active])
 
         if single.duration > 0:
             first_row = single.start_time
@@ -273,8 +291,8 @@ class OutputActionManager:
         if comp.config_file:
             cmd.extend(["--output-config-path", comp.config_file])
 
-        if comp.active_configs:
-            cmd.extend(["--active-configs", *comp.active_configs])
+        active = self._resolve_active_configs(comp, "templates/default_comparison_plots.yaml")
+        cmd.extend(["--active-configs", *active])
 
         if comp.duration > 0:
             first_row = comp.start_time
