@@ -88,49 +88,59 @@ class _PlotSection:
             row=0, column=2, sticky="e",
         )
 
-        # ── Active configs checkboxes ──────────────────────────────
+        # ── Active configs list (Treeview with checkboxes) ─────────
         row = 3
         ttk.Label(self.frame, text="Active configs:").grid(
             row=row, column=0, sticky="w", pady=(4, 2),
         )
 
         row = 4
-        # Scrollable container for config checkboxes
-        self._cb_outer = ttk.Frame(self.frame)
-        self._cb_outer.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(0, 4))
-
-        self._cb_canvas = tk.Canvas(self._cb_outer, highlightthickness=0)
-        self._cb_scrollbar = ttk.Scrollbar(
-            self._cb_outer, orient="vertical", command=self._cb_canvas.yview,
-        )
-        self._cb_frame = ttk.Frame(self._cb_canvas)
-
-        self._cb_frame.bind(
-            "<Configure>",
-            lambda e: self._cb_canvas.configure(scrollregion=self._cb_canvas.bbox("all")),
-        )
-        self._cb_canvas_window = self._cb_canvas.create_window(
-            (0, 0), window=self._cb_frame, anchor="nw",
-        )
-        self._cb_canvas.configure(yscrollcommand=self._cb_scrollbar.set)
-
-        self._cb_canvas.pack(side="left", fill="both", expand=True)
-        # Scrollbar is packed only when needed (see _populate_checkboxes)
-
-        # Line height for sizing the canvas
         self._lh = tkfont.nametofont("TkDefaultFont").metrics("linespace")
+        cw = tkfont.nametofont("TkDefaultFont").measure("0")
 
-        self._config_vars: dict[str, tk.BooleanVar] = {}
-        self._populate_checkboxes()
+        config_frame = ttk.Frame(self.frame)
+        config_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+        config_frame.columnconfigure(0, weight=1)
+        config_frame.rowconfigure(0, weight=1)
+
+        self._config_tree = ttk.Treeview(
+            config_frame,
+            columns=("check", "name"),
+            show="headings",
+            selectmode="extended",
+            height=6,
+        )
+        self._config_tree.heading("check", text="\u25bd")
+        self._config_tree.heading("name", text="Config")
+        self._config_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self._config_tree.column("name", width=cw * 20, minwidth=cw * 10, stretch=True)
+        self._config_tree.grid(row=0, column=0, sticky="nsew")
+
+        config_scroll = ttk.Scrollbar(config_frame, orient="vertical", command=self._config_tree.yview)
+        config_scroll.grid(row=0, column=1, sticky="ns")
+        self._config_tree.configure(yscrollcommand=config_scroll.set)
+
+        self._config_tree.bind("<Button-1>", self._on_config_click)
+        self._config_tree.bind("<space>", self._on_config_space)
+
+        self._populate_configs()
 
     # ── Public helpers ────────────────────────────────────────────
+
+    # Unicode checkbox characters (same as main window)
+    _CHECK_ON = "\u25a3"   # ▣
+    _CHECK_OFF = "\u25a1"  # □
 
     def collect(self) -> PlotSettings:
         """Return a ``PlotSettings`` built from the current widget state."""
         start = _parse_int(self._start_var.get(), self._settings.start_time)
         duration = _parse_int(self._duration_var.get(), self._settings.duration)
         config_file = _relative_config_path(self._config_path)
-        active = [name for name, var in self._config_vars.items() if var.get()]
+        active: list[str] = []
+        for item in self._config_tree.get_children():
+            values = self._config_tree.item(item, "values")
+            if values and values[0] == self._CHECK_ON:
+                active.append(values[1])
         return PlotSettings(
             start_time=start,
             duration=duration,
@@ -140,83 +150,46 @@ class _PlotSection:
 
     # ── Internal ──────────────────────────────────────────────────
 
-    def _populate_checkboxes(self) -> None:
-        """Create one ``ttk.Checkbutton`` per config name found in the YAML."""
-        # Clear existing checkboxes
-        for child in self._cb_frame.winfo_children():
-            child.destroy()
-        self._config_vars.clear()
+    def _populate_configs(self) -> None:
+        """Populate the config Treeview from the YAML file."""
+        for item in self._config_tree.get_children():
+            self._config_tree.delete(item)
 
         config_names = parse_plot_configs(self._config_path)
         if not config_names:
-            ttk.Label(self._cb_frame, text="(no configs found)").pack(anchor="w")
-            self._cb_canvas.configure(height=self._lh)
-            self._cb_scrollbar.pack_forget()
             return
 
         saved_active = self._settings.active_configs
         saved_config_file = self._settings.config_file or self._default_config_file
         current_rel = _relative_config_path(self._config_path)
-
-        # If the config file matches the one already saved in settings,
-        # restore saved selection; otherwise auto-select all.
         is_same_file = (current_rel == saved_config_file)
 
         for name in config_names:
-            var = tk.BooleanVar()
             if is_same_file and saved_active:
-                var.set(name in saved_active)
+                check = self._CHECK_ON if name in saved_active else self._CHECK_OFF
             else:
-                # New / different config file -> select everything
-                var.set(True)
-            self._config_vars[name] = var
-            cb = ttk.Checkbutton(self._cb_frame, text=name, variable=var)
-            cb.pack(anchor="w")
+                check = self._CHECK_ON
+            self._config_tree.insert("", "end", values=(check, name))
 
-        # Set max visible height (up to 10 items) and show/hide scrollbar
-        max_visible = 10
-        visible_count = min(len(config_names), max_visible)
-        canvas_height = visible_count * self._lh
-        self._cb_canvas.configure(height=canvas_height)
+    def _on_config_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Toggle checkbox on click in the check column."""
+        region = self._config_tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        column = self._config_tree.identify_column(event.x)
+        if column == "#1":  # check column
+            item = self._config_tree.identify_row(event.y)
+            if item:
+                current = self._config_tree.set(item, "check")
+                new_val = self._CHECK_OFF if current == self._CHECK_ON else self._CHECK_ON
+                self._config_tree.set(item, "check", new_val)
 
-        if len(config_names) > max_visible:
-            self._cb_scrollbar.pack(side="right", fill="y")
-            self._bind_mousewheel(self._cb_canvas)
-        else:
-            self._cb_scrollbar.pack_forget()
-            self._unbind_mousewheel(self._cb_canvas)
-
-    def _bind_mousewheel(self, canvas: tk.Canvas) -> None:
-        """Bind mouse wheel events for scrolling the config checkbox canvas."""
-        def _on_mousewheel(event: tk.Event) -> None:  # type: ignore[type-arg]
-            canvas.yview_scroll(-1 * (event.delta // 120 or (1 if event.num == 4 else -1)), "units")
-
-        # Linux uses Button-4/5, Windows/Mac use <MouseWheel>
-        canvas.bind("<MouseWheel>", _on_mousewheel)
-        canvas.bind("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
-        canvas.bind("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
-        # Also bind on the inner frame so scrolling works when hovering over checkbuttons
-        self._cb_frame.bind("<MouseWheel>", _on_mousewheel)
-        self._cb_frame.bind("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
-        self._cb_frame.bind("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
-        # Bind on individual children as well
-        for child in self._cb_frame.winfo_children():
-            child.bind("<MouseWheel>", _on_mousewheel)
-            child.bind("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
-            child.bind("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
-
-    def _unbind_mousewheel(self, canvas: tk.Canvas) -> None:
-        """Remove mouse wheel bindings from the config checkbox canvas."""
-        canvas.unbind("<MouseWheel>")
-        canvas.unbind("<Button-4>")
-        canvas.unbind("<Button-5>")
-        self._cb_frame.unbind("<MouseWheel>")
-        self._cb_frame.unbind("<Button-4>")
-        self._cb_frame.unbind("<Button-5>")
-        for child in self._cb_frame.winfo_children():
-            child.unbind("<MouseWheel>")
-            child.unbind("<Button-4>")
-            child.unbind("<Button-5>")
+    def _on_config_space(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Toggle checkboxes for selected items on space."""
+        for item in self._config_tree.selection():
+            current = self._config_tree.set(item, "check")
+            new_val = self._CHECK_OFF if current == self._CHECK_ON else self._CHECK_ON
+            self._config_tree.set(item, "check", new_val)
 
     def _on_change_config(self) -> None:
         """Open a file chooser to select a different YAML config file."""
@@ -261,7 +234,7 @@ class _PlotSection:
 
         self._config_path = new_path
         self._config_label_var.set(_relative_config_path(new_path))
-        self._populate_checkboxes()
+        self._populate_configs()
 
 
 class PlotDialog(tk.Toplevel):
