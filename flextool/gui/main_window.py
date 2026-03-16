@@ -274,9 +274,9 @@ class MainWindow(tk.Tk):
         self.auto_comp_plots_var.trace_add("write", self._on_auto_gen_toggled)
         self.auto_comp_excel_var.trace_add("write", self._on_auto_gen_toggled)
 
-        # --- Plot menu and Execution menu buttons (col 2-3, rows 7-8) ---
+        # --- Plot settings and Execution menu buttons (col 2-3, rows 7-8) ---
         self.plot_menu_btn = ttk.Button(
-            outer, text="Plot menu", width=14,
+            outer, text="Plot settings", width=14,
             command=self._on_plot_menu,
         )
         self.plot_menu_btn.grid(row=7, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)

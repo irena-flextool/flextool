@@ -47,10 +47,11 @@ class _PlotSection:
         self._default_config_file = default_config_file
 
         self.frame = ttk.LabelFrame(parent, text=label, padding=10)
+        self.frame.columnconfigure(1, weight=1)
 
         # ── Start time ─────────────────────────────────────────────
         row = 0
-        ttk.Label(self.frame, text="Time series plot start time (as integer timestep):").grid(
+        ttk.Label(self.frame, text="Start timestep:").grid(
             row=row, column=0, sticky="w", pady=(0, 4),
         )
         self._start_var = tk.StringVar(value=str(settings.start_time))
@@ -60,7 +61,7 @@ class _PlotSection:
 
         # ── Duration ───────────────────────────────────────────────
         row = 1
-        ttk.Label(self.frame, text="Time series plot duration (as number of timesteps):").grid(
+        ttk.Label(self.frame, text="Duration (timesteps):").grid(
             row=row, column=0, sticky="w", pady=(0, 4),
         )
         self._duration_var = tk.StringVar(value=str(settings.duration))
@@ -95,11 +96,12 @@ class _PlotSection:
         )
 
         row = 4
+        self.frame.rowconfigure(row, weight=1)
         self._lh = tkfont.nametofont("TkDefaultFont").metrics("linespace")
         cw = tkfont.nametofont("TkDefaultFont").measure("0")
 
         config_frame = ttk.Frame(self.frame)
-        config_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+        config_frame.grid(row=row, column=0, columnspan=2, sticky="nsew", pady=(0, 4))
         config_frame.columnconfigure(0, weight=1)
         config_frame.rowconfigure(0, weight=1)
 
@@ -266,9 +268,9 @@ class PlotDialog(tk.Toplevel):
         lh: int = default_font.metrics("linespace")
 
         # ── Dialog size ──────────────────────────────────────────
-        self.geometry(f"{cw * 60}x{lh * 42}")
+        self.geometry(f"{cw * 110}x{lh * 30}")
         self.resizable(True, True)
-        self.minsize(cw * 60, lh * 30)
+        self.minsize(cw * 80, lh * 20)
 
         self._build_widgets()
 
@@ -293,29 +295,36 @@ class PlotDialog(tk.Toplevel):
     # ── Widget construction ──────────────────────────────────────
 
     def _build_widgets(self) -> None:
-        pad = dict(padx=10, pady=5)
+        # Use grid so the two sections sit side-by-side and expand
+        self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
 
-        # ── Single scenario section ──────────────────────────────
+        # ── Single scenario section (left) ───────────────────────
         self._single_section = _PlotSection(
             self,
             label="Single scenario settings:",
             settings=self._settings.single_plot_settings,
             default_config_file="templates/default_plots.yaml",
         )
-        self._single_section.frame.pack(fill="x", **pad)
+        self._single_section.frame.grid(
+            row=0, column=0, sticky="nsew", padx=(10, 5), pady=(10, 5),
+        )
 
-        # ── Comparison section ───────────────────────────────────
+        # ── Comparison section (right) ───────────────────────────
         self._comp_section = _PlotSection(
             self,
             label="Scenario comparison settings:",
             settings=self._settings.comparison_plot_settings,
             default_config_file="templates/default_comparison_plots.yaml",
         )
-        self._comp_section.frame.pack(fill="x", **pad)
+        self._comp_section.frame.grid(
+            row=0, column=1, sticky="nsew", padx=(5, 10), pady=(10, 5),
+        )
 
         # ── OK button ────────────────────────────────────────────
         btn_frame = ttk.Frame(self)
-        btn_frame.pack(fill="x", padx=10, pady=(5, 10))
+        btn_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(5, 10))
 
         ttk.Button(btn_frame, text="OK", width=10, command=self._on_ok).pack(
             side="right",
