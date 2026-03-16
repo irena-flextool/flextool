@@ -36,6 +36,11 @@ class ProjectSettings:
     comp_plots_scenarios: list[str] = field(default_factory=list)
     comp_excel_scenarios: list[str] = field(default_factory=list)
 
+    # Persisted checkbox states
+    checked_input_sources: list[str] = field(default_factory=list)    # source names
+    checked_available_scenarios: list[str] = field(default_factory=list)  # "source_number|name" keys
+    checked_executed_scenarios: list[str] = field(default_factory=list)   # scenario names
+
 
 @dataclass
 class GlobalSettings:

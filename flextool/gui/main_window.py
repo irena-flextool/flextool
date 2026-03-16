@@ -78,7 +78,7 @@ class MainWindow(tk.Tk):
 
         # ── Treeview row height (global) ──────────────────────────
         style = ttk.Style()
-        row_height = self._line_height + 6
+        row_height = self._line_height + 2
         style.configure("Treeview", rowheight=row_height)
 
         # ── Custom button styles for visual highlighting ──────────
@@ -190,9 +190,9 @@ class MainWindow(tk.Tk):
         self.input_sources_tree.heading("name", text="Name")
         self.input_sources_tree.heading("number", text="#")
         self.input_sources_tree.heading("status", text="")
-        self.input_sources_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self.input_sources_tree.column("check", width=cw * 2, minwidth=cw * 2, stretch=False)
         self.input_sources_tree.column("name", width=cw * 25, minwidth=cw * 12)
-        self.input_sources_tree.column("number", width=cw * 4, minwidth=cw * 3, stretch=False)
+        self.input_sources_tree.column("number", width=cw * 2, minwidth=cw * 2, stretch=False)
         self.input_sources_tree.column("status", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.input_sources_tree.grid(row=0, column=0, sticky="nsew")
 
@@ -304,15 +304,13 @@ class MainWindow(tk.Tk):
         self._output_frame_default_bg = theme_bg
 
 
-        output_info = [
-            ("Plot scenarios", "scen_plots"),
-            ("Scenarios to Excel", "scen_excel"),
-            ("Scenarios to csvs", "scen_csvs"),
-            ("Comparison plots", "comp_plots"),
-            ("Comparison to Excel", "comp_excel"),
+        output_info: list[tuple[str, str, str | None]] = [
+            ("Re-plot scenarios", "scen_plots", None),      # No show button
+            ("Scenarios to Excel", "scen_excel", "Open"),
+            ("Scenarios to csvs", "scen_csvs", "Show"),
+            ("Comparison plots", "comp_plots", "Show"),
+            ("Comparison to Excel", "comp_excel", "Open"),
         ]
-        # "Show" for plots/csvs, "Open" for Excel
-        action_labels = ["Show", "Open", "Show", "Show", "Open"]
 
         self.output_status_labels: dict[str, ttk.Button] = {}
         self.output_action_btns: dict[str, ttk.Button] = {}
@@ -328,14 +326,13 @@ class MainWindow(tk.Tk):
             "comp_excel": "_on_gen_comp_excel",
         }
         _show_commands: dict[str, str] = {
-            "scen_plots": "_on_show_scen_plots",
             "scen_excel": "_on_show_scen_excel",
             "scen_csvs": "_on_show_scen_csvs",
             "comp_plots": "_on_show_comp_plots",
             "comp_excel": "_on_show_comp_excel",
         }
 
-        for i, ((label_text, key), action_text) in enumerate(zip(output_info, action_labels)):
+        for i, (label_text, key, action_text) in enumerate(output_info):
             status_btn = ttk.Button(
                 self.output_frame, text=label_text, width=20,
                 command=getattr(self, _gen_commands[key]),
@@ -347,12 +344,13 @@ class MainWindow(tk.Tk):
             spinner_label.grid(row=i, column=1, padx=2, pady=2)
             self._output_spinners[key] = spinner_label
 
-            action_btn = ttk.Button(
-                self.output_frame, text=action_text, width=5,
-                command=getattr(self, _show_commands[key]),
-            )
-            action_btn.grid(row=i, column=2, sticky="w", padx=(2, 0), pady=2)
-            self.output_action_btns[key] = action_btn
+            if action_text is not None:
+                action_btn = ttk.Button(
+                    self.output_frame, text=action_text, width=5,
+                    command=getattr(self, _show_commands[key]),
+                )
+                action_btn.grid(row=i, column=2, sticky="w", padx=(2, 0), pady=2)
+                self.output_action_btns[key] = action_btn
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
@@ -387,8 +385,8 @@ class MainWindow(tk.Tk):
         self.available_tree.heading("check", text="▽")
         self.available_tree.heading("source_num", text="#")
         self.available_tree.heading("scenario_name", text="Scenario")
-        self.available_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
-        self.available_tree.column("source_num", width=cw * 4, minwidth=cw * 3, stretch=False)
+        self.available_tree.column("check", width=cw * 2, minwidth=cw * 2, stretch=False)
+        self.available_tree.column("source_num", width=cw * 2, minwidth=cw * 2, stretch=False)
         self.available_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
         self.available_tree.grid(row=0, column=0, sticky="nsew")
 
@@ -408,7 +406,7 @@ class MainWindow(tk.Tk):
 
         self.executed_tree = ttk.Treeview(
             exec_frame,
-            columns=("check", "source_num", "scenario_name", "timestamp"),
+            columns=("check", "source_num", "scenario_name", "view", "timestamp"),
             show="headings",
             selectmode="extended",
             height=8,
@@ -416,11 +414,13 @@ class MainWindow(tk.Tk):
         self.executed_tree.heading("check", text="▽")
         self.executed_tree.heading("source_num", text="#")
         self.executed_tree.heading("scenario_name", text="Scenario")
+        self.executed_tree.heading("view", text="")
         self.executed_tree.heading("timestamp", text="Timestamp")
-        self.executed_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
-        self.executed_tree.column("source_num", width=cw * 4, minwidth=cw * 3, stretch=False)
+        self.executed_tree.column("check", width=cw * 2, minwidth=cw * 2, stretch=False)
+        self.executed_tree.column("source_num", width=cw * 2, minwidth=cw * 2, stretch=False)
         self.executed_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
-        self.executed_tree.column("timestamp", width=cw * 16, minwidth=cw * 12)
+        self.executed_tree.column("view", width=cw * 5, minwidth=cw * 4, stretch=False)
+        self.executed_tree.column("timestamp", width=cw * 10, minwidth=cw * 8)
         self.executed_tree.grid(row=0, column=0, sticky="nsew")
 
         exec_scroll = ttk.Scrollbar(exec_frame, orient="vertical", command=self.executed_tree.yview)
@@ -749,6 +749,11 @@ class MainWindow(tk.Tk):
                         self.avail_scenario_mgr.get_order()
                     )
 
+                # Persist checkbox states
+                self._collect_checked_input_sources()
+                self._collect_checked_available_scenarios()
+                self._collect_checked_executed_scenarios()
+
                 project_path = get_projects_dir() / self.current_project
                 save_project_settings(project_path, self.project_settings)
             except Exception:
@@ -881,6 +886,7 @@ class MainWindow(tk.Tk):
             if item:
                 self._toggle_check(tree, item, "check")
                 self._update_available_scenarios()
+                self._save_checked_input_sources()
 
     def _on_available_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         tree = self.available_tree
@@ -893,6 +899,7 @@ class MainWindow(tk.Tk):
             if item:
                 self._toggle_check(tree, item, "check")
                 self._update_add_to_execution_style()
+                self._save_checked_available_scenarios()
 
     def _on_executed_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         tree = self.executed_tree
@@ -905,6 +912,14 @@ class MainWindow(tk.Tk):
             if item:
                 self._toggle_check(tree, item, "check")
                 self._update_output_status()
+                self._save_checked_executed_scenarios()
+        elif column == "#4":  # "view" column
+            item = tree.identify_row(event.y)
+            if item:
+                values = tree.item(item, "values")
+                if values and values[3] == "View":
+                    scenario_name = values[2]
+                    self._view_scenario_plots(scenario_name)
 
     # ── Input source management ──────────────────────────────────────
 
@@ -951,6 +966,8 @@ class MainWindow(tk.Tk):
         self.input_sources_tree.tag_configure("error", background="#ffcccc")
 
         # Populate input sources tree
+        saved_checked = set(self.project_settings.checked_input_sources)
+        has_saved_state = len(saved_checked) > 0
         for source in sources:
             if source.status == "ok":
                 status_char = STATUS_OK
@@ -959,11 +976,18 @@ class MainWindow(tk.Tk):
             else:
                 status_char = STATUS_ERR
 
+            # Restore checkbox: if we have saved state, only check those in saved list;
+            # otherwise default to CHECK_ON (first load / no saved state)
+            if has_saved_state:
+                check_char = CHECK_ON if source.name in saved_checked else CHECK_OFF
+            else:
+                check_char = CHECK_ON
+
             tags = ("error",) if source.status == "error" else ()
             self.input_sources_tree.insert(
                 "",
                 "end",
-                values=(CHECK_ON, source.name, source.number, status_char),
+                values=(check_char, source.name, source.number, status_char),
                 tags=tags,
             )
 
@@ -1073,14 +1097,17 @@ class MainWindow(tk.Tk):
         # Configure tag for editing-source scenarios (reddish background)
         self.available_tree.tag_configure("editing_source", background="#662222")
 
+        saved_checked_avail = set(self.project_settings.checked_available_scenarios)
         for scenario in scenarios:
+            key = f"{scenario.source_number}|{scenario.name}"
+            check_char = CHECK_ON if key in saved_checked_avail else CHECK_OFF
             tags: tuple[str, ...] = ()
             if scenario.source_number in editing_source_numbers:
                 tags = ("editing_source",)
             self.available_tree.insert(
                 "",
                 "end",
-                values=(CHECK_OFF, scenario.source_number, scenario.name),
+                values=(check_char, scenario.source_number, scenario.name),
                 tags=tags,
             )
 
@@ -1366,18 +1393,21 @@ class MainWindow(tk.Tk):
         for item in self.available_tree.selection():
             self._toggle_check(self.available_tree, item, "check")
         self._update_add_to_execution_style()
+        self._save_checked_available_scenarios()
 
     def _on_available_space(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
         """Toggle checkboxes for all selected (highlighted) items in available_tree."""
         for item in self.available_tree.selection():
             self._toggle_check(self.available_tree, item, "check")
         self._update_add_to_execution_style()
+        self._save_checked_available_scenarios()
 
     def _on_executed_space(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
         """Toggle checkboxes for all selected (highlighted) items in executed_tree."""
         for item in self.executed_tree.selection():
             self._toggle_check(self.executed_tree, item, "check")
         self._update_output_status()
+        self._save_checked_executed_scenarios()
 
     # ── Executed scenarios management ────────────────────────────
 
@@ -1409,13 +1439,21 @@ class MainWindow(tk.Tk):
             for scenario_info in self.input_source_mgr.get_all_scenarios():
                 source_number_map[scenario_info.name] = scenario_info.source_number
 
+        # On first load (no items were in tree), restore from saved settings
+        if not previously_checked:
+            previously_checked = set(self.project_settings.checked_executed_scenarios)
+
         for info in executed:
             src_num = source_number_map.get(info.name, info.source_number)
             check_char = CHECK_ON if info.name in previously_checked else CHECK_OFF
+            # Check if plots exist for this scenario
+            plot_dir = self.exec_scenario_mgr.project_path / "output_plots" / info.name
+            has_plots = plot_dir.is_dir() and any(plot_dir.iterdir())
+            view_text = "View" if has_plots else ""
             self.executed_tree.insert(
                 "",
                 "end",
-                values=(check_char, src_num, info.name, info.timestamp),
+                values=(check_char, src_num, info.name, view_text, info.timestamp),
             )
 
         self._update_output_status()
@@ -1744,7 +1782,7 @@ class MainWindow(tk.Tk):
         )
 
         status_map = {
-            "scen_plots": ("Plot scenarios", all_have_plots),
+            "scen_plots": ("Re-plot scenarios", all_have_plots),
             "scen_excel": ("Scenarios to Excel", all_have_excel),
             "scen_csvs": ("Scenarios to csvs", all_have_csvs),
             "comp_plots": ("Comparison plots", comp_plots_match),
@@ -1755,20 +1793,23 @@ class MainWindow(tk.Tk):
             self.output_status_labels[key].configure(text=full_name)
             if has_output:
                 self._output_spinners[key].configure(text="\u2713")
-                self.output_action_btns[key].configure(style="TButton")
+                if key in self.output_action_btns:
+                    self.output_action_btns[key].configure(style="TButton")
             elif key in self._output_action_failed:
                 self._output_spinners[key].configure(text="\u2298")
-                self.output_action_btns[key].configure(style="Grey.TButton")
+                if key in self.output_action_btns:
+                    self.output_action_btns[key].configure(style="Grey.TButton")
             else:
                 self._output_spinners[key].configure(text="  ")
-                self.output_action_btns[key].configure(style="Grey.TButton")
+                if key in self.output_action_btns:
+                    self.output_action_btns[key].configure(style="Grey.TButton")
 
         self._update_output_frame_style()
 
     def _reset_output_status(self) -> None:
         """Reset all output status labels to the default (no output) state."""
         default_names = {
-            "scen_plots": "Plot scenarios",
+            "scen_plots": "Re-plot scenarios",
             "scen_excel": "Scenarios to Excel",
             "scen_csvs": "Scenarios to csvs",
             "comp_plots": "Comparison plots",
@@ -1777,7 +1818,8 @@ class MainWindow(tk.Tk):
         for key, full_name in default_names.items():
             self.output_status_labels[key].configure(text=full_name)
             self._output_spinners[key].configure(text="  ")
-            self.output_action_btns[key].configure(style="Grey.TButton")
+            if key in self.output_action_btns:
+                self.output_action_btns[key].configure(style="Grey.TButton")
 
     # ── Auto-generate checkbox management ─────────────────────────
 
@@ -1949,26 +1991,6 @@ class MainWindow(tk.Tk):
     # ── Show / Open button handlers ───────────────────────────────
 
     @safe_callback
-    def _on_show_scen_plots(self) -> None:
-        """Open the first .png from output_plots/<first_selected_scenario>/."""
-        if not self.current_project:
-            return
-        names = self._get_checked_executed_names()
-        if not names:
-            return
-        project_path = get_projects_dir() / self.current_project
-        plot_dir = project_path / "output_plots" / names[0]
-        mgr = self._ensure_output_action_mgr()
-        if mgr is None:
-            return
-        first_png = mgr.find_first_plot(plot_dir)
-        if first_png is not None:
-            try:
-                open_file_in_default_app(first_png)
-            except OSError as exc:
-                logger.warning("Could not open plot: %s", exc)
-
-    @safe_callback
     def _on_show_scen_excel(self) -> None:
         """Open the Excel file for the first checked executed scenario."""
         if not self.current_project:
@@ -2036,3 +2058,71 @@ class MainWindow(tk.Tk):
                 open_file_in_default_app(xlsx)
             except OSError as exc:
                 logger.warning("Could not open comparison Excel: %s", exc)
+
+    # ── View scenario plots (from executed_tree view column) ──────
+
+    def _view_scenario_plots(self, scenario_name: str) -> None:
+        """Open the first plot for the given scenario."""
+        if not self.current_project:
+            return
+        project_path = get_projects_dir() / self.current_project
+        plot_dir = project_path / "output_plots" / scenario_name
+        if not plot_dir.is_dir():
+            return
+        pngs = sorted(plot_dir.rglob("*.png"))
+        if pngs:
+            try:
+                open_file_in_default_app(pngs[0])
+            except OSError as exc:
+                logger.warning("Could not open plot: %s", exc)
+
+    # ── Checkbox state persistence helpers ────────────────────────
+
+    def _collect_checked_input_sources(self) -> None:
+        """Read checked source names from the tree into project settings."""
+        checked: list[str] = []
+        for item in self.input_sources_tree.get_children():
+            values = self.input_sources_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                checked.append(values[1])  # name column
+        self.project_settings.checked_input_sources = checked
+
+    def _save_checked_input_sources(self) -> None:
+        """Persist checked input source names to settings."""
+        self._collect_checked_input_sources()
+        if self.current_project:
+            project_path = get_projects_dir() / self.current_project
+            save_project_settings(project_path, self.project_settings)
+
+    def _collect_checked_available_scenarios(self) -> None:
+        """Read checked available scenario keys from the tree into project settings."""
+        checked: list[str] = []
+        for item in self.available_tree.get_children():
+            values = self.available_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                key = f"{values[1]}|{values[2]}"
+                checked.append(key)
+        self.project_settings.checked_available_scenarios = checked
+
+    def _save_checked_available_scenarios(self) -> None:
+        """Persist checked available scenario keys to settings."""
+        self._collect_checked_available_scenarios()
+        if self.current_project:
+            project_path = get_projects_dir() / self.current_project
+            save_project_settings(project_path, self.project_settings)
+
+    def _collect_checked_executed_scenarios(self) -> None:
+        """Read checked executed scenario names from the tree into project settings."""
+        checked: list[str] = []
+        for item in self.executed_tree.get_children():
+            values = self.executed_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                checked.append(values[2])  # scenario_name column
+        self.project_settings.checked_executed_scenarios = checked
+
+    def _save_checked_executed_scenarios(self) -> None:
+        """Persist checked executed scenario names to settings."""
+        self._collect_checked_executed_scenarios()
+        if self.current_project:
+            project_path = get_projects_dir() / self.current_project
+            save_project_settings(project_path, self.project_settings)

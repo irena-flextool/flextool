@@ -55,6 +55,9 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     settings.scenario_order = data.get("scenario_order", settings.scenario_order)
     settings.comp_plots_scenarios = data.get("comp_plots_scenarios", [])
     settings.comp_excel_scenarios = data.get("comp_excel_scenarios", [])
+    settings.checked_input_sources = data.get("checked_input_sources", [])
+    settings.checked_available_scenarios = data.get("checked_available_scenarios", [])
+    settings.checked_executed_scenarios = data.get("checked_executed_scenarios", [])
 
     single_plot = data.get("single_plot_settings")
     if isinstance(single_plot, dict):
