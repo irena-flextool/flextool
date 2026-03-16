@@ -419,9 +419,12 @@ class MainWindow(tk.Tk):
         self.executed_tree.column("check", width=cw * 2, minwidth=cw * 2, stretch=False)
         self.executed_tree.column("source_num", width=cw * 2, minwidth=cw * 2, stretch=False)
         self.executed_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
-        self.executed_tree.column("view", width=cw * 5, minwidth=cw * 4, stretch=False)
+        self.executed_tree.column("view", width=cw * 7, minwidth=cw * 6, stretch=False, anchor="center")
         self.executed_tree.column("timestamp", width=cw * 10, minwidth=cw * 8)
         self.executed_tree.grid(row=0, column=0, sticky="nsew")
+
+        # Tag for clickable "View" cells — styled with link-like color
+        self.executed_tree.tag_configure("has_view", foreground="#58a6ff")
 
         exec_scroll = ttk.Scrollbar(exec_frame, orient="vertical", command=self.executed_tree.yview)
         exec_scroll.grid(row=0, column=1, sticky="ns")
@@ -917,7 +920,7 @@ class MainWindow(tk.Tk):
             item = tree.identify_row(event.y)
             if item:
                 values = tree.item(item, "values")
-                if values and values[3] == "View":
+                if values and values[3]:
                     scenario_name = values[2]
                     self._view_scenario_plots(scenario_name)
 
@@ -1449,11 +1452,13 @@ class MainWindow(tk.Tk):
             # Check if plots exist for this scenario
             plot_dir = self.exec_scenario_mgr.project_path / "output_plots" / info.name
             has_plots = plot_dir.is_dir() and any(plot_dir.iterdir())
-            view_text = "View" if has_plots else ""
+            view_text = "\u25b6 View" if has_plots else ""
+            tags = ("has_view",) if has_plots else ()
             self.executed_tree.insert(
                 "",
                 "end",
                 values=(check_char, src_num, info.name, view_text, info.timestamp),
+                tags=tags,
             )
 
         self._update_output_status()
