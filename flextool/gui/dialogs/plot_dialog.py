@@ -266,9 +266,9 @@ class PlotDialog(tk.Toplevel):
         lh: int = default_font.metrics("linespace")
 
         # ── Dialog size ──────────────────────────────────────────
-        self.geometry(f"{cw * 72}x{lh * 26}")
+        self.geometry(f"{cw * 60}x{lh * 42}")
         self.resizable(True, True)
-        self.minsize(cw * 58, lh * 20)
+        self.minsize(cw * 60, lh * 30)
 
         self._build_widgets()
 
