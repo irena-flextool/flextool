@@ -438,13 +438,13 @@ class MainWindow(tk.Tk):
         bottom_left.grid(row=row, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         self.check_btn = ttk.Button(
-            bottom_left, text="Check\n[Alt-C]",
+            bottom_left, text="Check/uncheck\nselected [Space]",
             command=self._on_check_selected,
         )
         self.check_btn.grid(row=0, column=0, padx=(0, 10))
 
         self.add_to_execution_btn = ttk.Button(
-            bottom_left, text="Add selected to the\nexecution list [Alt-A]",
+            bottom_left, text="Add checked scenarios to\nthe execution list [Alt-A]",
             command=self._on_add_to_execution,
         )
         self.add_to_execution_btn.grid(row=0, column=1, padx=(0, 10))

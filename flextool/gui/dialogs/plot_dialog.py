@@ -51,7 +51,7 @@ class _PlotSection:
 
         # ── Start time ─────────────────────────────────────────────
         row = 0
-        ttk.Label(self.frame, text="Start timestep:").grid(
+        ttk.Label(self.frame, text="Start timestep (integer):").grid(
             row=row, column=0, sticky="w", pady=(0, 4),
         )
         self._start_var = tk.StringVar(value=str(settings.start_time))
@@ -61,7 +61,7 @@ class _PlotSection:
 
         # ── Duration ───────────────────────────────────────────────
         row = 1
-        ttk.Label(self.frame, text="Duration (timesteps):").grid(
+        ttk.Label(self.frame, text="Duration (number of timesteps):").grid(
             row=row, column=0, sticky="w", pady=(0, 4),
         )
         self._duration_var = tk.StringVar(value=str(settings.duration))
