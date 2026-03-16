@@ -78,7 +78,7 @@ class MainWindow(tk.Tk):
 
         # ── Treeview row height (global) ──────────────────────────
         style = ttk.Style()
-        row_height = self._line_height + 2
+        row_height = self._line_height
         style.configure("Treeview", rowheight=row_height)
 
         # ── Custom button styles for visual highlighting ──────────
@@ -420,11 +420,11 @@ class MainWindow(tk.Tk):
         self.executed_tree.column("source_num", width=cw * 2, minwidth=cw * 2, stretch=False)
         self.executed_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
         self.executed_tree.column("view", width=cw * 7, minwidth=cw * 6, stretch=False, anchor="center")
-        self.executed_tree.column("timestamp", width=cw * 10, minwidth=cw * 8)
+        self.executed_tree.column("timestamp", width=cw * 8, minwidth=cw * 7)
         self.executed_tree.grid(row=0, column=0, sticky="nsew")
 
-        # Tag for clickable "View" cells — styled with link-like color
-        self.executed_tree.tag_configure("has_view", foreground="#58a6ff")
+        # No row-level tag for View — Treeview tags color the entire row.
+        # The ▶ View text is visually distinct on its own.
 
         exec_scroll = ttk.Scrollbar(exec_frame, orient="vertical", command=self.executed_tree.yview)
         exec_scroll.grid(row=0, column=1, sticky="ns")
@@ -1453,12 +1453,10 @@ class MainWindow(tk.Tk):
             plot_dir = self.exec_scenario_mgr.project_path / "output_plots" / info.name
             has_plots = plot_dir.is_dir() and any(plot_dir.iterdir())
             view_text = "\u25b6 View" if has_plots else ""
-            tags = ("has_view",) if has_plots else ()
             self.executed_tree.insert(
                 "",
                 "end",
                 values=(check_char, src_num, info.name, view_text, info.timestamp),
-                tags=tags,
             )
 
         self._update_output_status()
