@@ -35,6 +35,7 @@ def run(
     basic_plots: bool,
     plot_file_format: str = 'png',
     scenario_folders: dict[str, str] | None = None,
+    excel_dir: str | None = None,
 ) -> None:
     """Run the full scenario-comparison pipeline.
 
@@ -114,7 +115,8 @@ def run(
     # Write to Excel (combined results)
     if write_to_xlsx:
         filename = 'compare_' + str(len(scenario_folders)) + '_scens.xlsx'
-        excel_path = os.path.join(plot_dir, filename)
+        target_dir = excel_dir if excel_dir is not None else plot_dir
+        excel_path = os.path.join(target_dir, filename)
         with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
             used_names: set[str] = set()
             for name, df in combined_dfs.items():

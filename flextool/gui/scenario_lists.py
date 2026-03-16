@@ -206,11 +206,19 @@ class ExecutedScenarioManager:
         if comp_dir.is_dir():
             for f in comp_dir.iterdir():
                 if f.is_file():
-                    if f.suffix.lower() == ".xlsx":
-                        has_comp_excel = True
-                    elif f.suffix.lower() in (".png", ".svg", ".pdf", ".html"):
+                    if f.suffix.lower() in (".png", ".svg", ".pdf", ".html"):
                         has_comp_plots = True
-                if has_comp_plots and has_comp_excel:
+                        break
+
+        # Check for comparison Excel in the project root directory
+        if self.project_path.is_dir():
+            for f in self.project_path.iterdir():
+                if (
+                    f.is_file()
+                    and f.suffix.lower() == ".xlsx"
+                    and f.stem.startswith("compare_")
+                ):
+                    has_comp_excel = True
                     break
 
         return {

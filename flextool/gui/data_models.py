@@ -32,6 +32,10 @@ class ProjectSettings:
     # Ordered list of scenario names for execution
     scenario_order: list[str] = field(default_factory=list)
 
+    # Scenarios used for the last comparison outputs
+    comp_plots_scenarios: list[str] = field(default_factory=list)
+    comp_excel_scenarios: list[str] = field(default_factory=list)
+
 
 @dataclass
 class GlobalSettings:

@@ -197,12 +197,12 @@ class OutputActionManager:
         return None
 
     def find_comparison_excel(self) -> Path | None:
-        """Find the first ``.xlsx`` file in ``output_plot_comparisons/``."""
-        comp_dir = self.project_path / "output_plot_comparisons"
-        if not comp_dir.is_dir():
+        """Find the first comparison ``.xlsx`` file in the project root."""
+        if not self.project_path.is_dir():
             return None
         xlsxs = sorted(
-            f for f in comp_dir.iterdir() if f.suffix.lower() == ".xlsx"
+            f for f in self.project_path.iterdir()
+            if f.suffix.lower() == ".xlsx" and f.stem.startswith("compare_")
         )
         return xlsxs[0] if xlsxs else None
 
@@ -286,6 +286,7 @@ class OutputActionManager:
 
         if excel:
             cmd.extend(["--write-to-xlsx", "--write-dispatch-xlsx"])
+            cmd.extend(["--excel-dir", str(self.project_path)])
 
         return cmd
 

@@ -53,6 +53,8 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
         "input_source_numbers", settings.input_source_numbers
     )
     settings.scenario_order = data.get("scenario_order", settings.scenario_order)
+    settings.comp_plots_scenarios = data.get("comp_plots_scenarios", [])
+    settings.comp_excel_scenarios = data.get("comp_excel_scenarios", [])
 
     single_plot = data.get("single_plot_settings")
     if isinstance(single_plot, dict):

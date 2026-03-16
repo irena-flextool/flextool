@@ -74,6 +74,10 @@ def main() -> None:
         choices=['png', 'svg'],
         help='File format for plot output (default: png)'
     )
+    parser.add_argument(
+        '--excel-dir', default=None,
+        help='Directory to write comparison Excel files (default: same as --plot-dir)'
+    )
 
     args = parser.parse_args()
     db_url = args.db_url
@@ -195,6 +199,7 @@ def main() -> None:
         basic_plots=do_basic,
         plot_file_format=plot_file_format,
         scenario_folders=pre_built_folders,
+        excel_dir=args.excel_dir,
     )
 
 

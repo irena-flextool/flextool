@@ -103,6 +103,7 @@ class MainWindow(tk.Tk):
         self.execution_mgr: ExecutionManager | None = None
         self.execution_window: ExecutionWindow | None = None
         self.output_action_mgr: OutputActionManager | None = None
+        self._output_action_failed: set[str] = set()
         self._pending_execution_scenarios: list[ScenarioInfo] = []
         self._lock_check_timer_id: str | None = None
         self.db_editor_mgr = DbEditorManager()
@@ -304,11 +305,11 @@ class MainWindow(tk.Tk):
 
 
         output_info = [
-            ("Scen. plots", "scen_plots"),
-            ("Scen. Excel", "scen_excel"),
-            ("Scen. csvs", "scen_csvs"),
-            ("Comp. plots", "comp_plots"),
-            ("Comp. Excel", "comp_excel"),
+            ("Plot scenarios", "scen_plots"),
+            ("Scenarios to Excel", "scen_excel"),
+            ("Scenarios to csvs", "scen_csvs"),
+            ("Comparison plots", "comp_plots"),
+            ("Comparison to Excel", "comp_excel"),
         ]
         # "Show" for plots/csvs, "Open" for Excel
         action_labels = ["Show", "Open", "Show", "Show", "Open"]
@@ -336,7 +337,7 @@ class MainWindow(tk.Tk):
 
         for i, ((label_text, key), action_text) in enumerate(zip(output_info, action_labels)):
             status_btn = ttk.Button(
-                self.output_frame, text=f"{label_text} {STATUS_ERR}", width=20,
+                self.output_frame, text=label_text, width=20,
                 command=getattr(self, _gen_commands[key]),
             )
             status_btn.grid(row=i, column=0, sticky="w", padx=(0, 2), pady=2)
@@ -1732,21 +1733,34 @@ class MainWindow(tk.Tk):
         # Check comparison outputs
         comp = self.exec_scenario_mgr.check_comparison_outputs(checked_names)
 
+        # For comparison outputs, also verify that the currently checked
+        # scenarios match the scenarios that were used to generate them.
+        checked_set = set(checked_names)
+        comp_plots_match = comp["has_comp_plots"] and (
+            checked_set == set(self.project_settings.comp_plots_scenarios)
+        )
+        comp_excel_match = comp["has_comp_excel"] and (
+            checked_set == set(self.project_settings.comp_excel_scenarios)
+        )
+
         status_map = {
             "scen_plots": ("Plot scenarios", all_have_plots),
             "scen_excel": ("Scenarios to Excel", all_have_excel),
             "scen_csvs": ("Scenarios to csvs", all_have_csvs),
-            "comp_plots": ("Comparison plots", comp["has_comp_plots"]),
-            "comp_excel": ("Comparison to Excel", comp["has_comp_excel"]),
+            "comp_plots": ("Comparison plots", comp_plots_match),
+            "comp_excel": ("Comparison to Excel", comp_excel_match),
         }
 
         for key, (full_name, has_output) in status_map.items():
-            indicator = STATUS_OK if has_output else STATUS_ERR
-            self.output_status_labels[key].configure(text=f"{full_name} {indicator}")
-            # Grey out Show/Open buttons when no output exists (Change 4)
+            self.output_status_labels[key].configure(text=full_name)
             if has_output:
+                self._output_spinners[key].configure(text="\u2713")
                 self.output_action_btns[key].configure(style="TButton")
+            elif key in self._output_action_failed:
+                self._output_spinners[key].configure(text="\u2298")
+                self.output_action_btns[key].configure(style="Grey.TButton")
             else:
+                self._output_spinners[key].configure(text="  ")
                 self.output_action_btns[key].configure(style="Grey.TButton")
 
         self._update_output_frame_style()
@@ -1761,8 +1775,8 @@ class MainWindow(tk.Tk):
             "comp_excel": "Comparison to Excel",
         }
         for key, full_name in default_names.items():
-            self.output_status_labels[key].configure(text=f"{full_name} {STATUS_ERR}")
-            # Grey out Show/Open buttons when no output (Change 4)
+            self.output_status_labels[key].configure(text=full_name)
+            self._output_spinners[key].configure(text="  ")
             self.output_action_btns[key].configure(style="Grey.TButton")
 
     # ── Auto-generate checkbox management ─────────────────────────
@@ -1789,6 +1803,12 @@ class MainWindow(tk.Tk):
             save_project_settings(project_path, self.project_settings)
 
     # ── Output generation button handlers ─────────────────────────
+
+    def _save_current_settings(self) -> None:
+        """Persist the current project settings to disk."""
+        if self.current_project:
+            project_path = get_projects_dir() / self.current_project
+            save_project_settings(project_path, self.project_settings)
 
     def _get_checked_executed_names(self) -> list[str]:
         """Return scenario names that are checked in the executed_tree."""
@@ -1826,6 +1846,7 @@ class MainWindow(tk.Tk):
         mgr = self._ensure_output_action_mgr()
         if mgr is None:
             return None
+        self._output_action_failed.discard(key)
         self.output_status_labels[key].configure(state="disabled")
         self._start_spinner(key)
         return names
@@ -1856,6 +1877,8 @@ class MainWindow(tk.Tk):
         """Generate comparison plots for checked executed scenarios."""
         names = self._start_output_action("comp_plots")
         if names and self.output_action_mgr:
+            self.project_settings.comp_plots_scenarios = list(names)
+            self._save_current_settings()
             self.output_action_mgr.run_comparison_plots(names)
 
     @safe_callback
@@ -1863,6 +1886,8 @@ class MainWindow(tk.Tk):
         """Generate comparison Excel for checked executed scenarios."""
         names = self._start_output_action("comp_excel")
         if names and self.output_action_mgr:
+            self.project_settings.comp_excel_scenarios = list(names)
+            self._save_current_settings()
             self.output_action_mgr.run_comparison_excel(names)
 
     # ── Spinner animation for output actions ─────────────────────
@@ -1908,6 +1933,13 @@ class MainWindow(tk.Tk):
     def _handle_output_action_done(self, action_name: str, success: bool) -> None:
         """Re-enable the action button and refresh output status (runs on main thread)."""
         self._stop_spinner(action_name)
+        if not success:
+            self._output_action_failed.add(action_name)
+        if action_name in self._output_spinners:
+            if success:
+                self._output_spinners[action_name].configure(text="\u2713")
+            else:
+                self._output_spinners[action_name].configure(text="\u2298")
         if action_name in self.output_status_labels:
             self.output_status_labels[action_name].configure(state="normal")
         self._update_output_status()
