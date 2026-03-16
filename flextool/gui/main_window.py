@@ -68,6 +68,15 @@ class MainWindow(tk.Tk):
 
         self.title("FlexTool")
 
+        # ── Window icon (works on Windows, macOS, Linux) ──────────
+        icon_path = Path(__file__).resolve().parent.parent.parent / "docs" / "irena_flextool_favicon.png"
+        if icon_path.exists():
+            try:
+                self._icon_image = tk.PhotoImage(file=str(icon_path))
+                self.iconphoto(True, self._icon_image)
+            except Exception:
+                pass  # Non-fatal: skip if image can't be loaded
+
         # ── Font metrics for DPI-aware sizing ─────────────────────
         default_font = tkfont.nametofont("TkDefaultFont")
         self._char_width: int = default_font.measure("0")
