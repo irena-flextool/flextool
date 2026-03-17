@@ -214,7 +214,7 @@ def get_scenario_results(
             raise ValueError("Either db_url or scenario_folders must be provided")
         print(f"Reading scenario information from {db_url}...")
         scenario_folders = read_scenario_folders(db_url)
-    print(f"Found {len(scenario_folders)} scenarios: {list(scenario_folders.keys())}")
+    print(f"Found {len(scenario_folders)} scenarios: {list(scenario_folders.keys())}. Processing...", flush=True)
 
     files_by_name = collect_parquet_files(scenario_folders, parquet_subdir)
     print(f"Found {len(files_by_name)} unique result variables from parquet subdirectories")
