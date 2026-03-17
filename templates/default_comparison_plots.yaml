@@ -467,12 +467,12 @@ plots:
   unit_inputs_cf_d_ee:
     unit_details:
       plot_name: '8.0.P Unit cf for inputs'
-      map_dimensions_for_plots: [d_see, b_geu]
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      subplots_per_row: 2
-      axis_tick_format: '.0%'
-      axis_bounds: [0, 1]
+      # map_dimensions_for_plots: [d_see, b_geu]
+      # max_items_per_plot: 40
+      # max_subplots_per_file: 2
+      # subplots_per_row: 2
+      # axis_tick_format: '.0%'
+      # axis_bounds: [0, 1]
   unit_outputs_cf_d_ee:
     unit_details:
       plot_name: '8.1.P Unit cf for outputs'
