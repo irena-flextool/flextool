@@ -58,6 +58,7 @@ class TimeSeriesResults:
     unit_outputs_cf_d_ee: pd.DataFrame | None = None
     unit_inputs_cf_d_ee: pd.DataFrame | None = None
     unit_curtailment_outputNode_dt_ee: pd.DataFrame | None = None
+    unit_curtailment_outputNode_d_ee: pd.DataFrame | None = None
     unit_curtailment_share_outputNode_dt_ee: pd.DataFrame | None = None
     unit_curtailment_share_outputNode_d_ee: pd.DataFrame | None = None
     unit_VRE_potential_outputNode_dt_ee: pd.DataFrame | None = None
@@ -96,6 +97,8 @@ class TimeSeriesResults:
     # --- NodeGroup outputs ---
     nodeGroup_flows_d_gpe: pd.DataFrame | None = None
     nodeGroup_flows_dt_gpe: pd.DataFrame | None = None
+    nodeGroup_flows_d_g: pd.DataFrame | None = None
+    nodeGroup_flows_dt_g: pd.DataFrame | None = None
     nodeGroup_gd_p: pd.DataFrame | None = None
     nodeGroup_gdt_p: pd.DataFrame | None = None
     nodeGroup_VRE_share_d_g: pd.DataFrame | None = None
