@@ -579,7 +579,7 @@
                 },
                 {
                     "type": "literal",
-                    "arg": "--all-plots"
+                    "arg": "--dispatch-plots"
                 }
             ],
             "kill_completed_processes": false,
