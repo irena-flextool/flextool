@@ -54,16 +54,16 @@ def _slice_scenario_df(
 
 def _order_dispatch_columns(
     df: pd.DataFrame,
-    *,
-    split_mixed: bool = False,
+    plot_name: str = "",
 ) -> pd.DataFrame:
     """Validate signs, sort by std dev, return reordered DataFrame.
 
-    split_mixed=True splits mixed-sign columns into _pos/_neg parts (node dispatch).
-    split_mixed=False excludes mixed-sign columns with a warning (group dispatch).
+    Mixed-sign columns are split into ``<col>_pos`` / ``<col>_neg`` parts
+    so they can be stacked correctly in area plots.
     """
     positive_cols: list[str] = []
     negative_cols: list[str] = []
+    plot_label = f" in '{plot_name}'" if plot_name else ""
 
     for col in list(df.columns):
         if col in LINE_COLUMNS:
@@ -73,19 +73,17 @@ def _order_dispatch_columns(
         has_neg = (series < 0).any()
 
         if has_pos and has_neg:
-            if split_mixed:
-                pos_part = series.clip(lower=0)
-                neg_part = series.clip(upper=0)
-                if pos_part.abs().sum() > 0:
-                    df[f"{col}_pos"] = pos_part
-                    positive_cols.append(f"{col}_pos")
-                if neg_part.abs().sum() > 0:
-                    df[f"{col}_neg"] = neg_part
-                    negative_cols.append(f"{col}_neg")
-                df = df.drop(columns=[col])
-            else:
-                print(f"  Warning: Column '{col}' has mixed positive/negative values - excluding from plot")
-                df = df.drop(columns=[col])
+            print(f"  Note: Column '{col}' has mixed positive/negative values{plot_label}"
+                  f" - splitting into {col}_pos and {col}_neg")
+            pos_part = series.clip(lower=0)
+            neg_part = series.clip(upper=0)
+            if pos_part.abs().sum() > 0:
+                df[f"{col}_pos"] = pos_part
+                positive_cols.append(f"{col}_pos")
+            if neg_part.abs().sum() > 0:
+                df[f"{col}_neg"] = neg_part
+                negative_cols.append(f"{col}_neg")
+            df = df.drop(columns=[col])
         elif has_neg:
             negative_cols.append(col)
         elif has_pos:
@@ -99,48 +97,32 @@ def _order_dispatch_columns(
         if col in positive_cols:
             print(f"  Warning: '{col}' is expected to be negative but has positive values")
 
-    # --- Sort regular columns by std dev (lowest first = closest to origin) ---
-    if split_mixed:
-        # Node dispatch: move LossOfLoad to end of positive
-        if positive_cols:
-            col_std = {c: df[c].std() for c in positive_cols}
-            positive_cols.sort(key=lambda c: col_std.get(c, 0))
-        if negative_cols:
-            col_std = {c: df[c].abs().std() for c in negative_cols}
-            negative_cols.sort(key=lambda c: col_std.get(c, 0))
+    # --- Sort columns by std dev, with special columns in fixed positions ---
+    pos_special = [c for c in positive_cols if c in POSITIVE_SPECIAL]
+    pos_regular = [c for c in positive_cols if c not in POSITIVE_SPECIAL]
+    neg_special = [c for c in negative_cols if c in NEGATIVE_SPECIAL]
+    neg_regular = [c for c in negative_cols if c not in NEGATIVE_SPECIAL]
 
-        if 'LossOfLoad' in positive_cols:
-            positive_cols.remove('LossOfLoad')
-            positive_cols.append('LossOfLoad')
+    if pos_regular:
+        col_std = {col: df[col].std() for col in pos_regular}
+        pos_regular = sorted(pos_regular, key=lambda c: col_std.get(c, 0))
+    if neg_regular:
+        col_std = {col: df[col].abs().std() for col in neg_regular}
+        neg_regular = sorted(neg_regular, key=lambda c: col_std.get(c, 0))
 
-        ordered_cols = negative_cols + positive_cols
-    else:
-        # Group dispatch: separate special from regular and order
-        pos_special = [c for c in positive_cols if c in POSITIVE_SPECIAL]
-        pos_regular = [c for c in positive_cols if c not in POSITIVE_SPECIAL]
-        neg_special = [c for c in negative_cols if c in NEGATIVE_SPECIAL]
-        neg_regular = [c for c in negative_cols if c not in NEGATIVE_SPECIAL]
+    ordered_cols: list[str] = []
+    ordered_cols.extend(neg_regular)
+    for col in ['internal_losses', 'Export', 'Charge']:
+        if col in neg_special:
+            ordered_cols.append(col)
+    ordered_cols.extend(pos_regular)
+    for col in ['Import', 'Discharge', 'LossOfLoad']:
+        if col in pos_special:
+            ordered_cols.append(col)
 
-        if pos_regular:
-            col_std = {col: df[col].std() for col in pos_regular}
-            pos_regular = sorted(pos_regular, key=lambda c: col_std.get(c, 0))
-        if neg_regular:
-            col_std = {col: df[col].abs().std() for col in neg_regular}
-            neg_regular = sorted(neg_regular, key=lambda c: col_std.get(c, 0))
-
-        ordered_cols = []
-        ordered_cols.extend(neg_regular)
-        for col in ['internal_losses', 'Export', 'Charge']:
-            if col in neg_special:
-                ordered_cols.append(col)
-        ordered_cols.extend(pos_regular)
-        for col in ['Import', 'Discharge', 'LossOfLoad']:
-            if col in pos_special:
-                ordered_cols.append(col)
-
-        # Line overlay
-        if 'Curtailed' in df.columns:
-            ordered_cols.append('Curtailed')
+    # Line overlay
+    if 'Curtailed' in df.columns:
+        ordered_cols.append('Curtailed')
 
     if ordered_cols:
         df = df[ordered_cols]
@@ -433,7 +415,7 @@ def prepare_dispatch_data(
                         df_dispatch['Curtailed'] = curtailed
 
         # --- Order columns (S6) ---
-        df_dispatch = _order_dispatch_columns(df_dispatch, split_mixed=False)
+        df_dispatch = _order_dispatch_columns(df_dispatch, plot_name=f"{output_node_group} ({scenario})")
 
         # --- Get demand from node_inflow__dt ---
         inflow_series = None
@@ -552,7 +534,7 @@ def prepare_node_dispatch_data(
                         df_dispatch['LossOfLoad'] = lol
 
         # --- Order columns (S6) ---
-        df_dispatch = _order_dispatch_columns(df_dispatch, split_mixed=True)
+        df_dispatch = _order_dispatch_columns(df_dispatch, plot_name=f"{node} ({scenario})")
 
         # --- Get demand from node_inflow__dt ---
         inflow_series = None
