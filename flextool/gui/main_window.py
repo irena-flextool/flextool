@@ -681,6 +681,7 @@ class MainWindow(tk.Tk):
         self.output_action_mgr = OutputActionManager(
             project_path=project_path,
             settings=self.project_settings,
+            parent=self,
             on_complete=self._on_output_action_complete,
         )
 
@@ -1883,6 +1884,7 @@ class MainWindow(tk.Tk):
         self.output_action_mgr = OutputActionManager(
             project_path=project_path,
             settings=self.project_settings,
+            parent=self,
             on_complete=self._on_output_action_complete,
         )
         return self.output_action_mgr

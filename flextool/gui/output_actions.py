@@ -6,11 +6,13 @@ import logging
 import subprocess
 import sys
 import threading
+import tkinter as tk
 from pathlib import Path
 from typing import Callable
 
 from flextool.gui.config_parser import parse_plot_configs
 from flextool.gui.data_models import PlotSettings, ProjectSettings
+from flextool.gui.output_log_window import OutputLogWindow
 from flextool.gui.platform_utils import open_file_in_default_app
 from flextool.gui.project_utils import get_projects_dir
 
@@ -29,17 +31,20 @@ class OutputActionManager:
         self,
         project_path: Path,
         settings: ProjectSettings,
+        parent: tk.Misc | None = None,
         on_complete: Callable[[str, bool], None] | None = None,
     ) -> None:
         """
         Args:
             project_path: Path to the project directory.
             settings: Project settings (plot settings, config paths, etc.).
+            parent: Parent tkinter widget for creating log windows.
             on_complete: ``callback(action_name, success)`` called when an
                 action finishes.  Called from the worker thread.
         """
         self.project_path = project_path
         self.settings = settings
+        self._parent = parent
         self._on_complete = on_complete
         self._running_actions: set[str] = set()
         self._lock = threading.Lock()
@@ -58,96 +63,70 @@ class OutputActionManager:
     # ------------------------------------------------------------------
 
     def run_scenario_plots(self, scenario_names: list[str]) -> None:
-        """Generate plots for selected executed scenarios.
-
-        Runs ``cmd_write_outputs`` for each scenario with ``--write-methods plot``.
-        Uses ``--read-parquet-dir`` to read from existing parquet files.
-        Opens the first plot automatically on completion.
-        """
+        """Generate plots for selected executed scenarios."""
         action = "scen_plots"
         if not self._mark_running(action):
             return
+        log_window = self._create_log_window("Re-plot scenarios")
 
-        def _work() -> bool:
+        def _work(lw: OutputLogWindow | None) -> bool:
             ok = True
             for name in scenario_names:
                 cmd = self._build_write_outputs_cmd(name, ["plot"])
-                logger.info("Running scenario plots for %s: %s", name, " ".join(cmd))
-                if not self._run_subprocess(cmd):
+                if not self._run_subprocess(cmd, lw):
                     ok = False
-            if ok:
-                # Try to open the first plot from the first scenario
-                for name in scenario_names:
-                    plot_dir = self.project_path / "output_plots" / name
-                    first_png = self.find_first_plot(plot_dir)
-                    if first_png is not None:
-                        try:
-                            open_file_in_default_app(first_png)
-                        except OSError:
-                            logger.warning("Could not open plot: %s", first_png)
-                        break
             return ok
 
-        self._start_thread(action, _work)
+        self._start_thread(action, _work, log_window)
 
     def run_scenario_excel(self, scenario_names: list[str]) -> None:
-        """Generate Excel files for selected executed scenarios.
-
-        Runs ``cmd_write_outputs`` for each scenario with ``--write-methods excel``.
-        """
+        """Generate Excel files for selected executed scenarios."""
         action = "scen_excel"
         if not self._mark_running(action):
             return
+        log_window = self._create_log_window("Scenarios to Excel")
 
-        def _work() -> bool:
+        def _work(lw: OutputLogWindow | None) -> bool:
             ok = True
             for name in scenario_names:
                 cmd = self._build_write_outputs_cmd(name, ["excel"])
-                logger.info("Running scenario Excel for %s: %s", name, " ".join(cmd))
-                if not self._run_subprocess(cmd):
+                if not self._run_subprocess(cmd, lw):
                     ok = False
             return ok
 
-        self._start_thread(action, _work)
+        self._start_thread(action, _work, log_window)
 
     def run_scenario_csvs(self, scenario_names: list[str]) -> None:
-        """Generate CSV files for selected executed scenarios.
-
-        Runs ``cmd_write_outputs`` for each scenario with ``--write-methods csv``.
-        """
+        """Generate CSV files for selected executed scenarios."""
         action = "scen_csvs"
         if not self._mark_running(action):
             return
+        log_window = self._create_log_window("Scenarios to CSVs")
 
-        def _work() -> bool:
+        def _work(lw: OutputLogWindow | None) -> bool:
             ok = True
             for name in scenario_names:
                 cmd = self._build_write_outputs_cmd(name, ["csv"])
-                logger.info("Running scenario CSVs for %s: %s", name, " ".join(cmd))
-                if not self._run_subprocess(cmd):
+                if not self._run_subprocess(cmd, lw):
                     ok = False
             return ok
 
-        self._start_thread(action, _work)
+        self._start_thread(action, _work, log_window)
 
     # ------------------------------------------------------------------
     # Comparison actions
     # ------------------------------------------------------------------
 
     def run_comparison_plots(self, scenario_names: list[str]) -> None:
-        """Generate comparison plots.
-
-        Runs ``cmd_scenario_results`` with ``--all-plots``.
-        Opens the first plot automatically on completion.
-        """
+        """Generate comparison plots."""
         action = "comp_plots"
         if not self._mark_running(action):
             return
+        log_window = self._create_log_window("Comparison plots")
 
-        def _work() -> bool:
+        def _work(lw: OutputLogWindow | None) -> bool:
             cmd = self._build_comparison_cmd(scenario_names, plots=True, excel=False)
-            logger.info("Running comparison plots: %s", " ".join(cmd))
-            ok = self._run_subprocess(cmd)
+            ok = self._run_subprocess(cmd, lw)
             if ok:
                 comp_dir = self.project_path / "output_plot_comparisons"
                 first_png = self.find_first_plot(comp_dir)
@@ -158,24 +137,20 @@ class OutputActionManager:
                         logger.warning("Could not open comparison plot: %s", first_png)
             return ok
 
-        self._start_thread(action, _work)
+        self._start_thread(action, _work, log_window)
 
     def run_comparison_excel(self, scenario_names: list[str]) -> None:
-        """Generate comparison Excel.
-
-        Runs ``cmd_scenario_results`` with ``--write-to-xlsx`` and
-        ``--write-dispatch-xlsx`` (no plot flags).
-        """
+        """Generate comparison Excel."""
         action = "comp_excel"
         if not self._mark_running(action):
             return
+        log_window = self._create_log_window("Comparison to Excel")
 
-        def _work() -> bool:
+        def _work(lw: OutputLogWindow | None) -> bool:
             cmd = self._build_comparison_cmd(scenario_names, plots=False, excel=True)
-            logger.info("Running comparison Excel: %s", " ".join(cmd))
-            return self._run_subprocess(cmd)
+            return self._run_subprocess(cmd, lw)
 
-        self._start_thread(action, _work)
+        self._start_thread(action, _work, log_window)
 
     # ------------------------------------------------------------------
     # File finders (used by Show/Open buttons)
@@ -300,7 +275,7 @@ class OutputActionManager:
             cmd.extend(["--plot-rows", str(first_row), str(last_row)])
 
         if plots:
-            cmd.append("--all-plots")
+            cmd.append("--dispatch-plots")
 
         if excel:
             cmd.extend(["--write-to-xlsx", "--write-dispatch-xlsx"])
@@ -325,17 +300,33 @@ class OutputActionManager:
         with self._lock:
             self._running_actions.discard(action)
 
-    def _start_thread(self, action: str, work: Callable[[], bool]) -> None:
+    def _create_log_window(self, title: str) -> OutputLogWindow | None:
+        """Create a log window on the main thread. Returns None if no parent."""
+        if self._parent is None:
+            return None
+        return OutputLogWindow(self._parent, title)
+
+    def _start_thread(
+        self, action: str, work: Callable[[OutputLogWindow | None], bool],
+        log_window: OutputLogWindow | None = None,
+    ) -> None:
         """Start a daemon thread that runs *work* and fires callbacks."""
 
         def _wrapper() -> None:
             try:
-                success = work()
+                success = work(log_window)
             except Exception:
                 logger.exception("Output action %s failed with exception", action)
                 success = False
             finally:
                 self._mark_finished(action)
+
+            # Notify log window (on main thread)
+            if log_window is not None:
+                try:
+                    log_window.after(0, log_window.mark_finished, success)
+                except Exception:
+                    pass
 
             if self._on_complete is not None:
                 try:
@@ -346,9 +337,18 @@ class OutputActionManager:
         thread = threading.Thread(target=_wrapper, daemon=True)
         thread.start()
 
-    @staticmethod
-    def _run_subprocess(cmd: list[str]) -> bool:
+    def _run_subprocess(
+        self, cmd: list[str], log_window: OutputLogWindow | None = None,
+    ) -> bool:
         """Run a subprocess to completion. Returns True on success."""
+        flextool_root = get_projects_dir().parent
+
+        # Log the command
+        cmd_str = " ".join(cmd)
+        if log_window is not None:
+            log_window.after(0, log_window.append_line, cmd_str)
+            log_window.after(0, log_window.append_line, "")
+
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -356,18 +356,43 @@ class OutputActionManager:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                cwd=str(flextool_root),
             )
+
+            # Register process with log window so Stop can kill it
+            if log_window is not None:
+                log_window.after(0, log_window.set_process, proc)
+
             assert proc.stdout is not None
             for line in proc.stdout:
-                logger.info("[output_action] %s", line.rstrip("\n"))
+                stripped = line.rstrip("\n")
+                logger.info("[output_action] %s", stripped)
+                if log_window is not None:
+                    try:
+                        log_window.after(0, log_window.append_line, stripped)
+                    except Exception:
+                        pass  # Window may have been closed
+
             return_code = proc.wait()
             if return_code != 0:
-                logger.error("Output action process exited with code %d", return_code)
+                msg = f"Process exited with code {return_code}"
+                logger.error("Output action %s", msg)
+                if log_window is not None:
+                    try:
+                        log_window.after(0, log_window.append_line, f"\n{msg}")
+                    except Exception:
+                        pass
                 return False
             return True
         except FileNotFoundError:
-            logger.error("Could not find executable: %s", cmd[0])
+            msg = f"Could not find executable: {cmd[0]}"
+            logger.error(msg)
+            if log_window is not None:
+                try:
+                    log_window.after(0, log_window.append_line, msg)
+                except Exception:
+                    pass
             return False
         except Exception:
-            logger.exception("Subprocess failed: %s", " ".join(cmd))
+            logger.exception("Subprocess failed: %s", cmd_str)
             return False
