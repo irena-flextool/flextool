@@ -4,17 +4,16 @@ IRENA FlexTool is an energy systems optimisation model developed for power and e
 
 # Documentation structure
 
-- You can find the installation instructions for IRENA FlexTool using Spine Toolbox as its interface (recommended in most cases): [Install with Toolbox](https://irena-flextool.github.io/flextool/install_toolbox/)
-- Follow video tutorial for installation with Spine Toolbox here: [Link to YouTube](https://youtu.be/N3qB0rzxPYw)
-- You can also use IRENA FlexTool with a web browser, but you will need to install a web server first: [Install with web server](https://irena-flextool.github.io/flextool/install_web_interface/)
+- Install IRENA FlexTool following the [installation instructions](install_toolbox.md). Follow the video tutorial for installation with Spine Toolbox here: [Link to YouTube](https://youtu.be/N3qB0rzxPYw)
+- The easiest way to use FlexTool is through the [FlexTool GUI](flextool_gui_interface.md) -- start it with `python -m flextool.gui`.
+- For advanced data management, use the [Spine Toolbox workflow](spine_toolbox.md).
+- For scripting and automation, use the [terminal workflow](terminal_workflow.md).
+- See the [overview of interfaces](interface_overview.md) for a comparison of the available options.
 
-- If using FlexTool with Spine Toolbox, learn how the Spine Toolbox workflow functions: [Spine Toolbox workflow](https://irena-flextool.github.io/flextool/spine_toolbox).
-- If using FlexTool with a web-browser, read how it works: [Browser interface](https://irena-flextool.github.io/flextool/browser_interface)
-
-- The tutorial is recommended for the new users of FlexTool: [Tutorial](https://irena-flextool.github.io/flextool/tutorial)
-- How-to section has examples on how to add specific features to a model: [How to](https://irena-flextool.github.io/flextool/how_to)
-- More advanced users can find the model parameter descriptions useful: [Model parameters](https://irena-flextool.github.io/flextool/reference)
-- Finally, result parameters are documented here: [Model results](https://irena-flextool.github.io/flextool/results)
+- The tutorial is recommended for the new users of FlexTool: [Tutorial](tutorial.md)
+- How-to section has examples on how to add specific features to a model: [How to](how_to.md)
+- More advanced users can find the model parameter descriptions useful: [Model parameters](reference.md)
+- Finally, result parameters are documented here: [Model results](results.md)
 
 # Monthly user support telcos
 

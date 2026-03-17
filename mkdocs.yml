@@ -28,16 +28,15 @@ nav:
   - Introduction: index.md
   - 'Installing and updating':
     - 'Overview of the interfaces to Flextool': interface_overview.md
-    - 'Install/start/update IRENA FlexTool - SpineToolbox': install_toolbox.md
-    - 'Installing IRENA FlexTool - Web interface': install_web_interface.md
+    - 'Install/start/update IRENA FlexTool': install_toolbox.md
   - Documentation:
     - 'Tutorial': tutorial.md
     - 'Model parameters': reference.md
     - 'Model outputs': results.md
     - 'How to': how_to.md
   - User interfaces:
+    - 'FlexTool GUI': flextool_gui_interface.md
     - 'Toolbox interface': spine_toolbox.md
     - 'Spine data editor' : spine_database.md
-    - 'Browser interface': browser_interface.md
     - 'Terminal workflow': terminal_workflow.md
  
