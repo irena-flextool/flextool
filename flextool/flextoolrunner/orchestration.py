@@ -202,8 +202,15 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         if not state.solve.realized_invest_periods[complete_solve[solve]] and state.solve.invest_periods[complete_solve[solve]] and state.solve.realized_periods[complete_solve[solve]]:
             solve_writers.write_periods(complete_solve[solve], state.solve.realized_periods, str(wf / 'solve_data/realized_invest_periods_of_current_solve.csv'))
         solve_writers.write_periods(complete_solve[solve], state.solve.invest_periods, str(wf / 'solve_data/invest_periods_of_current_solve.csv'))
-        solve_writers.write_years_represented(period__branch_lists[solve], state.solve.solve_period_years_represented[complete_solve[solve]], str(wf / 'solve_data/p_years_represented.csv'))
-        solve_writers.write_period_years(period__branch_lists[solve], state.solve.solve_period_years_represented[complete_solve[solve]], str(wf / 'solve_data/p_discount_years.csv'))
+        # Use years_represented if defined, otherwise default to 1 year per period
+        years_rep = state.solve.solve_period_years_represented[complete_solve[solve]]
+        if not years_rep:
+            years_rep = [
+                (pt[0], 1)
+                for pt in state.solve.timesets_used_by_solves[complete_solve[solve]]
+            ]
+        solve_writers.write_years_represented(period__branch_lists[solve], years_rep, str(wf / 'solve_data/p_years_represented.csv'))
+        solve_writers.write_period_years(period__branch_lists[solve], years_rep, str(wf / 'solve_data/p_discount_years.csv'))
         solve_writers.write_current_solve(solve, str(wf / 'solve_data/solve_current.csv'))
         solve_writers.write_hole_multiplier(solve, state.solve.hole_multipliers, str(wf / 'solve_data/solve_hole_multiplier.csv'))
         solve_writers.write_first_steps(active_time_lists[solve], str(wf / 'solve_data/first_timesteps.csv'))
