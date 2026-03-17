@@ -367,15 +367,15 @@ plots:
     default:
       plot_name: '5.1.D Emissions CO2 per nodeGroup'
       map_dimensions_for_plots: [d_g, s_b]
-      xlabel: Mt CO2
+      xlabel: t CO2
     sum_periods:
       plot_name: '5.1.S Emissions CO2 per nodeGroup total'
       map_dimensions_for_plots: [d_g, m_b]
-      xlabel: Mt CO2 (total)
+      xlabel: t CO2 (total)
   process_co2_d_eee:
     plot_name: '5.2.D Process CO2 emissions'
     map_dimensions_for_plots: [d_eeee, b_xbxx]
-    xlabel: Mt CO2
+    xlabel: t CO2
 
   # NodeGroups
   nodeGroup_flows_d_gpe:
@@ -585,7 +585,7 @@ plots:
       map_dimensions_for_plots: [d_e, m_b]
   connection_losses_dt_eee:
     plot_name: '8.6.T Connection losses'
-    map_dimensions_for_plots: [dt_e, tt_s]
+    map_dimensions_for_plots: [dt_e, tt_l]
     max_items_per_plot: 10
     max_subplots_per_file: 6
     ylabel: MWh/h

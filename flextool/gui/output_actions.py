@@ -47,6 +47,8 @@ class OutputActionManager:
         self._parent = parent
         self._on_complete = on_complete
         self._running_actions: set[str] = set()
+        self._log_windows: dict[str, OutputLogWindow] = {}
+        self._action_gen: dict[str, int] = {}  # generation counter per action
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -65,9 +67,8 @@ class OutputActionManager:
     def run_scenario_plots(self, scenario_names: list[str]) -> None:
         """Generate plots for selected executed scenarios."""
         action = "scen_plots"
-        if not self._mark_running(action):
-            return
-        log_window = self._create_log_window("Re-plot scenarios")
+        gen = self._mark_running(action)
+        log_window = self._create_log_window(action, "Re-plot scenarios")
 
         def _work(lw: OutputLogWindow | None) -> bool:
             ok = True
@@ -77,14 +78,13 @@ class OutputActionManager:
                     ok = False
             return ok
 
-        self._start_thread(action, _work, log_window)
+        self._start_thread(action, gen, _work, log_window)
 
     def run_scenario_excel(self, scenario_names: list[str]) -> None:
         """Generate Excel files for selected executed scenarios."""
         action = "scen_excel"
-        if not self._mark_running(action):
-            return
-        log_window = self._create_log_window("Scenarios to Excel")
+        gen = self._mark_running(action)
+        log_window = self._create_log_window(action, "Scenarios to Excel")
 
         def _work(lw: OutputLogWindow | None) -> bool:
             ok = True
@@ -94,14 +94,13 @@ class OutputActionManager:
                     ok = False
             return ok
 
-        self._start_thread(action, _work, log_window)
+        self._start_thread(action, gen, _work, log_window)
 
     def run_scenario_csvs(self, scenario_names: list[str]) -> None:
         """Generate CSV files for selected executed scenarios."""
         action = "scen_csvs"
-        if not self._mark_running(action):
-            return
-        log_window = self._create_log_window("Scenarios to CSVs")
+        gen = self._mark_running(action)
+        log_window = self._create_log_window(action, "Scenarios to CSVs")
 
         def _work(lw: OutputLogWindow | None) -> bool:
             ok = True
@@ -111,7 +110,7 @@ class OutputActionManager:
                     ok = False
             return ok
 
-        self._start_thread(action, _work, log_window)
+        self._start_thread(action, gen, _work, log_window)
 
     # ------------------------------------------------------------------
     # Comparison actions
@@ -120,9 +119,8 @@ class OutputActionManager:
     def run_comparison_plots(self, scenario_names: list[str]) -> None:
         """Generate comparison plots."""
         action = "comp_plots"
-        if not self._mark_running(action):
-            return
-        log_window = self._create_log_window("Comparison plots")
+        gen = self._mark_running(action)
+        log_window = self._create_log_window(action, "Comparison plots")
 
         def _work(lw: OutputLogWindow | None) -> bool:
             cmd = self._build_comparison_cmd(scenario_names, plots=True, excel=False)
@@ -137,20 +135,19 @@ class OutputActionManager:
                         logger.warning("Could not open comparison plot: %s", first_png)
             return ok
 
-        self._start_thread(action, _work, log_window)
+        self._start_thread(action, gen, _work, log_window)
 
     def run_comparison_excel(self, scenario_names: list[str]) -> None:
         """Generate comparison Excel."""
         action = "comp_excel"
-        if not self._mark_running(action):
-            return
-        log_window = self._create_log_window("Comparison to Excel")
+        gen = self._mark_running(action)
+        log_window = self._create_log_window(action, "Comparison to Excel")
 
         def _work(lw: OutputLogWindow | None) -> bool:
             cmd = self._build_comparison_cmd(scenario_names, plots=False, excel=True)
             return self._run_subprocess(cmd, lw)
 
-        self._start_thread(action, _work, log_window)
+        self._start_thread(action, gen, _work, log_window)
 
     # ------------------------------------------------------------------
     # File finders (used by Show/Open buttons)
@@ -274,7 +271,7 @@ class OutputActionManager:
             last_row = comp.start_time + comp.duration - 1
             cmd.extend(["--plot-rows", str(first_row), str(last_row)])
 
-        if plots:
+        if plots and comp.dispatch_plots:
             cmd.append("--dispatch-plots")
 
         if excel:
@@ -287,27 +284,61 @@ class OutputActionManager:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _mark_running(self, action: str) -> bool:
-        """Mark *action* as running. Returns False if already running."""
+    def _mark_running(self, action: str) -> int:
+        """Mark *action* as running.  Returns the generation number.
+
+        If the action is already running, kills its process and closes
+        the log window first, then starts a fresh run.
+        """
         with self._lock:
             if action in self._running_actions:
-                logger.info("Action %s is already running, ignoring", action)
-                return False
+                # Kill previous and close its window
+                self._stop_and_close_log_window(action)
             self._running_actions.add(action)
-            return True
+            gen = self._action_gen.get(action, 0) + 1
+            self._action_gen[action] = gen
+            return gen
 
     def _mark_finished(self, action: str) -> None:
         with self._lock:
             self._running_actions.discard(action)
 
-    def _create_log_window(self, title: str) -> OutputLogWindow | None:
-        """Create a log window on the main thread. Returns None if no parent."""
+    def _create_log_window(self, action: str, title: str) -> OutputLogWindow | None:
+        """Create a log window on the main thread. Returns None if no parent.
+
+        Also closes any existing log window for the same action.
+        """
         if self._parent is None:
             return None
-        return OutputLogWindow(self._parent, title)
+        # Close previous log window for this action (finished or not)
+        self._close_log_window(action)
+        lw = OutputLogWindow(self._parent, title)
+        self._log_windows[action] = lw
+        return lw
+
+    def _close_log_window(self, action: str) -> None:
+        """Close a log window for *action* if it exists."""
+        lw = self._log_windows.pop(action, None)
+        if lw is not None:
+            try:
+                if lw.winfo_exists():
+                    lw.destroy()
+            except Exception:
+                pass
+
+    def _stop_and_close_log_window(self, action: str) -> None:
+        """Kill the subprocess and close the log window for *action*."""
+        lw = self._log_windows.pop(action, None)
+        if lw is not None:
+            try:
+                if lw.winfo_exists():
+                    lw._on_stop_and_close()
+            except Exception:
+                pass
 
     def _start_thread(
-        self, action: str, work: Callable[[OutputLogWindow | None], bool],
+        self, action: str, gen: int,
+        work: Callable[[OutputLogWindow | None], bool],
         log_window: OutputLogWindow | None = None,
     ) -> None:
         """Start a daemon thread that runs *work* and fires callbacks."""
@@ -321,14 +352,18 @@ class OutputActionManager:
             finally:
                 self._mark_finished(action)
 
+            # If this invocation has been superseded, skip callbacks
+            with self._lock:
+                superseded = self._action_gen.get(action, 0) != gen
+
             # Notify log window (on main thread)
-            if log_window is not None:
+            if log_window is not None and not superseded:
                 try:
                     log_window.after(0, log_window.mark_finished, success)
                 except Exception:
                     pass
 
-            if self._on_complete is not None:
+            if self._on_complete is not None and not superseded:
                 try:
                     self._on_complete(action, success)
                 except Exception:
@@ -366,7 +401,7 @@ class OutputActionManager:
             assert proc.stdout is not None
             for line in proc.stdout:
                 stripped = line.rstrip("\n")
-                logger.info("[output_action] %s", stripped)
+                logger.debug("[output_action] %s", stripped)
                 if log_window is not None:
                     try:
                         log_window.after(0, log_window.append_line, stripped)

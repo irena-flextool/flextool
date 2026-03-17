@@ -211,6 +211,7 @@ class MainWindow(tk.Tk):
 
         # Bind click for checkbox toggling (filtering) and selection change (button state)
         self.input_sources_tree.bind("<Button-1>", self._on_input_source_click)
+        self.input_sources_tree.bind("<Double-1>", self._on_input_source_dblclick)
         self.input_sources_tree.bind("<B1-Motion>", self._on_tree_drag_select)
         self.input_sources_tree.bind("<<TreeviewSelect>>", lambda _e: self._update_input_button_states())
 
@@ -901,6 +902,14 @@ class MainWindow(tk.Tk):
                 self._update_available_scenarios()
                 self._save_checked_input_sources()
 
+    def _on_input_source_dblclick(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Double-click on an input source row opens it for editing."""
+        item = self.input_sources_tree.identify_row(event.y)
+        if item:
+            # Select the item so _on_edit_source sees it as selected
+            self.input_sources_tree.selection_set(item)
+            self._on_edit_source()
+
     def _on_available_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         tree = self.available_tree
         region = tree.identify_region(event.x, event.y)
@@ -1056,14 +1065,18 @@ class MainWindow(tk.Tk):
         else:
             self.output_frame.configure(bg=self._output_frame_default_bg)
 
-    def _refresh_and_autocheck_scenario(self, scenario_name: str) -> None:
+    def _refresh_and_autocheck_scenario(
+        self, scenario_name: str, finish_timestamp: str = "",
+    ) -> None:
         """Refresh executed scenarios and auto-check the newly completed one."""
         self._refresh_executed_scenarios()
-        # Find and check the newly completed scenario
+        # Find and check the newly completed scenario, updating timestamp
         for item in self.executed_tree.get_children():
             values = self.executed_tree.item(item, "values")
             if values and values[2] == scenario_name:
                 self.executed_tree.set(item, "check", CHECK_ON)
+                if finish_timestamp:
+                    self.executed_tree.set(item, "timestamp", finish_timestamp)
                 break
         self._update_output_status()
 
@@ -1621,16 +1634,47 @@ class MainWindow(tk.Tk):
             if not result:
                 return
 
-        self._pending_execution_scenarios = checked
-        names = [s.name for s in checked]
-        logger.info("Scenarios queued for execution: %s", names)
-
-        # Create the ExecutionManager lazily
+        # Filter out scenarios already in the execution queue (pending or running)
         self._ensure_execution_mgr()
         assert self.execution_mgr is not None
 
+        already_queued: set[str] = set()
+        for job in self.execution_mgr.get_jobs():
+            if job.status in (JobStatus.PENDING, JobStatus.RUNNING):
+                already_queued.add(job.scenario_name)
+
+        duplicates = [s for s in checked if s.name in already_queued]
+        new_scenarios = [s for s in checked if s.name not in already_queued]
+
+        if duplicates and not new_scenarios:
+            dup_names = ", ".join(s.name for s in duplicates)
+            messagebox.showwarning(
+                "Already in execution list",
+                f"All selected scenarios are already pending or running:\n\n"
+                f"  {dup_names}\n\n"
+                f"They will not be added again.",
+                parent=self,
+            )
+            return
+
+        if duplicates:
+            dup_names = ", ".join(s.name for s in duplicates)
+            messagebox.showinfo(
+                "Some already queued",
+                f"These scenarios are already pending or running and "
+                f"will be skipped:\n\n  {dup_names}",
+                parent=self,
+            )
+
+        if not new_scenarios:
+            return
+
+        self._pending_execution_scenarios = new_scenarios
+        names = [s.name for s in new_scenarios]
+        logger.info("Scenarios queued for execution: %s", names)
+
         # Add jobs to the manager and start execution automatically
-        self.execution_mgr.add_jobs(checked)
+        self.execution_mgr.add_jobs(new_scenarios)
         self.execution_mgr.start()
 
         # Update execution menu button highlight
@@ -1696,7 +1740,10 @@ class MainWindow(tk.Tk):
         via ``self.after()``.
         """
         if job.status == JobStatus.SUCCESS:
-            self.after(0, self._refresh_and_autocheck_scenario, job.scenario_name)
+            self.after(
+                0, self._refresh_and_autocheck_scenario,
+                job.scenario_name, job.finish_timestamp,
+            )
         elif job.status in (JobStatus.FAILED, JobStatus.KILLED):
             self.after(0, self._refresh_executed_scenarios)
 

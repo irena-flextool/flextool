@@ -75,6 +75,7 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
             duration=comp_plot.get("duration", 0),
             config_file=comp_plot.get("config_file", ""),
             active_configs=comp_plot.get("active_configs", []),
+            dispatch_plots=comp_plot.get("dispatch_plots", True),
         )
 
     return settings

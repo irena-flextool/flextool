@@ -10,6 +10,7 @@ class PlotSettings:
     duration: int = 0
     config_file: str = ""
     active_configs: list[str] = field(default_factory=list)
+    dispatch_plots: bool = True  # comparison only: include --dispatch-plots
 
 
 @dataclass

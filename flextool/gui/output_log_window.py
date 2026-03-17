@@ -32,7 +32,13 @@ class OutputLogWindow(tk.Toplevel):
         lh = default_font.metrics("linespace")
 
         # ── Window sizing ────────────────────────────────────────
-        self.geometry(f"{cw * 100}x{lh * 25}")
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        taskbar_margin = lh * 4
+        win_h = screen_h - taskbar_margin
+        win_w = 1800
+        x = max(0, screen_w - win_w)
+        self.geometry(f"{win_w}x{win_h}+{x}+0")
         self.minsize(cw * 50, lh * 10)
 
         self.columnconfigure(0, weight=1)
@@ -44,17 +50,13 @@ class OutputLogWindow(tk.Toplevel):
         text_frame.columnconfigure(0, weight=1)
         text_frame.rowconfigure(0, weight=1)
 
-        self._text = tk.Text(text_frame, wrap="none", font=mono_font)
+        self._text = tk.Text(text_frame, wrap="word", font=mono_font)
         self._text.grid(row=0, column=0, sticky="nsew")
         self._text.bind("<Key>", self._on_key_press)
 
         vscroll = ttk.Scrollbar(text_frame, orient="vertical", command=self._text.yview)
         self._text.configure(yscrollcommand=vscroll.set)
         vscroll.grid(row=0, column=1, sticky="ns")
-
-        hscroll = ttk.Scrollbar(text_frame, orient="horizontal", command=self._text.xview)
-        self._text.configure(xscrollcommand=hscroll.set)
-        hscroll.grid(row=1, column=0, sticky="ew")
 
         # ── Buttons ──────────────────────────────────────────────
         btn_frame = ttk.Frame(self, padding=(8, 4, 8, 8))

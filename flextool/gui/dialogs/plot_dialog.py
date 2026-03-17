@@ -42,6 +42,7 @@ class _PlotSection:
         label: str,
         settings: PlotSettings,
         default_config_file: str,
+        show_dispatch: bool = False,
     ) -> None:
         self._settings = settings
         self._default_config_file = default_config_file
@@ -89,13 +90,22 @@ class _PlotSection:
             row=0, column=2, sticky="e",
         )
 
+        # ── Dispatch checkbox (comparison section only) ────────────
+        self._dispatch_var: tk.BooleanVar | None = None
+        if show_dispatch:
+            row = 3
+            self._dispatch_var = tk.BooleanVar(value=settings.dispatch_plots)
+            ttk.Checkbutton(
+                self.frame, text="Dispatch plots", variable=self._dispatch_var,
+            ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 2))
+
         # ── Active configs list (Treeview with checkboxes) ─────────
-        row = 3
+        row = 4 if show_dispatch else 3
         ttk.Label(self.frame, text="Active configs:").grid(
             row=row, column=0, sticky="w", pady=(4, 2),
         )
 
-        row = 4
+        row += 1
         self.frame.rowconfigure(row, weight=1)
         self._lh = tkfont.nametofont("TkDefaultFont").metrics("linespace")
         cw = tkfont.nametofont("TkDefaultFont").measure("0")
@@ -143,11 +153,13 @@ class _PlotSection:
             values = self._config_tree.item(item, "values")
             if values and values[0] == self._CHECK_ON:
                 active.append(values[1])
+        dispatch = self._dispatch_var.get() if self._dispatch_var is not None else self._settings.dispatch_plots
         return PlotSettings(
             start_time=start,
             duration=duration,
             config_file=config_file,
             active_configs=active,
+            dispatch_plots=dispatch,
         )
 
     # ── Internal ──────────────────────────────────────────────────
@@ -317,6 +329,7 @@ class PlotDialog(tk.Toplevel):
             label="Scenario comparison settings:",
             settings=self._settings.comparison_plot_settings,
             default_config_file="templates/default_comparison_plots.yaml",
+            show_dispatch=True,
         )
         self._comp_section.frame.grid(
             row=0, column=1, sticky="nsew", padx=(5, 10), pady=(10, 5),

@@ -503,7 +503,7 @@ class ExecutionManager:
             cmd.extend(["--plot-rows", str(first_row), str(last_row)])
 
         if do_comp_plots:
-            cmd.append("--all-plots")
+            cmd.append("--dispatch-plots")
 
         if do_comp_excel:
             cmd.extend(["--write-to-xlsx", "--write-dispatch-xlsx"])
