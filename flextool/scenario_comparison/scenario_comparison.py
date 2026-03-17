@@ -43,8 +43,3 @@ from flextool.scenario_comparison.dispatch_plots import (  # noqa: E402
     create_dispatch_plots,
     plot_dispatch_area,
 )
-
-from flextool.scenario_comparison.summary_plots import (  # noqa: E402
-    create_basic_plots,
-    plot_horizontal_bar,
-)

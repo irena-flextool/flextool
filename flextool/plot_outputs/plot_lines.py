@@ -18,7 +18,7 @@ from flextool.plot_outputs.subplot_helpers import (
 
 # ── Layout constants (inches) ──
 CHAR_WIDTH = 0.081           # Approximate width per character at font-size 9 (labels)
-TICK_CHAR_WIDTH = 0.065      # Approximate width per digit character at tick font size
+TICK_CHAR_WIDTH = 0.075      # Approximate width per digit character at tick font size
 LEFT_PAD = 0.1              # Left edge padding
 RIGHT_PAD = 0.2              # Right edge padding
 SUBPLOT_VPAD = 0.25          # Space above axes for subplot title
@@ -319,10 +319,10 @@ def _render_lines_figure(
 
 
 def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
-    rows=(0,167), subplots_per_row=3, legend_position='right',
+    rows=(0,167), subplots_per_row=2, legend_position='right',
     xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
-    axis_bounds=None, axis_tick_format=None, always_include_zero_in_axis=True,
-    max_items_per_plot=None, max_subplots_per_file=None, output_filepath=None):
+    axis_bounds=None, axis_tick_format='1,.0f', always_include_zero_in_axis=True,
+    max_items_per_plot=10, max_subplots_per_file=6, output_filepath=None):
 
     # Convert level indices to level names
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -519,11 +519,11 @@ def _render_stack_figure(
 
 
 def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
-        rows=(0,167), subplots_per_row=3,
+        rows=(0,167), subplots_per_row=2,
         legend_position='right',
         xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
-        axis_bounds=None, axis_tick_format=None, always_include_zero_in_axis=True,
-        max_items_per_plot=None, max_subplots_per_file=None, output_filepath=None):
+        axis_bounds=None, axis_tick_format='1,.0f', always_include_zero_in_axis=True,
+        max_items_per_plot=10, max_subplots_per_file=6, output_filepath=None):
 
     # Convert level indices to level names
     if isinstance(df_plot.columns, pd.MultiIndex):

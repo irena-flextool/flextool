@@ -22,7 +22,8 @@ PLOT_FIELD_NAMES = {
     'bar_orientation', 'base_length', 'max_subplots_per_file', 'max_items_per_plot',
     'time_average_duration', 'xlabel', 'ylabel', 'value_label', 'axis_bounds',
     'axis_scale_min_max',  # backward compat alias for axis_bounds
-    'axis_tick_format', 'always_include_zero_in_axis', 'skip_data_with_only_zeroes'
+    'axis_tick_format', 'always_include_zero_in_axis', 'skip_data_with_only_zeroes',
+    'multiply_by',
 }
 
 
@@ -35,20 +36,21 @@ class PlotConfig:
     """
     plot_name: str = ''
     map_dimensions_for_plots: dict = field(default_factory=dict)
-    subplots_per_row: int = 3
+    subplots_per_row: int = 2
     legend: str = 'right'
     bar_orientation: str = 'horizontal'
     base_length: float = 4.0
-    max_subplots_per_file: int = 9
-    max_items_per_plot: int | None = None
+    max_subplots_per_file: int = 6
+    max_items_per_plot: int = 10
     time_average_duration: str | None = None
     xlabel: str | None = None
     ylabel: str | None = None
     value_label: str | None = None
     axis_bounds: dict | list | str | None = None
-    axis_tick_format: str | None = None
+    axis_tick_format: str = '1,.0f'
     always_include_zero_in_axis: bool = True
     skip_data_with_only_zeroes: bool = False
+    multiply_by: float | None = None
 
 
 def _is_single_config(d: dict) -> bool:

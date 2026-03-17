@@ -58,14 +58,6 @@ def main() -> None:
         help='Generate dispatch area plots for nodes and nodeGroups'
     )
     parser.add_argument(
-        '--basic-plots', action='store_true',
-        help='Generate basic comparison plots'
-    )
-    parser.add_argument(
-        '--all-plots', action='store_true',
-        help='Generate all plot types (dispatch and summary)'
-    )
-    parser.add_argument(
         '--show-plots', action='store_true', default=None,
         help='Display plots interactively (in addition to saving)'
     )
@@ -180,9 +172,8 @@ def main() -> None:
         alternative_filter = alternative_filter_config(alternatives)
         db_url = append_filter_config(db_url, alternative_filter)
 
-    # Resolve --all-plots into dispatch_plots and basic_plots flags
-    do_dispatch = args.dispatch_plots or args.all_plots
-    do_basic = args.basic_plots or args.all_plots
+    # Resolve dispatch_plots flags
+    do_dispatch = args.dispatch_plots
 
     orchestrator.run(
         db_url=db_url,
@@ -196,7 +187,6 @@ def main() -> None:
         write_to_ods=write_to_ods,
         show_plots=show_plots,
         dispatch_plots=do_dispatch,
-        basic_plots=do_basic,
         plot_file_format=plot_file_format,
         scenario_folders=pre_built_folders,
         excel_dir=args.excel_dir,

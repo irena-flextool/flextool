@@ -171,10 +171,11 @@ def _plot_stacked_bars(
     if n_stack > 10:
         colors = plt.colormaps['tab20'].colors[:n_stack]
 
-    # Track which stacks have been labeled (for legend)
-    labeled_stacks: set = set()
+    # Track which stacks have positive/negative values (for legend ordering)
+    pos_stacks: set[int] = set()
+    neg_stacks: set[int] = set()
 
-    # Plot bars
+    # Plot bars (no labels — legend is built explicitly afterwards)
     for bar_idx, (group, period) in enumerate(all_bars):
         # Get data for this group
         if group is None:
@@ -223,48 +224,59 @@ def _plot_stacked_bars(
 
             values.append(value)
 
-        # Stack positive values to the right from 0
+        # Track positive/negative stacks
+        for stack_idx, value in enumerate(values):
+            if value > 0:
+                pos_stacks.add(stack_idx)
+            elif value < 0:
+                neg_stacks.add(stack_idx)
+
+        # Stack positive values (forward order: 0,1,...,N)
         left_pos = 0
         for stack_idx, value in enumerate(values):
             if value > 0:
-                label = _stack_label(stack_idx, stacks, labeled_stacks)
                 if bar_orientation == 'horizontal':
                     ax.barh(bar_idx, value, left=left_pos,
-                            label=label,
                             color=colors[stack_idx % len(colors)])
-                else:  # vertical
+                else:
                     ax.bar(bar_idx, value, bottom=left_pos,
-                           label=label,
                            color=colors[stack_idx % len(colors)])
                 left_pos += value
 
-        # Stack zero values
-        for stack_idx, value in enumerate(values):
-            if value == 0.0:
-                label = _stack_label(stack_idx, stacks, labeled_stacks)
-                if bar_orientation == 'horizontal':
-                    ax.barh(0, 0, left=0,
-                            label=label,
-                            color=colors[stack_idx % len(colors)])
-                else:  # vertical
-                    ax.bar(0, 0, bottom=0,
-                           label=label,
-                           color=colors[stack_idx % len(colors)])
-
-        # Stack negative values to the left from 0
+        # Stack negative values (reversed order: N,...,1,0)
         left_neg = 0
-        for stack_idx, value in enumerate(values):
+        for stack_idx in range(len(values) - 1, -1, -1):
+            value = values[stack_idx]
             if value < 0:
-                label = _stack_label(stack_idx, stacks, labeled_stacks)
                 if bar_orientation == 'horizontal':
                     ax.barh(bar_idx, value, left=left_neg,
-                            label=label,
                             color=colors[stack_idx % len(colors)])
-                else:  # vertical
+                else:
                     ax.bar(bar_idx, value, bottom=left_neg,
-                           label=label,
                            color=colors[stack_idx % len(colors)])
                 left_neg += value
+
+    # Build legend handles in desired order:
+    # - Positives first, then negatives
+    # - Horizontal: positives in bar order [0,...,N], negatives reversed [N,...,0]
+    # - Vertical: positives reversed [N,...,0] (top-of-bar first), negatives reversed [N,...,0]
+    from matplotlib.patches import Patch
+    pos_indices = sorted(pos_stacks)
+    neg_only_indices = sorted(neg_stacks - pos_stacks)  # stacks that are only negative
+
+    if bar_orientation == 'horizontal':
+        legend_order = pos_indices + list(reversed(neg_only_indices))
+    else:
+        legend_order = list(reversed(pos_indices)) + list(reversed(neg_only_indices))
+
+    for si in legend_order:
+        stack_value = stacks[si]
+        label = (
+            ' | '.join(str(v) for v in stack_value)
+            if isinstance(stack_value, (tuple, list))
+            else str(stack_value)
+        )
+        ax.bar(0, 0, color=colors[si % len(colors)], label=label)  # invisible, just for legend
 
 
 def _plot_simple_bars(

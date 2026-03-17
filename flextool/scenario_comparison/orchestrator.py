@@ -16,7 +16,6 @@ from flextool.scenario_comparison.data_models import DispatchMappings
 from flextool.scenario_comparison.db_reader import get_scenario_results
 from flextool.scenario_comparison.dispatch_mappings import combine_dispatch_mappings
 from flextool.scenario_comparison.dispatch_plots import create_dispatch_plots
-from flextool.scenario_comparison.summary_plots import create_basic_plots
 from flextool.plot_outputs.plot_functions import plot_dict_of_dataframes
 
 
@@ -32,7 +31,6 @@ def run(
     write_to_ods: bool,
     show_plots: bool,
     dispatch_plots: bool,
-    basic_plots: bool,
     plot_file_format: str = 'png',
     scenario_folders: dict[str, str] | None = None,
     excel_dir: str | None = None,
@@ -76,7 +74,7 @@ def run(
 
     # Create or update dispatch config
     dispatch_config = None
-    if dispatch_plots or basic_plots:
+    if dispatch_plots:
         dispatch_config = create_or_update_dispatch_config(
             plot_dir, results, scenarios, mappings
         )
@@ -101,16 +99,6 @@ def run(
             )
         else:
             print("Warning: Cannot generate dispatch plots - missing dispatch mappings")
-
-    # Generate summary plots
-    if basic_plots:
-        if dispatch_config:
-            print("\nGenerating summary plots...")
-            create_basic_plots(
-                results, group_node_df, dispatch_config, plot_dir,
-                scenarios=get_scenarios_from_config(dispatch_config),
-                show_plot=show_plots,
-            )
 
     # Write to Excel (combined results)
     if write_to_xlsx:

@@ -28,6 +28,22 @@ def estimate_legend_width(labels, title: str = '', base_width: float = 1.5) -> f
     return estimated_width
 
 
+def estimate_legend_height(n_entries: int, has_title: bool = True) -> float:
+    """Estimate the height in inches needed for a legend.
+
+    Args:
+        n_entries: Number of legend entries
+        has_title: Whether the legend has a title
+
+    Returns:
+        Estimated height in inches
+    """
+    entry_height = 0.22  # approximate height per entry at 10pt font
+    title_height = 0.25 if has_title else 0.0
+    padding = 0.15  # top + bottom padding
+    return n_entries * entry_height + title_height + padding
+
+
 def _format_legend_labels(items: list) -> list[str]:
     """Convert legend items (possibly tuples/lists) to display strings.
 
@@ -57,8 +73,6 @@ def _should_show_legend(
     if legend_position == 'all':
         return True
     if legend_position == 'right':
-        if not sub_levels:
-            return True
         col = idx % n_cols
         if col == n_cols - 1 or idx == n_subs - 1:
             return True

@@ -8,7 +8,6 @@ Navigation:
 - config_builder.py   : Build/update dispatch config.yaml from data
 - dispatch_data.py    : Prepare per-scenario dispatch DataFrames for plotting
 - dispatch_plots.py   : Render stacked area dispatch plots
-- summary_plots.py    : Summary bar chart plots
 - orchestrator.py     : Top-level run() function tying all pieces together
 """
 from flextool.scenario_comparison.db_reader import get_scenario_results

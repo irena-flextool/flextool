@@ -78,7 +78,6 @@ flextool/
     ├── config_builder.py                 Build/update dispatch config from data
     ├── dispatch_data.py                  Prepare per-scenario dispatch DataFrames for plotting
     ├── dispatch_plots.py                 Render and save dispatch stacked area plots
-    ├── summary_plots.py                  Summary bar chart plots
     ├── orchestrator.py                   Top-level run() tying db_reader → plots
     └── scenario_comparison.py            Backward-compat shim (re-exports from new modules)
 ```

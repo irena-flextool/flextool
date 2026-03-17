@@ -10,7 +10,6 @@
         "flextool/scenario_comparison/config_builder.py",
         "flextool/scenario_comparison/config_io.py",
         "flextool/scenario_comparison/dispatch_data.py",
-        "flextool/scenario_comparison/summary_plots.py",
         "flextool/scenario_comparison/__init__.py",
         "flextool/scenario_comparison/data_models.py",
         "flextool/scenario_comparison/orchestrator.py",

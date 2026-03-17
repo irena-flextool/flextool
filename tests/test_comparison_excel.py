@@ -69,7 +69,6 @@ class TestComparisonExcelDirectory(unittest.TestCase):
                 write_to_ods=False,
                 show_plots=False,
                 dispatch_plots=False,
-                basic_plots=False,
                 scenario_folders=fake_scenario_folders,
             )
 
@@ -123,7 +122,6 @@ class TestComparisonExcelDirectory(unittest.TestCase):
                     write_to_ods=False,
                     show_plots=False,
                     dispatch_plots=False,
-                    basic_plots=False,
                     scenario_folders=fake_scenario_folders,
                 )
         finally:

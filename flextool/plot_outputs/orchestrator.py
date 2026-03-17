@@ -169,9 +169,14 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
             if levels_to_sort:
                 df = df.sort_index(axis=1, level=levels_to_sort, sort_remaining=False)
 
+            # Track which dimensions were summed/averaged for plot title
+            summed_dimensions = []
+            averaged_dimensions = []
+
             # Sum row levels marked 'm'
             sum_row_levels = [i for i, char in enumerate(rules[:nr_row_levels]) if char == 'm']
             if sum_row_levels:
+                summed_dimensions.extend(df.index.names[i] for i in sum_row_levels)
                 keep_levels = [i for i in range(nr_row_levels) if i not in sum_row_levels]
                 if len(keep_levels) > 0:
                     df = df.groupby(level=keep_levels).sum()
@@ -179,13 +184,14 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                         rules = rules[:i] + rules[i + 1:]
                 else:
                     df = df.sum(axis=0).to_frame().T
-                    df.index = ['sum']
+                    df.index = ['']
                     df.index.name = 'sum'
 
             # Sum column levels marked 'm'
             nr_column_levels = df.columns.nlevels
             sum_column_levels = [i for i, char in enumerate(rules[df.index.nlevels:]) if char == 'm']
             if sum_column_levels:
+                summed_dimensions.extend(df.columns.names[i] for i in sum_column_levels)
                 keep_levels = [i for i in range(nr_column_levels) if i not in sum_column_levels]
                 if len(keep_levels) > 0:
                     df = df.T.groupby(level=keep_levels).sum().T
@@ -193,7 +199,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                         rules = rules[:i + df.index.nlevels] + rules[i + 1 + df.index.nlevels:]
                 else:
                     df = df.sum(axis=1).to_frame()
-                    df.columns = ['sum']
+                    df.columns = ['']
                     df.columns.name = 'sum'
 
             nr_row_levels = df.index.nlevels
@@ -202,6 +208,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
             # Average row levels marked 'a'
             mean_row_levels = [i for i, char in enumerate(rules[:nr_row_levels]) if char == 'a']
             if mean_row_levels:
+                averaged_dimensions.extend(df.index.names[i] for i in mean_row_levels)
                 keep_levels = [i for i in range(nr_row_levels) if i not in mean_row_levels]
                 if len(keep_levels) > 1:
                     df = df.groupby(level=keep_levels).mean()
@@ -209,12 +216,13 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                         rules = rules[:i] + rules[i + 1:]
                 else:
                     df = df.mean(axis=0).to_frame().T
-                    df.index = ['mean']
+                    df.index = ['']
                     df.index.name = 'mean'
 
             # Average column levels marked 'a'
             mean_column_levels = [i for i, char in enumerate(rules[nr_row_levels:]) if char == 'a']
             if mean_column_levels:
+                averaged_dimensions.extend(df.columns.names[i] for i in mean_column_levels)
                 keep_levels = [i for i in range(nr_column_levels) if i not in mean_column_levels]
                 if len(keep_levels) > 1:
                     df = df.T.groupby(level=keep_levels).mean().T
@@ -222,7 +230,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                         rules = rules[:i + df.index.nlevels] + rules[i + 1 + df.index.nlevels:]
                 else:
                     df = df.mean(axis=1).to_frame()
-                    df.columns = ['mean']
+                    df.columns = ['']
                     df.columns.name = 'mean'
 
             nr_row_levels = df.index.nlevels
@@ -325,6 +333,15 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 line_levels = [i for i, c in enumerate(col_rules) if c == 'l']
                 file_levels = [i for i, c in enumerate(col_rules) if c == 'f']
 
+                # Build plot title with summed/averaged info (separate from filename)
+                plot_title = plot_name
+                if summed_dimensions:
+                    dim_str = "', '".join(str(d) for d in summed_dimensions)
+                    plot_title = f"{plot_title} ('{dim_str}' summed)"
+                if averaged_dimensions:
+                    dim_str = "', '".join(str(d) for d in averaged_dimensions)
+                    plot_title = f"{plot_title} ('{dim_str}' averaged)"
+
                 # --- Determine file-dimension members (outer split) --------
                 if file_levels:
                     if len(file_levels) == 1:
@@ -383,7 +400,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             str(file_member) if not isinstance(file_member, tuple)
                             else '_'.join(str(v) for v in file_member)
                         )
-                        effective_plot_name = f'{plot_name}\n{member_str}'
+                        effective_plot_name = f'{plot_title} — {member_str}'
 
                         # Recompute level indices after dropping 'f' levels
                         _shift = lambda lvls: [
@@ -397,7 +414,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                         fm_line_levels = _shift(line_levels)
                     else:
                         df_fm = df
-                        effective_plot_name = plot_name
+                        effective_plot_name = plot_title
                         member_str = None
                         fm_grouped_bar_levels = grouped_bar_levels
                         fm_stack_levels = stack_levels
@@ -422,9 +439,13 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                         if df_fm.empty:
                             continue
 
+                    # Apply unit conversion multiplier
+                    if cfg.multiply_by is not None:
+                        df_fm = df_fm * cfg.multiply_by
+
                     # Determine items and per-file limits
                     if chart_type == 'time':
-                        default_max_items = 9
+                        default_max_items = 10
                         max_items = cfg.max_items_per_plot if cfg.max_items_per_plot is not None else default_max_items
                         item_levels = fm_line_levels if fm_line_levels else fm_stack_levels
                         if not item_levels:
@@ -436,12 +457,12 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             item_df = df_fm.columns.to_frame()[item_level_names].drop_duplicates()
                             all_items = [tuple(row) for row in item_df.values]
                     else:  # bar chart
-                        default_max_items = 20
+                        default_max_items = 10
                         max_items = cfg.max_items_per_plot if cfg.max_items_per_plot is not None else default_max_items
                         all_items = df_fm.index.tolist()
 
-                    if fm_subplot_levels and chart_type == 'bar':
-                        # BAR + SUBPLOTS: send all data in one call.
+                    if chart_type == 'bar':
+                        # BAR (with or without subplots): send all data in one call.
                         # The bar function handles item splitting, subplot expansion,
                         # and file splitting (max_subplots_per_file) internally.
                         filepath = generate_split_filename(
@@ -497,7 +518,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                 output_filepath=filepath)
 
                     else:
-                        # STRATEGY 2: no subplots — split items into files
+                        # TIME without subplots — split items into files
                         needs_item_split = len(all_items) > max_items
                         file_chunks = _plan_file_splits(
                             all_subs, all_items, fm_subplot_levels,
@@ -508,19 +529,16 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
 
                             # Filter by item chunk
                             if needs_item_split:
-                                if chart_type == 'bar':
-                                    df_chunk = df_chunk.loc[df_chunk.index.isin(item_chunk)]
-                                else:
-                                    if item_levels and item_chunk[0] is not None:
-                                        if len(item_levels) == 1:
-                                            level_name = df_fm.columns.names[item_levels[0]]
-                                            mask = df_chunk.columns.get_level_values(level_name).isin(item_chunk)
-                                            df_chunk = df_chunk.loc[:, mask]
-                                        else:
-                                            item_level_names = [df_fm.columns.names[i] for i in item_levels]
-                                            col_tuples = df_chunk.columns.to_frame()[item_level_names]
-                                            mask = col_tuples.apply(tuple, axis=1).isin(item_chunk)
-                                            df_chunk = df_chunk.loc[:, mask.values]
+                                if item_levels and item_chunk[0] is not None:
+                                    if len(item_levels) == 1:
+                                        level_name = df_fm.columns.names[item_levels[0]]
+                                        mask = df_chunk.columns.get_level_values(level_name).isin(item_chunk)
+                                        df_chunk = df_chunk.loc[:, mask]
+                                    else:
+                                        item_level_names = [df_fm.columns.names[i] for i in item_levels]
+                                        col_tuples = df_chunk.columns.to_frame()[item_level_names]
+                                        mask = col_tuples.apply(tuple, axis=1).isin(item_chunk)
+                                        df_chunk = df_chunk.loc[:, mask.values]
 
                             if df_chunk.empty:
                                 continue
@@ -531,42 +549,27 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                 file_member=member_str,
                             )
 
-                            if chart_type == 'time':
-                                if fm_stack_levels:
-                                    plot_dt_stack_sub(
-                                        df_chunk, effective_plot_name, plot_dir,
-                                        fm_stack_levels, fm_subplot_levels,
-                                        rows=plot_rows, legend_position=cfg.legend,
-                                        xlabel=cfg.xlabel, ylabel=cfg.ylabel,
-                                        base_width_per_col=6, subplot_height=cfg.base_length,
-                                        axis_bounds=axis_bounds,
-                                        axis_tick_format=cfg.axis_tick_format,
-                                        always_include_zero_in_axis=cfg.always_include_zero_in_axis,
-                                        output_filepath=filepath)
-                                else:
-                                    plot_dt_sub_lines(
-                                        df_chunk, effective_plot_name, plot_dir,
-                                        fm_subplot_levels, fm_line_levels,
-                                        rows=plot_rows, legend_position=cfg.legend,
-                                        xlabel=cfg.xlabel, ylabel=cfg.ylabel,
-                                        base_width_per_col=6, subplot_height=cfg.base_length,
-                                        axis_bounds=axis_bounds,
-                                        axis_tick_format=cfg.axis_tick_format,
-                                        always_include_zero_in_axis=cfg.always_include_zero_in_axis,
-                                        output_filepath=filepath)
-                            elif chart_type == 'bar':
-                                plot_rowbars_stack_groupbars(
+                            if fm_stack_levels:
+                                plot_dt_stack_sub(
                                     df_chunk, effective_plot_name, plot_dir,
-                                    fm_stack_levels, fm_expand_axis_levels,
-                                    fm_subplot_levels, fm_grouped_bar_levels,
-                                    subplots_per_row=cfg.subplots_per_row, legend_position=cfg.legend,
+                                    fm_stack_levels, fm_subplot_levels,
+                                    rows=plot_rows, legend_position=cfg.legend,
                                     xlabel=cfg.xlabel, ylabel=cfg.ylabel,
-                                    bar_orientation=cfg.bar_orientation, base_bar_length=cfg.base_length,
-                                    value_label=cfg.value_label, axis_bounds=axis_bounds,
+                                    base_width_per_col=6, subplot_height=cfg.base_length,
+                                    axis_bounds=axis_bounds,
                                     axis_tick_format=cfg.axis_tick_format,
                                     always_include_zero_in_axis=cfg.always_include_zero_in_axis,
                                     output_filepath=filepath)
                             else:
-                                raise ValueError(f'Could not interpret plot rule for {key}')
+                                plot_dt_sub_lines(
+                                    df_chunk, effective_plot_name, plot_dir,
+                                    fm_subplot_levels, fm_line_levels,
+                                    rows=plot_rows, legend_position=cfg.legend,
+                                    xlabel=cfg.xlabel, ylabel=cfg.ylabel,
+                                    base_width_per_col=6, subplot_height=cfg.base_length,
+                                    axis_bounds=axis_bounds,
+                                    axis_tick_format=cfg.axis_tick_format,
+                                    always_include_zero_in_axis=cfg.always_include_zero_in_axis,
+                                    output_filepath=filepath)
 
             plt.close('all')  # Clean up

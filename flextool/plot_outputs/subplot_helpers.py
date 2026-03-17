@@ -17,18 +17,22 @@ class BarLayoutParams:
     """Pre-computed horizontal layout measurements for bar charts (inches).
 
     Attributes:
-        bar_label_width:   Width for the longest bar tick label.
-        group_label_width: Width for the longest group label (0 if no expand_axis).
-        left_margin:       Total left margin = bar_label_width + group_label_width.
-        legend_width:      Width reserved for the legend column (0 if not needed).
-        base_bar_length:   The drawing-area width (value axis extent).
+        bar_label_width:    Width for the longest bar tick label.
+        group_label_width:  Width for the longest group label (0 if no expand_axis).
+        total_label_width:  Total label width = bar_label_width + group_label_width.
+        legend_width:       Width reserved for the legend column (0 if not needed).
+        legend_height:      Height needed for the legend (0 if not needed).
+        base_bar_length:    The drawing-area width (value axis extent).
+        value_axis_width:   Width for value-axis tick labels (vertical bar plots).
     """
 
     bar_label_width: float
     group_label_width: float
-    left_margin: float
+    total_label_width: float
     legend_width: float
+    legend_height: float
     base_bar_length: float
+    value_axis_width: float
 
 
 @dataclass

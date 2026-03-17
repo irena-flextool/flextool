@@ -388,7 +388,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             "plots": {
                 key: [plot_name, plot_type, subplots_per_row, legend_position]
             },
-            "filenames": {
+            "rename": {
                 key: csv_name
             }
         }
@@ -409,21 +409,18 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
     # Read and process data
     start = log_time("Read configuration files", start)
 
-    # If results already exist as parquet files, read them (filtered by settings)
+    # If results already exist as parquet files, read them
     if read_parquet_dir:
         results = {}
-        keys_to_read = set(settings['filenames'].keys())
         for filename in os.listdir(parquet_dir):
             if filename.endswith('.parquet'):
                 key = filename[:-8]  # Remove '.parquet' extension
-                # Only read if this key is in settings (optimization for single_result)
-                if key in keys_to_read:
-                    filepath = os.path.join(parquet_dir, filename)
-                    results[key] = pd.read_parquet(filepath)
-                    if len(results[key].columns.names) == 1:
-                        results[key] = results[key].squeeze()
-                    else:
-                        results[key] = results[key].droplevel('scenario', axis=1)
+                filepath = os.path.join(parquet_dir, filename)
+                results[key] = pd.read_parquet(filepath)
+                if len(results[key].columns.names) == 1:
+                    results[key] = results[key].squeeze()
+                else:
+                    results[key] = results[key].droplevel('scenario', axis=1)
         start = log_time("Read parquet files", start)
 
     # Read original raw outputs from FlexTool
@@ -453,9 +450,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 # Use excel_sheet as the key to allow multiple outputs per function
                 all_results[table_name] = result_df
 
-        # Filter results to only include keys in settings (for single_result optimization)
-        keys_to_keep = set(settings['filenames'].keys())
-        results = {k: v for k, v in all_results.items() if k in keys_to_keep}
+        results = all_results
         start = log_time("Formatted for output", start)
 
     # Write files for debugging purposes
@@ -511,45 +506,43 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # Different CSV writing logic depending on data source
         if read_parquet_dir:
             # Simplified CSV writing from parquet (no par,s,v,r available)
-            for table_name, attributes in settings['filenames'].items():
-                if table_name and table_name in results and attributes:
-                    csv_filename = attributes + '.csv'
-                    df = results[table_name]
-                    csv_path = os.path.join(csv_dir, csv_filename)
-                    df_copy = df.reset_index()
-                    df_copy.columns.names = [None] * df_copy.columns.nlevels
-                    df_copy.to_csv(csv_path, index=False, float_format='%.8g')
+            rename = settings.get('rename', {})
+            for table_name, df in results.items():
+                csv_filename = rename.get(table_name, table_name) + '.csv'
+                csv_path = os.path.join(csv_dir, csv_filename)
+                df_copy = df.reset_index()
+                df_copy.columns.names = [None] * df_copy.columns.nlevels
+                df_copy.to_csv(csv_path, index=False, float_format='%.8g')
         else:
             # Full CSV writing from output_raw (par,s,v,r available)
             write_summary_csv(par, s, v, r, csv_dir)
 
-            for table_name, attributes in settings['filenames'].items():
-                if table_name and table_name in results and attributes:
-                    csv_filename = attributes + '.csv'
-                    df = results[table_name]
-                    if isinstance(df, (pd.MultiIndex, pd.Index)):
-                        df = df.to_frame(index=False)
-                    if 'solve' not in df.index.names and 'period' in df.index.names:
-                        if 'time' in df.index.names:
-                            # Use per-timestep mapping for dispatch data (correct per-roll solve names)
-                            df.index = df.index.join(s.solve_period_time)
-                        else:
-                            # For period-only data, use solve_period but deduplicate to avoid many-to-many
-                            unique_solve_period = s.solve_period[~s.solve_period.droplevel('solve').duplicated(keep='last')]
-                            df.index = df.index.join(unique_solve_period)
-                        names = list(df.index.names)
-                        solve_pos = names.index('solve')
-                        period_pos = names.index('period')
-                        names.pop(solve_pos)
-                        if solve_pos < period_pos:
-                            period_pos -= 1
-                        names.insert(period_pos, 'solve')
-                        df.index = df.index.reorder_levels(order=names)
+            rename = settings.get('rename', {})
+            for table_name, df in results.items():
+                if isinstance(df, (pd.MultiIndex, pd.Index)):
+                    df = df.to_frame(index=False)
+                if 'solve' not in df.index.names and 'period' in df.index.names:
+                    if 'time' in df.index.names:
+                        # Use per-timestep mapping for dispatch data (correct per-roll solve names)
+                        df.index = df.index.join(s.solve_period_time)
+                    else:
+                        # For period-only data, use solve_period but deduplicate to avoid many-to-many
+                        unique_solve_period = s.solve_period[~s.solve_period.droplevel('solve').duplicated(keep='last')]
+                        df.index = df.index.join(unique_solve_period)
+                    names = list(df.index.names)
+                    solve_pos = names.index('solve')
+                    period_pos = names.index('period')
+                    names.pop(solve_pos)
+                    if solve_pos < period_pos:
+                        period_pos -= 1
+                    names.insert(period_pos, 'solve')
+                    df.index = df.index.reorder_levels(order=names)
 
-                    csv_path = os.path.join(csv_dir, csv_filename)
-                    df = df.reset_index()
-                    df.columns.names = [None] * df.columns.nlevels
-                    df.to_csv(csv_path, index=False, float_format='%.8g')
+                csv_filename = rename.get(table_name, table_name) + '.csv'
+                csv_path = os.path.join(csv_dir, csv_filename)
+                df = df.reset_index()
+                df.columns.names = [None] * df.columns.nlevels
+                df.to_csv(csv_path, index=False, float_format='%.8g')
 
         start = log_time('Wrote to csv', start)
 
