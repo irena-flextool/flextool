@@ -101,6 +101,7 @@ def collect_parquet_files(
 
 def combine_parquet_files(
     files_by_name: dict[str, list[tuple[str, Path]]],
+    num_scenarios: int = 0,
 ) -> dict[str, pd.DataFrame]:
     """Combine parquet files across scenarios into dataframes.
 
@@ -111,6 +112,8 @@ def combine_parquet_files(
     ----------
     files_by_name : dict
         Dictionary mapping filename to list of (scenario_name, file_path) tuples
+    num_scenarios : int
+        Total number of scenarios being combined (for warning about missing files)
 
     Returns
     -------
@@ -136,8 +139,9 @@ def combine_parquet_files(
         if dfs_to_append:
             combined_df = pd.concat(dfs_to_append, axis=1)
             combined_dfs[variable_name] = combined_df
-            print(f"Combined {len(dfs_to_append)} files for variable '{variable_name}' "
-                  f"(shape: {combined_df.shape})")
+            if num_scenarios > 0 and len(dfs_to_append) < num_scenarios:
+                print(f"Found and combined only {len(dfs_to_append)} out of {num_scenarios} "
+                      f"possible files for variable '{variable_name}' (shape: {combined_df.shape})")
         else:
             print(f"Warning: No valid data found for {filename}")
 
@@ -212,13 +216,10 @@ def get_scenario_results(
         scenario_folders = read_scenario_folders(db_url)
     print(f"Found {len(scenario_folders)} scenarios: {list(scenario_folders.keys())}")
 
-    print(f"\nCollecting parquet files from {parquet_subdir} subdirectories...")
     files_by_name = collect_parquet_files(scenario_folders, parquet_subdir)
-    print(f"Found {len(files_by_name)} unique result variables")
+    print(f"Found {len(files_by_name)} unique result variables from parquet subdirectories")
 
-    print("\nCombining parquet files...")
-    combined_dfs = combine_parquet_files(files_by_name)
-
-    print(f"Combined {len(combined_dfs)} result variables.")
+    num_scenarios = len(scenario_folders)
+    combined_dfs = combine_parquet_files(files_by_name, num_scenarios=num_scenarios)
 
     return scenario_folders, TimeSeriesResults.from_dict(combined_dfs)
