@@ -4,7 +4,8 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from flextool.plot_outputs.format_helpers import _get_value_formatter
 from flextool.plot_outputs.legend_helpers import (
-    estimate_legend_width, _format_legend_labels, _should_show_legend,
+    estimate_legend_width, estimate_legend_height,
+    _format_legend_labels, _should_show_legend,
 )
 from flextool.plot_outputs.axis_helpers import (
     _subplot_axis_bounds, _apply_subplot_label, _estimate_value_nbins,
@@ -25,7 +26,6 @@ SUBPLOT_VPAD = 0.3          # Space above axes for subplot title
 INTER_COL_GAP = 0.4         # Horizontal gap between subplot columns
 INTER_ROW_GAP = 0.6         # Vertical gap between subplot rows
 VALUE_LABEL_MARGIN = 0.2    # Extra right margin when value labels are shown
-VALUE_AXIS_WIDTH = 1.0      # Space for y-axis value tick labels in vertical bar plots
 YLABEL_WIDTH = 0.4          # Space reserved for y-axis label text
 XLABEL_HEIGHT = 0.2         # Space reserved for x-axis label text
 LEGEND_GAP = 0.15           # Gap between drawing area and legend box
@@ -80,10 +80,12 @@ def _compute_bar_layout(
     else:
         group_label_width = 0.0
 
-    left_margin = bar_label_width + group_label_width
+    total_label_width = bar_label_width + group_label_width
 
-    # ── legend width (max across ALL subplots) ──
+    # ── legend width and height (max across ALL subplots) ──
     legend_width = 0.0
+    max_legend_entries = 0
+    legend_has_title = False
     if stack_levels or grouped_bar_levels:
         for _, df_sub in effective_plots:
             if grouped_bar_levels:
@@ -99,8 +101,25 @@ def _compute_bar_layout(
                     leg_title = str(df_sub.columns.name) if df_sub.columns.name else 'group'
             else:
                 if len(stack_level_names) == 1:
-                    items = df_sub.columns.get_level_values(
-                        stack_level_names[0]).unique().astype(str).tolist()
+                    if isinstance(df_sub.columns, pd.MultiIndex):
+                        all_stacks = df_sub.columns.get_level_values(
+                            stack_level_names[0]).unique().tolist()
+                        # Only count stacks with non-zero values (matching actual legend)
+                        items = []
+                        for s in all_stacks:
+                            try:
+                                vals = df_sub.xs(s, level=stack_level_names[0], axis=1)
+                            except (KeyError, TypeError):
+                                continue
+                            if (vals.abs() > 1e-6).any().any():
+                                items.append(str(s))
+                        if not items:
+                            items = [str(s) for s in all_stacks]
+                    else:
+                        # Single-level columns after subplot extraction
+                        items = [str(c) for c in df_sub.columns if (df_sub[c].abs() > 1e-6).any()]
+                        if not items:
+                            items = [str(c) for c in df_sub.columns]
                 else:
                     stack_df = df_sub.columns.to_frame()[stack_level_names].drop_duplicates()
                     items = [tuple(str(v) for v in row) for row in stack_df.values]
@@ -111,13 +130,33 @@ def _compute_bar_layout(
             legend_labels = _format_legend_labels(items)
             w = estimate_legend_width(legend_labels, leg_title)
             legend_width = max(legend_width, w)
+            max_legend_entries = max(max_legend_entries, len(items))
+            legend_has_title = True  # all legend paths set a title
+
+    legend_height = estimate_legend_height(max_legend_entries, legend_has_title) if max_legend_entries > 0 else 0.0
+
+    # ── value-axis tick label width (for vertical bars) ──
+    # Estimate from the extreme data values across all subplots
+    max_val_chars = 1
+    for _, df_sub in effective_plots:
+        numeric = df_sub.select_dtypes(include='number')
+        if numeric.empty:
+            continue
+        extremes = [numeric.min().min(), numeric.max().max()]
+        for val in extremes:
+            if pd.notna(val):
+                formatted = f'{val:,.6g}'
+                max_val_chars = max(max_val_chars, len(formatted))
+    value_axis_width = max(0.5, max_val_chars * CHAR_WIDTH + 0.15)
 
     return BarLayoutParams(
         bar_label_width=bar_label_width,
         group_label_width=group_label_width,
-        left_margin=left_margin,
+        total_label_width=total_label_width,
         legend_width=legend_width,
+        legend_height=legend_height,
         base_bar_length=base_bar_length,
+        value_axis_width=value_axis_width,
     )
 
 
@@ -174,13 +213,14 @@ def _render_bar_figure(
         fig = None
         axes = [None]
         # Precompute consistent width for single-subplot figures
-        _single_width = layout.base_bar_length + layout.left_margin + left_edge_pad + RIGHT_PAD
+        _single_width = layout.base_bar_length + layout.total_label_width + left_edge_pad + RIGHT_PAD
         if layout.legend_width > 0:
             _single_width += layout.legend_width + LEGEND_GAP
     else:
         if bar_orientation == 'horizontal':
             # --- Horizontal bars: height varies per subplot, width uniform ---
-            cell_width = layout.base_bar_length + layout.left_margin + RIGHT_PAD
+            # Cell width excludes RIGHT_PAD; it is added once at the figure edge
+            cell_width = layout.base_bar_length + layout.total_label_width
             # Per-cell legend space only for 'all' with multiple columns
             if layout.legend_width > 0 and legend_position == 'all' and n_cols > 1:
                 cell_width += layout.legend_width + LEGEND_GAP
@@ -198,7 +238,12 @@ def _render_bar_figure(
 
             content_height = sum(row_heights) + INTER_ROW_GAP * max(0, n_rows - 1)
             total_height = content_height + TITLE_PAD + bottom_pad
-            total_width = cell_width * n_cols + INTER_COL_GAP * max(0, n_cols - 1) + left_edge_pad
+            # Add legend height excess
+            if layout and layout.legend_height > 0:
+                min_axes_h = min(subplot_sizes)  # smallest subplot
+                legend_excess = max(0, layout.legend_height - min_axes_h + SUBPLOT_VPAD)
+                total_height += legend_excess
+            total_width = cell_width * n_cols + INTER_COL_GAP * max(0, n_cols - 1) + left_edge_pad + RIGHT_PAD
             # For 'right' legend (or single column), add legend space once
             if layout.legend_width > 0 and not (legend_position == 'all' and n_cols > 1):
                 total_width += layout.legend_width + LEGEND_GAP
@@ -212,7 +257,7 @@ def _render_bar_figure(
                 row_top = y_cursor
                 for sub_idx, sub_h in row:
                     c = sub_idx % n_cols
-                    x_left = (c * (cell_width + INTER_COL_GAP) + layout.left_margin + left_edge_pad) / total_width
+                    x_left = (c * (cell_width + INTER_COL_GAP) + layout.total_label_width + left_edge_pad) / total_width
                     ax_width = layout.base_bar_length / total_width
                     # Axes height = bars only; SUBPLOT_VPAD stays above for title/spacing
                     bars_h = sub_h - SUBPLOT_VPAD
@@ -226,10 +271,10 @@ def _render_bar_figure(
             # For vertical: x-axis = bar labels (rotated), y-axis = values
             # Each subplot cell: value_axis_labels + bars + right_pad
             vert_subplot_widths = [
-                VALUE_AXIS_WIDTH + BAR_HEIGHT * bc + RIGHT_PAD
+                layout.value_axis_width + BAR_HEIGHT * bc + RIGHT_PAD
                 for bc in bar_counts
             ]
-            cell_height = layout.base_bar_length + layout.left_margin + SUBPLOT_VPAD
+            cell_height = layout.base_bar_length + layout.total_label_width + SUBPLOT_VPAD
 
             row_stacks: list[list[tuple[int, float]]] = [[] for _ in range(n_rows)]
             for i in range(n_subs):
@@ -252,19 +297,24 @@ def _render_bar_figure(
             total_width += left_edge_pad
             content_height = cell_height * n_rows + INTER_ROW_GAP * max(0, n_rows - 1)
             total_height = content_height + TITLE_PAD + bottom_pad
+            # Add legend height excess
+            if layout and layout.legend_height > 0:
+                axes_h = layout.base_bar_length
+                legend_excess = max(0, layout.legend_height - axes_h)
+                total_height += legend_excess
 
             fig = plt.figure(figsize=(total_width, total_height))
 
             axes = [None] * n_subs
             for r, stack in enumerate(row_stacks):
                 y_top = total_height - TITLE_PAD - r * (cell_height + INTER_ROW_GAP)
-                y_bottom = (y_top - cell_height + layout.left_margin) / total_height
+                y_bottom = (y_top - cell_height + layout.total_label_width) / total_height
                 ax_height = layout.base_bar_length / total_height
 
                 x_cursor = left_edge_pad
                 for sub_idx, sub_w in stack:
-                    bars_w = sub_w - VALUE_AXIS_WIDTH - RIGHT_PAD
-                    x_left = (x_cursor + VALUE_AXIS_WIDTH) / total_width
+                    bars_w = sub_w - layout.value_axis_width - RIGHT_PAD
+                    x_left = (x_cursor + layout.value_axis_width) / total_width
                     ax_width = bars_w / total_width
                     axes[sub_idx] = fig.add_axes([x_left, y_bottom, ax_width, ax_height])
                     x_cursor += sub_w + INTER_COL_GAP
@@ -318,22 +368,30 @@ def _render_bar_figure(
             if bar_orientation == 'horizontal':
                 fig_w = _single_width
                 fig_h = subplot_h + TITLE_PAD + bottom_pad
+                legend_excess = 0.0
+                if layout and layout.legend_height > 0:
+                    legend_excess = max(0.0, layout.legend_height - bars_only_h)
+                    fig_h += legend_excess
                 fig = plt.figure(figsize=(fig_w, fig_h))
                 ax = fig.add_axes([
-                    (layout.left_margin + left_edge_pad) / fig_w,
-                    bottom_pad / fig_h,
+                    (layout.total_label_width + left_edge_pad) / fig_w,
+                    (bottom_pad + legend_excess) / fig_h,
                     layout.base_bar_length / fig_w,
                     bars_only_h / fig_h,
                 ])
             else:  # vertical
-                fig_w = VALUE_AXIS_WIDTH + bars_only_h + RIGHT_PAD
+                fig_w = layout.value_axis_width + bars_only_h + RIGHT_PAD
                 if layout.legend_width > 0:
                     fig_w += layout.legend_width + LEGEND_GAP
-                fig_h = layout.base_bar_length + layout.left_margin + SUBPLOT_VPAD + TITLE_PAD + bottom_pad
+                fig_h = layout.base_bar_length + layout.total_label_width + SUBPLOT_VPAD + TITLE_PAD + bottom_pad
+                legend_excess = 0.0
+                if layout and layout.legend_height > 0:
+                    legend_excess = max(0.0, layout.legend_height - layout.base_bar_length)
+                    fig_h += legend_excess
                 fig = plt.figure(figsize=(fig_w, fig_h))
                 ax = fig.add_axes([
-                    VALUE_AXIS_WIDTH / fig_w,
-                    (bottom_pad + layout.left_margin) / fig_h,
+                    layout.value_axis_width / fig_w,
+                    (bottom_pad + layout.total_label_width + legend_excess) / fig_h,
                     bars_only_h / fig_w,
                     layout.base_bar_length / fig_h,
                 ])
@@ -373,7 +431,7 @@ def _render_bar_figure(
             ax.tick_params('x', length=0)
             ax.set_xlim(-0.5, len(all_bars) - 0.5)
             ax.tick_params(labelsize=10)
-            plt.setp(ax.get_xticklabels(), rotation=90, ha='right')
+            plt.setp(ax.get_xticklabels(), rotation=90, ha='center')
 
         if expand_axis_levels:
             # Multiple groups - add two-level axis
@@ -397,9 +455,9 @@ def _render_bar_figure(
                     # Bar separators: bar label margin + small offset
                     bar_tick_length = layout.bar_label_width * 72
                     # Group separators: both label margins + padding
-                    group_tick_length = layout.left_margin * 72
+                    group_tick_length = layout.total_label_width * 72
                     # Group label padding: bar label margin
-                    group_label_pad = (layout.bar_label_width + 0.1) * 72
+                    group_label_pad = layout.bar_label_width * 72 + 10
                 else:
                     # Fallback for single subplot or no expand_axis_levels
                     bar_tick_length = 5
@@ -427,9 +485,9 @@ def _render_bar_figure(
                     # Bar separators: bar label margin + small offset
                     bar_tick_length = layout.bar_label_width * 72
                     # Group separators: both label margins + padding
-                    group_tick_length = layout.left_margin * 72
+                    group_tick_length = layout.total_label_width * 72
                     # Group label padding: bar label margin
-                    group_label_pad = layout.bar_label_width * 72
+                    group_label_pad = layout.bar_label_width * 72 + 10
                 else:
                     # Fallback for single subplot or no expand_axis_levels
                     bar_tick_length = 5
@@ -446,7 +504,7 @@ def _render_bar_figure(
                 group_ax.set_xticks(group_centers, labels=group_labels)
                 group_ax.tick_params('x', length=0, pad=group_label_pad)
                 group_ax.tick_params(labelsize=10)
-                plt.setp(group_ax.get_xticklabels(), rotation=90, ha='right')
+                plt.setp(group_ax.get_xticklabels(), rotation=90, ha='center')
 
                 # Separators for groups
                 group_sep_ax = ax.secondary_xaxis(location=0)
@@ -476,8 +534,19 @@ def _render_bar_figure(
                     legend_title = str(df_sub.columns.name) if df_sub.columns.name else 'stack'
 
             if _should_show_legend(legend_position, sub_levels, idx, n_cols, n_subs):
-                ax.legend(handles[::-1], labels_leg[::-1], title=legend_title,
-                        bbox_to_anchor=(1, 1), loc='upper left', borderaxespad=1.0)
+                # Axes width depends on orientation: horizontal uses base_bar_length,
+                # vertical uses bar area width (BAR_HEIGHT * n_bars)
+                if bar_orientation == 'horizontal':
+                    axes_width = layout.base_bar_length
+                else:
+                    axes_width = BAR_HEIGHT * len(all_bars)
+                legend_x = 1 + LEGEND_GAP / axes_width
+                # For stacked bars, _plot_stacked_bars already builds legend entries
+                # in the desired order; for grouped bars, reverse to match visual order
+                if grouped_bar_levels:
+                    handles, labels_leg = handles[::-1], labels_leg[::-1]
+                ax.legend(handles, labels_leg, title=legend_title,
+                        bbox_to_anchor=(legend_x, 1), loc='upper left', borderaxespad=0)
 
         # Value axis: pad for bar labels -> apply explicit scale -> formatter -> labels
         row = idx // n_cols
@@ -553,11 +622,11 @@ def _render_bar_figure(
 
 def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_axis_levels,
         sub_levels=[], grouped_bar_levels=None,
-        legend_position='right', subplots_per_row=3,
+        legend_position='right', subplots_per_row=2,
         xlabel=None, ylabel=None, bar_orientation='horizontal', base_bar_length=4,
-        value_label=False, axis_bounds=None, axis_tick_format=None,
-        always_include_zero_in_axis=True, max_items_per_plot=None,
-        max_subplots_per_file=None, output_filepath=None):
+        value_label=False, axis_bounds=None, axis_tick_format='1,.0f',
+        always_include_zero_in_axis=True, max_items_per_plot=10,
+        max_subplots_per_file=6, output_filepath=None):
     """
     Create horizontal stacked and grouped bar plot.
 
@@ -642,6 +711,17 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
     # Handle empty sub_levels (single plot, no subplotting)
     subs = _get_unique_levels(df.columns, sub_levels)
 
+    # Compute expand-group count so max_items_per_plot accounts for total bars
+    # (each row item produces n_expand_groups visual bars)
+    if expand_axis_levels and isinstance(df.columns, pd.MultiIndex):
+        expand_level_name = expand_axis_level_names[0]
+        n_expand_groups = len(
+            df.columns.get_level_values(expand_level_name).unique()
+        )
+    else:
+        expand_level_name = None
+        n_expand_groups = 1
+
     # Pre-extract subplot data, drop empty rows, and split by max_items_per_plot
     effective_plots: list[tuple[str | None, pd.DataFrame]] = []
     for sub in subs:
@@ -655,11 +735,32 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             ' | '.join(str(v) for v in sub) if isinstance(sub, tuple)
             else str(sub) if sub is not None else None
         )
-        if max_items_per_plot and len(df_sub) > max_items_per_plot:
-            n_chunks = -(-len(df_sub) // max_items_per_plot)  # ceil division
-            for i in range(n_chunks):
-                chunk = df_sub.iloc[i * max_items_per_plot:(i + 1) * max_items_per_plot]
-                effective_plots.append((f"{title}_{i + 1}", chunk))
+        # Compute total visual bars for this subplot
+        n_rows = len(df_sub)
+        total_bars = n_rows * n_expand_groups
+        if max_items_per_plot and total_bars > max_items_per_plot:
+            # Try splitting by row items first
+            max_row_items = max(1, max_items_per_plot // n_expand_groups)
+            if n_rows > max_row_items:
+                # Split by rows
+                for i in range(0, n_rows, max_row_items):
+                    chunk = df_sub.iloc[i:i + max_row_items]
+                    chunk_label = f"{title}_{i // max_row_items + 1}" if title else None
+                    effective_plots.append((chunk_label, chunk))
+            elif expand_level_name is not None:
+                # Can't reduce rows further — split by expand-axis groups
+                max_groups = max(1, max_items_per_plot // n_rows)
+                all_groups = df_sub.columns.get_level_values(
+                    expand_level_name
+                ).unique().tolist()
+                for gi, grp_start in enumerate(range(0, len(all_groups), max_groups)):
+                    grp_chunk = all_groups[grp_start:grp_start + max_groups]
+                    mask = df_sub.columns.get_level_values(expand_level_name).isin(grp_chunk)
+                    chunk = df_sub.loc[:, mask]
+                    chunk_label = f"{title}_{gi + 1}" if title else None
+                    effective_plots.append((chunk_label, chunk))
+            else:
+                effective_plots.append((title, df_sub))
         else:
             effective_plots.append((title, df_sub))
 
