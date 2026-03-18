@@ -447,13 +447,15 @@ class ExecutionManager:
     # ------------------------------------------------------------------
 
     def _run_post_execution(self) -> None:
-        """Run comparison plots/Excel after all scenarios finish."""
+        """Run comparison plots/Excel after all scenarios finish.
+
+        Accumulates successful scenario names across batches so that when
+        the user adds batch 2 after batch 1 has already finished, the
+        comparison includes all scenarios from both batches.
+        """
         settings = self.settings
         do_comp_plots = settings.auto_generate_comp_plots
         do_comp_excel = settings.auto_generate_comp_excel
-
-        if not do_comp_plots and not do_comp_excel:
-            return
 
         # Gather scenario names from successful jobs
         with self._lock:
@@ -465,6 +467,14 @@ class ExecutionManager:
             # Merge in any externally-specified comparison scenarios
             extra = [s for s in self._comparison_scenarios if s not in successful]
             all_scenarios = successful + extra
+            # Accumulate: remember these scenarios so that if a new batch
+            # is added later, the next comparison will include them too.
+            for name in successful:
+                if name not in self._comparison_scenarios:
+                    self._comparison_scenarios.append(name)
+
+        if not do_comp_plots and not do_comp_excel:
+            return
 
         if len(all_scenarios) < 1:
             logger.info("No successful scenarios; skipping comparison")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
 import tkinter as tk
@@ -1201,11 +1202,11 @@ class MainWindow(tk.Tk):
         else:
             self.edit_source_btn.configure(state="disabled")
 
-        # ── Convert: exactly one selected, xlsx, status OK ──
+        # ── Convert: exactly one selected, xlsx or sqlite, status OK ──
         if len(selected) == 1:
             name, status = selected[0]
-            is_xlsx = name.lower().endswith(".xlsx")
-            if is_xlsx and status == STATUS_OK:
+            is_convertible = name.lower().endswith((".xlsx", ".sqlite"))
+            if is_convertible and status == STATUS_OK:
                 self.convert_source_btn.configure(state="normal")
             else:
                 self.convert_source_btn.configure(state="disabled")
@@ -1267,7 +1268,7 @@ class MainWindow(tk.Tk):
 
     @safe_callback
     def _on_convert_source(self) -> None:
-        """Convert the selected (highlighted) xlsx input source to a sqlite database."""
+        """Convert the selected input source between xlsx and sqlite formats."""
         if not self.input_source_mgr or not self.current_project:
             return
 
@@ -1276,18 +1277,17 @@ class MainWindow(tk.Tk):
             return
 
         source_name, _status = selected[0]
-        if not source_name.lower().endswith(".xlsx"):
-            return
+        ext = Path(source_name).suffix.lower()
 
-        answer = messagebox.askokcancel(
-            "Convert to database",
-            "Are you sure you want to convert the selected xlsx input source "
-            "to a database input source? xlsx will be copied to 'converted' "
-            "folder for safekeeping.",
-        )
-        if not answer:
-            return
+        if ext == ".xlsx":
+            self._convert_xlsx_to_sqlite(source_name)
+        elif ext == ".sqlite":
+            self._convert_sqlite_to_xlsx(source_name)
 
+    # ── Conversion: xlsx → sqlite ────────────────────────────────
+
+    def _convert_xlsx_to_sqlite(self, source_name: str) -> None:
+        """Convert an xlsx input source to sqlite format."""
         project_path = get_projects_dir() / self.current_project
         input_dir = project_path / "input_sources"
         xlsx_path = input_dir / source_name
@@ -1296,23 +1296,36 @@ class MainWindow(tk.Tk):
             messagebox.showerror("File not found", f"Cannot find:\n{xlsx_path}")
             return
 
-        # Determine target sqlite path
         stem = Path(source_name).stem
         target_sqlite = input_dir / f"{stem}.sqlite"
+
+        # Check if target already exists in input_sources/
+        if not self._resolve_file_conflict(target_sqlite):
+            return
+
+        answer = messagebox.askokcancel(
+            "Convert to database",
+            f"Convert '{source_name}' to a database input source?\n\n"
+            f"The xlsx will be moved to the 'converted' folder for safekeeping.",
+        )
+        if not answer:
+            return
+
         target_db_url = f"sqlite:///{target_sqlite}"
 
         try:
-            # Import conversion utilities
             from flextool.process_inputs.read_tabular_with_specification import (
                 TabularReader,
             )
             from flextool.process_inputs.write_to_input_db import (
                 write_to_flextool_input_db,
             )
+            from flextool.cli.cmd_read_tabular_input import _ensure_target_db_exists
 
-            # Locate the specification JSON
             cli_dir = Path(__file__).resolve().parent.parent / "cli"
             json_path = str(cli_dir / ".." / "import_excel_input.json")
+
+            _ensure_target_db_exists(target_db_url)
 
             tabular_reader = TabularReader(json_path)
             write_to_flextool_input_db(
@@ -1328,27 +1341,165 @@ class MainWindow(tk.Tk):
 
         # Move xlsx to converted/ folder
         converted_dir = project_path / "converted"
-        converted_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            shutil.move(str(xlsx_path), str(converted_dir / source_name))
-        except OSError as exc:
-            messagebox.showwarning(
-                "Move failed",
-                f"Conversion succeeded but the xlsx could not be moved "
-                f"to the 'converted' folder:\n{exc}",
-            )
+        moved = self._move_to_converted(xlsx_path, converted_dir)
 
-        # Remove old xlsx from input_source_numbers if present
-        if source_name in self.project_settings.input_source_numbers:
+        if moved and source_name in self.project_settings.input_source_numbers:
             del self.project_settings.input_source_numbers[source_name]
             save_project_settings(project_path, self.project_settings)
 
         self._refresh_input_sources()
-        messagebox.showinfo(
-            "Conversion complete",
-            f"'{source_name}' has been converted to '{stem}.sqlite'.\n"
-            f"The xlsx has been moved to the 'converted' folder.",
+        if moved:
+            messagebox.showinfo(
+                "Conversion complete",
+                f"'{source_name}' has been converted to '{stem}.sqlite'.\n"
+                f"The xlsx has been moved to the 'converted' folder.",
+            )
+        else:
+            messagebox.showinfo(
+                "Conversion complete",
+                f"'{source_name}' has been converted to '{stem}.sqlite'.\n"
+                f"The original xlsx remains in the input_sources folder.",
+            )
+
+    # ── Conversion: sqlite → xlsx ────────────────────────────────
+
+    def _convert_sqlite_to_xlsx(self, source_name: str) -> None:
+        """Convert a sqlite input source to xlsx format."""
+        project_path = get_projects_dir() / self.current_project
+        input_dir = project_path / "input_sources"
+        sqlite_path = input_dir / source_name
+
+        if not sqlite_path.exists():
+            messagebox.showerror("File not found", f"Cannot find:\n{sqlite_path}")
+            return
+
+        stem = Path(source_name).stem
+        target_xlsx = input_dir / f"{stem}.xlsx"
+
+        # Check if target already exists in input_sources/
+        if not self._resolve_file_conflict(target_xlsx):
+            return
+
+        answer = messagebox.askokcancel(
+            "Convert to Excel",
+            f"Convert '{source_name}' to Excel format?\n\n"
+            f"The sqlite will be moved to the 'converted' folder for safekeeping.",
         )
+        if not answer:
+            return
+
+        try:
+            from flextool.export_to_tabular import export_to_excel
+
+            db_url = f"sqlite:///{sqlite_path}"
+            export_to_excel(db_url, str(target_xlsx))
+        except Exception as exc:
+            logger.error("Conversion failed: %s", exc, exc_info=True)
+            messagebox.showerror(
+                "Conversion failed",
+                f"An error occurred during conversion:\n{exc}",
+            )
+            return
+
+        # Move sqlite to converted/ folder
+        converted_dir = project_path / "converted"
+        moved = self._move_to_converted(sqlite_path, converted_dir)
+
+        if moved and source_name in self.project_settings.input_source_numbers:
+            del self.project_settings.input_source_numbers[source_name]
+            save_project_settings(project_path, self.project_settings)
+
+        self._refresh_input_sources()
+        if moved:
+            messagebox.showinfo(
+                "Conversion complete",
+                f"'{source_name}' has been converted to '{stem}.xlsx'.\n"
+                f"The sqlite has been moved to the 'converted' folder.",
+            )
+        else:
+            messagebox.showinfo(
+                "Conversion complete",
+                f"'{source_name}' has been converted to '{stem}.xlsx'.\n"
+                f"The original sqlite remains in the input_sources folder.",
+            )
+
+    # ── File conflict resolution helpers ─────────────────────────
+
+    def _ask_file_conflict(self, filepath: Path) -> str:
+        """Ask user how to handle an existing file.
+
+        Returns: "overwrite", "rename", or "cancel".
+        """
+        result = messagebox.askyesnocancel(
+            "File already exists",
+            f"'{filepath.name}' already exists in:\n"
+            f"  {filepath.parent}\n\n"
+            f"Yes = Overwrite existing file\n"
+            f"No = Rename existing to .backup (with content hash)\n"
+            f"Cancel = Abort",
+        )
+        if result is True:
+            return "overwrite"
+        elif result is False:
+            return "rename"
+        return "cancel"
+
+    @staticmethod
+    def _backup_with_hash(filepath: Path) -> Path:
+        """Rename a file to include a content hash and .backup suffix.
+
+        Example: foo.xlsx → foo.a1b2c3d4e5f6.backup.xlsx
+        """
+        content_hash = hashlib.sha256(filepath.read_bytes()).hexdigest()[:12]
+        backup_name = f"{filepath.stem}.{content_hash}.backup{filepath.suffix}"
+        backup_path = filepath.parent / backup_name
+        filepath.rename(backup_path)
+        return backup_path
+
+    def _resolve_file_conflict(self, target_path: Path) -> bool:
+        """Check if target exists and resolve the conflict.
+
+        Returns True if resolved (file removed/renamed or didn't exist),
+        False if user cancelled.
+        """
+        if not target_path.exists():
+            return True
+        action = self._ask_file_conflict(target_path)
+        if action == "cancel":
+            return False
+        if action == "rename":
+            self._backup_with_hash(target_path)
+        elif action == "overwrite":
+            target_path.unlink()
+        return True
+
+    def _move_to_converted(self, source_path: Path, converted_dir: Path) -> bool:
+        """Move source file to converted/ folder, handling conflicts.
+
+        Returns True if moved successfully, False otherwise.
+        """
+        converted_dir.mkdir(parents=True, exist_ok=True)
+        dest = converted_dir / source_path.name
+
+        if dest.exists():
+            action = self._ask_file_conflict(dest)
+            if action == "cancel":
+                return False
+            if action == "rename":
+                self._backup_with_hash(dest)
+            elif action == "overwrite":
+                dest.unlink()
+
+        try:
+            shutil.move(str(source_path), str(dest))
+            return True
+        except OSError as exc:
+            messagebox.showwarning(
+                "Move failed",
+                f"Conversion succeeded but the file could not be moved "
+                f"to the 'converted' folder:\n{exc}",
+            )
+            return False
 
     # ── Delete button handler ───────────────────────────────────────
 
