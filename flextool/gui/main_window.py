@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import shutil
+import subprocess
+import sys
+import threading
 import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
@@ -34,6 +37,7 @@ from flextool.gui.platform_utils import (
     open_spine_db_editor,
 )
 from flextool.gui.db_editor_integration import DbEditorManager
+from flextool.gui.output_log_window import OutputLogWindow
 
 logger = logging.getLogger(__name__)
 
@@ -1287,7 +1291,7 @@ class MainWindow(tk.Tk):
     # ── Conversion: xlsx → sqlite ────────────────────────────────
 
     def _convert_xlsx_to_sqlite(self, source_name: str) -> None:
-        """Convert an xlsx input source to sqlite format."""
+        """Convert an xlsx input source to sqlite format via subprocess."""
         project_path = get_projects_dir() / self.current_project
         input_dir = project_path / "input_sources"
         xlsx_path = input_dir / source_name
@@ -1313,58 +1317,28 @@ class MainWindow(tk.Tk):
 
         target_db_url = f"sqlite:///{target_sqlite}"
 
-        try:
-            from flextool.process_inputs.read_tabular_with_specification import (
-                TabularReader,
-            )
-            from flextool.process_inputs.write_to_input_db import (
-                write_to_flextool_input_db,
-            )
-            from flextool.cli.cmd_read_tabular_input import _ensure_target_db_exists
+        # Initialize the target database from the FlexTool template
+        from flextool.cli.cmd_read_tabular_input import _ensure_target_db_exists
+        _ensure_target_db_exists(target_db_url)
 
-            cli_dir = Path(__file__).resolve().parent.parent / "cli"
-            json_path = str(cli_dir / ".." / "import_excel_input.json")
+        # Build subprocess command
+        cmd = [
+            sys.executable, "-m",
+            "flextool.cli.cmd_read_self_describing_tabular_input",
+            str(xlsx_path),
+            target_db_url,
+        ]
 
-            _ensure_target_db_exists(target_db_url)
-
-            tabular_reader = TabularReader(json_path)
-            write_to_flextool_input_db(
-                str(xlsx_path), tabular_reader, target_db_url, input_type="excel"
-            )
-        except Exception as exc:
-            logger.error("Conversion failed: %s", exc, exc_info=True)
-            messagebox.showerror(
-                "Conversion failed",
-                f"An error occurred during conversion:\n{exc}",
-            )
-            return
-
-        # Move xlsx to converted/ folder
-        converted_dir = project_path / "converted"
-        moved = self._move_to_converted(xlsx_path, converted_dir)
-
-        if moved and source_name in self.project_settings.input_source_numbers:
-            del self.project_settings.input_source_numbers[source_name]
-            save_project_settings(project_path, self.project_settings)
-
-        self._refresh_input_sources()
-        if moved:
-            messagebox.showinfo(
-                "Conversion complete",
-                f"'{source_name}' has been converted to '{stem}.sqlite'.\n"
-                f"The xlsx has been moved to the 'converted' folder.",
-            )
-        else:
-            messagebox.showinfo(
-                "Conversion complete",
-                f"'{source_name}' has been converted to '{stem}.sqlite'.\n"
-                f"The original xlsx remains in the input_sources folder.",
-            )
+        log_window = OutputLogWindow(self, f"Convert: {source_name} → sqlite")
+        self._run_conversion_subprocess(
+            cmd, log_window, source_name, xlsx_path, target_sqlite,
+            f"'{source_name}' → '{stem}.sqlite'",
+        )
 
     # ── Conversion: sqlite → xlsx ────────────────────────────────
 
     def _convert_sqlite_to_xlsx(self, source_name: str) -> None:
-        """Convert a sqlite input source to xlsx format."""
+        """Convert a sqlite input source to xlsx format via subprocess."""
         project_path = get_projects_dir() / self.current_project
         input_dir = project_path / "input_sources"
         sqlite_path = input_dir / source_name
@@ -1388,40 +1362,113 @@ class MainWindow(tk.Tk):
         if not answer:
             return
 
-        try:
-            from flextool.export_to_tabular import export_to_excel
+        db_url = f"sqlite:///{sqlite_path}"
 
-            db_url = f"sqlite:///{sqlite_path}"
-            export_to_excel(db_url, str(target_xlsx))
-        except Exception as exc:
-            logger.error("Conversion failed: %s", exc, exc_info=True)
-            messagebox.showerror(
-                "Conversion failed",
-                f"An error occurred during conversion:\n{exc}",
-            )
+        # Build subprocess command
+        cmd = [
+            sys.executable, "-m",
+            "flextool.cli.cmd_export_to_tabular",
+            db_url,
+            str(target_xlsx),
+        ]
+
+        log_window = OutputLogWindow(self, f"Convert: {source_name} → xlsx")
+        self._run_conversion_subprocess(
+            cmd, log_window, source_name, sqlite_path, target_xlsx,
+            f"'{source_name}' → '{stem}.xlsx'",
+        )
+
+    # ── Conversion subprocess runner ─────────────────────────────
+
+    def _run_conversion_subprocess(
+        self,
+        cmd: list[str],
+        log_window: OutputLogWindow,
+        source_name: str,
+        source_path: Path,
+        target_path: Path,
+        description: str,
+    ) -> None:
+        """Run a conversion command as a subprocess with output in the log window.
+
+        After the subprocess completes, moves the source to converted/ and
+        refreshes the input sources list.
+        """
+        flextool_root = get_projects_dir().parent
+        cmd_str = " ".join(cmd)
+        log_window.append_line(f"Converting {description}\n")
+        log_window.append_line(cmd_str)
+        log_window.append_line("")
+
+        def _worker() -> None:
+            success = False
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    cwd=str(flextool_root),
+                )
+                log_window.after(0, log_window.set_process, proc)
+
+                for line in proc.stdout:  # type: ignore[union-attr]
+                    log_window.after(0, log_window.append_line, line.rstrip("\n"))
+
+                proc.wait()
+                success = proc.returncode == 0
+
+                if success:
+                    log_window.after(0, log_window.append_line, "\nConversion succeeded.")
+                else:
+                    log_window.after(
+                        0, log_window.append_line,
+                        f"\nConversion failed (exit code {proc.returncode}).",
+                    )
+            except Exception as exc:
+                logger.error("Conversion subprocess failed: %s", exc, exc_info=True)
+                log_window.after(
+                    0, log_window.append_line, f"\nError: {exc}",
+                )
+
+            # Finish up on the main thread
+            self.after(0, self._conversion_finished,
+                       success, source_name, source_path, target_path, log_window)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+    def _conversion_finished(
+        self,
+        success: bool,
+        source_name: str,
+        source_path: Path,
+        target_path: Path,
+        log_window: OutputLogWindow,
+    ) -> None:
+        """Handle post-conversion tasks on the main thread."""
+        log_window.mark_finished(success)
+
+        if not success:
+            # Clean up target if conversion failed
+            if target_path.exists():
+                try:
+                    target_path.unlink()
+                except OSError:
+                    pass
             return
 
-        # Move sqlite to converted/ folder
+        # Move source to converted/ folder
+        project_path = get_projects_dir() / self.current_project
         converted_dir = project_path / "converted"
-        moved = self._move_to_converted(sqlite_path, converted_dir)
+        moved = self._move_to_converted(source_path, converted_dir)
 
         if moved and source_name in self.project_settings.input_source_numbers:
             del self.project_settings.input_source_numbers[source_name]
             save_project_settings(project_path, self.project_settings)
 
         self._refresh_input_sources()
-        if moved:
-            messagebox.showinfo(
-                "Conversion complete",
-                f"'{source_name}' has been converted to '{stem}.xlsx'.\n"
-                f"The sqlite has been moved to the 'converted' folder.",
-            )
-        else:
-            messagebox.showinfo(
-                "Conversion complete",
-                f"'{source_name}' has been converted to '{stem}.xlsx'.\n"
-                f"The original sqlite remains in the input_sources folder.",
-            )
 
     # ── File conflict resolution helpers ─────────────────────────
 

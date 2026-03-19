@@ -12,6 +12,28 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _clean_env() -> dict[str, str]:
+    """Return a copy of os.environ without Python virtualenv variables.
+
+    LibreOffice and other desktop apps bundle their own Python and crash
+    (std::bad_alloc) if they inherit PYTHONPATH/VIRTUAL_ENV from the
+    parent process.  This only affects the child process — the current
+    Python process keeps its full environment.
+    """
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("PYTHONPATH", "VIRTUAL_ENV", "VIRTUAL_ENV_DISABLE_PROMPT",
+                     "PYTHONHOME", "CONDA_PREFIX", "CONDA_DEFAULT_ENV")
+    }
+    if "VIRTUAL_ENV" in os.environ:
+        venv_bin = os.path.join(os.environ["VIRTUAL_ENV"], "bin")
+        env["PATH"] = os.pathsep.join(
+            p for p in os.environ.get("PATH", "").split(os.pathsep)
+            if p != venv_bin
+        )
+    return env
+
+
 def open_file_in_default_app(filepath: Path) -> None:
     """Open a file using the OS default application.
 
@@ -31,7 +53,11 @@ def open_file_in_default_app(filepath: Path) -> None:
     elif sys.platform == "darwin":
         subprocess.Popen(["open", str(filepath)])
     else:
-        subprocess.Popen(["xdg-open", str(filepath)])
+        subprocess.Popen(
+            ["xdg-open", str(filepath)],
+            start_new_session=True,
+            env=_clean_env(),
+        )
 
 
 def open_folder(dirpath: Path) -> None:
@@ -53,7 +79,11 @@ def open_folder(dirpath: Path) -> None:
     elif sys.platform == "darwin":
         subprocess.Popen(["open", str(dirpath)])
     else:
-        subprocess.Popen(["xdg-open", str(dirpath)])
+        subprocess.Popen(
+            ["xdg-open", str(dirpath)],
+            start_new_session=True,
+            env=_clean_env(),
+        )
 
 
 def open_spine_db_editor(db_url: str) -> subprocess.Popen | None:

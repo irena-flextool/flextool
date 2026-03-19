@@ -62,43 +62,99 @@ class InputSourceManager:
     def read_scenarios_xlsx(self, filepath: Path) -> list[str] | None:
         """Read scenario names from the 'scenario' sheet in an xlsx file.
 
+        Uses zipfile + xml.etree to read the xlsx directly without openpyxl,
+        avoiding any file handle leaks that could prevent LibreOffice from
+        opening the file afterwards.
+
         Reads the 2nd row, skips the first column, and reads cell values
-        until an empty cell is encountered.  Returns ``None`` if the sheet
-        does not exist or openpyxl is not available.
+        until an empty cell is encountered.
         """
-        try:
-            import openpyxl
-        except ImportError:
-            logger.warning("openpyxl is not installed -- cannot read xlsx scenarios")
-            return None
+        import zipfile
+        import xml.etree.ElementTree as ET
+
+        ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 
         try:
-            wb = openpyxl.load_workbook(str(filepath), read_only=True, data_only=True)
-        except Exception:
-            logger.warning("Failed to open workbook: %s", filepath, exc_info=True)
-            return None
+            with zipfile.ZipFile(str(filepath), "r") as zf:
+                # Find the scenario sheet: read workbook.xml for sheet names
+                wb_xml = ET.fromstring(zf.read("xl/workbook.xml"))
+                sheets = wb_xml.findall(".//s:sheet", ns)
+                scenario_sheet_id = None
+                for sheet in sheets:
+                    if sheet.get("name") == "scenario":
+                        # rId attribute links to the actual sheet file
+                        scenario_sheet_id = sheet.get(
+                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+                        )
+                        break
 
-        try:
-            if "scenario" not in wb.sheetnames:
-                wb.close()
-                return None
+                if scenario_sheet_id is None:
+                    return None
 
-            ws = wb["scenario"]
-            scenarios: list[str] = []
-            # Row 2 (1-indexed), skip first column (start from column 2)
-            for cell in ws[2][1:]:  # type: ignore[index]
-                value = cell.value
-                if value is None or (isinstance(value, str) and value.strip() == ""):
+                # Resolve rId to a sheet file path via relationships
+                rels_xml = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+                sheet_file = None
+                for rel in rels_xml:
+                    if rel.get("Id") == scenario_sheet_id:
+                        target = rel.get("Target", "")
+                        # Target may be relative (e.g. "worksheets/sheet3.xml")
+                        # or absolute (e.g. "/xl/worksheets/sheet3.xml")
+                        if target.startswith("/"):
+                            sheet_file = target.lstrip("/")
+                        else:
+                            sheet_file = "xl/" + target
+                        break
+
+                if sheet_file is None or sheet_file not in zf.namelist():
+                    return None
+
+                # Read shared strings (cell values may reference these)
+                shared_strings: list[str] = []
+                if "xl/sharedStrings.xml" in zf.namelist():
+                    ss_xml = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+                    for si in ss_xml.findall("s:si", ns):
+                        t_elem = si.find("s:t", ns)
+                        shared_strings.append(t_elem.text if t_elem is not None and t_elem.text else "")
+
+                # Parse the scenario sheet — find row 2 cells
+                sheet_xml = ET.fromstring(zf.read(sheet_file))
+                scenarios: list[str] = []
+
+                for row in sheet_xml.findall(".//s:sheetData/s:row", ns):
+                    if row.get("r") != "2":
+                        continue
+                    # Found row 2 — read cells from column B onwards
+                    for cell in row.findall("s:c", ns):
+                        ref = cell.get("r", "")
+                        # Skip column A (ref is exactly "A2", not "AA2", "AB2", etc.)
+                        if ref == "A2":
+                            continue
+                        cell_type = cell.get("t", "")
+                        value = ""
+                        if cell_type == "s":
+                            # Shared string reference
+                            v_elem = cell.find("s:v", ns)
+                            if v_elem is not None and v_elem.text is not None:
+                                idx = int(v_elem.text)
+                                value = shared_strings[idx] if idx < len(shared_strings) else ""
+                        elif cell_type == "inlineStr":
+                            # Inline string: <is><t>text</t></is>
+                            is_elem = cell.find("s:is/s:t", ns)
+                            if is_elem is not None and is_elem.text is not None:
+                                value = is_elem.text
+                        else:
+                            v_elem = cell.find("s:v", ns)
+                            if v_elem is not None and v_elem.text is not None:
+                                value = v_elem.text
+                        value = value.strip()
+                        if value:
+                            scenarios.append(value)
                     break
-                scenarios.append(str(value).strip())
-            wb.close()
-            return scenarios
+
+                return scenarios if scenarios else None
+
         except Exception:
             logger.warning("Error reading scenarios from %s", filepath, exc_info=True)
-            try:
-                wb.close()
-            except Exception:
-                pass
             return None
 
     def read_scenarios_sqlite(self, filepath: Path) -> list[str] | None:

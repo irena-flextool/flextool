@@ -21,8 +21,12 @@ example_input.xlsx
 site/
 input/
 output/
+output_plots/
+output_parquet/
+ouptut_plot_comparisons/
 solve_data/
 flextool-venv/
 specs/
 test/expected/
 projects/
+tests/unitTests.txt

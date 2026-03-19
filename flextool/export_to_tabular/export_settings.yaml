@@ -1,0 +1,206 @@
+# Entity classes that need an Entity Alternative column (active_by_default=False).
+entity_alternative_classes:
+  - node
+  - unit
+  - connection
+  - constraint
+  - reserve__upDown__unit__node
+  - reserve__upDown__connection__node
+
+# Parameters that must appear before the Entity Alternative column.
+# Ensures roundtrip compatibility with the position-based importer.
+pre_entity_alternative_params:
+  node: ["has_balance"]
+
+# Default index column names per layout type (replaces 'x' from the DB).
+index_name_defaults:
+  periodic: "period"
+  timeseries: "time"
+  nested_periodic: "period"
+
+# Merge two entity classes onto one sheet set, adding a direction column.
+merge_classes:
+  unit_node:
+    classes:
+      unit__inputNode: "input"
+      unit__outputNode: "output"
+    direction_column: "input_output"
+
+# Unpack a Map parameter's indexes as an extra row-identifier column.
+# Creates a separate sheet from the main entity class sheet.
+unpack_map_params:
+  unit_node_constraint:
+    source_classes: ["unit__inputNode", "unit__outputNode"]
+    direction_column: "input_output"
+    params: ["constraint_flow_coefficient"]
+    index_column: "constraint"
+  connection_node_constraint:
+    source_classes: ["connection__node"]
+    params: ["constraint_flow_coefficient"]
+    index_column: "constraint"
+  node_constraint:
+    source_classes: ["node"]
+    params: ["constraint_capacity_coefficient", "constraint_state_coefficient"]
+    index_column: "constraint"
+  unit_constraint:
+    source_classes: ["unit"]
+    params: ["constraint_capacity_coefficient"]
+    index_column: "constraint"
+  connection_constraint:
+    source_classes: ["connection"]
+    params: ["constraint_capacity_coefficient"]
+    index_column: "constraint"
+
+# Add columns from a related multi-dim entity class to a sheet.
+add_entity_elements:
+  connection:
+    from_class: "connection__node__node"
+    columns: ["left_node", "right_node"]
+
+# Split an entity class across multiple sheet groups with different param subsets.
+split_params:
+  solve:
+    solve:
+      params: ["solve_mode", "solver", "highs_method", "highs_parallel",
+               "highs_presolve", "contains_solves", "solver_precommand",
+               "solver_arguments"]
+    solve_period:
+      params: ["period_timeset", "years_represented", "realized_periods",
+               "invest_periods", "realized_invest_periods", "fix_storage_periods"]
+    rolling_parameters:
+      params: ["rolling_solve_jump", "rolling_solve_horizon", "rolling_duration",
+               "rolling_solve_horizon_methods"]
+  model:
+    model:
+      params: ["periods_available", "discount_rate",
+               "discount_offset_investment", "discount_offset_operations",
+               "version", "debug", "output_horizon"]
+    model_solve_sequence:
+      params: ["solves"]
+  timeset:
+    timeset_timeline:
+      params: ["new_stepduration", "timeline"]
+    timeset_blocks:
+      params: ["timeset_duration"]
+
+# Dimensions to drop from generated sheet names (always-present relationship dims).
+drop_dimensions: ["upDown"]
+
+# Rename generated base sheet names to match template conventions.
+rename_sheets:
+  constraint: "constraint_sense"
+
+# Sheet ordering
+sheet_order:
+  - navigate
+  - version
+  - scenario
+  - model
+  - model_solve_sequence
+  - solve
+  - solve_period
+  - solve_period_period
+  - rolling_parameters
+  - timeline
+  - timeset_timeline
+  - timeset_blocks
+  - node_c
+  - node_p
+  - node_t
+  - commodity_c
+  - commodity_p
+  - commodity_node
+  - connection_c
+  - connection_p
+  - connection_t
+  - unit_c
+  - unit_p
+  - unit_t
+  - unit_node_c
+  - unit_node_p
+  - unit_node_t
+  - profile_t
+  - node_profile_c
+  - connection_profile_c
+  - unit_node_profile_c
+  - group_c
+  - group_p
+  - group_connection
+  - group_connection_node
+  - group_node
+  - group_unit
+  - group_unit_node
+  - reserve_connection_node_c
+  - reserve_group_c
+  - reserve_group_p
+  - reserve_group_t
+  - reserve_unit_node_c
+  - constraint_sense_c
+  - unit_node_constraint_c
+  - connection_node_constraint_c
+  - node_constraint_c
+  - unit_constraint_c
+  - connection_constraint_c
+  - connection_node
+
+# Navigate sheet: groups of related sheets, each row lists sheet names
+# placed across columns A (Constants), B (Periodic), C (Timeseries).
+navigate_groups:
+  - name: "Configuration"
+    color: "D9D9D9"
+    rows:
+      - [version]
+      - [scenario]
+      - [model]
+      - [model_solve_sequence]
+      - [solve, solve_period, solve_period_period]
+      - [rolling_parameters]
+  - name: "Time"
+    color: "D9D9D9"
+    rows:
+      - [timeline_c, timeline_p]
+      - [timeset_timeline]
+      - [timeset_blocks]
+      - [timeblockSet_c, timeblockSet_p]
+      - [timeblockSet_timeline]
+  - name: "Core entities"
+    color: "D5C2EE"
+    rows:
+      - [node_c, node_p, node_t]
+      - [commodity_c, commodity_p]
+      - [commodity_node]
+      - [connection_c, connection_p]
+      - [connection_node]
+      - [unit_c, unit_p, unit_t]
+      - [unit_node_c, unit_node_p, unit_node_t]
+  - name: "Profiles"
+    color: "C5E0B4"
+    rows:
+      - [profile_t]
+      - [node_profile_c]
+      - [connection_profile_c]
+      - [unit_node_profile_c]
+  - name: "Groups"
+    color: "BDD7EE"
+    rows:
+      - [group_c, group_p]
+      - [group_connection]
+      - [group_connection_node]
+      - [group_node]
+      - [group_unit]
+      - [group_unit_node]
+  - name: "Reserves"
+    color: "F8CBAD"
+    rows:
+      - [reserve_connection_node_c, reserve_group_p, reserve_group_t]
+      - [reserve_group_c]
+      - [reserve_unit_node_c]
+  - name: "Constraints"
+    color: "FFE699"
+    rows:
+      - [constraint_sense_c]
+      - [unit_node_constraint_c]
+      - [connection_node_constraint_c]
+      - [node_constraint_c]
+      - [unit_constraint_c]
+      - [connection_constraint_c]
