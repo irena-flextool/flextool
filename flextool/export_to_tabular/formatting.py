@@ -43,11 +43,22 @@ FILL_TIME_DATA = PatternFill(
     patternType="solid", fgColor=Color(theme=0, tint=-0.1499984740745262)
 )
 
-# Description row (row 1) – dark background with white text
+# Description/data-type label cells (row 1-2, definition column) – medium grey, black font
 FILL_DESC_ROW = PatternFill(
-    patternType="solid", fgColor=Color(theme=1, tint=0.0)
+    patternType="solid", fgColor=Color(theme=0, tint=-0.3499862666707358)
 )
-FONT_DESC_ROW = Font(color=Color(theme=0, tint=0.0))
+FONT_DESC_ROW = Font(color=Color(theme=1, tint=0.0))
+
+# Description/data-type data cells (row 1-2, parameter columns) – lighter grey, black font
+FILL_DESC_DATA = PatternFill(
+    patternType="solid", fgColor=Color(theme=0, tint=-0.249977111117893)
+)
+FONT_DESC_DATA = Font(color=Color(theme=1, tint=0.0))
+
+# Definition column background (grey) for data rows where def column is empty
+FILL_DEF_COL = PatternFill(
+    patternType="solid", fgColor=Color(theme=0, tint=-0.1499984740745262)
+)
 
 # 'navigate' label in row 1 of each sheet (blue link colour)
 FONT_NAVIGATE_LINK = Font(color=Color(theme=10, tint=0.0))
@@ -55,6 +66,11 @@ FONT_NAVIGATE_LINK = Font(color=Color(theme=10, tint=0.0))
 # Parameter *label* cell (e.g. the word "parameter" in timeseries sheets)
 FILL_PARAM_LABEL = PatternFill(
     patternType="solid", fgColor=Color(theme=4, tint=0.3999755851924192)
+)
+
+# Parameter data columns — slightly darker grey than default white
+FILL_PARAM_DATA = PatternFill(
+    patternType="solid", fgColor=Color(theme=0, tint=-0.0499893185216834)
 )
 
 # Index dimension columns (period, time, constraint) — light green
@@ -301,15 +317,25 @@ def format_constant_sheet_v2(
         cell_r1 = ws.cell(row=1, column=col)
         if col == 1:
             pass  # navigate link
-        elif col >= def_col and cell_r1.value is not None:
+        elif col == def_col and cell_r1.value is not None:
+            # Label cell ("description") — dark
             cell_r1.fill = FILL_DESC_ROW
             cell_r1.font = FONT_DESC_ROW
+        elif col > def_col and cell_r1.value is not None:
+            # Data cells (actual descriptions) — lighter
+            cell_r1.fill = FILL_DESC_DATA
+            cell_r1.font = FONT_DESC_DATA
 
         # --- Row 2: data type row (from def_col onward) ---
         cell_r2 = ws.cell(row=2, column=col)
-        if col >= def_col and cell_r2.value is not None:
+        if col == def_col and cell_r2.value is not None:
+            # Label cell ("data type") — dark
             cell_r2.fill = FILL_DESC_ROW
             cell_r2.font = FONT_DESC_ROW
+        elif col > def_col and cell_r2.value is not None:
+            # Data cells (actual types) — lighter
+            cell_r2.fill = FILL_DESC_DATA
+            cell_r2.font = FONT_DESC_DATA
 
         # --- Row 3: definition row ---
         cell_r3 = ws.cell(row=3, column=col)
@@ -331,9 +357,12 @@ def format_constant_sheet_v2(
                 cell.fill = FILL_ALT_DATA
             elif is_index:
                 cell.fill = FILL_INDEX_DATA
+            elif col == def_col:
+                cell.fill = FILL_DEF_COL
             elif col < def_col:
                 cell.fill = FILL_ENTITY_DATA
-            # parameter data cells and def_col cells: no fill
+            elif col > def_col:
+                cell.fill = FILL_PARAM_DATA
 
 
 def format_periodic_sheet_v2(
@@ -353,47 +382,66 @@ def format_periodic_sheet_v2(
 def format_timeseries_sheet_v2(
     ws: Worksheet,
     n_header_rows: int,
+    single_param: bool = False,
+    row_types: dict[int, str] | None = None,
 ) -> None:
     """Apply formatting to a v2 transposed timeseries-layout sheet.
 
-    Row layout (1-based):
-        1                   'navigate' | 'alternative' | alt values...
-        2                   '' | 'parameter: X' | param names...
-        3                   'index: time' | 'entity: X' | entity names...
-        4+                  time values | '' | data values
+    Formatting is based on the *row_types* dict which maps 1-based row
+    numbers to their semantic type: 'description', 'data_type', 'alternative',
+    'parameter', 'entity', 'param_info' (grey single-param row).
+
+    If *row_types* is not provided, it is inferred from *single_param*.
     """
     max_row = ws.max_row
     max_col = ws.max_column
 
+    if row_types is None:
+        row_types = {}
+        if single_param:
+            row_types = {1: "param_info", 2: "alternative", 3: "entity"}
+        else:
+            row_types = {1: "alternative", 2: "parameter", 3: "entity"}
+
+    # Map row type to (label_fill, data_fill) for col 2 and cols 3+
+    type_fills = {
+        "description": (FILL_DESC_ROW, FILL_DESC_DATA, FONT_DESC_ROW, FONT_DESC_DATA),
+        "data_type":   (FILL_DESC_ROW, FILL_DESC_DATA, FONT_DESC_ROW, FONT_DESC_DATA),
+        "alternative": (FILL_ALT_HEADER, FILL_ALT_DATA, None, None),
+        "parameter":   (FILL_PARAM_LABEL, FILL_PARAM_HEADER, None, None),
+        "entity":      (FILL_ENTITY_HEADER, FILL_ENTITY_DATA, None, None),
+        "param_info":  (FILL_DEF_COL, FILL_DEF_COL, None, None),
+    }
+
     for row in range(1, max_row + 1):
+        rtype = row_types.get(row)
+
         for col in range(1, max_col + 1):
             cell = ws.cell(row=row, column=col)
 
             if col == 1:
                 if row == 1:
-                    pass  # navigate
+                    pass  # navigate link
                 elif row < n_header_rows:
-                    pass  # empty cells above the time row
+                    pass
                 elif row == n_header_rows:
                     cell.fill = FILL_TIME_HEADER
                 else:
                     cell.fill = FILL_TIME_DATA
 
-            elif col == 2:
-                if row == 1:
-                    cell.fill = FILL_ALT_HEADER
-                elif row == 2:
-                    cell.fill = FILL_PARAM_LABEL
-                elif row <= n_header_rows:
-                    cell.fill = FILL_ENTITY_HEADER
+            elif rtype in type_fills:
+                label_fill, data_fill, label_font, data_font = type_fills[rtype]
+                if col == 2:
+                    cell.fill = label_fill
+                    if label_font:
+                        cell.font = label_font
+                else:
+                    cell.fill = data_fill
+                    if data_font:
+                        cell.font = data_font
 
-            else:
-                if row == 1:
-                    cell.fill = FILL_ALT_DATA
-                elif row == 2:
-                    cell.fill = FILL_PARAM_HEADER
-                elif row <= n_header_rows:
-                    cell.fill = FILL_ENTITY_DATA
+            elif row > n_header_rows:
+                pass  # data rows — no fill for data columns
 
 
 def format_link_sheet_v2(ws: Worksheet) -> None:
@@ -416,18 +464,57 @@ def format_link_sheet_v2(ws: Worksheet) -> None:
 
 def auto_column_width(
     ws: Worksheet,
-    min_width: int = 8,
-    max_width: int = 30,
+    min_param_width: float = 10,
+    non_param_width: float = 22,
+    def_col_width: float = 11,
+    index_col_width: float = 12,
+    max_width: float = 40,
+    header_row: int = 0,
+    def_col: int = 0,
+    index_cols: set[int] | None = None,
 ) -> None:
-    """Auto-size every column based on the longest cell value, with padding."""
-    for col_idx in range(1, ws.max_column + 1):
-        longest = min_width
-        for row_idx in range(1, ws.max_row + 1):
-            value = ws.cell(row=row_idx, column=col_idx).value
-            if value is not None:
-                length = len(str(value))
-                if length > longest:
-                    longest = length
-        width = min(longest + 2, max_width)
+    """Size columns based on their role and header content.
+
+    Args:
+        min_param_width: Minimum width for parameter columns (right of def_col).
+        non_param_width: Width for structural columns (alternative, entity).
+        def_col_width: Width for the definition column.
+        index_col_width: Width for index columns (period, time, constraint).
+        max_width: Maximum column width cap.
+        header_row: Row containing parameter names for sizing.  When 0,
+            scan all rows (for navigate, scenario, etc.).
+        def_col: 1-based column of the definition column (the boundary).
+            When 0, all columns use content-based sizing.
+        index_cols: 1-based column numbers that are index dimensions.
+    """
+    if index_cols is None:
+        index_cols = set()
+
+    for col_idx in range(1, (ws.max_column or 0) + 1):
+        if def_col > 0 and col_idx in index_cols:
+            width = index_col_width
+        elif def_col > 0 and col_idx < def_col:
+            width = non_param_width
+        elif def_col > 0 and col_idx == def_col:
+            width = def_col_width
+        elif def_col > 0 and header_row > 0:
+            # Parameter column — size to header row text
+            header_val = ws.cell(row=header_row, column=col_idx).value
+            if header_val is not None:
+                header_len = len(str(header_val)) + 1
+            else:
+                header_len = 0
+            width = max(min_param_width, min(header_len, max_width))
+        else:
+            # No def_col (navigate, scenario, etc.) — scan all rows
+            longest = non_param_width
+            for row_idx in range(1, min((ws.max_row or 0) + 1, 200)):
+                value = ws.cell(row=row_idx, column=col_idx).value
+                if value is not None:
+                    length = len(str(value)) + 1
+                    if length > longest:
+                        longest = length
+            width = min(longest, max_width)
+
         col_letter = get_column_letter(col_idx)
         ws.column_dimensions[col_letter].width = width

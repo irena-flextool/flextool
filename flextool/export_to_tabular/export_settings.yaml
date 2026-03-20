@@ -12,6 +12,12 @@ entity_alternative_classes:
 pre_entity_alternative_params:
   node: ["has_balance"]
 
+# Column width settings (unit ≈ width of character '0' in Calibri 11, ~7px).
+minimum_parameter_column_width: 10
+width_non_parameter_columns: 22
+definition_column_width: 11
+index_column_width: 12
+
 # Default index column names per layout type (replaces 'x' from the DB).
 index_name_defaults:
   periodic: "period"
@@ -72,11 +78,17 @@ split_params:
                "rolling_solve_horizon_methods"]
   model:
     model:
-      params: ["periods_available", "discount_rate",
+      params: ["solves", "periods_available", "discount_rate",
                "discount_offset_investment", "discount_offset_operations",
-               "version", "debug", "output_horizon"]
+               "debug", "output_horizon",
+               "output_node_balance_t", "output_unit__node_flow_t",
+               "output_unit__node_ramp_t", "output_connection__node__node_flow_t",
+               "output_ramp_envelope", "output_connection_flow_separate",
+               "exclude_entity_outputs"]
     model_solve_sequence:
       params: ["solves"]
+    model_periods_available:
+      params: ["periods_available"]
   timeset:
     timeset_timeline:
       params: ["new_stepduration", "timeline"]
@@ -97,6 +109,7 @@ sheet_order:
   - scenario
   - model
   - model_solve_sequence
+  - model_periods_available
   - solve
   - solve_period
   - solve_period_period
@@ -149,10 +162,10 @@ navigate_groups:
   - name: "Configuration"
     color: "D9D9D9"
     rows:
-      - [version]
       - [scenario]
       - [model]
       - [model_solve_sequence]
+      - [model_periods_available]
       - [solve, solve_period, solve_period_period]
       - [rolling_parameters]
   - name: "Time"
@@ -204,3 +217,99 @@ navigate_groups:
       - [node_constraint_c]
       - [unit_constraint_c]
       - [connection_constraint_c]
+
+# Sheets that require the --include-advanced flag.
+# Omitted by default; included when advanced features are needed or when the
+# database contains data that requires them.
+advanced_sheets:
+  - model_solve_sequence
+  - model_periods_available
+  - solve_period_period
+
+# Data type overrides for parameters where the DB type_list doesn't capture
+# the full convention.  Spine DB uses 2d-map with string "yes" values as a
+# workaround for map-of-arrays (which it doesn't support natively).
+data_type_overrides:
+  nested_periodic:
+    invest_periods: "string (2d-map)"
+    realized_invest_periods: "string (2d-map)"
+    realized_periods: "string (2d-map)"
+    fix_storage_periods: "string (2d-map)"
+
+# Parameters that are ONLY period-indexed (never time-indexed).
+# Used to filter them out of _t sheets.  Derived from parameter descriptions.
+# Parameters not listed here but having 1d_map in type_list are assumed to be
+# usable on both _p and _t sheets.
+period_only_params:
+  node:
+    - constraint_capacity_coefficient
+    - constraint_state_coefficient
+    - annual_flow
+    - cumulative_max_capacity
+    - cumulative_min_capacity
+    - existing
+    - fixed_cost
+    - interest_rate
+    - invest_cost
+    - invest_forced
+    - invest_max_period
+    - invest_min_period
+    - lifetime
+    - peak_inflow
+    - retire_max_period
+    - retire_min_period
+    - penalty_down
+    - penalty_up
+    - salvage_value
+    - self_discharge_loss
+    - storage_state_reference_price
+    - storage_state_reference_value
+  unit:
+    - constraint_capacity_coefficient
+    - cumulative_max_capacity
+    - cumulative_min_capacity
+    - existing
+    - fixed_cost
+    - interest_rate
+    - invest_cost
+    - invest_max_period
+    - invest_min_period
+    - lifetime
+    - retire_max_period
+    - retire_min_period
+    - salvage_value
+  connection:
+    - constraint_capacity_coefficient
+    - cumulative_max_capacity
+    - cumulative_min_capacity
+    - existing
+    - fixed_cost
+    - interest_rate
+    - invest_cost
+    - invest_max_period
+    - invest_min_period
+    - lifetime
+    - retire_max_period
+    - retire_min_period
+    - salvage_value
+  group:
+    - co2_max_period
+    - inertia_limit
+    - invest_max_period
+    - invest_min_period
+    - max_cumulative_flow
+    - max_instant_flow
+    - min_cumulative_flow
+    - min_instant_flow
+    - non_synchronous_limit
+    - penalty_capacity_margin
+    - penalty_inertia
+    - penalty_non_synchronous
+  solve:
+    - years_represented
+  unit__inputNode:
+    - constraint_flow_coefficient
+  unit__outputNode:
+    - constraint_flow_coefficient
+  connection__node:
+    - constraint_flow_coefficient

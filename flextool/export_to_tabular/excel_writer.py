@@ -30,10 +30,13 @@ from flextool.export_to_tabular.formatting import (
     format_periodic_sheet_v2,
     format_timeseries_sheet,
     format_timeseries_sheet_v2,
+    FILL_DEF_COL,
     FILL_ENTITY_HEADER,
     FILL_DESC_ROW,
+    FILL_DESC_DATA,
     FILL_PARAM_HEADER,
     FONT_DESC_ROW,
+    FONT_DESC_DATA,
     FONT_NAVIGATE_LINK,
 )
 from flextool.export_to_tabular.sheet_config import SheetSpec
@@ -563,7 +566,7 @@ def write_periodic_sheet(
                         elif pname in param_arrays:
                             # Boolean: check if current period is in the array
                             if idx_val in param_arrays[pname]:
-                                row.append("yes")
+                                row.append(True)
                             else:
                                 row.append(None)
                         else:
@@ -761,6 +764,162 @@ def write_nested_periodic_sheet(
     format_periodic_sheet(ws, n_entity_cols, n_extra)
     add_navigate_link(ws)
     auto_column_width(ws)
+
+
+def write_nested_periodic_sheet_v2(
+    ws: Worksheet,
+    spec: SheetSpec,
+    db_contents: DatabaseContents,
+) -> None:
+    """Write a nested-periodic-layout sheet in v2 self-describing format.
+
+    Layout (solve_period_period):
+        Row 1: navigate | | | | description | data type | ...
+        Row 2: | | | | data type | string/float (2d-map) | ...
+        Row 3: alternative | entity: solve | index: current_solve_period | index: periods_included | parameter | param1 | ...
+        Row 4+: data...
+    """
+    # Only include params that actually have nested Map values
+    nested_params: list[str] = []
+    for pname in spec.parameter_names:
+        for (cls, _byname, p, _alt), value in db_contents.parameter_values.items():
+            if cls in spec.entity_classes and p == pname and _is_map(value):
+                if any(_is_map(mv) for mv in value.values):
+                    nested_params.append(pname)
+                    break
+
+    if not nested_params:
+        nested_params = list(spec.parameter_names)
+
+    # Build left-side columns
+    left_cols: list[str] = ["alternative"]
+    entity_label = _build_entity_def_label(spec)
+    left_cols.append(entity_label)
+    left_cols.append("index: current_solve_period")
+    left_cols.append("index: periods_included")
+
+    def_col = len(left_cols) + 1  # 1-based
+
+    # Right-side columns
+    right_cols: list[str] = ["parameter"]
+    right_cols.extend(nested_params)
+
+    # --- Row 1: descriptions ---
+    ws.cell(row=1, column=def_col, value="description")
+    ws.cell(row=1, column=def_col).fill = FILL_DESC_ROW
+    ws.cell(row=1, column=def_col).font = FONT_DESC_ROW
+    for i, pname in enumerate(nested_params):
+        col = def_col + 1 + i
+        desc = _get_param_description(pname, spec.entity_classes, db_contents)
+        if desc:
+            ws.cell(row=1, column=col, value=desc)
+            ws.cell(row=1, column=col).fill = FILL_DESC_DATA
+            ws.cell(row=1, column=col).font = FONT_DESC_DATA
+
+    # --- Row 2: data types ---
+    ws.cell(row=2, column=def_col, value="data type")
+    ws.cell(row=2, column=def_col).fill = FILL_DESC_ROW
+    ws.cell(row=2, column=def_col).font = FONT_DESC_ROW
+    for i, pname in enumerate(nested_params):
+        col = def_col + 1 + i
+        dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="nested_periodic")
+        ws.cell(row=2, column=col, value=dtype)
+        ws.cell(row=2, column=col).fill = FILL_DESC_DATA
+        ws.cell(row=2, column=col).font = FONT_DESC_DATA
+
+    # --- Row 3: definition row ---
+    for col_idx, label in enumerate(left_cols, start=1):
+        ws.cell(row=3, column=col_idx, value=label)
+    for col_idx, label in enumerate(right_cols, start=def_col):
+        ws.cell(row=3, column=col_idx, value=label)
+
+    # --- Collect data rows ---
+    data_rows: list[list[Any]] = []
+
+    for entity_class in spec.entity_classes:
+        entities = db_contents.entities.get(entity_class, [])
+
+        for entity in entities:
+            entity_byname = entity["entity_byname"]
+            alts = _find_alternatives_for_entity(
+                entity_class, entity_byname, spec, db_contents
+            )
+
+            for alt in alts:
+                nested_data: dict[str, Map] = {}
+                for pname in nested_params:
+                    key = (entity_class, entity_byname, pname, alt)
+                    value = db_contents.parameter_values.get(key)
+                    if value is not None and _is_map(value):
+                        if any(_is_map(mv) for mv in value.values):
+                            nested_data[pname] = value
+
+                if not nested_data:
+                    continue
+
+                row_combos: set[tuple[str, str]] = set()
+                for pname, outer_map in nested_data.items():
+                    for oi, inner_val in zip(outer_map.indexes, outer_map.values):
+                        outer_str = str(_to_native(oi))
+                        if _is_map(inner_val):
+                            for ii in inner_val.indexes:
+                                inner_str = str(_to_native(ii))
+                                row_combos.add((outer_str, inner_str))
+
+                for outer_idx, inner_idx in sorted(row_combos):
+                    row: list[Any] = [alt]
+                    for elem in entity_byname:
+                        row.append(str(_to_native(elem)))
+                    row.append(outer_idx)
+                    row.append(inner_idx)
+                    row.append(None)  # def column
+
+                    for pname in nested_params:
+                        outer_map = nested_data.get(pname)
+                        if outer_map is not None:
+                            found = False
+                            for oi, inner_val in zip(outer_map.indexes, outer_map.values):
+                                if str(_to_native(oi)) == outer_idx and _is_map(inner_val):
+                                    for ii, iv in zip(inner_val.indexes, inner_val.values):
+                                        if str(_to_native(ii)) == inner_idx:
+                                            row.append(_to_native(iv))
+                                            found = True
+                                            break
+                                    break
+                            if not found:
+                                row.append(None)
+                        else:
+                            row.append(None)
+
+                    data_rows.append(row)
+
+    data_rows.sort(key=lambda r: tuple(str(v) if v is not None else "" for v in r))
+
+    # --- Write data rows ---
+    for row_idx, row_data in enumerate(data_rows, start=4):
+        for col_idx, value in enumerate(row_data, start=1):
+            if value is not None:
+                ws.cell(row=row_idx, column=col_idx, value=value)
+
+    # --- Reference section ---
+    last_data_col = def_col + len(right_cols) - 1
+    _write_param_reference(
+        ws, last_data_col + 1, spec, db_contents, header_row=3,
+        n_data_rows=len(data_rows), layout="nested_periodic",
+        shown_params=nested_params,
+    )
+
+    # --- Formatting ---
+    n_entity_cols = len(spec.entity_columns)
+    index_col_positions = {3, 4}  # current_solve_period and periods_included
+    format_constant_sheet_v2(ws, n_entity_cols, 2, def_col, index_col_positions)
+    add_navigate_link(ws)
+    auto_column_width(ws, min_param_width=_min_param_width,
+                      non_param_width=_non_param_width,
+                      def_col_width=_def_col_width,
+                      index_col_width=_index_col_width,
+                      header_row=3, def_col=def_col,
+                      index_cols=index_col_positions)
 
 
 # ---------------------------------------------------------------------------
@@ -1020,6 +1179,7 @@ def write_navigate_sheet(
     ws: Worksheet,
     all_specs: list[SheetSpec],
     navigate_groups: list[dict[str, Any]] | None = None,
+    version: float | None = None,
 ) -> None:
     """Write the navigate sheet with grouped, colour-coded hyperlinks.
 
@@ -1027,6 +1187,7 @@ def write_navigate_sheet(
         ws: Target worksheet.
         all_specs: All sheet specifications (used for fallback if no groups).
         navigate_groups: Navigate group configuration from export_settings.yaml.
+        version: FlexTool DB version to display.
     """
     # Build set of sheet names that actually exist in the workbook specs
     existing_sheets: set[str] = {spec.sheet_name for spec in all_specs if spec.layout != "navigate"}
@@ -1055,6 +1216,12 @@ def write_navigate_sheet(
     for i, text in enumerate(help_lines):
         if text:
             ws.cell(row=1 + i, column=5, value=text)
+
+    # --- Version info at E15 ---
+    if version is not None:
+        version_int = int(version) if version == int(version) else version
+        ws.cell(row=15, column=5, value="FlexTool DB version:")
+        ws.cell(row=15, column=6, value=version_int)
 
     # --- Write grouped rows ---
     current_row = 2  # start after header row
@@ -1132,24 +1299,109 @@ def _write_navigate_flat(
 # ===========================================================================
 
 
+# Data type overrides from settings, set by export_to_excel before writing.
+# Maps (layout, param_name) -> override string.
+_data_type_overrides: dict[str, dict[str, str]] = {}
+_min_param_width: float = 10
+_non_param_width: float = 22
+_def_col_width: float = 11
+_index_col_width: float = 12
+
+
 def _get_param_data_type(
     param_name: str,
     entity_classes: list[str],
     db_contents: DatabaseContents,
+    layout: str = "constant",
 ) -> str:
-    """Determine the data type label for a parameter ('string' or 'float').
+    """Determine the data type label for a parameter on a specific sheet layout.
 
-    Checks the parameter_type_list from the DB: if it contains 'str', returns
-    'string'; otherwise returns 'float'.
+    The label tells the user what to enter in each cell and helps the reader
+    interpret values correctly.
+
+    Returns labels like:
+        "float", "string", "boolean (array)",
+        "float (1d-map)", "string (1d-map)", "string/float (1d-map)"
     """
+    # Check overrides first (e.g. nested_periodic convention for 2d-maps)
+    overrides = _data_type_overrides.get(layout, {})
+    if param_name in overrides:
+        return overrides[param_name]
+
     for entity_class in entity_classes:
         for pdef in db_contents.parameter_definitions.get(entity_class, []):
             if pdef["name"] == param_name:
                 type_list = pdef.get("parameter_type_list")
-                if type_list and "str" in type_list:
-                    return "string"
-                return "float"
+                if not type_list:
+                    return "float"
+                types = set(type_list)
+
+                # Pure array parameters — entered as boolean values
+                if "array" in types and not (types & {"float", "1d_map", "2d_map", "3d_map", "4d_map"}):
+                    return "boolean (array)"
+
+                # On constant sheets: report the scalar type
+                if layout == "constant":
+                    if "str" in types:
+                        return "string"
+                    return "float"
+
+                # On periodic sheets: array params are boolean (array index = period column)
+                if layout == "periodic" and "array" in types:
+                    return "boolean (array)"
+
+                # On periodic/timeseries sheets: report the map dimension
+                # relevant to THIS layout, not the highest available.
+                # Periodic/timeseries use 1d_map; nested_periodic uses 2d_map;
+                # 3d_map/4d_map are for stochastic sheets.
+                if layout == "nested_periodic":
+                    map_suffix = "2d-map" if "2d_map" in types else "1d-map"
+                elif layout in ("periodic", "timeseries"):
+                    map_suffix = "1d-map" if "1d_map" in types else ""
+                elif "4d_map" in types:
+                    map_suffix = "4d-map"
+                elif "3d_map" in types:
+                    map_suffix = "3d-map"
+                elif "2d_map" in types:
+                    map_suffix = "2d-map"
+                elif "1d_map" in types:
+                    map_suffix = "1d-map"
+                else:
+                    map_suffix = ""
+
+                # Determine inner value type
+                has_str = "str" in types
+                has_float = "float" in types
+                if has_str and not has_float:
+                    base = "string"
+                elif has_float and not has_str:
+                    base = "float"
+                elif has_str and has_float:
+                    base = "string/float"
+                else:
+                    # No str or float info (pure map) — allow either
+                    base = "string/float"
+
+                if map_suffix:
+                    return f"{base} ({map_suffix})"
+                return base
+
     return "float"
+
+
+def _get_param_value_list(
+    param_name: str,
+    entity_classes: list[str],
+    db_contents: DatabaseContents,
+) -> list[str] | None:
+    """Get the allowed value list for a parameter, if any."""
+    for entity_class in entity_classes:
+        for pdef in db_contents.parameter_definitions.get(entity_class, []):
+            if pdef["name"] == param_name:
+                vl_name = pdef.get("parameter_value_list_name")
+                if vl_name and vl_name in db_contents.list_values:
+                    return [str(v) for v in db_contents.list_values[vl_name]]
+    return None
 
 
 def _get_param_description(
@@ -1201,16 +1453,87 @@ def _build_filter_label(spec: SheetSpec) -> str | None:
     return f"filter: ({', '.join(parts)})"
 
 
+def _add_data_validation(
+    ws: Worksheet,
+    param_names: list[str],
+    def_col: int,
+    ea_offset: int,
+    spec: SheetSpec,
+    db_contents: DatabaseContents,
+    max_data_rows: int = 500,
+) -> None:
+    """Add dropdown validation lists for parameters that have value lists.
+
+    Applies validation from row 4 down to a reasonable limit (not the entire
+    column) to avoid bloating the file.
+    """
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    last_row = min(4 + max_data_rows, 504)  # cap at ~500 data rows
+
+    from openpyxl.utils import get_column_letter
+
+    for i, pname in enumerate(param_names):
+        col = def_col + 1 + ea_offset + i
+        values = _get_param_value_list(pname, spec.entity_classes, db_contents)
+        if not values:
+            continue
+        # Add empty choice so user can clear a selection
+        all_values = [""] + values
+        formula = ",".join(all_values)
+        dv = DataValidation(
+            type="list",
+            formula1=f'"{formula}"',
+            allow_blank=True,
+            showDropDown=False,  # False means show it (confusing openpyxl API)
+        )
+        dv.error = f"Value must be one of: {', '.join(values)}"
+        dv.errorTitle = f"Invalid {pname}"
+        col_letter = get_column_letter(col)
+        dv.sqref = f"{col_letter}4:{col_letter}{last_row}"
+        ws.add_data_validation(dv)
+
+
+# Period-only params from settings, set by export_to_excel.
+_period_only_params: dict[str, list[str]] = {}
+
+
+def _is_param_valid_for_layout(
+    pdef: dict, layout: str, entity_class: str = "",
+) -> bool:
+    """Check if a parameter is valid for a given sheet layout."""
+    type_list = pdef.get("parameter_type_list")
+    if not type_list:
+        return layout == "constant"
+    types = set(type_list)
+    pname = pdef["name"]
+
+    if layout == "constant":
+        return bool(types & {"str", "float", "array", "2d_map"})
+    elif layout == "periodic":
+        return bool(types & {"1d_map", "2d_map", "array"})
+    elif layout == "timeseries":
+        if not (types & {"1d_map", "3d_map", "4d_map"}):
+            return False
+        # Filter out period-only params
+        period_only = _period_only_params.get(entity_class, [])
+        if pname in period_only:
+            return False
+        return True
+    return True
+
+
 def _get_all_param_defs_for_class(
     entity_classes: list[str],
     db_contents: DatabaseContents,
+    layout: str = "constant",
 ) -> list[dict]:
-    """Get all parameter definitions across entity classes (deduplicated by name)."""
+    """Get parameter definitions valid for the given layout, deduplicated by name."""
     seen: set[str] = set()
     result: list[dict] = []
     for entity_class in entity_classes:
         for pdef in db_contents.parameter_definitions.get(entity_class, []):
-            if pdef["name"] not in seen:
+            if pdef["name"] not in seen and _is_param_valid_for_layout(pdef, layout, entity_class):
                 seen.add(pdef["name"])
                 result.append(pdef)
     result.sort(key=lambda p: p["name"])
@@ -1223,50 +1546,80 @@ def _write_param_reference(
     spec: SheetSpec,
     db_contents: DatabaseContents,
     header_row: int = 3,
+    n_data_rows: int = 0,
+    layout: str = "constant",
+    shown_params: list[str] | None = None,
+    row_types: dict[int, str] | None = None,
 ) -> None:
-    """Write the parameter reference section after an empty separator column.
+    """Write reference sections to the right of the data area.
 
-    Places a 3-row header (Parameter / Description / Data type) followed by
-    one row per available parameter for the entity class, starting at
-    ``start_col + 1`` (the +1 is the empty separator).
+    For transposed sheets with row_types (multi-param timeseries):
+      Writes a "quadruplet" section mirroring description/data_type/
+      alternative(empty)/parameter rows, plus a convenience section below.
 
-    Args:
-        ws: Target worksheet.
-        start_col: The column after the last data column (separator column).
-        spec: Sheet specification.
-        db_contents: Database contents.
-        header_row: Row number for the definition/header row (3 for v2).
+    For standard sheets:
+      Writes only the convenience section (parameter name | description).
     """
-    all_pdefs = _get_all_param_defs_for_class(spec.entity_classes, db_contents)
-    if not all_pdefs:
+    if not shown_params:
         return
 
-    # The reference section starts after the empty separator column
-    ref_col = start_col + 1
+    # Get the full definitions for the shown params (preserving order)
+    all_pdefs_map: dict[str, dict] = {}
+    for entity_class in spec.entity_classes:
+        for pdef in db_contents.parameter_definitions.get(entity_class, []):
+            all_pdefs_map[pdef["name"]] = pdef
 
-    # Write reference header in the description row (row 1 for v2)
-    desc_row = header_row - 2  # row 1
-    ws.cell(row=desc_row, column=ref_col, value="Parameter")
-    ws.cell(row=desc_row, column=ref_col + 1, value="Data type")
-    ws.cell(row=desc_row, column=ref_col + 2, value="Description")
+    # Get ALL valid params for this layout (for the quadruplet — extra params not shown)
+    all_valid = _get_all_param_defs_for_class(spec.entity_classes, db_contents, layout=layout)
+    shown_set = set(shown_params)
+    extra_pdefs = [p for p in all_valid if p["name"] not in shown_set]
 
-    # Apply description row formatting to the header
-    for c in range(ref_col, ref_col + 3):
-        cell = ws.cell(row=desc_row, column=c)
-        cell.fill = FILL_DESC_ROW
-        cell.font = FONT_DESC_ROW
+    pdefs = [all_pdefs_map[p] for p in shown_params if p in all_pdefs_map]
+    if not pdefs:
+        return
 
-    # Write each parameter starting from the data type row (row 2 for v2)
-    dtype_row = header_row - 1  # row 2
-    for i, pdef in enumerate(all_pdefs):
-        row = dtype_row + i
+    ref_col = start_col + 1  # after empty separator column
+
+    # ------------------------------------------------------------------
+    # Quadruplet section for transposed sheets (description, data_type,
+    # alternative[empty], parameter) — shows ALL valid params so user
+    # can copy columns when adding new entities.
+    # ------------------------------------------------------------------
+    if row_types and all_valid:
+        for i, pdef in enumerate(all_valid):
+            col = ref_col + i
+            pname = pdef["name"]
+            for row_num, rtype in row_types.items():
+                if rtype == "description":
+                    desc = pdef.get("description", "")
+                    if desc:
+                        ws.cell(row=row_num, column=col, value=desc)
+                elif rtype == "data_type":
+                    dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout=layout)
+                    ws.cell(row=row_num, column=col, value=dtype)
+                elif rtype == "alternative":
+                    pass  # leave empty — user fills this when copying
+                elif rtype == "parameter":
+                    ws.cell(row=row_num, column=col, value=pname)
+                # entity row: leave empty
+
+    # ------------------------------------------------------------------
+    # Convenience section (parameter name | description)
+    # ------------------------------------------------------------------
+    conv_row = header_row + 2  # one empty row after header
+
+    # Header
+    ws.cell(row=conv_row, column=ref_col, value="Parameter")
+    ws.cell(row=conv_row, column=ref_col).fill = FILL_PARAM_HEADER
+    ws.cell(row=conv_row, column=ref_col + 1, value="Description")
+    ws.cell(row=conv_row, column=ref_col + 1).fill = FILL_PARAM_HEADER
+
+    for i, pdef in enumerate(pdefs):
+        row = conv_row + 1 + i
         ws.cell(row=row, column=ref_col, value=pdef["name"])
-        type_list = pdef.get("parameter_type_list")
-        dtype = "string" if (type_list and "str" in type_list) else "float"
-        ws.cell(row=row, column=ref_col + 1, value=dtype)
         desc = pdef.get("description")
         if desc:
-            ws.cell(row=row, column=ref_col + 2, value=desc)
+            ws.cell(row=row, column=ref_col + 1, value=desc)
 
 
 def _lock_metadata_cells(
@@ -1379,7 +1732,7 @@ def write_constant_sheet_v2(
         ws.cell(row=2, column=def_col + 1, value="string")
     for i, pname in enumerate(all_params):
         col = def_col + 1 + ea_offset + i
-        dtype = _get_param_data_type(pname, spec.entity_classes, db_contents)
+        dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="constant")
         ws.cell(row=2, column=col, value=dtype)
 
     # --- Row 3: definition row ---
@@ -1466,7 +1819,11 @@ def write_constant_sheet_v2(
 
     # --- Write parameter reference section ---
     last_data_col = def_col + len(right_cols) - 1
-    _write_param_reference(ws, last_data_col + 1, spec, db_contents, header_row=3)
+    _write_param_reference(
+        ws, last_data_col + 1, spec, db_contents, header_row=3,
+        n_data_rows=len(data_rows), layout="constant",
+        shown_params=all_params,
+    )
 
     # --- Formatting ---
     n_extra = (
@@ -1476,7 +1833,17 @@ def write_constant_sheet_v2(
     )
     format_constant_sheet_v2(ws, n_entity_cols, n_extra, def_col, index_col_positions)
     add_navigate_link(ws)
-    auto_column_width(ws)
+
+    # --- Data validation (dropdown lists) for parameters with value lists ---
+    _add_data_validation(ws, all_params, def_col, ea_offset, spec, db_contents,
+                         max_data_rows=max(len(data_rows), 1) + 3)
+
+    auto_column_width(ws, min_param_width=_min_param_width,
+                      non_param_width=_non_param_width,
+                      def_col_width=_def_col_width,
+                      index_col_width=_index_col_width,
+                      header_row=3, def_col=def_col,
+                      index_cols=index_col_positions)
 
     # --- Lock metadata ---
     _lock_metadata_cells(
@@ -1743,7 +2110,7 @@ def write_periodic_sheet_v2(
     ws.cell(row=2, column=def_col, value="data type")
     for i, pname in enumerate(spec.parameter_names):
         col = def_col + 1 + i
-        dtype = _get_param_data_type(pname, spec.entity_classes, db_contents)
+        dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="periodic")
         ws.cell(row=2, column=col, value=dtype)
 
     # --- Row 3: definition row ---
@@ -1837,7 +2204,7 @@ def write_periodic_sheet_v2(
                                     break
                         elif pname in param_arrays:
                             if idx_val in param_arrays[pname]:
-                                cells.append((param_col_map[pname], "yes"))
+                                cells.append((param_col_map[pname], True))
 
                     data_rows.append(cells)
 
@@ -1854,7 +2221,11 @@ def write_periodic_sheet_v2(
 
     # --- Write parameter reference section ---
     last_data_col = def_col + len(right_cols) - 1
-    _write_param_reference(ws, last_data_col + 1, spec, db_contents, header_row=3)
+    _write_param_reference(
+        ws, last_data_col + 1, spec, db_contents, header_row=3,
+        n_data_rows=len(data_rows), layout="periodic",
+        shown_params=list(spec.parameter_names),
+    )
 
     # --- Formatting ---
     n_extra = (
@@ -1863,7 +2234,12 @@ def write_periodic_sheet_v2(
     )
     format_periodic_sheet_v2(ws, n_entity_cols, n_extra, def_col, {index_col_pos})
     add_navigate_link(ws)
-    auto_column_width(ws)
+    auto_column_width(ws, min_param_width=_min_param_width,
+                      non_param_width=_non_param_width,
+                      def_col_width=_def_col_width,
+                      index_col_width=_index_col_width,
+                      header_row=3, def_col=def_col,
+                      index_cols={index_col_pos})
 
     # --- Lock metadata ---
     _lock_metadata_cells(
@@ -1887,26 +2263,24 @@ def write_timeseries_sheet_v2(
 ) -> None:
     """Write a transposed timeseries-layout sheet in the v2 self-describing format.
 
-    Layout:
-        Row 1: navigate     | alternative      | Base     | Base     | ...
-        Row 2:              | parameter: X     |          |          | ...
-        Row 3: index: time  | entity: profile  | Wind1    | Battery  | ...
-        Row 4+: t0001       |                  | 1.0      | 0.5      | ...
+    All _t sheets are transposed: time index in column A, data in columns C+.
+    Header rows follow the canonical order, applied to whichever dimensions
+    are needed:
 
-    For multi-param timeseries, 'parameter' is the row 2 label and actual
-    param names appear in row 2 data columns. For single-param (like
-    profile_t), 'parameter: profile' is used as the label.
+        description → data_type → entity → entity_dims → filter →
+        alternative → parameter
+
+    For single-param sheets, description/data_type/parameter collapse into
+    a single 'triplet row' in B1 using ``|`` separator.
     """
-    # Collect all data columns
+    # ── Collect data columns ──────────────────────────────────────
     columns: list[tuple[str, tuple, str, str, Map]] = []
     all_time_indexes: set[str] = set()
 
     for entity_class in spec.entity_classes:
         entities = db_contents.entities.get(entity_class, [])
-
         for entity in entities:
             entity_byname = entity["entity_byname"]
-
             for pname in spec.parameter_names:
                 for alt in db_contents.alternatives:
                     key = (entity_class, entity_byname, pname, alt)
@@ -1920,82 +2294,100 @@ def write_timeseries_sheet_v2(
                         for idx in value.indexes:
                             all_time_indexes.add(str(_to_native(idx)))
 
-    if not columns:
-        ws.cell(row=1, column=1, value="navigate")
-        ws.cell(row=1, column=2, value="alternative")
-        ws.cell(row=2, column=2, value="parameter")
-        add_navigate_link(ws)
-        auto_column_width(ws)
-        return
-
-    # Sort columns
     columns.sort(key=lambda c: (c[3], c[1], c[2]))
     sorted_times = sorted(all_time_indexes)
 
+    single_param = len(spec.parameter_names) == 1
     n_entity_dims = len(spec.entity_columns)
     has_direction = spec.direction_column is not None
+    entity_label = _build_entity_def_label(spec)
 
-    # Determine if single-parameter sheet
-    unique_params = set(c[2] for c in columns)
-    single_param = len(unique_params) == 1
-    default_param = next(iter(unique_params)) if single_param else None
+    # ── Build header rows following canonical order ───────────────
+    # Each entry: (label_for_B, type_tag, data_getter)
+    # type_tag is used for formatting colors.
+    row_types: dict[int, str] = {}
+    cur_row = 1
 
-    # n_header_rows: alt row + param row + entity dim row(s) + optional direction
-    n_header_rows = 2 + max(1, n_entity_dims)
-    if has_direction:
-        n_header_rows += 1
-
-    # --- Row 1: 'navigate' | 'alternative' | alt values... ---
-    ws.cell(row=1, column=1, value="navigate")
-    ws.cell(row=1, column=2, value="alternative")
-    for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
-        ws.cell(row=1, column=col_idx, value=alt)
-
-    # --- Row 2: '' | 'parameter[: X]' | param names... ---
     if single_param:
-        ws.cell(row=2, column=2, value=f"parameter: {default_param}")
+        # Triplet row: combined parameter | data_type | description in B1
+        default_param = spec.parameter_names[0]
+        dtype = _get_param_data_type(default_param, spec.entity_classes, db_contents, layout="timeseries")
+        desc = _get_param_description(default_param, spec.entity_classes, db_contents) or ""
+        triplet = f"parameter: {default_param} | data type: {dtype}"
+        if desc:
+            triplet += f" | description: {desc}"
+        ws.cell(row=cur_row, column=2, value=triplet)
+        row_types[cur_row] = "param_info"
+        cur_row += 1
     else:
-        ws.cell(row=2, column=2, value="parameter")
-    for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
-        ws.cell(row=2, column=col_idx, value=pname)
+        # description row
+        ws.cell(row=cur_row, column=2, value="description")
+        for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
+            d = _get_param_description(pname, spec.entity_classes, db_contents)
+            if d:
+                ws.cell(row=cur_row, column=col_idx, value=d)
+        row_types[cur_row] = "description"
+        cur_row += 1
 
-    # --- Entity dimension rows ---
+        # data_type row
+        ws.cell(row=cur_row, column=2, value="data type")
+        for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
+            dt = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="timeseries")
+            ws.cell(row=cur_row, column=col_idx, value=dt)
+        row_types[cur_row] = "data_type"
+        cur_row += 1
+
+    # entity row (class definition label)
+    ws.cell(row=cur_row, column=2, value=entity_label)
     if n_entity_dims <= 1:
-        # Single entity dim: row 3 is the entity/time row
-        entity_label = _build_entity_def_label(spec)
-        ws.cell(row=3, column=1, value="index: time")
-        ws.cell(row=3, column=2, value=entity_label)
         for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
             if byname:
-                ws.cell(row=3, column=col_idx, value=str(_to_native(byname[0])))
-    else:
-        # Multiple entity dims
+                ws.cell(row=cur_row, column=col_idx, value=str(_to_native(byname[0])))
+    row_types[cur_row] = "entity"
+    cur_row += 1
+
+    # entity_dims rows (for multi-dim entities: one row per extra dimension)
+    if n_entity_dims > 1:
         for dim_idx in range(n_entity_dims):
-            row = 3 + dim_idx
-            if dim_idx == 0:
-                entity_label = _build_entity_def_label(spec)
-                ws.cell(row=row, column=2, value=entity_label)
-            else:
-                ws.cell(row=row, column=2, value=spec.entity_columns[dim_idx])
+            ws.cell(row=cur_row, column=2, value=spec.entity_columns[dim_idx])
             for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
                 if dim_idx < len(byname):
-                    ws.cell(row=row, column=col_idx, value=str(_to_native(byname[dim_idx])))
-        ws.cell(row=2 + n_entity_dims, column=1, value="index: time")
+                    ws.cell(row=cur_row, column=col_idx, value=str(_to_native(byname[dim_idx])))
+            row_types[cur_row] = "entity"
+            cur_row += 1
 
-    # Direction row
+    # filter row (for merged classes with direction)
     if has_direction:
-        dir_row = 3 + max(1, n_entity_dims)
-        ws.cell(row=dir_row, column=2, value=spec.direction_column)
+        filter_label = _build_filter_label(spec)
+        ws.cell(row=cur_row, column=2, value=filter_label or spec.direction_column)
         for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
             direction = _get_direction(ec, spec)
             if direction:
-                ws.cell(row=dir_row, column=col_idx, value=direction)
+                ws.cell(row=cur_row, column=col_idx, value=direction)
+        row_types[cur_row] = "entity"
+        cur_row += 1
 
-    # Adjust n_header_rows for single dim case
-    if n_entity_dims <= 1 and not has_direction:
-        n_header_rows = 3
+    # alternative row
+    ws.cell(row=cur_row, column=2, value="alternative")
+    for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
+        ws.cell(row=cur_row, column=col_idx, value=alt)
+    row_types[cur_row] = "alternative"
+    cur_row += 1
 
-    # --- Write time data rows ---
+    # parameter row (multi-param only)
+    if not single_param:
+        ws.cell(row=cur_row, column=2, value="parameter")
+        for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
+            ws.cell(row=cur_row, column=col_idx, value=pname)
+        row_types[cur_row] = "parameter"
+        cur_row += 1
+
+    n_header_rows = cur_row - 1
+
+    # index: time label on column A of the last header row
+    ws.cell(row=n_header_rows, column=1, value="index: time")
+
+    # ── Write time data rows ─────────────────────────────────────
     col_index_maps: list[dict[str, Any]] = []
     for ec, byname, pname, alt, m in columns:
         idx_map: dict[str, Any] = {}
@@ -2011,18 +2403,30 @@ def write_timeseries_sheet_v2(
             if value is not None:
                 ws.cell(row=row, column=col_idx + 3, value=value)
 
-    # --- Formatting ---
-    format_timeseries_sheet_v2(ws, n_header_rows)
     add_navigate_link(ws)
-    auto_column_width(ws)
 
-    # --- Lock metadata ---
+    # ── Reference sections ────────────────────────────────────────
+    last_data_col = max(len(columns) + 2, 3)
+    _write_param_reference(
+        ws, last_data_col + 1, spec, db_contents, header_row=n_header_rows,
+        n_data_rows=len(sorted_times), layout="timeseries",
+        shown_params=list(spec.parameter_names),
+        row_types=row_types if not single_param else None,
+    )
+
+    # ── Formatting ────────────────────────────────────────────────
+    format_timeseries_sheet_v2(ws, n_header_rows, single_param=single_param,
+                               row_types=row_types)
+
+    auto_column_width(ws, min_param_width=_min_param_width,
+                      non_param_width=_non_param_width,
+                      def_col_width=_def_col_width,
+                      index_col_width=_index_col_width,
+                      header_row=n_header_rows, def_col=3)
+
     _lock_metadata_cells(
-        ws,
-        meta_rows=n_header_rows,
-        meta_cols=2,
-        data_start_row=n_header_rows + 1,
-        data_start_col=1,
+        ws, meta_rows=n_header_rows, meta_cols=2,
+        data_start_row=n_header_rows + 1, data_start_col=1,
     )
 
 
@@ -2057,7 +2461,9 @@ def write_link_sheet_v2(
     if not entity_class:
         format_link_sheet_v2(ws)
         add_navigate_link(ws)
-        auto_column_width(ws)
+        auto_column_width(ws, non_param_width=_non_param_width,
+                      def_col_width=_def_col_width,
+                      index_col_width=_index_col_width)
         return
 
     # Collect and sort entity rows
@@ -2075,7 +2481,9 @@ def write_link_sheet_v2(
 
     format_link_sheet_v2(ws)
     add_navigate_link(ws)
-    auto_column_width(ws)
+    auto_column_width(ws, non_param_width=_non_param_width,
+                      def_col_width=_def_col_width,
+                      index_col_width=_index_col_width)
 
     # --- Lock metadata ---
     _lock_metadata_cells(

@@ -18,9 +18,9 @@ def main() -> None:
         help="Output Excel file path (.xlsx)",
     )
     parser.add_argument(
-        "--include-stochastics",
+        "--include-advanced",
         action="store_true",
-        help="Include stochastic (3d/4d map) data sheets",
+        help="Include advanced sheets (solve sequences, stochastic data)",
     )
     parser.add_argument(
         "--old-format",
@@ -31,7 +31,7 @@ def main() -> None:
     export_to_excel(
         args.db_url,
         args.output_path,
-        args.include_stochastics,
+        include_advanced=args.include_advanced,
         use_new_format=not args.old_format,
     )
 
