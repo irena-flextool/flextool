@@ -16,6 +16,7 @@ from flextool.scenario_comparison.data_models import DispatchMappings
 from flextool.scenario_comparison.db_reader import get_scenario_results
 from flextool.scenario_comparison.dispatch_mappings import combine_dispatch_mappings
 from flextool.scenario_comparison.dispatch_plots import create_dispatch_plots
+from flextool.plot_outputs.config import _is_single_config
 from flextool.plot_outputs.plot_functions import plot_dict_of_dataframes
 
 
@@ -34,6 +35,7 @@ def run(
     plot_file_format: str = 'png',
     scenario_folders: dict[str, str] | None = None,
     excel_dir: str | None = None,
+    shared_legend: bool = True,
 ) -> None:
     """Run the full scenario-comparison pipeline.
 
@@ -78,6 +80,21 @@ def run(
         dispatch_config = create_or_update_dispatch_config(
             plot_dir, results, scenarios, mappings
         )
+
+    # If shared_legend is disabled, replace 'shared' legend with 'right' in all plot configs
+    if not shared_legend:
+        for result_name, config_dict in settings['plots'].items():
+            if not isinstance(config_dict, dict):
+                continue
+            if _is_single_config(config_dict):
+                # Single config: the dict itself is the plot settings
+                if config_dict.get('legend') == 'shared':
+                    config_dict['legend'] = 'right'
+            else:
+                # Named configs: iterate sub-dicts
+                for config_name, plot_cfg in config_dict.items():
+                    if isinstance(plot_cfg, dict) and plot_cfg.get('legend') == 'shared':
+                        plot_cfg['legend'] = 'right'
 
     # Generate original comparison plots (from default_comparison_plots.yaml)
     plot_dict_of_dataframes(

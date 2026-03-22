@@ -1614,12 +1614,21 @@ def _write_param_reference(
     ws.cell(row=conv_row, column=ref_col + 1, value="Description")
     ws.cell(row=conv_row, column=ref_col + 1).fill = FILL_PARAM_HEADER
 
+    max_name_len = len("Parameter")
     for i, pdef in enumerate(pdefs):
         row = conv_row + 1 + i
-        ws.cell(row=row, column=ref_col, value=pdef["name"])
+        name = pdef["name"]
+        ws.cell(row=row, column=ref_col, value=name)
+        if len(name) > max_name_len:
+            max_name_len = len(name)
         desc = pdef.get("description")
         if desc:
             ws.cell(row=row, column=ref_col + 1, value=desc)
+
+    # Size the parameter name column to fit the widest name
+    from openpyxl.utils import get_column_letter
+    col_letter = get_column_letter(ref_col)
+    ws.column_dimensions[col_letter].width = max_name_len + 2
 
 
 def _lock_metadata_cells(

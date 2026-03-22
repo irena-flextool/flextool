@@ -70,6 +70,10 @@ def main() -> None:
         '--excel-dir', default=None,
         help='Directory to write comparison Excel files (default: same as --plot-dir)'
     )
+    parser.add_argument(
+        '--shared-legend', action='store_true', default=None,
+        help='Use shared legend across subplots (default: true)'
+    )
 
     args = parser.parse_args()
     db_url = args.db_url
@@ -91,6 +95,7 @@ def main() -> None:
     write_to_ods = args.write_to_ods
     show_plots = args.show_plots
     plot_file_format = args.plot_file_format
+    shared_legend = args.shared_legend
 
     settings_db_url = args.settings_db_url
     if settings_db_url and os.path.exists(settings_db_url.replace('sqlite:///', '')):
@@ -131,6 +136,8 @@ def main() -> None:
                     show_plots = bool(settings_params['show-plots'])
                 if plot_file_format is None and 'plot-file-format' in settings_params:
                     plot_file_format = str(settings_params['plot-file-format'])
+                if shared_legend is None and 'shared-legend' in settings_params:
+                    shared_legend = bool(settings_params['shared-legend'])
 
     # Apply hardcoded defaults for anything still unset
     if output_config_path is None:
@@ -149,6 +156,8 @@ def main() -> None:
         show_plots = False
     if plot_file_format is None:
         plot_file_format = 'png'
+    if shared_legend is None:
+        shared_legend = True
 
     # Build scenario-to-folder mapping from either --parquet-base-dir or db_url
     alternatives = args.alternatives
@@ -190,6 +199,7 @@ def main() -> None:
         plot_file_format=plot_file_format,
         scenario_folders=pre_built_folders,
         excel_dir=args.excel_dir,
+        shared_legend=shared_legend,
     )
 
 
