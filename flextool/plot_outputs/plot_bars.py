@@ -6,6 +6,7 @@ from flextool.plot_outputs.format_helpers import _get_value_formatter
 from flextool.plot_outputs.legend_helpers import (
     estimate_legend_width, estimate_legend_height,
     _format_legend_labels, _should_show_legend,
+    build_shared_color_map,
 )
 from flextool.plot_outputs.axis_helpers import (
     _subplot_axis_bounds, _apply_subplot_label, _estimate_value_nbins,
@@ -87,51 +88,89 @@ def _compute_bar_layout(
     max_legend_entries = 0
     legend_has_title = False
     if stack_levels or grouped_bar_levels:
-        for _, df_sub in effective_plots:
-            if grouped_bar_levels:
-                if len(grouped_bar_level_names) == 1:
-                    items = df_sub.columns.get_level_values(
-                        grouped_bar_level_names[0]).unique().astype(str).tolist()
-                else:
-                    item_df = df_sub.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
-                    items = [tuple(str(v) for v in row) for row in item_df.values]
-                if isinstance(df_sub.columns, pd.MultiIndex):
-                    leg_title = ' | '.join(str(n) for n in grouped_bar_level_names)
-                else:
-                    leg_title = str(df_sub.columns.name) if df_sub.columns.name else 'group'
-            else:
-                if len(stack_level_names) == 1:
-                    if isinstance(df_sub.columns, pd.MultiIndex):
-                        all_stacks = df_sub.columns.get_level_values(
-                            stack_level_names[0]).unique().tolist()
-                        # Only count stacks with non-zero values (matching actual legend)
-                        items = []
-                        for s in all_stacks:
-                            try:
-                                vals = df_sub.xs(s, level=stack_level_names[0], axis=1)
-                            except (KeyError, TypeError):
-                                continue
-                            if (vals.abs() > 1e-6).any().any():
-                                items.append(str(s))
-                        if not items:
-                            items = [str(s) for s in all_stacks]
+        if legend_position == 'shared':
+            # Union of all labels across all subplots
+            all_items_union: list = []
+            leg_title = ''
+            for _, df_sub in effective_plots:
+                if grouped_bar_levels:
+                    if len(grouped_bar_level_names) == 1:
+                        items = df_sub.columns.get_level_values(
+                            grouped_bar_level_names[0]).unique().astype(str).tolist()
                     else:
-                        # Single-level columns after subplot extraction
-                        items = [str(c) for c in df_sub.columns if (df_sub[c].abs() > 1e-6).any()]
-                        if not items:
+                        item_df = df_sub.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
+                        items = [tuple(str(v) for v in row) for row in item_df.values]
+                    if isinstance(df_sub.columns, pd.MultiIndex):
+                        leg_title = ' | '.join(str(n) for n in grouped_bar_level_names)
+                    else:
+                        leg_title = str(df_sub.columns.name) if df_sub.columns.name else 'group'
+                else:
+                    if len(stack_level_names) == 1:
+                        if isinstance(df_sub.columns, pd.MultiIndex):
+                            items = df_sub.columns.get_level_values(
+                                stack_level_names[0]).unique().astype(str).tolist()
+                        else:
                             items = [str(c) for c in df_sub.columns]
+                    else:
+                        stack_df = df_sub.columns.to_frame()[stack_level_names].drop_duplicates()
+                        items = [tuple(str(v) for v in row) for row in stack_df.values]
+                    if isinstance(df_sub.columns, pd.MultiIndex):
+                        leg_title = ' | '.join(str(n) for n in stack_level_names)
+                    else:
+                        leg_title = str(df_sub.columns.name) if df_sub.columns.name else 'stack'
+                for item in items:
+                    if item not in all_items_union:
+                        all_items_union.append(item)
+            legend_labels = _format_legend_labels(all_items_union)
+            legend_width = estimate_legend_width(legend_labels, leg_title)
+            max_legend_entries = len(all_items_union)
+            legend_has_title = True
+        else:
+            for _, df_sub in effective_plots:
+                if grouped_bar_levels:
+                    if len(grouped_bar_level_names) == 1:
+                        items = df_sub.columns.get_level_values(
+                            grouped_bar_level_names[0]).unique().astype(str).tolist()
+                    else:
+                        item_df = df_sub.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
+                        items = [tuple(str(v) for v in row) for row in item_df.values]
+                    if isinstance(df_sub.columns, pd.MultiIndex):
+                        leg_title = ' | '.join(str(n) for n in grouped_bar_level_names)
+                    else:
+                        leg_title = str(df_sub.columns.name) if df_sub.columns.name else 'group'
                 else:
-                    stack_df = df_sub.columns.to_frame()[stack_level_names].drop_duplicates()
-                    items = [tuple(str(v) for v in row) for row in stack_df.values]
-                if isinstance(df_sub.columns, pd.MultiIndex):
-                    leg_title = ' | '.join(str(n) for n in stack_level_names)
-                else:
-                    leg_title = str(df_sub.columns.name) if df_sub.columns.name else 'stack'
-            legend_labels = _format_legend_labels(items)
-            w = estimate_legend_width(legend_labels, leg_title)
-            legend_width = max(legend_width, w)
-            max_legend_entries = max(max_legend_entries, len(items))
-            legend_has_title = True  # all legend paths set a title
+                    if len(stack_level_names) == 1:
+                        if isinstance(df_sub.columns, pd.MultiIndex):
+                            all_stacks = df_sub.columns.get_level_values(
+                                stack_level_names[0]).unique().tolist()
+                            # Only count stacks with non-zero values (matching actual legend)
+                            items = []
+                            for s in all_stacks:
+                                try:
+                                    vals = df_sub.xs(s, level=stack_level_names[0], axis=1)
+                                except (KeyError, TypeError):
+                                    continue
+                                if (vals.abs() > 1e-6).any().any():
+                                    items.append(str(s))
+                            if not items:
+                                items = [str(s) for s in all_stacks]
+                        else:
+                            # Single-level columns after subplot extraction
+                            items = [str(c) for c in df_sub.columns if (df_sub[c].abs() > 1e-6).any()]
+                            if not items:
+                                items = [str(c) for c in df_sub.columns]
+                    else:
+                        stack_df = df_sub.columns.to_frame()[stack_level_names].drop_duplicates()
+                        items = [tuple(str(v) for v in row) for row in stack_df.values]
+                    if isinstance(df_sub.columns, pd.MultiIndex):
+                        leg_title = ' | '.join(str(n) for n in stack_level_names)
+                    else:
+                        leg_title = str(df_sub.columns.name) if df_sub.columns.name else 'stack'
+                legend_labels = _format_legend_labels(items)
+                w = estimate_legend_width(legend_labels, leg_title)
+                legend_width = max(legend_width, w)
+                max_legend_entries = max(max_legend_entries, len(items))
+                legend_has_title = True  # all legend paths set a title
 
     legend_height = estimate_legend_height(max_legend_entries, legend_has_title) if max_legend_entries > 0 else 0.0
 
@@ -171,6 +210,7 @@ def _render_bar_figure(
     value_fmt, axis_bounds, axis_tick_format,
     always_include_zero_in_axis, output_filepath,
     layout: BarLayoutParams | None = None,
+    shared_color_map: dict[str, tuple] | None = None,
 ):
     """Render one file's worth of bar subplots to a single figure/file."""
     # Calculate subplot grid
@@ -402,10 +442,12 @@ def _render_bar_figure(
         # Determine plotting mode and execute appropriate logic
         if grouped_bar_levels:
             _plot_grouped_bars(ax, df_sub, all_bars, expand_axis_level_names,
-                               grouped_bar_level_names, bar_orientation, value_fmt)
+                               grouped_bar_level_names, bar_orientation, value_fmt,
+                               shared_color_map=shared_color_map)
         elif stack_levels:
             _plot_stacked_bars(ax, df_sub, all_bars, expand_axis_level_names,
-                               stack_level_names, bar_orientation)
+                               stack_level_names, bar_orientation,
+                               shared_color_map=shared_color_map)
         else:
             _plot_simple_bars(ax, df_sub, all_bars, expand_axis_level_names,
                               bar_orientation, value_fmt)
@@ -603,6 +645,36 @@ def _render_bar_figure(
         else:
             ax.axhline(0, color='black', linewidth=0.5, linestyle=':')
 
+    # ── Shared legend (one per file, anchored to top-right subplot) ──
+    if legend_position == 'shared' and shared_color_map and (stack_levels or grouped_bar_levels):
+        from matplotlib.patches import Patch
+        legend_ax_idx = min(n_cols - 1, n_subs - 1)
+        ax_legend = axes[legend_ax_idx]
+        handles = [Patch(facecolor=c) for c in shared_color_map.values()]
+        labels_all = list(shared_color_map.keys())
+
+        # Generate legend title
+        if grouped_bar_levels:
+            if isinstance(df.columns, pd.MultiIndex):
+                legend_title = ' | '.join(str(n) for n in grouped_bar_level_names)
+            else:
+                legend_title = str(df.columns.name) if df.columns.name else 'group'
+        else:
+            if isinstance(df.columns, pd.MultiIndex):
+                legend_title = ' | '.join(str(n) for n in stack_level_names)
+            else:
+                legend_title = str(df.columns.name) if df.columns.name else 'stack'
+
+        if bar_orientation == 'horizontal':
+            axes_width = layout.base_bar_length
+        else:
+            axes_width = BAR_HEIGHT * max(
+                (len(ep[1]) for ep in effective_plots), default=1
+            )
+        legend_x = 1 + LEGEND_GAP / axes_width
+        ax_legend.legend(handles, labels_all, title=legend_title,
+                         bbox_to_anchor=(legend_x, 1), loc='upper left', borderaxespad=0)
+
     # Hide unused subplots
     for idx in range(n_subs, len(axes)):
         axes[idx].set_visible(False)
@@ -767,6 +839,35 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
     if not effective_plots:
         return
 
+    # Build shared color map before splitting into file batches
+    shared_color_map = None
+    if legend_position == 'shared' and (stack_levels or grouped_bar_levels):
+        all_labels: list[str] = []
+        for _, df_sub in effective_plots:
+            if grouped_bar_levels:
+                if len(grouped_bar_level_names) == 1:
+                    items = df_sub.columns.get_level_values(
+                        grouped_bar_level_names[0]).unique().tolist()
+                else:
+                    item_df = df_sub.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
+                    items = [tuple(row) for row in item_df.values]
+            else:
+                if len(stack_level_names) == 1:
+                    if isinstance(df_sub.columns, pd.MultiIndex):
+                        items = df_sub.columns.get_level_values(
+                            stack_level_names[0]).unique().tolist()
+                    else:
+                        items = df_sub.columns.unique().tolist()
+                else:
+                    stack_df = df_sub.columns.to_frame()[stack_level_names].drop_duplicates()
+                    items = [tuple(row) for row in stack_df.values]
+            for item in items:
+                label = _format_legend_labels([item])[0]
+                if label not in all_labels:
+                    all_labels.append(label)
+        all_labels.sort()
+        shared_color_map = build_shared_color_map(all_labels)
+
     # Compute layout once across ALL effective_plots for consistent margins
     layout = _compute_bar_layout(
         effective_plots, df,
@@ -805,4 +906,5 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             value_fmt, axis_bounds, axis_tick_format,
             always_include_zero_in_axis, batch_filepath,
             layout=layout,
+            shared_color_map=shared_color_map,
         )

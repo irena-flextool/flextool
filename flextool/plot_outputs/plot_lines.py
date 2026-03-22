@@ -6,6 +6,7 @@ from matplotlib.ticker import MaxNLocator
 from flextool.plot_outputs.format_helpers import _get_value_formatter
 from flextool.plot_outputs.legend_helpers import (
     estimate_legend_width, _format_legend_labels, _should_show_legend,
+    build_shared_color_map,
 )
 from flextool.plot_outputs.axis_helpers import (
     _subplot_axis_bounds, _apply_subplot_label, set_smart_xticks,
@@ -162,15 +163,26 @@ def _compute_line_layout(
     # ── value-label width (y-axis tick labels) ──
     value_label_width = _estimate_value_label_width(effective_plots, axis_tick_format)
 
-    # ── legend width (max across ALL subplots) ──
+    # ── legend width ──
     legend_width = 0.0
     if item_level_names:
-        for _, df_sub in effective_plots:
-            legend_labels = _format_legend_labels(
-                _get_column_items(df_sub, item_level_names)
-            )
-            w = estimate_legend_width(legend_labels, base_width=0.6)
-            legend_width = max(legend_width, w)
+        if legend_position == 'shared':
+            # Use union of all labels across all subplots
+            all_items: list = []
+            for _, df_sub in effective_plots:
+                for item in _get_column_items(df_sub, item_level_names):
+                    if item not in all_items:
+                        all_items.append(item)
+            legend_labels = _format_legend_labels(all_items)
+            legend_width = estimate_legend_width(legend_labels, base_width=0.6)
+        else:
+            # Max across individual subplots
+            for _, df_sub in effective_plots:
+                legend_labels = _format_legend_labels(
+                    _get_column_items(df_sub, item_level_names)
+                )
+                w = estimate_legend_width(legend_labels, base_width=0.6)
+                legend_width = max(legend_width, w)
 
     return LineLayoutParams(
         value_label_width=value_label_width,
@@ -191,6 +203,7 @@ def _render_lines_figure(
     axis_bounds, axis_tick_format, always_include_zero_in_axis,
     output_filepath,
     layout: LineLayoutParams,
+    shared_color_map: dict[str, tuple] | None = None,
 ):
     """Render one file's worth of line subplots."""
     n_subs = len(effective_plots)
@@ -240,7 +253,9 @@ def _render_lines_figure(
 
         # Get line combinations from line_levels
         if isinstance(df_sub, pd.Series):
-            ax.plot(time_index, df_sub.values, label=str(eff_title))
+            label = str(eff_title)
+            color = shared_color_map.get(label) if shared_color_map else None
+            ax.plot(time_index, df_sub.values, label=label, color=color)
         else:
             is_multiindex = isinstance(df_sub.columns, pd.MultiIndex)
 
@@ -272,7 +287,9 @@ def _render_lines_figure(
                 if isinstance(y_data, pd.DataFrame):
                     y_data = y_data.sum(axis=1)
 
-                ax.plot(time_index, y_data.values, label=str(line))
+                label = str(line)
+                color = shared_color_map.get(label) if shared_color_map else None
+                ax.plot(time_index, y_data.values, label=label, color=color)
 
         # Subplot formatting
         if eff_title is not None:
@@ -305,6 +322,17 @@ def _render_lines_figure(
 
         ax_width_inches = layout.base_width
         set_smart_xticks(ax, time_index, ax_width_inches)
+
+    # ── Shared legend (one per file, anchored to top-right subplot) ──
+    if legend_position == 'shared' and shared_color_map:
+        from matplotlib.lines import Line2D
+        legend_ax_idx = min(n_cols - 1, n_subs - 1)
+        ax_legend = axes[legend_ax_idx]
+        handles = [Line2D([0], [0], color=c) for c in shared_color_map.values()]
+        labels_all = list(shared_color_map.keys())
+        legend_x = 1 + LEGEND_GAP / layout.base_width
+        ax_legend.legend(handles, labels_all, bbox_to_anchor=(legend_x, 1),
+                         loc='upper left', fontsize=8, borderaxespad=0)
 
     # ── Figure title ──
     fig_h = fig.get_size_inches()[1]
@@ -343,6 +371,18 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     if not effective_plots:
         return
 
+    # Build shared color map before splitting into file batches
+    shared_color_map = None
+    if legend_position == 'shared' and line_level_names:
+        all_labels: list[str] = []
+        for _, df_sub in effective_plots:
+            for item in _get_column_items(df_sub, line_level_names):
+                label = str(item)
+                if label not in all_labels:
+                    all_labels.append(label)
+        all_labels.sort()
+        shared_color_map = build_shared_color_map(all_labels)
+
     # Compute layout once across ALL effective_plots
     layout = _compute_line_layout(
         effective_plots, line_level_names,
@@ -362,6 +402,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
             batch_filepath,
             layout=layout,
+            shared_color_map=shared_color_map,
         )
 
 
@@ -376,6 +417,7 @@ def _render_stack_figure(
     axis_bounds, axis_tick_format, always_include_zero_in_axis,
     output_filepath,
     layout: LineLayoutParams,
+    shared_color_map: dict[str, tuple] | None = None,
 ):
     """Render one file's worth of stacked-area subplots."""
     n_subs = len(effective_plots)
@@ -469,9 +511,22 @@ def _render_stack_figure(
 
         # Create stacked area plot
         n_columns = len(df_to_plot.columns)
-        colors = plt.colormaps['tab10'].colors[:n_columns]
-        if n_columns > 10:
-            colors = plt.colormaps['tab20'].colors[:n_columns]
+        if shared_color_map:
+            # Handle _pos/_neg suffixes from mixed-sign column splitting
+            def _lookup_color(col_name):
+                if col_name in shared_color_map:
+                    return shared_color_map[col_name]
+                for suffix in ('_pos', '_neg'):
+                    if col_name.endswith(suffix):
+                        base = col_name[:-len(suffix)]
+                        if base in shared_color_map:
+                            return shared_color_map[base]
+                return (0.5, 0.5, 0.5)
+            colors = [_lookup_color(col) for col in df_to_plot.columns]
+        else:
+            colors = plt.colormaps['tab10'].colors[:n_columns]
+            if n_columns > 10:
+                colors = plt.colormaps['tab20'].colors[:n_columns]
         df_to_plot.plot.area(stacked=True, ax=ax, alpha=1.0, legend=False, linewidth=0, color=colors, xlabel="")
 
         # Subplot formatting
@@ -505,6 +560,17 @@ def _render_stack_figure(
 
         ax_width_inches = layout.base_width
         set_smart_xticks(ax, time_index, ax_width_inches)
+
+    # ── Shared legend (one per file, anchored to top-right subplot) ──
+    if legend_position == 'shared' and shared_color_map:
+        from matplotlib.patches import Patch
+        legend_ax_idx = min(n_cols - 1, n_subs - 1)
+        ax_legend = axes[legend_ax_idx]
+        handles = [Patch(facecolor=c) for c in shared_color_map.values()]
+        labels_all = list(shared_color_map.keys())
+        legend_x = 1 + LEGEND_GAP / layout.base_width
+        ax_legend.legend(handles, labels_all, bbox_to_anchor=(legend_x, 1),
+                         loc='upper left', fontsize=8, borderaxespad=0)
 
     # ── Figure title ──
     fig_h = fig.get_size_inches()[1]
@@ -544,6 +610,18 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
     if not effective_plots:
         return
 
+    # Build shared color map before splitting into file batches
+    shared_color_map = None
+    if legend_position == 'shared' and stack_level_names:
+        all_labels: list[str] = []
+        for _, df_sub in effective_plots:
+            for item in _get_column_items(df_sub, stack_level_names):
+                label = str(item)
+                if label not in all_labels:
+                    all_labels.append(label)
+        all_labels.sort()
+        shared_color_map = build_shared_color_map(all_labels)
+
     # Compute layout once across ALL effective_plots
     layout = _compute_line_layout(
         effective_plots, stack_level_names,
@@ -563,4 +641,5 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
             batch_filepath,
             layout=layout,
+            shared_color_map=shared_color_map,
         )

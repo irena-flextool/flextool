@@ -32,6 +32,7 @@ def _plot_grouped_bars(
     grouped_bar_level_names: list,
     bar_orientation: str,
     value_fmt: str | None,
+    shared_color_map: dict[str, tuple] | None = None,
 ) -> None:
     """Render grouped side-by-side bars onto ax for one subplot."""
     # Get grouped bar combinations
@@ -43,9 +44,15 @@ def _plot_grouped_bars(
 
     # Colors for grouped bars
     n_grouped = len(grouped_bars)
-    colors = plt.colormaps['tab10'].colors[:n_grouped]
-    if n_grouped > 10:
-        colors = plt.colormaps['tab20'].colors[:n_grouped]
+    if shared_color_map:
+        colors = []
+        for gb in grouped_bars:
+            label = ' | '.join(str(v) for v in gb) if isinstance(gb, (tuple, list)) else str(gb)
+            colors.append(shared_color_map.get(label, (0.5, 0.5, 0.5)))
+    else:
+        colors = list(plt.colormaps['tab10'].colors[:n_grouped])
+        if n_grouped > 10:
+            colors = list(plt.colormaps['tab20'].colors[:n_grouped])
 
     # Calculate bar width and offsets for side-by-side positioning
     total_bar_width = 0.8
@@ -152,6 +159,7 @@ def _plot_stacked_bars(
     expand_axis_level_names: list,
     stack_level_names: list,
     bar_orientation: str,
+    shared_color_map: dict[str, tuple] | None = None,
 ) -> None:
     """Render stacked bars onto ax for one subplot.
 
@@ -166,10 +174,16 @@ def _plot_stacked_bars(
         stacks = [tuple(row) for row in stack_df.values]
 
     # Colors for stacking
-    n_stack = len(stacks)
-    colors = plt.colormaps['tab10'].colors[:n_stack]
-    if n_stack > 10:
-        colors = plt.colormaps['tab20'].colors[:n_stack]
+    if shared_color_map:
+        colors = []
+        for s in stacks:
+            label = ' | '.join(str(v) for v in s) if isinstance(s, (tuple, list)) else str(s)
+            colors.append(shared_color_map.get(label, (0.5, 0.5, 0.5)))
+    else:
+        n_stack = len(stacks)
+        colors = list(plt.colormaps['tab10'].colors[:n_stack])
+        if n_stack > 10:
+            colors = list(plt.colormaps['tab20'].colors[:n_stack])
 
     # Track which stacks have positive/negative values (for legend ordering)
     pos_stacks: set[int] = set()

@@ -1,6 +1,8 @@
 """Legend sizing, positioning, and label formatting utilities."""
 from __future__ import annotations
 
+import matplotlib.pyplot as plt
+
 
 def estimate_legend_width(labels, title: str = '', base_width: float = 1.5) -> float:
     """Estimate the width in inches needed for a legend based on label content.
@@ -67,9 +69,12 @@ def _should_show_legend(
 ) -> bool:
     """Return True if the legend should be shown on subplot idx.
 
-    'all'   → show on every subplot.
-    'right' → show only on the rightmost column or the last subplot.
+    'all'    → show on every subplot.
+    'right'  → show only on the rightmost column or the last subplot.
+    'shared' → never (the caller renders one figure-level legend separately).
     """
+    if legend_position == 'shared':
+        return False
     if legend_position == 'all':
         return True
     if legend_position == 'right':
@@ -77,3 +82,17 @@ def _should_show_legend(
         if col == n_cols - 1 or idx == n_subs - 1:
             return True
     return False
+
+
+def build_shared_color_map(labels: list[str]) -> dict[str, tuple]:
+    """Assign consistent colors from tab10/tab20 to a list of labels.
+
+    Returns a dict mapping each label string to an (R, G, B) color tuple.
+    The mapping is stable across files when the same *labels* list is passed.
+    """
+    n = len(labels)
+    if n <= 10:
+        cmap_colors = plt.colormaps['tab10'].colors
+    else:
+        cmap_colors = plt.colormaps['tab20'].colors
+    return {label: cmap_colors[i % len(cmap_colors)] for i, label in enumerate(labels)}

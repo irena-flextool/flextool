@@ -37,7 +37,7 @@ class PlotConfig:
     plot_name: str = ''
     map_dimensions_for_plots: dict = field(default_factory=dict)
     subplots_per_row: int = 2
-    legend: str = 'right'
+    legend: str = 'right'  # 'right', 'all', or 'shared'
     bar_orientation: str = 'horizontal'
     base_length: float = 4.0
     max_subplots_per_file: int = 6

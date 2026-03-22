@@ -327,7 +327,15 @@ def _parse_default_value(text: str) -> tuple[str, str | None]:
     "parameter: profile" → ("parameter", "profile")
     "parameter"          → ("parameter", None)
     "data type: float"   → ("data type", "float")
+
+    Also handles the triplet format with ``|`` separator:
+    "parameter: profile | data type: float | description: ..."
+    → ("parameter", "profile")
     """
+    # Handle | separator: only parse the first segment
+    if "|" in text:
+        text = text.split("|")[0].strip()
+
     for keyword in sorted(ROW_KEYWORDS, key=len, reverse=True):
         if text.lower().startswith(keyword):
             rest = text[len(keyword):].strip()
