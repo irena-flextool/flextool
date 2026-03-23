@@ -1321,12 +1321,13 @@ class MainWindow(tk.Tk):
         from flextool.cli.cmd_read_tabular_input import _ensure_target_db_exists
         _ensure_target_db_exists(target_db_url)
 
-        # Build subprocess command
+        # Build subprocess command — purge data but keep template entities
         cmd = [
             sys.executable, "-m",
             "flextool.cli.cmd_read_self_describing_tabular_input",
             str(xlsx_path),
             target_db_url,
+            "--keep-entities",
         ]
 
         log_window = OutputLogWindow(self, f"Convert: {source_name} → sqlite")

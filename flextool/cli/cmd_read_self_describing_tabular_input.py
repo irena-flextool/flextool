@@ -24,6 +24,11 @@ def main() -> None:
         action="store_true",
         help="Do not purge existing data before importing",
     )
+    parser.add_argument(
+        "--keep-entities",
+        action="store_true",
+        help="Keep existing entities during purge (for fresh template DBs)",
+    )
     args = parser.parse_args()
 
     print(f"Reading Excel: {args.xlsx_path}")
@@ -34,7 +39,11 @@ def main() -> None:
     print(f"Parsed {len(sheets)} sheets: {total_records} records, {total_links} links")
 
     print(f"Writing to database: {args.target_db_url}")
-    write_sheet_data_to_db(sheets, args.target_db_url, purge_first=not args.no_purge)
+    write_sheet_data_to_db(
+        sheets, args.target_db_url,
+        purge_first=not args.no_purge,
+        keep_entities=args.keep_entities,
+    )
     print("Import complete!")
 
 

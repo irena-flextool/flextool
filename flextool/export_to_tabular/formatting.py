@@ -55,9 +55,9 @@ FILL_DESC_DATA = PatternFill(
 )
 FONT_DESC_DATA = Font(color=Color(theme=1, tint=0.0))
 
-# Definition column background (grey) for data rows where def column is empty
+# Definition column background (darker grey) — conveys "do not fill here"
 FILL_DEF_COL = PatternFill(
-    patternType="solid", fgColor=Color(theme=0, tint=-0.1499984740745262)
+    patternType="solid", fgColor=Color(theme=0, tint=-0.3499862666707358)
 )
 
 # 'navigate' label in row 1 of each sheet (blue link colour)
@@ -283,6 +283,7 @@ def format_constant_sheet_v2(
     n_extra_cols: int = 0,
     def_col: int = 3,
     index_cols: set[int] | None = None,
+    last_data_col: int = 0,
 ) -> None:
     """Apply formatting to a v2 constant-layout sheet.
 
@@ -308,7 +309,7 @@ def format_constant_sheet_v2(
         index_cols = set()
 
     max_row = ws.max_row
-    max_col = ws.max_column
+    max_col = last_data_col if last_data_col > 0 else ws.max_column
 
     for col in range(1, max_col + 1):
         is_index = col in index_cols
@@ -350,19 +351,35 @@ def format_constant_sheet_v2(
         else:
             cell_r3.fill = FILL_PARAM_HEADER
 
-        # --- Rows 4+: data rows ---
-        for row in range(4, max_row + 1):
-            cell = ws.cell(row=row, column=col)
+    # --- Rows 4+: data row fills via conditional formatting (range-based, fast) ---
+    # Extend 100 rows beyond data so new user entries get the right colors
+    if max_row >= 4:
+        from openpyxl.formatting.rule import CellIsRule
+
+        _always = ['"§§§NEVER§§§"']
+        data_range_end = max_row + 100
+
+        for col in range(1, (last_data_col if last_data_col > 0 else max_col) + 1):
+            is_index = col in index_cols
+            cl = get_column_letter(col)
+            rng = f"{cl}4:{cl}{data_range_end}"
+
             if col == 1:
-                cell.fill = FILL_ALT_DATA
+                fill = FILL_ALT_DATA
             elif is_index:
-                cell.fill = FILL_INDEX_DATA
+                fill = FILL_INDEX_DATA
             elif col == def_col:
-                cell.fill = FILL_DEF_COL
+                fill = FILL_DEF_COL
             elif col < def_col:
-                cell.fill = FILL_ENTITY_DATA
+                fill = FILL_ENTITY_DATA
             elif col > def_col:
-                cell.fill = FILL_PARAM_DATA
+                fill = FILL_PARAM_DATA
+            else:
+                continue
+
+            ws.conditional_formatting.add(
+                rng, CellIsRule(operator="notEqual", formula=_always, fill=fill)
+            )
 
 
 def format_periodic_sheet_v2(
@@ -371,12 +388,13 @@ def format_periodic_sheet_v2(
     n_extra_cols: int = 0,
     def_col: int = 3,
     index_cols: set[int] | None = None,
+    last_data_col: int = 0,
 ) -> None:
     """Apply formatting to a v2 periodic-layout sheet.
 
     Same structure as format_constant_sheet_v2 but for periodic sheets.
     """
-    format_constant_sheet_v2(ws, n_entity_cols, n_extra_cols, def_col, index_cols)
+    format_constant_sheet_v2(ws, n_entity_cols, n_extra_cols, def_col, index_cols, last_data_col)
 
 
 def format_timeseries_sheet_v2(
@@ -384,6 +402,7 @@ def format_timeseries_sheet_v2(
     n_header_rows: int,
     single_param: bool = False,
     row_types: dict[int, str] | None = None,
+    last_data_col: int = 0,
 ) -> None:
     """Apply formatting to a v2 transposed timeseries-layout sheet.
 
@@ -413,21 +432,18 @@ def format_timeseries_sheet_v2(
         "param_info":  (FILL_DEF_COL, FILL_DEF_COL, None, None),
     }
 
-    for row in range(1, max_row + 1):
+    # Format header rows (per-cell — only a few rows, only data columns)
+    header_col_end = last_data_col if last_data_col > 0 else max_col
+    for row in range(1, n_header_rows + 1):
         rtype = row_types.get(row)
 
-        for col in range(1, max_col + 1):
+        for col in range(1, header_col_end + 1):
             cell = ws.cell(row=row, column=col)
 
             if col == 1:
-                if row == 1:
-                    pass  # navigate link
-                elif row < n_header_rows:
-                    pass
-                elif row == n_header_rows:
-                    cell.fill = FILL_TIME_HEADER
-                else:
-                    cell.fill = FILL_TIME_DATA
+                if row == n_header_rows:
+                    cell.fill = FILL_INDEX_HEADER
+                # else: navigate link or empty — no fill
 
             elif rtype in type_fills:
                 label_fill, data_fill, label_font, data_font = type_fills[rtype]
@@ -440,8 +456,8 @@ def format_timeseries_sheet_v2(
                     if data_font:
                         cell.font = data_font
 
-            elif row > n_header_rows:
-                pass  # data rows — no fill for data columns
+    # Note: Column A data fill is NOT applied here — each writer adds its own
+    # (FILL_TIME_DATA for timeseries, FILL_INDEX_DATA for array sheets).
 
 
 def format_link_sheet_v2(ws: Worksheet) -> None:
@@ -472,6 +488,7 @@ def auto_column_width(
     header_row: int = 0,
     def_col: int = 0,
     index_cols: set[int] | None = None,
+    last_data_col: int = 0,
 ) -> None:
     """Size columns based on their role and header content.
 
@@ -486,11 +503,15 @@ def auto_column_width(
         def_col: 1-based column of the definition column (the boundary).
             When 0, all columns use content-based sizing.
         index_cols: 1-based column numbers that are index dimensions.
+        last_data_col: Last column of the data area (1-based).  Columns
+            beyond this are not sized (e.g. convenience/reference sections
+            set their own widths).  When 0, size all columns.
     """
     if index_cols is None:
         index_cols = set()
 
-    for col_idx in range(1, (ws.max_column or 0) + 1):
+    end_col = last_data_col if last_data_col > 0 else (ws.max_column or 0)
+    for col_idx in range(1, end_col + 1):
         if def_col > 0 and col_idx in index_cols:
             width = index_col_width
         elif def_col > 0 and col_idx < def_col:

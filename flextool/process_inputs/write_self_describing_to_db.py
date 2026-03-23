@@ -193,6 +193,8 @@ def _write_sheet(
     for rec in scalars:
         if rec["param_name"] == _ENTITY_EXISTENCE:
             continue
+        if not rec["param_name"]:
+            continue  # entity-only record — no param to write
         value, type_ = to_database(rec["value"])
         try:
             db.add_parameter_value(
@@ -392,11 +394,19 @@ def _is_scenario_sheet(sheet: SheetData) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _purge_database(db: DatabaseMapping) -> None:
-    """Remove all entities, alternatives, scenarios, and parameter values."""
+def _purge_database(db: DatabaseMapping, keep_entities: bool = False) -> None:
+    """Remove data from the database before import.
+
+    Args:
+        keep_entities: If True, keep entities (useful when importing into a
+            fresh template DB where structural entities like upDown should
+            be preserved).  Alternatives, scenarios, and parameter values
+            are always purged.
+    """
     try:
         db.remove_parameter_value(id=Asterisk)
-        db.remove_entity(id=Asterisk)
+        if not keep_entities:
+            db.remove_entity(id=Asterisk)
         db.remove_alternative(id=Asterisk)
         db.remove_scenario(id=Asterisk)
         db.commit_session("Purged database before import")
@@ -415,6 +425,7 @@ def write_sheet_data_to_db(
     sheet_data_list: list[SheetData],
     db_url: str,
     purge_first: bool = True,
+    keep_entities: bool = False,
 ) -> None:
     """Write parsed SheetData objects into a SpineDB.
 
@@ -425,12 +436,15 @@ def write_sheet_data_to_db(
         sheet_data_list: Output of :func:`read_self_describing_excel`.
         db_url: SQLAlchemy-style database URL, e.g.
             ``sqlite:///path/to/db.sqlite``.
-        purge_first: If True, remove all existing data from the database
+        purge_first: If True, remove existing data from the database
             before writing (keeps entity classes and parameter definitions).
+        keep_entities: If True (and purge_first is True), keep existing
+            entities during purge.  Useful when importing into a fresh
+            template DB that has structural entities (like upDown).
     """
     with DatabaseMapping(db_url, create=False, upgrade=True) as db:
         if purge_first:
-            _purge_database(db)
+            _purge_database(db, keep_entities=keep_entities)
 
         # Tracking sets to avoid duplicate add calls
         alternatives_added: set[str] = set()

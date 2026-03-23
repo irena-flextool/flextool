@@ -75,6 +75,7 @@ def read_database(db_url: str) -> DatabaseContents:
     dc = DatabaseContents()
     db = DatabaseMapping(db_url, create=False)
     try:
+        db.fetch_all()
         _read_entity_classes(db, dc)
         _read_entities(db, dc)
         _read_parameter_definitions(db, dc)

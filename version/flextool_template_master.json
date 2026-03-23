@@ -3810,5 +3810,17 @@
             "Base",
             "Base alternative"
         ]
+    ],
+    "entities": [
+        [
+            "upDown",
+            "up",
+            "Upward reserve direction"
+        ],
+        [
+            "upDown",
+            "down",
+            "Downward reserve direction"
+        ]
     ]
 }

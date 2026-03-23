@@ -24,6 +24,12 @@ index_name_defaults:
   timeseries: "time"
   nested_periodic: "period"
 
+# Entity classes that define time structure.  Their Map parameters use timestep
+# names as indexes but should NOT be filtered out by the time-indexed check.
+time_structure_classes:
+  - timeline
+  - timeset
+
 # Merge two entity classes onto one sheet set, adding a direction column.
 merge_classes:
   unit_node:
@@ -78,7 +84,7 @@ split_params:
                "rolling_solve_horizon_methods"]
   model:
     model:
-      params: ["solves", "periods_available", "discount_rate",
+      params: ["discount_rate",
                "discount_offset_investment", "discount_offset_operations",
                "debug", "output_horizon",
                "output_node_balance_t", "output_unit__node_flow_t",
@@ -89,10 +95,13 @@ split_params:
       params: ["solves"]
     model_periods_available:
       params: ["periods_available"]
+  timeline:
+    timeline:
+      params: ["timestep_duration"]
   timeset:
-    timeset_timeline:
+    timeset_c:
       params: ["new_stepduration", "timeline"]
-    timeset_blocks:
+    timeset_t:
       params: ["timeset_duration"]
 
 # Dimensions to drop from generated sheet names (always-present relationship dims).
@@ -115,8 +124,8 @@ sheet_order:
   - solve_period_period
   - rolling_parameters
   - timeline
-  - timeset_timeline
-  - timeset_blocks
+  - timeset_c
+  - timeset_t
   - node_c
   - node_p
   - node_t
@@ -171,18 +180,15 @@ navigate_groups:
   - name: "Time"
     color: "D9D9D9"
     rows:
-      - [timeline_c, timeline_p]
-      - [timeset_timeline]
-      - [timeset_blocks]
-      - [timeblockSet_c, timeblockSet_p]
-      - [timeblockSet_timeline]
+      - [timeline]
+      - [timeset_c, timeset_t]
   - name: "Core entities"
     color: "D5C2EE"
     rows:
       - [node_c, node_p, node_t]
       - [commodity_c, commodity_p]
       - [commodity_node]
-      - [connection_c, connection_p]
+      - [connection_c, connection_p, connection_t]
       - [connection_node]
       - [unit_c, unit_p, unit_t]
       - [unit_node_c, unit_node_p, unit_node_t]
@@ -222,9 +228,14 @@ navigate_groups:
 # Omitted by default; included when advanced features are needed or when the
 # database contains data that requires them.
 advanced_sheets:
-  - model_solve_sequence
   - model_periods_available
   - solve_period_period
+
+# INFO rows: optional information text shown at the top of specific sheets.
+# The reader ignores rows starting with "INFO:".
+info_rows:
+  model: "INFO: There can be only one model per scenario - best to just use same model name always."
+  model_solve_sequence: "INFO: FlexTool can define one or more solves to be executed in sequence. They will be executed in top to down order from the column the model uses."
 
 # Data type overrides for parameters where the DB type_list doesn't capture
 # the full convention.  Spine DB uses 2d-map with string "yes" values as a

@@ -88,10 +88,17 @@ def _has_time_indexed_values(
     entity_class: str,
     param_name: str,
 ) -> bool:
-    """Check whether any actual parameter value for this param has index_name='time'."""
+    """Check whether any actual parameter value for this param is time-indexed.
+
+    Uses the IndexClassifier from excel_writer if available, falling back to
+    a simple index_name=='time' check.
+    """
+    from flextool.export_to_tabular.excel_writer import _is_time_indexed_map
+    from spinedb_api import Map
+
     for (cls, _byname, pname, _alt), value in db_contents.parameter_values.items():
-        if cls == entity_class and pname == param_name:
-            if hasattr(value, "index_name") and value.index_name == "time":
+        if cls == entity_class and pname == param_name and isinstance(value, Map):
+            if _is_time_indexed_map(value):
                 return True
     return False
 
@@ -450,9 +457,6 @@ def build_sheet_specs(
             # No params remaining: either link sheet or skip
             if not dims:
                 # Zero-dim class with no params — skip (upDown, reserve, etc.)
-                continue
-            # Skip classes used solely as extra entity element sources
-            if cls_name in element_source_classes:
                 continue
             # Multi-dim relationship class -> link sheet
             spec = SheetSpec(

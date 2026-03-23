@@ -32,6 +32,8 @@ from flextool.export_to_tabular.formatting import (
     format_timeseries_sheet_v2,
     FILL_DEF_COL,
     FILL_ENTITY_HEADER,
+    FILL_INDEX_DATA,
+    FILL_INDEX_HEADER,
     FILL_DESC_ROW,
     FILL_DESC_DATA,
     FILL_PARAM_HEADER,
@@ -175,25 +177,42 @@ def _get_extra_columns_for_entity(
     return [None] * len(spec.extra_entity_columns)
 
 
+# Pre-built index for fast alternative lookups, set by export_to_excel.
+_entity_alts_index: dict[tuple[str, tuple], set[str]] = {}
+
+
+def _build_entity_alts_index(db_contents: DatabaseContents) -> None:
+    """Build a lookup from (class, byname) → set of alternatives."""
+    global _entity_alts_index
+    _entity_alts_index = {}
+    for (cls, byname, _param, alt) in db_contents.parameter_values:
+        key = (cls, byname)
+        if key not in _entity_alts_index:
+            _entity_alts_index[key] = set()
+        _entity_alts_index[key].add(alt)
+    for (cls, byname, alt) in db_contents.entity_alternatives:
+        key = (cls, byname)
+        if key not in _entity_alts_index:
+            _entity_alts_index[key] = set()
+        _entity_alts_index[key].add(alt)
+
+
 def _find_alternatives_for_entity(
     entity_class: str,
     entity_byname: tuple,
     spec: SheetSpec,
     db_contents: DatabaseContents,
 ) -> list[str]:
-    """Find all alternatives that have parameter values or entity_alternatives for an entity."""
-    alts: set[str] = set()
+    """Find all alternatives that have parameter values or entity_alternatives for an entity.
 
-    # From parameter values
-    for (cls, byname, _param, alt), _val in db_contents.parameter_values.items():
-        if cls == entity_class and byname == entity_byname:
-            if _param in spec.parameter_names:
-                alts.add(alt)
+    If the entity has no data at all, returns ``[""]`` so that it still
+    gets written as an empty row (preserving the entity in the export).
+    """
+    key = (entity_class, entity_byname)
+    alts = _entity_alts_index.get(key, set())
 
-    # From entity alternatives
-    for (cls, byname, alt), _active in db_contents.entity_alternatives.items():
-        if cls == entity_class and byname == entity_byname:
-            alts.add(alt)
+    if not alts:
+        return [""]  # empty alt → entity row with no data
 
     return sorted(alts)
 
@@ -912,7 +931,8 @@ def write_nested_periodic_sheet_v2(
     # --- Formatting ---
     n_entity_cols = len(spec.entity_columns)
     index_col_positions = {3, 4}  # current_solve_period and periods_included
-    format_constant_sheet_v2(ws, n_entity_cols, 2, def_col, index_col_positions)
+    last_data_col_nested = def_col + len(right_cols) - 1
+    format_constant_sheet_v2(ws, n_entity_cols, 2, def_col, index_col_positions, last_data_col_nested)
     add_navigate_link(ws)
     auto_column_width(ws, min_param_width=_min_param_width,
                       non_param_width=_non_param_width,
@@ -1087,34 +1107,21 @@ def write_scenario_sheet(
 ) -> None:
     """Write the scenario sheet with formatting.
 
-    Args:
-        ws: Target worksheet.
-        db_contents: Database contents.
-        include_stochastics: If True, add a 'stochastic' row after alternatives.
+    Layout:
+        Row 1: navigate | Scenario names
+        Row 2: index:   | scenario_1 | scenario_2 | ...
+        Row 3: base_alternative | alt | alt | ...
+        Row 4-33: alternative_1..30 | ...
     """
     scenarios = db_contents.scenarios
     font_dark = Font(color=Color(theme=1, tint=0.0))
 
-    if not scenarios:
-        ws.cell(row=1, column=1, value="navigate")
-        ws.cell(row=1, column=2, value="Scenario names")
-        add_navigate_link(ws)
-        auto_column_width(ws)
-        return
-
-    # Find max number of alternatives
-    max_alts = max(len(sc["alternatives"]) for sc in scenarios) if scenarios else 0
-
-    # Minimum 15 alternative rows (base_alternative + alternative_1..15)
-    min_alt_rows = 16  # base_alternative + 15 alternative_N rows
-    total_alt_rows = max(min_alt_rows, max_alts)
-
     # Row 1: 'navigate' | 'Scenario names'
-    ws.cell(row=1, column=1, value="navigate")
     cell_b1 = ws.cell(row=1, column=2, value="Scenario names")
     cell_b1.font = font_dark
 
-    # Row 2: '' | scenario names
+    # Row 2: 'index:' | scenario names
+    ws.cell(row=2, column=1, value="index:")
     for col_idx, sc in enumerate(scenarios, start=2):
         cell = ws.cell(row=2, column=col_idx, value=sc["name"])
         cell.fill = FILL_ENTITY_HEADER
@@ -1125,29 +1132,25 @@ def write_scenario_sheet(
     cell_a3.fill = FILL_PARAM_HEADER
     cell_a3.font = font_dark
     for col_idx, sc in enumerate(scenarios, start=2):
-        alts = sc["alternatives"]
+        alts = sc.get("alternatives", [])
         if alts:
             cell = ws.cell(row=3, column=col_idx, value=alts[0][0])
             cell.font = font_dark
 
-    # Rows 4+: 'alternative_N' | alt names — always write at least 15 rows
-    for alt_idx in range(1, total_alt_rows):
+    # Rows 4-33: alternative_1..30 — autofill to 30
+    max_alts = max((len(sc.get("alternatives", [])) for sc in scenarios), default=0)
+    total_alt_rows = max(30, max_alts)
+
+    for alt_idx in range(1, total_alt_rows + 1):
         row = 3 + alt_idx
         cell_label = ws.cell(row=row, column=1, value=f"alternative_{alt_idx}")
         cell_label.fill = FILL_PARAM_HEADER
         cell_label.font = font_dark
         for col_idx, sc in enumerate(scenarios, start=2):
-            alts = sc["alternatives"]
+            alts = sc.get("alternatives", [])
             if alt_idx < len(alts):
                 cell = ws.cell(row=row, column=col_idx, value=alts[alt_idx][0])
                 cell.font = font_dark
-
-    # Stochastic row (after alternatives)
-    if include_stochastics:
-        stochastic_row = 3 + total_alt_rows
-        cell_stoch = ws.cell(row=stochastic_row, column=1, value="stochastic")
-        cell_stoch.fill = FILL_PARAM_HEADER
-        cell_stoch.font = font_dark
 
     add_navigate_link(ws)
     auto_column_width(ws)
@@ -1168,6 +1171,139 @@ def write_version_sheet(
         ws.cell(row=1, column=1, value=f"Generated from FlexTool sqlite version: {version_int}")
     else:
         ws.cell(row=1, column=1, value="Generated from FlexTool sqlite")
+
+
+# ---------------------------------------------------------------------------
+# Array-transposed sheet (model_solve_sequence, model_periods_available)
+# ---------------------------------------------------------------------------
+
+
+def write_array_transposed_sheet_v2(
+    ws: Worksheet,
+    spec: SheetSpec,
+    db_contents: DatabaseContents,
+) -> None:
+    """Write an array-parameter sheet in transposed layout.
+
+    Like profile_t but for array parameters: columns are (entity, alt)
+    combinations, rows are array index positions.
+
+    Layout:
+        Row 1: navigate | parameter: solves | data type: boolean (array) | description: ...
+        Row 2: INFO: ... (optional, from _info_rows setting)
+        Row N:          | entity: model | flexTool  | flexTool  | ...
+        Row N+1:        | alternative   | init      | 5weeks    | ...
+        Row N+2: index: | 0             | solve_a   | solve_b   | ...
+        ...autofill to 30
+    """
+    if not spec.parameter_names:
+        add_navigate_link(ws)
+        return
+
+    pname = spec.parameter_names[0]
+    entity_label = _build_entity_def_label(spec)
+    dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="constant")
+    desc = _get_param_description(pname, spec.entity_classes, db_contents)
+
+    # Collect data: (entity_byname, alt) → array values
+    columns: list[tuple[str, tuple, list[Any]]] = []  # (alt, entity_byname, values)
+    max_array_len = 0
+
+    for entity_class in spec.entity_classes:
+        for entity in db_contents.entities.get(entity_class, []):
+            entity_byname = entity["entity_byname"]
+            for alt in db_contents.alternatives:
+                key = (entity_class, entity_byname, pname, alt)
+                value = db_contents.parameter_values.get(key)
+                if value is not None and _is_array(value):
+                    arr = [_to_native(v) for v in value.values]
+                    columns.append((alt, entity_byname, arr))
+                    if len(arr) > max_array_len:
+                        max_array_len = len(arr)
+                elif value is not None and _is_scalar(value):
+                    # String value = single-element array
+                    columns.append((alt, entity_byname, [_to_native(value)]))
+                    if 1 > max_array_len:
+                        max_array_len = 1
+
+    columns.sort(key=lambda c: (c[0], c[1]))
+
+    cur_row = 1
+
+    # INFO row (starts from definition column B, not A)
+    info_text = _info_rows.get(spec.sheet_name)
+    if not info_text:
+        info_text = "INFO: Add new data columns as needed by right clicking on the column name and then selecting 'Insert columns before'."
+    if info_text:
+        ws.cell(row=cur_row, column=2, value=info_text)
+        cur_row += 1
+
+    # Triplet row (parameter info)
+    triplet = f"parameter: {pname} | data type: {dtype}"
+    if desc:
+        triplet += f" | description: {desc}"
+    ws.cell(row=cur_row, column=2, value=triplet)
+    cur_row += 1
+
+    # Entity row
+    ws.cell(row=cur_row, column=2, value=entity_label)
+    for col_idx, (alt, byname, _arr) in enumerate(columns, start=3):
+        ws.cell(row=cur_row, column=col_idx, value=str(_to_native(byname[0])))
+    cur_row += 1
+
+    # Alternative row — this is the last header row; put index: label in A
+    ws.cell(row=cur_row, column=1, value="index:")
+    ws.cell(row=cur_row, column=2, value="alternative")
+    for col_idx, (alt, byname, _arr) in enumerate(columns, start=3):
+        ws.cell(row=cur_row, column=col_idx, value=alt)
+    cur_row += 1
+
+    # Data rows — index numbers in column A, values in columns C+
+    n_index_rows = max(30, max_array_len)
+    index_start_row = cur_row
+
+    for idx in range(n_index_rows):
+        row = index_start_row + idx
+        ws.cell(row=row, column=1, value=idx)
+        for col_idx, (alt, byname, arr) in enumerate(columns, start=3):
+            if idx < len(arr):
+                ws.cell(row=row, column=col_idx, value=arr[idx])
+
+    # Formatting — build row_types based on actual row positions
+    n_header_rows = index_start_row - 1
+    row_types: dict[int, str] = {}
+    r = 1
+    if info_text:
+        # INFO row has no special formatting type (plain text)
+        r += 1
+    row_types[r] = "param_info"  # triplet row
+    r += 1
+    row_types[r] = "entity"
+    r += 1
+    row_types[r] = "alternative"
+
+    arr_last_data_col = max(len(columns) + 2, 3)
+    format_timeseries_sheet_v2(ws, n_header_rows, single_param=True,
+                               row_types=row_types, last_data_col=arr_last_data_col)
+
+    # Column A: green index fill (header + data + 100 extra rows)
+    from openpyxl.formatting.rule import CellIsRule
+    extend_end = index_start_row + n_index_rows + 100
+    ws.cell(row=n_header_rows, column=1).fill = FILL_INDEX_HEADER
+    ws.conditional_formatting.add(
+        f"A{index_start_row}:A{extend_end}",
+        CellIsRule(operator="notEqual", formula=['"§§§NEVER§§§"'],
+                   fill=FILL_INDEX_DATA),
+    )
+    # Column B: grey definition column fill for data rows
+    ws.conditional_formatting.add(
+        f"B{index_start_row}:B{extend_end}",
+        CellIsRule(operator="notEqual", formula=['"§§§NEVER§§§"'],
+                   fill=FILL_DEF_COL),
+    )
+
+    add_navigate_link(ws)  # always A1
+    auto_column_width(ws)
 
 
 # ---------------------------------------------------------------------------
@@ -1248,6 +1384,44 @@ def write_navigate_sheet(
 
         # Blank separator row after each group
         current_row += 1
+
+    # --- Sheet mappings section (documents multi-mapping entity classes) ---
+    mapping_specs = [s for s in all_specs
+                     if s.direction_map and len(s.entity_classes) > 1
+                     and s.sheet_name in existing_sheets]
+    if mapping_specs:
+        current_row += 1
+        header_fill = PatternFill(patternType="solid", fgColor="BDD7EE")
+        ws.cell(row=current_row, column=1, value="Sheet mappings")
+        ws.cell(row=current_row, column=1).fill = header_fill
+        ws.cell(row=current_row, column=2, value="Entity classes")
+        ws.cell(row=current_row, column=2).fill = header_fill
+        ws.cell(row=current_row, column=3, value="Filter column")
+        ws.cell(row=current_row, column=3).fill = header_fill
+        ws.cell(row=current_row, column=4, value="Filter value")
+        ws.cell(row=current_row, column=4).fill = header_fill
+        ws.cell(row=current_row, column=5, value="Dimensions")
+        ws.cell(row=current_row, column=5).fill = header_fill
+        ws.cell(row=current_row, column=6, value="Orientation")
+        ws.cell(row=current_row, column=6).fill = header_fill
+        current_row += 1
+
+        seen_sheets: set[str] = set()
+        for spec in mapping_specs:
+            if spec.sheet_name in seen_sheets:
+                continue
+            seen_sheets.add(spec.sheet_name)
+
+            orientation = "rows" if spec.layout == "timeseries" else "columns"
+            for cls_name, direction_val in spec.direction_map.items():
+                ws.cell(row=current_row, column=1, value=spec.sheet_name)
+                ws.cell(row=current_row, column=2, value=cls_name)
+                ws.cell(row=current_row, column=3, value=spec.direction_column)
+                ws.cell(row=current_row, column=4, value=direction_val)
+                dims = ", ".join(spec.entity_columns)
+                ws.cell(row=current_row, column=5, value=dims)
+                ws.cell(row=current_row, column=6, value=orientation)
+                current_row += 1
 
     auto_column_width(ws)
 
@@ -1420,37 +1594,21 @@ def _get_param_description(
 def _build_entity_def_label(spec: SheetSpec) -> str:
     """Build the 'entity: ...' definition label for the definition row.
 
-    For single-class single-dim: 'entity: node'
-    For single-class multi-dim:  'entity: commodity, node'
-    For merged classes (direction_column): 'entity: (cls1: (dim1, dim2), cls2: (dim1, dim2))'
+    Always uses simplified form with just dimension names.
+    Full multi-mapping details are on the navigate sheet.
     """
-    if spec.direction_column and len(spec.entity_classes) > 1:
-        # Merged classes with direction — use explicit class mapping
-        parts: list[str] = []
-        for cls_name in spec.entity_classes:
-            dims = spec.entity_columns
-            if len(dims) == 1:
-                parts.append(f"{cls_name}: {dims[0]}")
-            else:
-                dim_str = ", ".join(dims)
-                parts.append(f"{cls_name}: ({dim_str})")
-        return f"entity: ({', '.join(parts)})"
-    else:
-        # Simple: single class or multi-dim
-        return f"entity: {', '.join(spec.entity_columns)}"
+    return f"entity: {', '.join(spec.entity_columns)}"
 
 
 def _build_filter_label(spec: SheetSpec) -> str | None:
-    """Build the 'filter: ...' label for merged classes with direction.
+    """Build the filter column label.
 
-    Returns 'filter: (cls1: ^input$, cls2: ^output$)' or None.
+    Returns the direction_column name (e.g. 'input_output') or None.
+    Full mapping details are on the navigate sheet.
     """
     if not spec.direction_column or not spec.direction_map:
         return None
-    parts: list[str] = []
-    for cls_name, direction_val in spec.direction_map.items():
-        parts.append(f"{cls_name}: ^{direction_val}$")
-    return f"filter: ({', '.join(parts)})"
+    return spec.direction_column
 
 
 def _add_data_validation(
@@ -1473,9 +1631,30 @@ def _add_data_validation(
 
     from openpyxl.utils import get_column_letter
 
+    # Entity existence column gets TRUE/FALSE dropdown
+    if ea_offset > 0:
+        ee_col = def_col + 1
+        dv_ee = DataValidation(
+            type="list",
+            formula1='",TRUE,FALSE"',
+            allow_blank=True,
+            showDropDown=False,
+        )
+        dv_ee.error = "Select TRUE or FALSE"
+        dv_ee.errorTitle = "Entity existence"
+        ee_letter = get_column_letter(ee_col)
+        dv_ee.sqref = f"{ee_letter}4:{ee_letter}{last_row}"
+        ws.add_data_validation(dv_ee)
+
     for i, pname in enumerate(param_names):
         col = def_col + 1 + ea_offset + i
         values = _get_param_value_list(pname, spec.entity_classes, db_contents)
+
+        # Boolean (array) params get TRUE/FALSE dropdown
+        dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="constant")
+        if dtype == "boolean (array)" and not values:
+            values = ["TRUE", "FALSE"]
+
         if not values:
             continue
         # Add empty choice so user can clear a selection
@@ -1485,7 +1664,7 @@ def _add_data_validation(
             type="list",
             formula1=f'"{formula}"',
             allow_blank=True,
-            showDropDown=False,  # False means show it (confusing openpyxl API)
+            showDropDown=False,
         )
         dv.error = f"Value must be one of: {', '.join(values)}"
         dv.errorTitle = f"Invalid {pname}"
@@ -1496,6 +1675,8 @@ def _add_data_validation(
 
 # Period-only params from settings, set by export_to_excel.
 _period_only_params: dict[str, list[str]] = {}
+_time_structure_classes: set[str] = set()
+_info_rows: dict[str, str] = {}
 
 
 def _is_param_valid_for_layout(
@@ -1604,15 +1785,17 @@ def _write_param_reference(
                 # entity row: leave empty
 
     # ------------------------------------------------------------------
-    # Convenience section (parameter name | description)
+    # Convenience section (parameter | data type | description)
     # ------------------------------------------------------------------
     conv_row = header_row + 2  # one empty row after header
 
     # Header
     ws.cell(row=conv_row, column=ref_col, value="Parameter")
     ws.cell(row=conv_row, column=ref_col).fill = FILL_PARAM_HEADER
-    ws.cell(row=conv_row, column=ref_col + 1, value="Description")
+    ws.cell(row=conv_row, column=ref_col + 1, value="Data type")
     ws.cell(row=conv_row, column=ref_col + 1).fill = FILL_PARAM_HEADER
+    ws.cell(row=conv_row, column=ref_col + 2, value="Description")
+    ws.cell(row=conv_row, column=ref_col + 2).fill = FILL_PARAM_HEADER
 
     max_name_len = len("Parameter")
     for i, pdef in enumerate(pdefs):
@@ -1621,14 +1804,19 @@ def _write_param_reference(
         ws.cell(row=row, column=ref_col, value=name)
         if len(name) > max_name_len:
             max_name_len = len(name)
+        dtype = _get_param_data_type(name, spec.entity_classes, db_contents, layout=layout)
+        ws.cell(row=row, column=ref_col + 1, value=dtype)
         desc = pdef.get("description")
         if desc:
-            ws.cell(row=row, column=ref_col + 1, value=desc)
+            ws.cell(row=row, column=ref_col + 2, value=desc)
 
-    # Size the parameter name column to fit the widest name
+    # Size the parameter name column and data type column
     from openpyxl.utils import get_column_letter
     col_letter = get_column_letter(ref_col)
     ws.column_dimensions[col_letter].width = max_name_len + 2
+    # Data type column: 50% wider than param name column
+    dt_col_letter = get_column_letter(ref_col + 1)
+    ws.column_dimensions[dt_col_letter].width = int((max_name_len + 2) * 1.5)
 
 
 def _lock_metadata_cells(
@@ -1702,8 +1890,10 @@ def write_constant_sheet_v2(
 
     # Filter column for direction
     filter_label = _build_filter_label(spec)
+    filter_col_pos: int | None = None
     if filter_label:
         left_cols.append(filter_label)
+        filter_col_pos = len(left_cols)  # 1-based
 
     # Unpack index column
     index_col_positions: set[int] = set()
@@ -1840,19 +2030,39 @@ def write_constant_sheet_v2(
         + (1 if filter_label else 0)
         + (1 if spec.unpack_index_column else 0)
     )
-    format_constant_sheet_v2(ws, n_entity_cols, n_extra, def_col, index_col_positions)
+    format_constant_sheet_v2(ws, n_entity_cols, n_extra, def_col, index_col_positions, last_data_col)
     add_navigate_link(ws)
 
     # --- Data validation (dropdown lists) for parameters with value lists ---
     _add_data_validation(ws, all_params, def_col, ea_offset, spec, db_contents,
                          max_data_rows=max(len(data_rows), 1) + 3)
 
+    # --- Filter dropdown for merged classes ---
+    if filter_col_pos is not None and spec.direction_map:
+        from openpyxl.worksheet.datavalidation import DataValidation
+        from openpyxl.utils import get_column_letter
+        filter_values = sorted(set(spec.direction_map.values()))
+        filter_list = ",".join([""] + filter_values)
+        dv_filter = DataValidation(
+            type="list",
+            formula1=f'"{filter_list}"',
+            allow_blank=True,
+            showDropDown=False,
+        )
+        dv_filter.error = f"Select: {', '.join(filter_values)}"
+        dv_filter.errorTitle = spec.direction_column or "Filter"
+        cl = get_column_letter(filter_col_pos)
+        last_row = max(len(data_rows) + 3, 504)
+        dv_filter.sqref = f"{cl}4:{cl}{last_row}"
+        ws.add_data_validation(dv_filter)
+
     auto_column_width(ws, min_param_width=_min_param_width,
                       non_param_width=_non_param_width,
                       def_col_width=_def_col_width,
                       index_col_width=_index_col_width,
                       header_row=3, def_col=def_col,
-                      index_cols=index_col_positions)
+                      index_cols=index_col_positions,
+                      last_data_col=last_data_col)
 
     # --- Lock metadata ---
     _lock_metadata_cells(
@@ -1918,7 +2128,7 @@ def _collect_constant_rows_v2(
                     ea_key = (entity_class, entity_byname, alt)
                     ea_val = db_contents.entity_alternatives.get(ea_key)
                     if ea_val is not None:
-                        cells.append((ea_data_col, ea_val))
+                        cells.append((ea_data_col, "TRUE" if ea_val else "FALSE"))
 
                 # Parameter values — check for Arrays
                 param_values: dict[str, Any] = {}
@@ -2178,7 +2388,9 @@ def write_periodic_sheet_v2(
                         is_nested = any(_is_map(mv) for mv in value.values)
                         if is_nested:
                             continue
-                        if _is_time_indexed_map(value):
+                        # Skip time-indexed maps on periodic sheets — unless
+                        # the entity class defines time structure itself
+                        if _is_time_indexed_map(value) and entity_class not in _time_structure_classes:
                             continue
                         param_maps[pname] = value
                         for idx in value.indexes:
@@ -2187,8 +2399,22 @@ def write_periodic_sheet_v2(
                         period_names = [str(_to_native(v)) for v in value.values]
                         param_arrays[pname] = period_names
 
+                # If no Map indexes but we have Array values, use the array
+                # values as indexes (they contain period names)
+                if not all_indexes and param_arrays:
+                    for arr_vals in param_arrays.values():
+                        all_indexes.update(arr_vals)
+
                 if not all_indexes:
                     continue
+
+                # Build dict lookups from Maps for O(1) access (avoids O(n²))
+                param_map_dicts: dict[str, dict[str, Any]] = {}
+                for pname, m in param_maps.items():
+                    param_map_dicts[pname] = {
+                        str(_to_native(mi)): _to_native(mv)
+                        for mi, mv in zip(m.indexes, m.values)
+                    }
 
                 for idx_val in sorted(all_indexes):
                     cells: list[tuple[int, Any]] = []
@@ -2205,15 +2431,14 @@ def write_periodic_sheet_v2(
                     cells.append((index_data_col, idx_val))
 
                     for pname in spec.parameter_names:
-                        m = param_maps.get(pname)
-                        if m is not None:
-                            for mi, mv in zip(m.indexes, m.values):
-                                if str(_to_native(mi)) == idx_val:
-                                    cells.append((param_col_map[pname], _to_native(mv)))
-                                    break
+                        md = param_map_dicts.get(pname)
+                        if md is not None:
+                            val = md.get(idx_val)
+                            if val is not None:
+                                cells.append((param_col_map[pname], val))
                         elif pname in param_arrays:
                             if idx_val in param_arrays[pname]:
-                                cells.append((param_col_map[pname], True))
+                                cells.append((param_col_map[pname], "TRUE"))
 
                     data_rows.append(cells)
 
@@ -2241,14 +2466,15 @@ def write_periodic_sheet_v2(
         (1 if filter_label else 0)
         + 1  # index column
     )
-    format_periodic_sheet_v2(ws, n_entity_cols, n_extra, def_col, {index_col_pos})
+    format_periodic_sheet_v2(ws, n_entity_cols, n_extra, def_col, {index_col_pos}, last_data_col)
     add_navigate_link(ws)
     auto_column_width(ws, min_param_width=_min_param_width,
                       non_param_width=_non_param_width,
                       def_col_width=_def_col_width,
                       index_col_width=_index_col_width,
                       header_row=3, def_col=def_col,
-                      index_cols={index_col_pos})
+                      index_cols={index_col_pos},
+                      last_data_col=last_data_col)
 
     # --- Lock metadata ---
     _lock_metadata_cells(
@@ -2312,13 +2538,18 @@ def write_timeseries_sheet_v2(
     entity_label = _build_entity_def_label(spec)
 
     # ── Build header rows following canonical order ───────────────
-    # Each entry: (label_for_B, type_tag, data_getter)
-    # type_tag is used for formatting colors.
     row_types: dict[int, str] = {}
     cur_row = 1
 
+    # INFO row for all transposed sheets
+    info_text = _info_rows.get(spec.sheet_name)
+    if not info_text:
+        info_text = "INFO: Add new data columns as needed by right clicking on the column name and then selecting 'Insert columns before'."
+    ws.cell(row=cur_row, column=2, value=info_text)
+    cur_row += 1
+
     if single_param:
-        # Triplet row: combined parameter | data_type | description in B1
+        # Triplet row: combined parameter | data_type | description
         default_param = spec.parameter_names[0]
         dtype = _get_param_data_type(default_param, spec.entity_classes, db_contents, layout="timeseries")
         desc = _get_param_description(default_param, spec.entity_classes, db_contents) or ""
@@ -2328,47 +2559,35 @@ def write_timeseries_sheet_v2(
         ws.cell(row=cur_row, column=2, value=triplet)
         row_types[cur_row] = "param_info"
         cur_row += 1
-    else:
-        # description row
-        ws.cell(row=cur_row, column=2, value="description")
-        for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
-            d = _get_param_description(pname, spec.entity_classes, db_contents)
-            if d:
-                ws.cell(row=cur_row, column=col_idx, value=d)
-        row_types[cur_row] = "description"
-        cur_row += 1
 
-        # data_type row
-        ws.cell(row=cur_row, column=2, value="data type")
-        for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
-            dt = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="timeseries")
-            ws.cell(row=cur_row, column=col_idx, value=dt)
-        row_types[cur_row] = "data_type"
-        cur_row += 1
-
-    # entity row (class definition label)
-    ws.cell(row=cur_row, column=2, value=entity_label)
+    # entity row — simplified label (just dimension names, not full mapping)
     if n_entity_dims <= 1:
+        simple_label = f"entity: {spec.entity_columns[0]}"
+        ws.cell(row=cur_row, column=2, value=simple_label)
         for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
             if byname:
                 ws.cell(row=cur_row, column=col_idx, value=str(_to_native(byname[0])))
-    row_types[cur_row] = "entity"
-    cur_row += 1
-
-    # entity_dims rows (for multi-dim entities: one row per extra dimension)
-    if n_entity_dims > 1:
+        row_types[cur_row] = "entity"
+        cur_row += 1
+    else:
+        # Multi-dim: one row per dimension
         for dim_idx in range(n_entity_dims):
-            ws.cell(row=cur_row, column=2, value=spec.entity_columns[dim_idx])
+            if dim_idx == 0:
+                ws.cell(row=cur_row, column=2, value=f"entity: {', '.join(spec.entity_columns)}")
+            else:
+                ws.cell(row=cur_row, column=2, value=spec.entity_columns[dim_idx])
             for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
                 if dim_idx < len(byname):
                     ws.cell(row=cur_row, column=col_idx, value=str(_to_native(byname[dim_idx])))
             row_types[cur_row] = "entity"
             cur_row += 1
 
-    # filter row (for merged classes with direction)
+    # filter row (for merged classes with direction) — simple label + dropdown
+    filter_row_num = None
     if has_direction:
-        filter_label = _build_filter_label(spec)
-        ws.cell(row=cur_row, column=2, value=filter_label or spec.direction_column)
+        filter_row_num = cur_row
+        ws.cell(row=cur_row, column=2, value=spec.direction_column)
+        filter_values = sorted(set(spec.direction_map.values()))
         for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
             direction = _get_direction(ec, spec)
             if direction:
@@ -2384,7 +2603,9 @@ def write_timeseries_sheet_v2(
     cur_row += 1
 
     # parameter row (multi-param only)
+    param_row_num = None
     if not single_param:
+        param_row_num = cur_row
         ws.cell(row=cur_row, column=2, value="parameter")
         for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
             ws.cell(row=cur_row, column=col_idx, value=pname)
@@ -2414,24 +2635,77 @@ def write_timeseries_sheet_v2(
 
     add_navigate_link(ws)
 
-    # ── Reference sections ────────────────────────────────────────
+    # ── Reference section (two-column gap, no triplet) ──────────
     last_data_col = max(len(columns) + 2, 3)
+    # Extend coloring to include the two-column gap before convenience
+    color_end_col = last_data_col + 2
     _write_param_reference(
-        ws, last_data_col + 1, spec, db_contents, header_row=n_header_rows,
+        ws, color_end_col, spec, db_contents, header_row=n_header_rows,
         n_data_rows=len(sorted_times), layout="timeseries",
         shown_params=list(spec.parameter_names),
-        row_types=row_types if not single_param else None,
     )
 
-    # ── Formatting ────────────────────────────────────────────────
+    # ── Dropdowns ─────────────────────────────────────────────────
+    from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.utils import get_column_letter
+
+    # Parameter dropdown for multi-param transposed sheets
+    if param_row_num is not None and len(spec.parameter_names) > 1:
+        param_list = ",".join([""] + list(spec.parameter_names))
+        dv = DataValidation(
+            type="list",
+            formula1=f'"{param_list}"',
+            allow_blank=True,
+            showDropDown=False,
+        )
+        dv.error = "Select a parameter"
+        dv.errorTitle = "Parameter"
+        first_col = get_column_letter(3)
+        last_col = get_column_letter(color_end_col)
+        dv.sqref = f"{first_col}{param_row_num}:{last_col}{param_row_num}"
+        ws.add_data_validation(dv)
+
+    # Filter dropdown for merged classes (input/output etc.)
+    if filter_row_num is not None and has_direction:
+        filter_values = sorted(set(spec.direction_map.values()))
+        filter_list = ",".join([""] + filter_values)
+        dv_filter = DataValidation(
+            type="list",
+            formula1=f'"{filter_list}"',
+            allow_blank=True,
+            showDropDown=False,
+        )
+        dv_filter.error = f"Select: {', '.join(filter_values)}"
+        dv_filter.errorTitle = spec.direction_column
+        first_col = get_column_letter(3)
+        last_col = get_column_letter(color_end_col)
+        dv_filter.sqref = f"{first_col}{filter_row_num}:{last_col}{filter_row_num}"
+        ws.add_data_validation(dv_filter)
+
+    # ── Formatting (extend to color_end_col to cover gap) ─────────
     format_timeseries_sheet_v2(ws, n_header_rows, single_param=single_param,
-                               row_types=row_types)
+                               row_types=row_types, last_data_col=color_end_col)
+
+    # Column A: index fill (green, consistent with other index columns)
+    from openpyxl.formatting.rule import CellIsRule
+    data_end = max(n_header_rows + len(sorted_times), n_header_rows + 1) + 100
+    ws.cell(row=n_header_rows, column=1).fill = FILL_INDEX_HEADER
+    ws.conditional_formatting.add(
+        f"A{n_header_rows + 1}:A{data_end}",
+        CellIsRule(operator="notEqual", formula=['"§§§NEVER§§§"'], fill=FILL_INDEX_DATA),
+    )
+    # Column B: dark grey definition column
+    ws.conditional_formatting.add(
+        f"B{n_header_rows + 1}:B{data_end}",
+        CellIsRule(operator="notEqual", formula=['"§§§NEVER§§§"'], fill=FILL_DEF_COL),
+    )
 
     auto_column_width(ws, min_param_width=_min_param_width,
                       non_param_width=_non_param_width,
                       def_col_width=_def_col_width,
                       index_col_width=_index_col_width,
-                      header_row=n_header_rows, def_col=3)
+                      header_row=n_header_rows, def_col=3,
+                      last_data_col=last_data_col)
 
     _lock_metadata_cells(
         ws, meta_rows=n_header_rows, meta_cols=2,

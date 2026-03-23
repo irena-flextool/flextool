@@ -11,6 +11,7 @@ from flextool.export_to_tabular.db_reader import DatabaseContents, read_database
 from flextool.export_to_tabular.sheet_config import SheetSpec, build_sheet_specs, load_settings
 from flextool.export_to_tabular.excel_writer import (
     IndexClassifier,
+    write_array_transposed_sheet_v2,
     write_constant_sheet,
     write_constant_sheet_v2,
     write_link_sheet,
@@ -64,8 +65,9 @@ def export_to_excel(
     print(f"Reading database: {db_url}")
     db_contents: DatabaseContents = read_database(db_url)
 
-    # 1b. Build index classifier for time vs period detection
+    # 1b. Build index classifier and entity alternatives index
     _ew._index_classifier = IndexClassifier(db_contents)
+    _ew._build_entity_alts_index(db_contents)
 
     # 2. Load settings and build ordered sheet specifications
     print("Building sheet specifications...")
@@ -78,14 +80,31 @@ def export_to_excel(
     _ew._def_col_width = settings.get("definition_column_width", 11)
     _ew._index_col_width = settings.get("index_column_width", 12)
     _ew._period_only_params = settings.get("period_only_params", {})
+    _ew._time_structure_classes = set(settings.get("time_structure_classes", []))
     specs: list[SheetSpec] = build_sheet_specs(db_contents, settings)
     navigate_groups: list[dict[str, Any]] = settings.get("navigate_groups", [])
     tab_color_map = _build_tab_color_map(navigate_groups) if navigate_groups else {}
 
-    # Filter out advanced sheets unless requested
+    # Filter out advanced sheets unless requested OR they have data
     advanced_sheets: set[str] = set(settings.get("advanced_sheets", []))
     if not include_advanced:
-        specs = [s for s in specs if s.sheet_name not in advanced_sheets]
+        # Pre-build a set of (class, param) pairs that have data for fast lookup
+        _data_keys: set[tuple[str, str]] = set()
+        for (cls, _bn, pn, _alt) in db_contents.parameter_values:
+            _data_keys.add((cls, pn))
+
+        def _has_data(spec: SheetSpec) -> bool:
+            for cls in spec.entity_classes:
+                for pn in spec.parameter_names:
+                    if (cls, pn) in _data_keys:
+                        return True
+            return False
+
+        specs = [s for s in specs
+                 if s.sheet_name not in advanced_sheets or _has_data(s)]
+
+    # Load info rows setting
+    _ew._info_rows = settings.get("info_rows", {})
 
     # 3. Create the workbook
     wb = Workbook()
@@ -104,7 +123,18 @@ def export_to_excel(
 
         if layout == "constant":
             if use_new_format:
-                write_constant_sheet_v2(ws, spec, db_contents)
+                # Check if this is a pure-array sheet (model_solve_sequence etc.)
+                _is_array_sheet = (
+                    len(spec.parameter_names) == 1
+                    and _ew._get_param_data_type(
+                        spec.parameter_names[0], spec.entity_classes,
+                        db_contents, layout="constant",
+                    ) == "boolean (array)"
+                )
+                if _is_array_sheet:
+                    write_array_transposed_sheet_v2(ws, spec, db_contents)
+                else:
+                    write_constant_sheet_v2(ws, spec, db_contents)
             else:
                 write_constant_sheet(ws, spec, db_contents)
         elif layout == "periodic":

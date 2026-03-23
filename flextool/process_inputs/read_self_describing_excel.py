@@ -157,6 +157,11 @@ def _actual_max_row(ws: Worksheet) -> int:
     return max_r
 
 
+def _is_info_row(text: str) -> bool:
+    """Check if text is an INFO row (to be skipped by the reader)."""
+    return text.upper().startswith("INFO:")
+
+
 def _is_keyword(text: str) -> bool:
     """Check if text starts with a recognised keyword."""
     t = text.lower()
@@ -482,19 +487,22 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
     meta = SheetMetadata(sheet_name=ws.title, is_transposed=True)
     max_row = _actual_max_row(ws)
 
-    # Scan column A for "index:" definition
+    # Scan column A for "index:" definition (skip INFO rows)
     for r in range(min(10, max_row)):
         val = _cell_value(ws, r, 0)
+        if _is_info_row(val):
+            continue
         if val.lower().startswith("index:"):
             meta.index_name = _parse_index_def(val)
             meta.index_col_transposed = 0
             meta.data_start_row = r + 1
-            # In practice, data starts from the row AFTER the last metadata row
-            # but this row also marks the last header row if it has the index def
 
-    # Scan column B for row role definitions
+    # Scan column B for row role definitions (skip INFO rows)
     label_col = 1  # column B
     for r in range(min(10, max_row)):
+        val_a = _cell_value(ws, r, 0)
+        if _is_info_row(val_a):
+            continue
         val = _cell_value(ws, r, label_col)
         if not val:
             continue
@@ -618,11 +626,16 @@ def detect_and_parse_sheet(ws: Worksheet) -> tuple[SheetMetadata | None, bool]:
     if _is_scenario_sheet(ws):
         return SheetMetadata(sheet_name=ws.title), True
 
-    # Check for transposed sheet first: "alternative" or "parameter" in column B (row 0-2)
+    # Check for transposed sheet first: "alternative" or "parameter" in column B (row 0-4)
     for r in range(min(5, _actual_max_row(ws))):
+        val_a = _cell_value(ws, r, 0)
+        if val_a and _is_info_row(val_a):
+            continue  # skip INFO rows
         val_b = _cell_value(ws, r, 1)  # column B
-        if val_b and val_b.lower() in ("alternative", "parameter"):
-            return parse_transposed_sheet_metadata(ws), False
+        if val_b:
+            vl = val_b.lower()
+            if vl in ("alternative", "parameter") or vl.startswith("parameter:"):
+                return parse_transposed_sheet_metadata(ws), False
 
     # Check for standard sheet (has keywords like "description" in row 1)
     for c in range(2, min(20, ws.max_column or 1)):  # start at col C (skip A=navigate, B)
@@ -723,8 +736,6 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
     for r in range(meta.data_start_row, max_row):
         # Read alternative
         alt = _cell_value(ws, r, meta.alt_col) if meta.alt_col is not None else None
-        if not alt:
-            continue  # skip empty rows
 
         # Read entity byname
         if entity_col is not None:
@@ -778,6 +789,7 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
                 entity_existence = ee_val.lower() in ("1", "true", "yes")
 
         # Read parameter values
+        row_has_data = False
         for c, pname in meta.param_cols.items():
             if pname == ENTITY_EXISTENCE:
                 continue  # already handled
@@ -799,6 +811,7 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
                 "index_name": meta.index_name,
             }
             data.records.append(record)
+            row_has_data = True
 
         # Add entity existence record
         if entity_existence is not None:
@@ -808,6 +821,20 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
                 "entity_byname": entity_byname,
                 "param_name": ENTITY_EXISTENCE,
                 "value": entity_existence,
+                "index_value": None,
+                "index_name": None,
+            })
+            row_has_data = True
+
+        # Create entity-only record if no data was found for this row
+        # (ensures data-less entities are still imported)
+        if not row_has_data and entity_byname:
+            data.records.append({
+                "alternative": alt or "",
+                "entity_class": entity_class.class_name,
+                "entity_byname": entity_byname,
+                "param_name": "",
+                "value": None,
                 "index_value": None,
                 "index_name": None,
             })
