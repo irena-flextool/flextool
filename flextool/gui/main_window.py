@@ -96,11 +96,9 @@ class MainWindow(tk.Tk):
         style.configure("Treeview", rowheight=row_height)
 
         # ── Custom button styles for visual highlighting ──────────
-        style.configure("Green.TButton", background="#4CAF50")
-        style.map(
-            "Green.TButton",
-            background=[("active", "#66BB6A"), ("disabled", "#4CAF50")],
-        )
+        # Note: Accent.TButton is built into sv_ttk and reliably renders
+        # as a visually prominent button.  The old Green.TButton approach
+        # did not work because sv_ttk ignores ttk background overrides.
         style.configure("Grey.TButton", foreground="#888888")
         style.map(
             "Grey.TButton",
@@ -548,7 +546,7 @@ class MainWindow(tk.Tk):
             self._switch_project(recent)
         else:
             # No valid recent project -- highlight Project menu and show dialog
-            self.project_menu_btn.configure(style="Green.TButton")
+            self.project_menu_btn.configure(style="Accent.TButton")
             self.after(100, self._show_project_dialog_if_needed)
 
     def _show_project_dialog_if_needed(self) -> None:
@@ -1028,9 +1026,14 @@ class MainWindow(tk.Tk):
         self._update_input_button_states()
 
     def _update_add_button_style(self, no_sources: bool) -> None:
-        """Highlight the Add button in green when there are no input sources."""
+        """Highlight the Add button when there are no input sources.
+
+        Uses sv_ttk's built-in Accent.TButton style which reliably renders
+        as a visually prominent button (Green.TButton background is ignored
+        by the Sun Valley theme engine).
+        """
         if no_sources:
-            self.add_source_btn.configure(style="Green.TButton")
+            self.add_source_btn.configure(style="Accent.TButton")
         else:
             self.add_source_btn.configure(style="TButton")
 
@@ -1043,7 +1046,7 @@ class MainWindow(tk.Tk):
                 has_checked = True
                 break
         if has_checked:
-            self.add_to_execution_btn.configure(style="Green.TButton")
+            self.add_to_execution_btn.configure(style="Accent.TButton")
         else:
             self.add_to_execution_btn.configure(style="TButton")
 
@@ -1053,7 +1056,7 @@ class MainWindow(tk.Tk):
         if self.execution_mgr is not None:
             has_jobs = len(self.execution_mgr.get_jobs()) > 0
         if has_jobs:
-            self.execution_menu_btn.configure(style="Green.TButton")
+            self.execution_menu_btn.configure(style="Accent.TButton")
         else:
             self.execution_menu_btn.configure(style="TButton")
 

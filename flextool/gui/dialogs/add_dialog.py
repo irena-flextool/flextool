@@ -12,6 +12,9 @@ from flextool.gui.project_utils import get_projects_dir
 
 logger = logging.getLogger(__name__)
 
+# Default name for the alternative created during old FlexTool import
+_OLD_FLEX_ALTERNATIVE = "base"
+
 
 class AddDialog(tk.Toplevel):
     """Modal dialog for adding input source files to a project.
@@ -41,7 +44,7 @@ class AddDialog(tk.Toplevel):
         lh: int = default_font.metrics("linespace")
 
         # ── Dialog size ─────────────────────────────────────────────
-        self.geometry(f"{self._cw * 55}x{lh * 20}")
+        self.geometry(f"{self._cw * 55}x{lh * 25}")
         self.resizable(False, False)
 
         self._build_widgets()
@@ -123,6 +126,19 @@ class AddDialog(tk.Toplevel):
             sqlite_row, text="Add", command=self._on_add_sqlite
         )
         sqlite_add_btn.pack(side="right")
+
+        # ── Convert from old FlexTool section ─────────────────────────
+        old_frame = ttk.LabelFrame(
+            self, text="Convert from FlexTool 2.0 input file", padding=8
+        )
+        old_frame.pack(fill="x", **pad)
+
+        convert_btn = ttk.Button(
+            old_frame,
+            text="Choose file and convert...",
+            command=self._on_convert_old_flextool,
+        )
+        convert_btn.pack(fill="x")
 
         # ── Close button (very bottom) ───────────────────────────────
         close_frame = ttk.Frame(self)
@@ -325,6 +341,128 @@ class AddDialog(tk.Toplevel):
         messagebox.showinfo(
             "Done",
             f"Created '{filename}' in input_sources.",
+            parent=self,
+        )
+
+    def _on_convert_old_flextool(self) -> None:
+        """Open a file chooser for an old FlexTool .xlsm, convert to Spine DB."""
+        initial_dir = Path.home()
+
+        # Determine dialog size from the main window (same as choose-and-copy)
+        try:
+            root = self.winfo_toplevel()
+            main_window_width = root.winfo_width()
+            screen_height = root.winfo_screenheight()
+        except Exception:
+            main_window_width = 700
+            screen_height = 800
+
+        picker = FilePickerDialog(
+            self,
+            title="Select old FlexTool input file",
+            initialdir=str(initial_dir),
+            filetypes=[
+                ("Old FlexTool Excel", "*.xlsm *.xlsx"),
+                ("All files", "*"),
+            ],
+            multiple=False,
+            width=main_window_width,
+            height=int(screen_height * 0.75),
+        )
+        filepath = picker.result
+        if not filepath:
+            return
+
+        filepath = Path(filepath)
+        dest_name = filepath.stem + ".sqlite"
+        dest = self._input_dir / dest_name
+
+        if dest.exists():
+            overwrite = messagebox.askyesno(
+                "File exists",
+                f"'{dest_name}' already exists in input_sources.\n"
+                "Do you want to overwrite it?",
+                parent=self,
+            )
+            if not overwrite:
+                return
+            # Remove the existing file so initialize_database can create fresh
+            try:
+                dest.unlink()
+            except OSError as exc:
+                messagebox.showerror(
+                    "Error",
+                    f"Could not remove existing file:\n{exc}",
+                    parent=self,
+                )
+                return
+
+        # Locate the FlexTool template for creating a new database
+        json_template = (
+            self._flextool_root / "version" / "flextool_template_master.json"
+        )
+        if not json_template.exists():
+            messagebox.showerror(
+                "Template missing",
+                f"Cannot find template:\n{json_template}",
+                parent=self,
+            )
+            return
+
+        # Show busy cursor during conversion
+        self.config(cursor="watch")
+        self.update()
+
+        try:
+            # Step 1: Create empty Spine DB from template
+            from flextool.update_flextool.initialize_database import (
+                initialize_database,
+            )
+            initialize_database(str(json_template), str(dest))
+
+            # Step 2: Read old FlexTool data
+            from flextool.process_inputs.read_old_flextool import (
+                read_old_flextool,
+            )
+            data = read_old_flextool(str(filepath))
+
+            # Step 3: Write to the new database
+            from flextool.process_inputs.write_old_flextool_to_db import (
+                write_old_flextool_to_db,
+            )
+            db_url = f"sqlite:///{dest}"
+            write_old_flextool_to_db(
+                data, db_url, alternative_name=_OLD_FLEX_ALTERNATIVE
+            )
+
+        except ImportError as exc:
+            messagebox.showerror(
+                "Missing dependency",
+                f"A required package is not installed:\n{exc}",
+                parent=self,
+            )
+            # Clean up partial database
+            if dest.exists():
+                dest.unlink(missing_ok=True)
+            return
+        except Exception as exc:
+            logger.error("Old FlexTool conversion failed: %s", exc, exc_info=True)
+            messagebox.showerror(
+                "Conversion failed",
+                f"Failed to convert '{filepath.name}':\n{exc}",
+                parent=self,
+            )
+            # Clean up partial database
+            if dest.exists():
+                dest.unlink(missing_ok=True)
+            return
+        finally:
+            self.config(cursor="")
+
+        self.result = True
+        messagebox.showinfo(
+            "Done",
+            f"Converted '{filepath.name}' → '{dest_name}' in input_sources.",
             parent=self,
         )
 
