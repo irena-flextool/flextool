@@ -24,6 +24,14 @@ index_name_defaults:
   timeseries: "time"
   nested_periodic: "period"
 
+# Default index names for stochastic (nested Map) dimensions.
+# Applied when the DB index_name is empty or 'x'.
+stochastic_index_names:
+  - "forecast"
+  - "branch_time"
+  - "time"
+  - "is_realized"
+
 # Entity classes that define time structure.  Their Map parameters use timestep
 # names as indexes but should NOT be filtered out by the time-indexed check.
 time_structure_classes:
@@ -82,6 +90,8 @@ split_params:
     rolling_parameters:
       params: ["rolling_solve_jump", "rolling_solve_horizon", "rolling_duration",
                "rolling_solve_horizon_methods"]
+    solve_s_stochastic_branches:
+      params: ["stochastic_branches"]
   model:
     model:
       params: ["discount_rate",
@@ -129,6 +139,8 @@ sheet_order:
   - node_c
   - node_p
   - node_t
+  - node_s_inflow
+  - node_s_availability
   - commodity_c
   - commodity_p
   - commodity_node
@@ -138,10 +150,15 @@ sheet_order:
   - unit_c
   - unit_p
   - unit_t
+  - unit_s_availability
+  - unit_s_efficiency
+  - unit_s_min_load
   - unit_node_c
   - unit_node_p
   - unit_node_t
+  - unit_node_s
   - profile_t
+  - profile_s
   - node_profile_c
   - connection_profile_c
   - unit_node_profile_c
@@ -156,7 +173,9 @@ sheet_order:
   - reserve_group_c
   - reserve_group_p
   - reserve_group_t
+  - reserve_group_s
   - reserve_unit_node_c
+  - solve_s_stochastic_branches
   - constraint_sense_c
   - unit_node_constraint_c
   - connection_node_constraint_c
@@ -166,7 +185,7 @@ sheet_order:
   - connection_node
 
 # Navigate sheet: groups of related sheets, each row lists sheet names
-# placed across columns A (Constants), B (Periodic), C (Timeseries).
+# placed across columns A (Constants), B (Periodic), C (Timeseries), D (Stochastic).
 navigate_groups:
   - name: "Configuration"
     color: "D9D9D9"
@@ -175,7 +194,7 @@ navigate_groups:
       - [model]
       - [model_solve_sequence]
       - [model_periods_available]
-      - [solve, solve_period, solve_period_period]
+      - [solve, solve_period, solve_period_period, solve_s_stochastic_branches]
       - [rolling_parameters]
   - name: "Time"
     color: "D9D9D9"
@@ -185,17 +204,20 @@ navigate_groups:
   - name: "Core entities"
     color: "D5C2EE"
     rows:
-      - [node_c, node_p, node_t]
+      - [node_c, node_p, node_t, node_s_inflow]
+      - ["", "", "", node_s_availability]
       - [commodity_c, commodity_p]
       - [commodity_node]
       - [connection_c, connection_p, connection_t]
       - [connection_node]
-      - [unit_c, unit_p, unit_t]
-      - [unit_node_c, unit_node_p, unit_node_t]
+      - [unit_c, unit_p, unit_t, unit_s_availability]
+      - ["", "", "", unit_s_efficiency]
+      - ["", "", "", unit_s_min_load]
+      - [unit_node_c, unit_node_p, unit_node_t, unit_node_s]
   - name: "Profiles"
     color: "C5E0B4"
     rows:
-      - [profile_t]
+      - [profile_t, "", "", profile_s]
       - [node_profile_c]
       - [connection_profile_c]
       - [unit_node_profile_c]
@@ -211,7 +233,7 @@ navigate_groups:
   - name: "Reserves"
     color: "F8CBAD"
     rows:
-      - [reserve_connection_node_c, reserve_group_p, reserve_group_t]
+      - [reserve_connection_node_c, reserve_group_p, reserve_group_t, reserve_group_s]
       - [reserve_group_c]
       - [reserve_unit_node_c]
   - name: "Constraints"

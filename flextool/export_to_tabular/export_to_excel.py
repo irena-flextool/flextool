@@ -22,6 +22,7 @@ from flextool.export_to_tabular.excel_writer import (
     write_periodic_sheet,
     write_periodic_sheet_v2,
     write_scenario_sheet,
+    write_stochastic_sheet_v2,
     write_timeseries_sheet,
     write_timeseries_sheet_v2,
     write_version_sheet,
@@ -80,6 +81,8 @@ def export_to_excel(
     _ew._def_col_width = settings.get("definition_column_width", 11)
     _ew._index_col_width = settings.get("index_column_width", 12)
     _ew._period_only_params = settings.get("period_only_params", {})
+    _ew._stochastic_index_names = settings.get("stochastic_index_names",
+                                                ["forecast", "branch_time", "time", "is_realized"])
     _ew._time_structure_classes = set(settings.get("time_structure_classes", []))
     specs: list[SheetSpec] = build_sheet_specs(db_contents, settings)
     navigate_groups: list[dict[str, Any]] = settings.get("navigate_groups", [])
@@ -152,6 +155,13 @@ def export_to_excel(
                 write_timeseries_sheet_v2(ws, spec, db_contents)
             else:
                 write_timeseries_sheet(ws, spec, db_contents)
+        elif layout == "stochastic":
+            if use_new_format:
+                write_stochastic_sheet_v2(ws, spec, db_contents)
+            else:
+                # v1 has no stochastic writer — skip
+                del wb[spec.sheet_name]
+                continue
         elif layout == "link":
             if use_new_format:
                 write_link_sheet_v2(ws, spec, db_contents)

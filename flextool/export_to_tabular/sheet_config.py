@@ -342,14 +342,22 @@ def build_sheet_specs(
             sub_params = sub_rule["params"]
             # Determine layout from param types in the sub-group
             has_periodic = False
+            has_stochastic = False
             for pname in sub_params:
                 pdef = class_pdefs.get(pname)
                 if pdef:
                     type_list = pdef.get("parameter_type_list")
                     if type_list and ("1d_map" in type_list or "2d_map" in type_list):
                         has_periodic = True
+                    if type_list and ("3d_map" in type_list or "4d_map" in type_list):
+                        has_stochastic = True
 
-            layout = "periodic" if has_periodic else "constant"
+            if has_stochastic:
+                layout = "stochastic"
+            elif has_periodic:
+                layout = "periodic"
+            else:
+                layout = "constant"
 
             spec = SheetSpec(
                 sheet_name=sub_name,
@@ -474,6 +482,7 @@ def build_sheet_specs(
             "constant": [],
             "periodic": [],
             "timeseries": [],
+            "stochastic": [],
         }
         for pdef in remaining_pdefs:
             pname = pdef["name"]
@@ -484,6 +493,8 @@ def build_sheet_specs(
                 layout_params["periodic"].append(pname)
             if "timeseries" in types:
                 layout_params["timeseries"].append(pname)
+            if "stochastic" in types:
+                layout_params["stochastic"].append(pname)
             # For params with periodic capability but no 3d_map: check actual DB values
             if "periodic" in types and "timeseries" not in types:
                 if _has_time_indexed_values(db_contents, cls_name, pname):
@@ -535,6 +546,26 @@ def build_sheet_specs(
             spec._primary_class = cls_name  # type: ignore[attr-defined]
             spec._all_param_defs = remaining_param_defs  # type: ignore[attr-defined]
             specs.append(spec)
+
+        # Stochastic sheets: one per parameter
+        # Use _s when only one stochastic param, _s_paramname when multiple
+        n_stoch = len(layout_params["stochastic"])
+        for stoch_pname in layout_params["stochastic"]:
+            if n_stoch == 1:
+                sheet_nm = f"{display_name}_s"
+            else:
+                sheet_nm = f"{display_name}_s_{stoch_pname}"
+            stoch_spec = SheetSpec(
+                sheet_name=sheet_nm,
+                layout="stochastic",
+                entity_classes=[cls_name],
+                entity_columns=entity_cols,
+                has_entity_alternative=False,
+            )
+            stoch_spec._raw_params = [stoch_pname]  # type: ignore[attr-defined]
+            stoch_spec._primary_class = cls_name  # type: ignore[attr-defined]
+            stoch_spec._all_param_defs = remaining_param_defs  # type: ignore[attr-defined]
+            specs.append(stoch_spec)
 
     # ---- 5. Add special sheets ----
     specs.append(SheetSpec(

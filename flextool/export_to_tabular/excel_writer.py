@@ -1307,6 +1307,239 @@ def write_array_transposed_sheet_v2(
 
 
 # ---------------------------------------------------------------------------
+# Stochastic sheet (_s)
+# ---------------------------------------------------------------------------
+
+
+def _flatten_nested_map(
+    value: Any,
+    depth: int,
+    prefix: tuple = (),
+) -> list[tuple[tuple[str, ...], Any]]:
+    """Flatten a nested Map into (index_tuple, scalar_value) pairs.
+
+    For a 3d Map (Map of Map of Map), returns tuples of length 3.
+    For a 4d Map, length 4, etc.
+    """
+    if depth <= 1 or not _is_map(value):
+        if _is_map(value):
+            # Deepest level — expand to individual entries
+            return [(prefix + (str(_to_native(idx)),), _to_native(val))
+                    for idx, val in zip(value.indexes, value.values)]
+        else:
+            return [(prefix, _to_native(value))]
+
+    result: list[tuple[tuple[str, ...], Any]] = []
+    for idx, inner in zip(value.indexes, value.values):
+        idx_str = str(_to_native(idx))
+        result.extend(_flatten_nested_map(inner, depth - 1, prefix + (idx_str,)))
+    return result
+
+
+def _get_nested_index_names(value: Any, depth: int) -> list[str]:
+    """Extract index names from each level of a nested Map.
+
+    Falls back to stochastic_index_names defaults from settings when
+    the DB stores 'x' or empty index names.
+    """
+    names: list[str] = []
+    current = value
+    for level in range(depth):
+        if _is_map(current) and hasattr(current, "index_name"):
+            iname = current.index_name
+            if iname and iname != "x":
+                names.append(iname)
+            elif level < len(_stochastic_index_names):
+                names.append(_stochastic_index_names[level])
+            else:
+                names.append(f"index_{level + 1}")
+            if current.values:
+                current = current.values[0]
+            else:
+                break
+        else:
+            break
+    return names
+
+
+def write_stochastic_sheet_v2(
+    ws: Worksheet,
+    spec: SheetSpec,
+    db_contents: DatabaseContents,
+) -> None:
+    """Write a stochastic (_s) sheet in the v2 self-describing format.
+
+    Layout (e.g. profile_s_profile with 3d map: branch × analysis_time × time):
+        Row 1: navigate    |                    |             | parameter: profile | data type: ... | ...
+        Row 2:             |                    |             | entity: profile    | wind1          | wind1
+        Row 3: index: branch | index: analysis_time | index: time | alternative  | 1week_rolling  | 2day
+        Row 4+: realized   | t0001              | t0001       |                    | 0.5            | 0.3
+    """
+    if not spec.parameter_names:
+        add_navigate_link(ws)
+        return
+
+    pname = spec.parameter_names[0]
+    entity_label = _build_entity_def_label(spec)
+    dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="timeseries")
+    desc = _get_param_description(pname, spec.entity_classes, db_contents)
+
+    # Collect data: flatten nested maps and build columns
+    columns: list[tuple[str, tuple, str, list[tuple[tuple[str, ...], Any]]]] = []
+    # (alt, entity_byname, entity_class, flat_data)
+    max_depth = 0
+    index_names: list[str] = []
+
+    for entity_class in spec.entity_classes:
+        for entity in db_contents.entities.get(entity_class, []):
+            entity_byname = entity["entity_byname"]
+            for alt in db_contents.alternatives:
+                key = (entity_class, entity_byname, pname, alt)
+                value = db_contents.parameter_values.get(key)
+                if value is None or not _is_map(value):
+                    continue
+                # Determine nesting depth
+                depth = 1
+                current = value
+                while _is_map(current) and current.values and _is_map(current.values[0]):
+                    depth += 1
+                    current = current.values[0]
+                if depth < 2:
+                    continue  # not stochastic (< 3d)
+
+                if not index_names:
+                    index_names = _get_nested_index_names(value, depth)
+                max_depth = max(max_depth, depth)
+
+                flat = _flatten_nested_map(value, depth)
+                columns.append((alt, entity_byname, entity_class, flat))
+
+    columns.sort(key=lambda c: (c[0], c[1]))
+
+    # Determine expected depth from parameter type_list even if no data
+    if not max_depth:
+        for entity_class in spec.entity_classes:
+            for pdef in db_contents.parameter_definitions.get(entity_class, []):
+                if pdef["name"] == pname:
+                    tl = pdef.get("parameter_type_list") or ()
+                    if "4d_map" in tl:
+                        max_depth = 4
+                    elif "3d_map" in tl:
+                        max_depth = 3
+                    break
+        if not max_depth:
+            max_depth = 3  # default for stochastic
+
+    n_index_cols = max_depth
+    def_col = n_index_cols + 1  # 1-based
+
+    # Pad index_names to match depth using stochastic defaults
+    while len(index_names) < n_index_cols:
+        level = len(index_names)
+        if level < len(_stochastic_index_names):
+            index_names.append(_stochastic_index_names[level])
+        else:
+            index_names.append(f"index_{level + 1}")
+
+    # Collect unique index tuples preserving original Map order
+    seen_tuples: set[tuple[str, ...]] = set()
+    ordered_tuples: list[tuple[str, ...]] = []
+    for _alt, _bn, _ec, flat in columns:
+        for idx_tuple, _val in flat:
+            if idx_tuple not in seen_tuples:
+                seen_tuples.add(idx_tuple)
+                ordered_tuples.append(idx_tuple)
+
+    # Build column data lookups (index_tuple → value)
+    col_lookups: list[dict[tuple[str, ...], Any]] = []
+    for _alt, _bn, _ec, flat in columns:
+        lookup = {idx_tuple: val for idx_tuple, val in flat}
+        col_lookups.append(lookup)
+
+    # ── Write header rows ────────────────────────────────────────
+    cur_row = 1
+
+    # Row 1: navigate + triplet in def_col
+    triplet = f"parameter: {pname} | data type: {dtype}"
+    if desc:
+        triplet += f" | description: {desc}"
+    ws.cell(row=cur_row, column=def_col, value=triplet)
+    row_types: dict[int, str] = {cur_row: "param_info"}
+    cur_row += 1
+
+    # Row 2: entity
+    ws.cell(row=cur_row, column=def_col, value=entity_label)
+    for col_idx, (alt, byname, ec, _flat) in enumerate(columns, start=def_col + 1):
+        if byname:
+            ws.cell(row=cur_row, column=col_idx, value=str(_to_native(byname[0])))
+    row_types[cur_row] = "entity"
+    cur_row += 1
+
+    # Row 3: index labels + alternative
+    for i in range(n_index_cols):
+        iname = index_names[i] if i < len(index_names) and index_names[i] else f"index_{i+1}"
+        ws.cell(row=cur_row, column=i + 1, value=f"index: {iname}")
+    ws.cell(row=cur_row, column=def_col, value="alternative")
+    for col_idx, (alt, byname, ec, _flat) in enumerate(columns, start=def_col + 1):
+        ws.cell(row=cur_row, column=col_idx, value=alt)
+    row_types[cur_row] = "alternative"
+    n_header_rows = cur_row
+    cur_row += 1
+
+    # ── Write data rows ──────────────────────────────────────────
+    for idx_tuple in ordered_tuples:
+        for i, idx_val in enumerate(idx_tuple):
+            ws.cell(row=cur_row, column=i + 1, value=idx_val)
+        for col_idx, lookup in enumerate(col_lookups, start=def_col + 1):
+            val = lookup.get(idx_tuple)
+            if val is not None:
+                ws.cell(row=cur_row, column=col_idx, value=val)
+        cur_row += 1
+
+    # ── Convenience section (two-column gap) ────────────────────
+    last_data_col = def_col + len(columns)
+    color_end_col = last_data_col + 2  # extend coloring 2 cols beyond data
+    _write_param_reference(
+        ws, color_end_col, spec, db_contents, header_row=n_header_rows,
+        n_data_rows=len(ordered_tuples), layout="stochastic",
+        shown_params=list(spec.parameter_names),
+    )
+
+    # ── Formatting (extend to color_end_col) ─────────────────────
+    format_timeseries_sheet_v2(ws, n_header_rows, single_param=True,
+                               row_types=row_types, last_data_col=color_end_col)
+
+    # Index columns: green fill
+    from openpyxl.formatting.rule import CellIsRule
+    from openpyxl.utils import get_column_letter
+    data_end = cur_row + 100
+    for i in range(n_index_cols):
+        cl = get_column_letter(i + 1)
+        ws.cell(row=n_header_rows, column=i + 1).fill = FILL_INDEX_HEADER
+        ws.conditional_formatting.add(
+            f"{cl}{n_header_rows + 1}:{cl}{data_end}",
+            CellIsRule(operator="notEqual", formula=['"§§§NEVER§§§"'],
+                       fill=FILL_INDEX_DATA),
+        )
+
+    # Definition column: dark grey
+    def_cl = get_column_letter(def_col)
+    ws.conditional_formatting.add(
+        f"{def_cl}{n_header_rows + 1}:{def_cl}{data_end}",
+        CellIsRule(operator="notEqual", formula=['"§§§NEVER§§§"'],
+                   fill=FILL_DEF_COL),
+    )
+
+    add_navigate_link(ws)
+    auto_column_width(ws, min_param_width=_min_param_width,
+                      non_param_width=_non_param_width,
+                      def_col_width=_def_col_width,
+                      index_col_width=_index_col_width,
+                      header_row=n_header_rows, def_col=def_col,
+                      last_data_col=last_data_col)
+
+
+# ---------------------------------------------------------------------------
 # Navigate sheet
 # ---------------------------------------------------------------------------
 
@@ -1337,13 +1570,15 @@ def write_navigate_sheet(
     ws.cell(row=1, column=1, value="Constants")
     ws.cell(row=1, column=2, value="Periodic")
     ws.cell(row=1, column=3, value="Timeseries")
+    ws.cell(row=1, column=4, value="Stochastic")
 
-    # --- Column E: help text ---
+    # --- Column F: help text ---
     help_lines = [
-        "FlexTool can take parameter data in three ways:",
+        "FlexTool can take parameter data in four ways:",
         "- constants (sheet ends with '_c') - Almost any value can be a constant or can be set as a time series.",
         "- period series (sheets ends with '_p') - These parameters have a period index (e.g. year).",
         "- time series (sheets ends with '_t') - These parameters can have values for each timestep.",
+        "- stochastic (sheets ends with '_s') - These parameters have forecast branches with time series.",
         "",
         "Some sheets establish only relationships between entities without additional parameters.",
         "",
@@ -1351,13 +1586,13 @@ def write_navigate_sheet(
     ]
     for i, text in enumerate(help_lines):
         if text:
-            ws.cell(row=1 + i, column=5, value=text)
+            ws.cell(row=1 + i, column=6, value=text)
 
     # --- Version info at E15 ---
     if version is not None:
         version_int = int(version) if version == int(version) else version
-        ws.cell(row=15, column=5, value="FlexTool DB version:")
-        ws.cell(row=15, column=6, value=version_int)
+        ws.cell(row=15, column=6, value="FlexTool DB version:")
+        ws.cell(row=15, column=7, value=version_int)
 
     # --- Write grouped rows ---
     current_row = 2  # start after header row
@@ -1377,7 +1612,7 @@ def write_navigate_sheet(
                     cell.font = FONT_NAVIGATE_LINK
 
             # Apply group fill to columns A, B, C for this row
-            for col in range(1, 4):
+            for col in range(1, 5):
                 ws.cell(row=current_row, column=col).fill = group_fill
 
             current_row += 1
@@ -1677,6 +1912,7 @@ def _add_data_validation(
 _period_only_params: dict[str, list[str]] = {}
 _time_structure_classes: set[str] = set()
 _info_rows: dict[str, str] = {}
+_stochastic_index_names: list[str] = ["forecast", "branch_time", "time", "is_realized"]
 
 
 def _is_param_valid_for_layout(
