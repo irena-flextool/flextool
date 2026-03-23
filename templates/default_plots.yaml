@@ -113,12 +113,11 @@ plots:
 
   # Curtailments
   unit_curtailment_outputNode_d_ee:
-    foo:
-      plot_name: '1.0.P Curtail. amount'
-      map_dimensions_for_plots: [d_ee, b_ux]
-      value_label: '1,.0f'
-      skip_data_with_only_zeroes: true
-      axis_tick_format: '1,.0f'
+    plot_name: '1.0.P Curtail. amount'
+    map_dimensions_for_plots: [d_ee, g_bx]
+    value_label: '1,.0f'
+    skip_data_with_only_zeroes: true
+    axis_tick_format: '1,.0f'
   unit_curtailment_outputNode_dt_ee:
     plot_name: '1.0.T Curtail. amount'
     map_dimensions_for_plots: [dt_ee, tt_ll]
@@ -126,16 +125,15 @@ plots:
     skip_data_with_only_zeroes: true
     axis_tick_format: '.0%'
   unit_curtailment_share_outputNode_d_ee:
-    foo:
-      plot_name: '1.1.P Curtail. share of VRE'
-      value_label: '.0%'
-      map_dimensions_for_plots: [d_ee, b_eu]
-      skip_data_with_only_zeroes: true
-      subplots_per_row: 2
-      max_subplots_per_file: 4
-      max_items_per_plot: 20
-      axis_bounds: shared
-      axis_tick_format: '.0%'
+    plot_name: '1.1.P Curtail. share of VRE'
+    value_label: '.0%'
+    map_dimensions_for_plots: [d_ee, b_eu]
+    skip_data_with_only_zeroes: true
+    subplots_per_row: 2
+    max_subplots_per_file: 4
+    max_items_per_plot: 20
+    axis_bounds: shared
+    axis_tick_format: '.0%'
   unit_curtailment_share_outputNode_dt_ee:
     plot_name: '1.1.T Curtail. share of VRE'
     map_dimensions_for_plots: [dt_ee, tt_lu]
@@ -157,7 +155,7 @@ plots:
 
   # Flows for units and connections
   unit_outputNode_d_ee:
-    foo:
+    default:
       plot_name: '2.0.P Flows unit to node'
       map_dimensions_for_plots: [d_ee, m_bu]
       ylabel: Node
@@ -168,10 +166,11 @@ plots:
       skip_data_with_only_zeroes: true
     sum_periods:
       plot_name: '2.0.S Flows unit to node total'
-      map_dimensions_for_plots: [d_ee, m_mu]
+      map_dimensions_for_plots: [d_ee, m_mb]
       ylabel: Node
       value_label: '1,.0f'
       xlabel: MWh (total)
+      axis_bounds: shared
       max_items_per_plot: 20
       max_subplots_per_file: 6
       skip_data_with_only_zeroes: true
@@ -204,9 +203,10 @@ plots:
       max_subplots_per_file: 6
     sum_periods:
       plot_name: '2.1.S Flows node to unit total'
-      map_dimensions_for_plots: [d_ee, m_mu]
+      map_dimensions_for_plots: [d_ee, m_mb]
       ylabel: Node
       xlabel: MWh (total)
+      axis_bounds: shared
       max_items_per_plot: 20
       max_subplots_per_file: 6
   unit_inputNode_dt_ee:
@@ -242,6 +242,7 @@ plots:
       map_dimensions_for_plots: [d_e, m_b]
       max_items_per_plot: 20
       max_subplots_per_file: 6
+      axis_bounds: shared
   connection_dt_eee:
     plot_name: '2.5.T Flows connection'
     map_dimensions_for_plots: [dt_e, tt_l]
