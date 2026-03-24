@@ -4,6 +4,8 @@ import argparse
 from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError, to_database
 import logging
 
+from flextool.update_flextool import FLEXTOOL_DB_VERSION
+
 def migrate_database(database_path):
 
     if database_path.startswith('sqlite://') or database_path.startswith('http://'):
@@ -25,7 +27,7 @@ def migrate_database(database_path):
             version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
         next_version = int(version) + 1
-        new_version = 25
+        new_version = FLEXTOOL_DB_VERSION
 
         while next_version <= new_version:
             if next_version == 0:

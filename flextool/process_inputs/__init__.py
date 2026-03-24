@@ -8,10 +8,8 @@ from enum import Enum
 from pathlib import Path
 
 from flextool.process_inputs.read_tabular_with_specification import TabularReader
-from flextool.process_inputs.write_to_input_db import (
-    write_to_flextool_input_db,
-    flextool_db_version as CURRENT_FLEXTOOL_DB_VERSION,
-)
+from flextool.process_inputs.write_to_input_db import write_to_flextool_input_db
+from flextool.update_flextool import FLEXTOOL_DB_VERSION as CURRENT_FLEXTOOL_DB_VERSION
 
 __all__ = [
     'TabularReader', 'write_to_flextool_input_db',

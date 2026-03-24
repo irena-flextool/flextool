@@ -1,8 +1,9 @@
 import os
 from spinedb_api import DatabaseMapping, from_database, SpineDBAPIError, Asterisk
 from spinedb_api.exception import NothingToCommit
+from flextool.update_flextool import FLEXTOOL_DB_VERSION
 
-flextool_db_version = 25
+flextool_db_version = FLEXTOOL_DB_VERSION
 
 def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_type='excel'):
     """Write tabular data to FlexTool input database, reading one sheet/file at a time.
