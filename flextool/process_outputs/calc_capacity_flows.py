@@ -18,9 +18,11 @@ def compute_capacity_and_flows(par, s, v, r) -> None:
     # The model uses edd_invest set to correctly track which investments apply to which periods,
     # handling both single-solve and multi-solve scenarios.
     r.entity_all_capacity = par.entity_all_capacity.copy()
-    # Drop solve level from index — downstream code expects (period,) only
+    # Drop solve level from index — downstream code expects (period,) only.
+    # For rolling scenarios, keep only the last solve per period.
     if r.entity_all_capacity.index.nlevels > 1:
         r.entity_all_capacity = r.entity_all_capacity.droplevel('solve')
+        r.entity_all_capacity = r.entity_all_capacity[~r.entity_all_capacity.index.duplicated(keep='last')]
     r.entity_all_capacity.columns.name = 'process'  # Required for level=0 matching in VRE calculations
 
     # process_online_dt
