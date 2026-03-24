@@ -524,11 +524,34 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 if 'solve' not in df.index.names and 'period' in df.index.names:
                     if 'time' in df.index.names:
                         # Use per-timestep mapping for dispatch data (correct per-roll solve names)
-                        df.index = df.index.join(s.solve_period_time)
+                        # Build a dict from (period, time) → solve to avoid sort-merge reordering
+                        spt = s.solve_period_time
+                        if spt.droplevel('solve').duplicated().any():
+                            spt = spt[~spt.droplevel('solve').duplicated(keep='last')]
+                        pt_to_solve = dict(zip(spt.droplevel('solve'), spt.get_level_values('solve')))
+                        solve_vals = df.index.map(lambda x: pt_to_solve.get((x[0], x[1]) if isinstance(x, tuple) else x, ''))
+                        df.index = pd.MultiIndex.from_arrays(
+                            [solve_vals] + [df.index.get_level_values(n) for n in df.index.names],
+                            names=['solve'] + list(df.index.names)
+                        )
                     else:
-                        # For period-only data, use solve_period but deduplicate to avoid many-to-many
-                        unique_solve_period = s.solve_period[~s.solve_period.droplevel('solve').duplicated(keep='last')]
-                        df.index = df.index.join(unique_solve_period)
+                        # For period-only data, use solve_period to add solve column
+                        # Use dict lookup to preserve index order (join reorders alphabetically)
+                        unique_sp = s.solve_period[~s.solve_period.droplevel('solve').duplicated(keep='last')]
+                        period_to_solve = dict(zip(unique_sp.get_level_values('period'), unique_sp.get_level_values('solve')))
+                        if df.index.nlevels == 1:
+                            solve_vals = df.index.map(lambda p: period_to_solve.get(p, ''))
+                            df.index = pd.MultiIndex.from_arrays(
+                                [solve_vals, df.index],
+                                names=['solve', df.index.name]
+                            )
+                        else:
+                            period_level = df.index.get_level_values('period')
+                            solve_vals = period_level.map(lambda p: period_to_solve.get(p, ''))
+                            df.index = pd.MultiIndex.from_arrays(
+                                [solve_vals] + [df.index.get_level_values(n) for n in df.index.names],
+                                names=['solve'] + list(df.index.names)
+                            )
                     names = list(df.index.names)
                     solve_pos = names.index('solve')
                     period_pos = names.index('period')
