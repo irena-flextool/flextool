@@ -1147,7 +1147,7 @@ param pdtReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in re
       else if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
 		  then pt_reserve_upDown_group[r, ud, g, param, t]
 		  else p_reserve_upDown_group[r, ud, g, param];
-set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group} 1};
+set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group} p_reserve_upDown_group[r, ud, g, 'reservation']};
 set prundt := {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt};
 set pdt_online_linear := {p in process_online_linear, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
 set pdt_online_integer := {p in process_online_integer, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
