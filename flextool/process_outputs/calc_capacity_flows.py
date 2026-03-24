@@ -14,23 +14,13 @@ def compute_capacity_and_flows(par, s, v, r) -> None:
 
     s.nb = s.node_balance.union(s.node_balance_period)
 
-    # entity_all_capacity: existing + cumulative invest - divest
-    r.entity_all_capacity = par.entity_all_existing.copy()
-    periods = r.entity_all_capacity.index.get_level_values('period')
-    if not v.invest.empty:
-        capacity_add = v.invest.mul(unitsize[v.invest.columns])
-        capacity_add_recursive = pd.DataFrame(columns=v.invest.columns)
-        for i, period in enumerate(periods):
-            available_periods = capacity_add.index.intersection(periods[:i+1])
-            capacity_add_recursive.loc[period] = capacity_add.loc[available_periods].sum()
-        r.entity_all_capacity = r.entity_all_capacity.add(capacity_add_recursive, fill_value=0)
-    if not v.divest.empty:
-        capacity_sub = v.divest.mul(unitsize[v.divest.columns])
-        capacity_sub_recursive = pd.DataFrame(columns=v.divest.columns)
-        for i, period in enumerate(periods):
-            available_periods = capacity_sub.index.intersection(periods[:i+1])
-            capacity_sub_recursive.loc[period] = capacity_sub.loc[available_periods].sum()
-        r.entity_all_capacity = r.entity_all_capacity.sub(capacity_sub_recursive, fill_value=0)
+    # entity_all_capacity: read directly from model output (existing + cumulative invest - divest)
+    # The model uses edd_invest set to correctly track which investments apply to which periods,
+    # handling both single-solve and multi-solve scenarios.
+    r.entity_all_capacity = par.entity_all_capacity.copy()
+    # Drop solve level from index — downstream code expects (period,) only
+    if r.entity_all_capacity.index.nlevels > 1:
+        r.entity_all_capacity = r.entity_all_capacity.droplevel('solve')
     r.entity_all_capacity.columns.name = 'process'  # Required for level=0 matching in VRE calculations
 
     # process_online_dt

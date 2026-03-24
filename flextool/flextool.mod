@@ -4783,6 +4783,18 @@ param entity_all_capacity{e in entity, d in period} :=
   - sum {(e, d_divest) in ed_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[e, d_divest].val * p_entity_unitsize[e]
 ;
 
+# Write entity_all_capacity (existing + cumulative invest - divest, computed by the model)
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period" > "output_raw/entity_all_capacity.csv";
+  for {e in entity} {printf ",%s", e >> "output_raw/entity_all_capacity.csv";}
+}
+for {s in solve_current, d in d_realize_dispatch_or_invest} {
+    printf "\n%s,%s", s, d >> "output_raw/entity_all_capacity.csv";
+    for {e in entity} {
+        printf ",%.8g", entity_all_capacity[e, d] >> "output_raw/entity_all_capacity.csv";
+    }
+}
+
 param r_process_Online__dt{p in process_online, (d, t) in dt} :=
   + (if p in process_online_linear then v_online_linear[p, d, t].val)
   + (if p in process_online_integer then v_online_integer[p, d, t].val);
