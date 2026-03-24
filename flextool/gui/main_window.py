@@ -1322,23 +1322,84 @@ class MainWindow(tk.Tk):
 
         target_db_url = f"sqlite:///{target_sqlite}"
 
-        # Initialize the target database from the FlexTool template
-        from flextool.cli.cmd_read_tabular_input import _ensure_target_db_exists
-        _ensure_target_db_exists(target_db_url)
+        # Detect Excel format / version and initialize DB with the right template
+        from flextool.process_inputs import (
+            detect_excel_format, ExcelFormat, CURRENT_FLEXTOOL_DB_VERSION,
+        )
+        from flextool.update_flextool.initialize_database import initialize_database
+        info = detect_excel_format(xlsx_path)
 
-        # Build subprocess command — purge data but keep template entities
-        cmd = [
-            sys.executable, "-m",
-            "flextool.cli.cmd_read_self_describing_tabular_input",
-            str(xlsx_path),
-            target_db_url,
-            "--keep-entities",
-        ]
+        flextool_root = Path(__file__).resolve().parent.parent.parent
+        if info.format == ExcelFormat.SPECIFICATION:
+            # Old 3.x format: must import against frozen v25 schema, then migrate
+            template = flextool_root / "version" / "flextool_template_v25.json"
+        else:
+            template = flextool_root / "version" / "flextool_template_master.json"
+
+        if not template.exists():
+            messagebox.showerror("Template missing", f"Cannot find template:\n{template}")
+            return
+        initialize_database(str(template), str(target_sqlite))
+
+        # Determine whether migration is needed after import
+        needs_migration = (
+            info.format == ExcelFormat.SPECIFICATION
+            or (
+                info.format == ExcelFormat.SELF_DESCRIBING
+                and info.version is not None
+                and info.version < CURRENT_FLEXTOOL_DB_VERSION
+            )
+        )
+
+        # Build the appropriate subprocess command
+        if info.format == ExcelFormat.SELF_DESCRIBING:
+            cmd = [
+                sys.executable, "-m",
+                "flextool.cli.cmd_read_self_describing_tabular_input",
+                str(xlsx_path),
+                target_db_url,
+                "--keep-entities",
+            ]
+        elif info.format == ExcelFormat.SPECIFICATION:
+            cmd = [
+                sys.executable, "-m",
+                "flextool.cli.cmd_read_tabular_input",
+                target_db_url,
+                "--tabular-file-path",
+                str(xlsx_path),
+            ]
+        elif info.format == ExcelFormat.OLD_V2:
+            cmd = [
+                sys.executable, "-m",
+                "flextool.cli.cmd_read_old_flextool",
+                str(xlsx_path),
+                target_db_url,
+            ]
+        else:
+            messagebox.showerror(
+                "Unknown format",
+                f"Cannot determine the Excel format of '{source_name}'.\n\n"
+                "Expected either a self-describing FlexTool Excel, a FlexTool 3.x "
+                "specification-based Excel, or an old FlexTool 2.x .xlsm file.",
+            )
+            return
+
+        # Build version note for the log window
+        version_note: str | None = None
+        if info.version is not None and info.version < CURRENT_FLEXTOOL_DB_VERSION:
+            version_note = (
+                f"Note: Excel is version {info.version}, "
+                f"current FlexTool version is {CURRENT_FLEXTOOL_DB_VERSION}. "
+                f"The database has been migrated to version {CURRENT_FLEXTOOL_DB_VERSION}. "
+                f"You can convert back to xlsx to get an updated Excel."
+            )
 
         log_window = OutputLogWindow(self, f"Convert: {source_name} → sqlite")
         self._run_conversion_subprocess(
             cmd, log_window, source_name, xlsx_path, target_sqlite,
             f"'{source_name}' → '{stem}.sqlite'",
+            migrate_db_path=str(target_sqlite) if needs_migration else None,
+            version_note=version_note,
         )
 
     # ── Conversion: sqlite → xlsx ────────────────────────────────
@@ -1394,11 +1455,14 @@ class MainWindow(tk.Tk):
         source_path: Path,
         target_path: Path,
         description: str,
+        migrate_db_path: str | None = None,
+        version_note: str | None = None,
     ) -> None:
         """Run a conversion command as a subprocess with output in the log window.
 
-        After the subprocess completes, moves the source to converted/ and
-        refreshes the input sources list.
+        After the subprocess completes, optionally runs database migration
+        (for old 3.x format imported against a frozen v25 schema), then moves
+        the source to converted/ and refreshes the input sources list.
         """
         flextool_root = get_projects_dir().parent
         cmd_str = " ".join(cmd)
@@ -1425,8 +1489,28 @@ class MainWindow(tk.Tk):
                 proc.wait()
                 success = proc.returncode == 0
 
+                if success and migrate_db_path:
+                    log_window.after(
+                        0, log_window.append_line,
+                        "\nMigrating database to current version...",
+                    )
+                    try:
+                        from flextool.update_flextool.db_migration import migrate_database
+                        migrate_database(migrate_db_path)
+                        log_window.after(
+                            0, log_window.append_line, "Database migration completed.",
+                        )
+                    except Exception as mig_exc:
+                        log_window.after(
+                            0, log_window.append_line,
+                            f"Database migration failed: {mig_exc}",
+                        )
+                        success = False
+
                 if success:
                     log_window.after(0, log_window.append_line, "\nConversion succeeded.")
+                    if version_note:
+                        log_window.after(0, log_window.append_line, f"\n{version_note}")
                 else:
                     log_window.after(
                         0, log_window.append_line,
