@@ -29,10 +29,14 @@ def compute_connection_flows(par, s, v, r) -> None:
     r.connection_dt = conn_to_right.droplevel('node', axis=1).sub(
         conn_to_left.droplevel('node', axis=1), axis=1
     )
+    # Losses = total_out - total_in (negative when energy is lost in connections)
+    # The .mod negates at output time (printf '- r_group_output_Internal_connection_losses'),
+    # so this value should be negative when there are losses.
     r.connection_losses_dt = (
-        r.connection_dt
-        .sub(right_to_conn.droplevel('node', axis=1))
-        .sub(left_to_conn.droplevel('node', axis=1))
+        conn_to_left.droplevel('node', axis=1)
+        .add(conn_to_right.droplevel('node', axis=1), fill_value=0)
+        .sub(left_to_conn.droplevel('node', axis=1), fill_value=0)
+        .sub(right_to_conn.droplevel('node', axis=1), fill_value=0)
     )
     r.connection_to_left_node__dt = conn_to_left.sub(left_to_conn, axis=1)
     r.connection_to_right_node__dt = conn_to_right.sub(right_to_conn, axis=1)
