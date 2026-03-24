@@ -648,6 +648,8 @@ class MainWindow(tk.Tk):
                 parent=self,
             )
             if not result:
+                # Reset the combo back – it already shows the new name
+                self.project_combo.set(self.current_project or "")
                 return
             self.execution_mgr.kill_all()
 
@@ -1876,14 +1878,16 @@ class MainWindow(tk.Tk):
         logger.info("Scenarios queued for execution: %s", names)
 
         # Add jobs to the manager and start execution automatically
-        self.execution_mgr.add_jobs(new_scenarios)
+        added_jobs = self.execution_mgr.add_jobs(new_scenarios)
         self.execution_mgr.start()
 
         # Update execution menu button highlight
         self._update_execution_menu_style()
 
-        # Open the execution window (or raise it)
+        # Open the execution window (or raise it) and select the last added job
         self._open_or_raise_execution_window()
+        if added_jobs and self.execution_window is not None:
+            self.execution_window.select_job(added_jobs[-1].job_id)
 
     # ── Execution menu handler ───────────────────────────────────
 

@@ -474,6 +474,19 @@ class ExecutionWindow(tk.Toplevel):
         if self.winfo_exists():
             self.after(0, self._refresh_job_list)
 
+    def select_job(self, job_id: int) -> None:
+        """Select and show the log for the job with *job_id*.
+
+        If the tree hasn't been populated with this job yet, a refresh is
+        triggered first.
+        """
+        iid = str(job_id)
+        if not self._job_tree.exists(iid):
+            self._refresh_job_list()
+        if self._job_tree.exists(iid):
+            self._job_tree.selection_set(iid)
+            self._job_tree.see(iid)
+
     # ------------------------------------------------------------------
     # Button handlers
     # ------------------------------------------------------------------
