@@ -60,7 +60,7 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
         setattr(par, attr, obj[~obj.index.duplicated(keep='first')])
 
     # Sets have varied special handling so are done individually
-    s.solve_period = s.period
+    s.solve_period = s.d_realized_period
     # Save per-timestep solve mapping before dropping (for correct re-join in CSV output)
     s.solve_period_time = s.dt_realize_dispatch
     s.period = s.period.droplevel('solve')
