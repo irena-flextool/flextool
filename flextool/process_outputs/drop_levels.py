@@ -48,11 +48,18 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     """
     for attr in _V_DROP:
         obj = getattr(v, attr)
-        setattr(v, attr, obj.droplevel('solve'))
+        obj = obj.droplevel('solve')
+        # For rolling scenarios, keep only last solve's value per (period, time)
+        if obj.index.duplicated().any():
+            obj = obj[~obj.index.duplicated(keep='last')]
+        setattr(v, attr, obj)
 
     for attr in _PAR_DROP:
         obj = getattr(par, attr)
-        setattr(par, attr, obj.droplevel('solve'))
+        obj = obj.droplevel('solve')
+        if obj.index.duplicated().any():
+            obj = obj[~obj.index.duplicated(keep='last')]
+        setattr(par, attr, obj)
 
     for attr in _PAR_DEDUP:
         obj = getattr(par, attr)
@@ -62,7 +69,10 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     # Sets have varied special handling so are done individually
     s.solve_period = s.d_realized_period
     # Save per-timestep solve mapping before dropping (for correct re-join in CSV output)
+    # For rolling scenarios, keep only the last solve's mapping per (period, time)
     s.solve_period_time = s.dt_realize_dispatch
+    if s.solve_period_time.droplevel('solve').duplicated().any():
+        s.solve_period_time = s.solve_period_time[~s.solve_period_time.droplevel('solve').duplicated(keep='last')]
     s.period = s.period.droplevel('solve')
     s.period__time_first = s.period__time_first.droplevel('solve')
     s.period_first_of_solve = s.period_first_of_solve.droplevel('solve')
@@ -70,11 +80,17 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     s.d_realize_dispatch_or_invest = s.d_realize_dispatch_or_invest.droplevel('solve').unique()
     s.d_realize_invest = s.d_realize_invest.droplevel('solve')
     s.d_realized_period = s.d_realized_period.droplevel('solve').unique()
-    s.dt = s.dt.droplevel('solve')
+    s.dt_realize_dispatch = s.dt_realize_dispatch.droplevel('solve').unique()
+    s.dt = s.dt.droplevel('solve').unique()
     s.dt_fix_storage_timesteps = s.dt_fix_storage_timesteps.droplevel('solve')
-    s.dt_realize_dispatch = s.dt_realize_dispatch.droplevel('solve')
+    # For rolling scenarios, dtt/dtttdt have overlapping timesteps from different solves.
+    # Filter to only realized (period, time) pairs, keeping the last solve's mapping.
     s.dtt = s.dtt.droplevel('solve')
+    dtt_pt = s.dtt.droplevel('t_previous')
+    s.dtt = s.dtt[dtt_pt.isin(s.dt_realize_dispatch) & ~dtt_pt.duplicated(keep='last')]
     s.dtttdt = s.dtttdt.droplevel('solve')
+    dtttdt_pt = s.dtttdt.droplevel(['t_previous', 't_previous_within_timeset', 'd_previous', 't_previous_within_solve'])
+    s.dtttdt = s.dtttdt[dtttdt_pt.isin(s.dt_realize_dispatch) & ~dtttdt_pt.duplicated(keep='last')]
     s.ed_invest = s.ed_invest.droplevel('solve').join(s.d_realize_invest, how='inner')
     s.edd_invest = s.edd_invest.droplevel('solve')
     s.edd_invest.names = ['entity', 'period_invest', 'period']
