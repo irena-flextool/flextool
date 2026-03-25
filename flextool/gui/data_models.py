@@ -11,6 +11,7 @@ class PlotSettings:
     config_file: str = ""
     active_configs: list[str] = field(default_factory=list)
     dispatch_plots: bool = True  # comparison only: include --dispatch-plots
+    only_first_file: bool = False  # limit to one file per plot (quick overview)
 
 
 @dataclass

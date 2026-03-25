@@ -34,6 +34,8 @@ def main():
                             help='File format for plot output (default: png)')
         parser.add_argument('--debug', action='store_true',
                             help='Enable debug output')
+        parser.add_argument('--only-first-file-per-plot', action='store_true', default=False,
+                            help='Only produce the first file for each plot (quick overview mode)')
         parser.add_argument('--single-result', type=str, nargs=6,
                             metavar=('KEY', 'CSV_NAME', 'PLOT_NAME', 'PLOT_TYPE', 'SUBPLOTS_PER_ROW', 'LEGEND_POSITION'),
                             help='Process a single result (overrides --config): key csv_name plot_name plot_type subplots_per_row legend_position. Use "null" for None values.')
@@ -96,7 +98,8 @@ def main():
                 debug=args.debug,
                 single_result=tuple(args.single_result) if args.single_result else None,
                 settings_db_url=args.settings_db_url,
-                plot_file_format=args.plot_file_format
+                plot_file_format=args.plot_file_format,
+                only_first_file=args.only_first_file_per_plot,
             )
 
 if __name__ == '__main__':

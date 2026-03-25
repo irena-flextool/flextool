@@ -66,6 +66,7 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
             duration=single_plot.get("duration", 0),
             config_file=single_plot.get("config_file", ""),
             active_configs=single_plot.get("active_configs", []),
+            only_first_file=single_plot.get("only_first_file", False),
         )
 
     comp_plot = data.get("comparison_plot_settings")
@@ -76,6 +77,7 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
             config_file=comp_plot.get("config_file", ""),
             active_configs=comp_plot.get("active_configs", []),
             dispatch_plots=comp_plot.get("dispatch_plots", True),
+            only_first_file=comp_plot.get("only_first_file", False),
         )
 
     return settings

@@ -750,7 +750,8 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
         xlabel=None, ylabel=None, bar_orientation='horizontal', base_bar_length=4,
         value_label=False, axis_bounds=None, axis_tick_format='1,.0f',
         always_include_zero_in_axis=True, max_items_per_plot=10,
-        max_subplots_per_file=6, output_filepath=None):
+        max_subplots_per_file=6, output_filepath=None,
+        only_first_file=False):
     """
     Create horizontal stacked and grouped bar plot.
 
@@ -895,7 +896,7 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             effective_plots.append((title, df_sub))
 
     if not effective_plots:
-        return
+        return 0
 
     # Build shared color map before splitting into file batches
     shared_color_map = None
@@ -952,9 +953,13 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
                 fp = f'{plot_dir}/{key_name}_d_{file_idx:02d}.png'
             _file_batches.append((batch, fp))
 
-    for batch, batch_filepath in _file_batches:
+    batches_to_render = _file_batches[:1] if only_first_file else _file_batches
+    skipped = len(_file_batches) - len(batches_to_render)
+    n_total_batches = len(_file_batches)
+    for batch_idx, (batch, batch_filepath) in enumerate(batches_to_render, start=1):
+        batch_title = f"{key_name} ({batch_idx}/{n_total_batches})" if n_total_batches > 1 else key_name
         _render_bar_figure(
-            batch, df, key_name, plot_dir,
+            batch, df, batch_title, plot_dir,
             stack_levels, stack_level_names,
             expand_axis_levels, expand_axis_level_names,
             sub_levels,
@@ -966,3 +971,4 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             layout=layout,
             shared_color_map=shared_color_map,
         )
+    return skipped

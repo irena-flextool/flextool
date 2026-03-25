@@ -57,6 +57,8 @@ def open_file_in_default_app(filepath: Path) -> None:
             ["xdg-open", str(filepath)],
             start_new_session=True,
             env=_clean_env(),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
 
@@ -83,6 +85,8 @@ def open_folder(dirpath: Path) -> None:
             ["xdg-open", str(dirpath)],
             start_new_session=True,
             env=_clean_env(),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
 

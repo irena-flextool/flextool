@@ -36,6 +36,7 @@ def run(
     scenario_folders: dict[str, str] | None = None,
     excel_dir: str | None = None,
     shared_legend: bool = True,
+    only_first_file: bool = False,
 ) -> None:
     """Run the full scenario-comparison pipeline.
 
@@ -101,6 +102,7 @@ def run(
         combined_dfs, plot_dir, settings['plots'],
         active_settings=active_configs, plot_rows=plot_rows,
         delete_existing_plots=True, plot_file_format=plot_file_format,
+        only_first_file=only_first_file,
     )
     print(f'\nPlotted comparison of {len(scenario_folders)} scenarios to folder: {plot_dir}')
 

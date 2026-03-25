@@ -16,6 +16,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Callable
 
+from flextool.gui.cli_format import format_cmd_for_log
 from flextool.gui.data_models import ProjectSettings, ScenarioInfo
 
 logger = logging.getLogger(__name__)
@@ -245,8 +246,8 @@ class ExecutionManager:
             work_folder.mkdir(parents=True, exist_ok=True)
 
             cmd = self._build_run_command(job, work_folder)
-            cmd_str = " ".join(cmd)
-            logger.info("Running job %d (%s): %s", job.job_id, job.scenario_name, cmd_str)
+            cmd_str = format_cmd_for_log(cmd)
+            logger.info("Running job %d (%s):\n%s", job.job_id, job.scenario_name, cmd_str)
 
             # Log the CLI command as the first line in the progress output
             with self._lock:
@@ -369,6 +370,9 @@ class ExecutionManager:
             last_row = single.start_time + single.duration - 1
             cmd.extend(["--plot-rows", str(first_row), str(last_row)])
 
+        if single.only_first_file:
+            cmd.append("--only-first-file-per-plot")
+
         return cmd
 
     # ------------------------------------------------------------------
@@ -447,7 +451,10 @@ class ExecutionManager:
         if do_comp_excel:
             cmd.extend(["--write-to-xlsx", "--write-dispatch-xlsx"])
 
-        logger.info("Running post-execution comparison: %s", " ".join(cmd))
+        if comp.only_first_file:
+            cmd.append("--only-first-file-per-plot")
+
+        logger.info("Running post-execution comparison:\n%s", format_cmd_for_log(cmd))
 
         flextool_root = Path(__file__).resolve().parent.parent.parent
 

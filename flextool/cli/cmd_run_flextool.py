@@ -60,6 +60,8 @@ def main():
     parser.add_argument('--work-folder', metavar='PATH', default=None,
                         help='Working directory for intermediate files (default: current directory). '
                              'Enables parallel scenario execution by isolating each run.')
+    parser.add_argument('--only-first-file-per-plot', action='store_true', default=False,
+                        help='Only produce the first file for each plot (quick overview mode)')
 
     args = parser.parse_args()
     input_db_url = args.input_db_url
@@ -132,6 +134,7 @@ def main():
             settings_db_url=settings_db_url,
             fallback_output_location=str(output_path),
             raw_output_dir=str(wf / 'output_raw'),
+            only_first_file=args.only_first_file_per_plot,
         )
         timer.insert(0, time.perf_counter())
     

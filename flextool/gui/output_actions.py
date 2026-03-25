@@ -10,6 +10,7 @@ import tkinter as tk
 from pathlib import Path
 from typing import Callable
 
+from flextool.gui.cli_format import format_cmd_for_log
 from flextool.gui.config_parser import parse_plot_configs
 from flextool.gui.data_models import PlotSettings, ProjectSettings
 from flextool.gui.output_log_window import OutputLogWindow
@@ -233,6 +234,9 @@ class OutputActionManager:
             last_row = single.start_time + single.duration - 1
             cmd.extend(["--plot-rows", str(first_row), str(last_row)])
 
+        if single.only_first_file:
+            cmd.append("--only-first-file-per-plot")
+
         return cmd
 
     def _build_comparison_cmd(
@@ -277,6 +281,9 @@ class OutputActionManager:
         if excel:
             cmd.extend(["--write-to-xlsx", "--write-dispatch-xlsx"])
             cmd.extend(["--excel-dir", str(self.project_path)])
+
+        if comp.only_first_file:
+            cmd.append("--only-first-file-per-plot")
 
         return cmd
 
@@ -378,8 +385,8 @@ class OutputActionManager:
         """Run a subprocess to completion. Returns True on success."""
         flextool_root = get_projects_dir().parent
 
-        # Log the command
-        cmd_str = " ".join(cmd)
+        # Log the command (multi-line for readability, copy-pasteable with \ continuations)
+        cmd_str = format_cmd_for_log(cmd)
         if log_window is not None:
             log_window.after(0, log_window.append_line, cmd_str)
             log_window.after(0, log_window.append_line, "")

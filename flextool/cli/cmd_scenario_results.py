@@ -74,6 +74,10 @@ def main() -> None:
         '--shared-legend', action='store_true', default=None,
         help='Use shared legend across subplots (default: true)'
     )
+    parser.add_argument(
+        '--only-first-file-per-plot', action='store_true', default=False,
+        help='Only produce the first file for each plot (quick overview mode)'
+    )
 
     args = parser.parse_args()
     db_url = args.db_url
@@ -200,6 +204,7 @@ def main() -> None:
         scenario_folders=pre_built_folders,
         excel_dir=args.excel_dir,
         shared_legend=shared_legend,
+        only_first_file=args.only_first_file_per_plot,
     )
 
 

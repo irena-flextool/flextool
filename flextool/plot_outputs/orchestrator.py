@@ -63,7 +63,7 @@ def _plan_file_splits(
 
 def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         active_settings=['default'], plot_rows=(0, 167), delete_existing_plots=True,
-        plot_file_format='png'):
+        plot_file_format='png', only_first_file=False):
     """
     Plot dataframes from a dictionary according to key suffixes.
 
@@ -84,6 +84,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 continue
             if os.path.isfile(file_path):
                 os.remove(file_path)
+
+    skipped_files = 0  # track files not plotted due to only_first_file
 
     for key in plot_settings:
         if key not in results_dict:
@@ -369,7 +371,9 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                     else:
                         axis_bounds = None
 
-                for file_member in all_file_members:
+                file_members_to_plot = all_file_members[:1] if only_first_file else all_file_members
+                skipped_files += len(all_file_members) - len(file_members_to_plot)
+                for file_member in file_members_to_plot:
                     # --- Filter df to this file member & drop the 'f' level(s) ---
                     if file_member is not None:
                         df_fm = df.copy()
@@ -469,7 +473,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             plot_name, plot_dir, plot_file_format,
                             file_member=member_str,
                         )
-                        plot_rowbars_stack_groupbars(
+                        skipped_files += plot_rowbars_stack_groupbars(
                             df_fm, effective_plot_name, plot_dir,
                             fm_stack_levels, fm_expand_axis_levels,
                             fm_subplot_levels, fm_grouped_bar_levels,
@@ -481,7 +485,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             always_include_zero_in_axis=cfg.always_include_zero_in_axis,
                             max_items_per_plot=max_items,
                             max_subplots_per_file=cfg.max_subplots_per_file,
-                            output_filepath=filepath)
+                            output_filepath=filepath,
+                            only_first_file=only_first_file)
 
                     elif fm_subplot_levels:
                         # TIME + SUBPLOTS: send all data in one call.
@@ -491,7 +496,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             file_member=member_str,
                         )
                         if fm_stack_levels:
-                            plot_dt_stack_sub(
+                            skipped_files += plot_dt_stack_sub(
                                 df_fm, effective_plot_name, plot_dir,
                                 fm_stack_levels, fm_subplot_levels,
                                 rows=plot_rows, subplots_per_row=cfg.subplots_per_row,
@@ -502,9 +507,10 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                 always_include_zero_in_axis=cfg.always_include_zero_in_axis,
                                 max_items_per_plot=max_items,
                                 max_subplots_per_file=cfg.max_subplots_per_file,
-                                output_filepath=filepath)
+                                output_filepath=filepath,
+                                only_first_file=only_first_file)
                         else:
-                            plot_dt_sub_lines(
+                            skipped_files += plot_dt_sub_lines(
                                 df_fm, effective_plot_name, plot_dir,
                                 fm_subplot_levels, fm_line_levels,
                                 rows=plot_rows, subplots_per_row=cfg.subplots_per_row,
@@ -515,7 +521,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                 always_include_zero_in_axis=cfg.always_include_zero_in_axis,
                                 max_items_per_plot=max_items,
                                 max_subplots_per_file=cfg.max_subplots_per_file,
-                                output_filepath=filepath)
+                                output_filepath=filepath,
+                                only_first_file=only_first_file)
 
                     else:
                         # TIME without subplots — split items into files
@@ -524,6 +531,9 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             all_subs, all_items, fm_subplot_levels,
                             max_items, cfg.max_subplots_per_file
                         )
+                        if only_first_file and len(file_chunks) > 1:
+                            skipped_files += len(file_chunks) - 1
+                            file_chunks = file_chunks[:1]
                         for file_idx, item_chunk in enumerate(file_chunks, start=1):
                             df_chunk = df_fm.copy()
 
@@ -573,3 +583,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                     output_filepath=filepath)
 
             plt.close('all')  # Clean up
+
+    if only_first_file and skipped_files > 0:
+        logger.warning(
+            "'Just one file per plot' active — %d file(s) not plotted.", skipped_files
+        )

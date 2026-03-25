@@ -99,8 +99,15 @@ class _PlotSection:
                 self.frame, text="Dispatch plots", variable=self._dispatch_var,
             ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 2))
 
-        # ── Active configs list (Treeview with checkboxes) ─────────
+        # ── "Just one file per plot" checkbox ─────────────────────
         row = 4 if show_dispatch else 3
+        self._only_first_file_var = tk.BooleanVar(value=settings.only_first_file)
+        ttk.Checkbutton(
+            self.frame, text="Just one file per plot", variable=self._only_first_file_var,
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 2))
+
+        # ── Active configs list (Treeview with checkboxes) ─────────
+        row += 1
         ttk.Label(self.frame, text="Active configs:").grid(
             row=row, column=0, sticky="w", pady=(4, 2),
         )
@@ -160,6 +167,7 @@ class _PlotSection:
             config_file=config_file,
             active_configs=active,
             dispatch_plots=dispatch,
+            only_first_file=self._only_first_file_var.get(),
         )
 
     # ── Internal ──────────────────────────────────────────────────

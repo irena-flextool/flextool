@@ -350,7 +350,8 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     rows=(0,167), subplots_per_row=2, legend_position='right',
     xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
     axis_bounds=None, axis_tick_format='1,.0f', always_include_zero_in_axis=True,
-    max_items_per_plot=10, max_subplots_per_file=6, output_filepath=None):
+    max_items_per_plot=10, max_subplots_per_file=6, output_filepath=None,
+    only_first_file=False):
 
     # Convert level indices to level names
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -369,7 +370,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
         df_plot, sub_levels, line_level_names, max_items_per_plot
     )
     if not effective_plots:
-        return
+        return 0
 
     # Build shared color map before splitting into file batches
     shared_color_map = None
@@ -392,11 +393,15 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     )
 
     # Split into file batches
-    for batch, batch_filepath in _make_file_batches(
+    file_batches = _make_file_batches(
         effective_plots, max_subplots_per_file, output_filepath, plot_dir, plot_name
-    ):
+    )
+    batches_to_render = file_batches[:1] if only_first_file else file_batches
+    n_total = len(file_batches)
+    for batch_idx, (batch, batch_filepath) in enumerate(batches_to_render, start=1):
+        batch_title = f"{plot_name} ({batch_idx}/{n_total})" if n_total > 1 else plot_name
         _render_lines_figure(
-            batch, plot_name, sub_levels, line_level_names, time_index,
+            batch, batch_title, sub_levels, line_level_names, time_index,
             subplots_per_row, legend_position,
             xlabel, ylabel,
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
@@ -404,6 +409,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
             layout=layout,
             shared_color_map=shared_color_map,
         )
+    return len(file_batches) - len(batches_to_render)
 
 
 # ---------------------------------------------------------------------------
@@ -614,7 +620,8 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
         legend_position='right',
         xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
         axis_bounds=None, axis_tick_format='1,.0f', always_include_zero_in_axis=True,
-        max_items_per_plot=10, max_subplots_per_file=6, output_filepath=None):
+        max_items_per_plot=10, max_subplots_per_file=6, output_filepath=None,
+        only_first_file=False):
 
     # Convert level indices to level names
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -633,7 +640,7 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
         df_plot, sub_levels, stack_level_names, max_items_per_plot
     )
     if not effective_plots:
-        return
+        return 0
 
     # Build shared color map before splitting into file batches
     shared_color_map = None
@@ -656,11 +663,15 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
     )
 
     # Split into file batches
-    for batch, batch_filepath in _make_file_batches(
+    file_batches = _make_file_batches(
         effective_plots, max_subplots_per_file, output_filepath, plot_dir, plot_name
-    ):
+    )
+    batches_to_render = file_batches[:1] if only_first_file else file_batches
+    n_total = len(file_batches)
+    for batch_idx, (batch, batch_filepath) in enumerate(batches_to_render, start=1):
+        batch_title = f"{plot_name} ({batch_idx}/{n_total})" if n_total > 1 else plot_name
         _render_stack_figure(
-            batch, plot_name, sub_levels, stack_level_names, time_index,
+            batch, batch_title, sub_levels, stack_level_names, time_index,
             subplots_per_row, legend_position,
             xlabel, ylabel,
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
@@ -668,3 +679,4 @@ def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,
             layout=layout,
             shared_color_map=shared_color_map,
         )
+    return len(file_batches) - len(batches_to_render)
