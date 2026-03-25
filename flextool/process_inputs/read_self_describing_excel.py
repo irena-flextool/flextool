@@ -23,6 +23,22 @@ from openpyxl.worksheet.worksheet import Worksheet
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Backward-compatible value remapping
+# ---------------------------------------------------------------------------
+# Old Excel files may contain parameter values that have been renamed.
+# This dict maps old values to their current names so imports stay correct.
+_VALUE_REMAP: dict[str, str] = {
+    "cumulative_limits": "invest_cumulative",
+}
+
+
+def _remap_value(value: Any) -> Any:
+    """Return the remapped value if it is a known old name, else unchanged."""
+    if isinstance(value, str):
+        return _VALUE_REMAP.get(value, value)
+    return value
+
+# ---------------------------------------------------------------------------
 # Keywords recognised in the definition column (row labels)
 # ---------------------------------------------------------------------------
 
@@ -799,7 +815,7 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
 
             # Convert based on data type
             dtype = meta.data_types.get(c, meta.default_data_type or "float")
-            converted = _convert_value(val, dtype)
+            converted = _remap_value(_convert_value(val, dtype))
 
             record = {
                 "alternative": alt,

@@ -6,6 +6,7 @@ import subprocess
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk
+from typing import Callable
 
 
 class OutputLogWindow(tk.Toplevel):
@@ -18,12 +19,16 @@ class OutputLogWindow(tk.Toplevel):
     * **Stop and close** -- kills the process and closes the window.
     """
 
-    def __init__(self, parent: tk.Misc, title: str) -> None:
+    def __init__(
+        self, parent: tk.Misc, title: str, on_abort: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.title(title)
         self.transient(parent)
 
         self._process: subprocess.Popen | None = None
+        self._on_abort = on_abort
+        self._aborted = False
 
         # ── Font metrics ─────────────────────────────────────────
         mono_font = tkfont.nametofont("TkFixedFont")
@@ -62,9 +67,14 @@ class OutputLogWindow(tk.Toplevel):
         btn_frame = ttk.Frame(self, padding=(8, 4, 8, 8))
         btn_frame.grid(row=1, column=0, sticky="ew")
 
-        self._stop_close_btn = ttk.Button(
-            btn_frame, text="Stop and close", command=self._on_stop_and_close,
-        )
+        if on_abort is not None:
+            self._stop_close_btn = ttk.Button(
+                btn_frame, text="Abort", command=self._on_abort_clicked,
+            )
+        else:
+            self._stop_close_btn = ttk.Button(
+                btn_frame, text="Stop and close", command=self._on_stop_and_close,
+            )
         self._stop_close_btn.pack(side="left", padx=(0, 10))
 
         self._close_btn = ttk.Button(
@@ -72,7 +82,10 @@ class OutputLogWindow(tk.Toplevel):
         )
         self._close_btn.pack(side="right")
 
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        if on_abort is not None:
+            self.protocol("WM_DELETE_WINDOW", self._on_abort_clicked)
+        else:
+            self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ── Public API ───────────────────────────────────────────────
 
@@ -96,6 +109,15 @@ class OutputLogWindow(tk.Toplevel):
         self._process = None
         self._stop_close_btn.configure(state="disabled")
 
+    @property
+    def is_aborted(self) -> bool:
+        """Whether the user clicked Abort."""
+        return self._aborted
+
+    def minimize(self) -> None:
+        """Minimize the window to the taskbar."""
+        self.iconify()
+
     # ── Event handlers ───────────────────────────────────────────
 
     def _on_key_press(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
@@ -106,6 +128,19 @@ class OutputLogWindow(tk.Toplevel):
 
     def _on_close(self) -> None:
         """Close the window without stopping the process."""
+        self.destroy()
+
+    def _on_abort_clicked(self) -> None:
+        """Kill the process, signal abort, and close the window."""
+        if self._process is not None:
+            try:
+                self._process.kill()
+            except OSError:
+                pass
+            self._process = None
+        self._aborted = True
+        if self._on_abort is not None:
+            self._on_abort()
         self.destroy()
 
     def _on_stop_and_close(self) -> None:

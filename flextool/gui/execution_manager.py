@@ -82,6 +82,8 @@ class ExecutionManager:
         self._scheduler_thread: threading.Thread | None = None
         self._comparison_scenarios: list[str] = []
 
+        self._converted_xlsx: set[str] = set()  # source_names already converted
+
         # Register cleanup for when the Python process exits
         atexit.register(self.cleanup)
 
@@ -228,11 +230,11 @@ class ExecutionManager:
                 job.start_time = datetime.now()
             self._notify_status_change(job)
 
-            # Step 1: xlsx -> sqlite conversion (if needed)
-            if job.is_xlsx_source and job.xlsx_path is not None:
-                conversion_ok = self._run_xlsx_conversion(job)
-                if not conversion_ok:
-                    return  # Status already set to FAILED
+            # xlsx conversion must be done before jobs are dispatched
+            if job.is_xlsx_source and job.source_name not in self._converted_xlsx:
+                raise RuntimeError(
+                    f"Bug: xlsx source '{job.source_name}' was not pre-converted"
+                )
 
             # Step 2: Build and run the main FlexTool command
             work_folder = self.project_path / "work" / job.scenario_name
@@ -314,163 +316,6 @@ class ExecutionManager:
         finally:
             with self._lock:
                 self._running_count -= 1
-
-    def _run_xlsx_conversion(self, job: ExecutionJob) -> bool:
-        """Convert an xlsx/ods file to sqlite. Returns True on success."""
-        assert job.xlsx_path is not None
-        target_db_url = job.input_db_url  # already points to intermediate/
-
-        # Ensure the intermediate/ directory exists
-        intermediate_dir = self.project_path / "intermediate"
-        intermediate_dir.mkdir(parents=True, exist_ok=True)
-
-        # Remove any stale intermediate sqlite from a previous run
-        db_path = target_db_url.replace("sqlite:///", "", 1)
-        if os.path.exists(db_path):
-            os.remove(db_path)
-
-        # Detect Excel format and version
-        from flextool.process_inputs import (
-            detect_excel_format, ExcelFormat, CURRENT_FLEXTOOL_DB_VERSION,
-        )
-        info = detect_excel_format(job.xlsx_path)
-
-        flextool_root = Path(__file__).resolve().parent.parent.parent
-        needs_migration = False
-
-        # Warn when Excel is from an older schema version
-        if (
-            info.version is not None
-            and info.version < CURRENT_FLEXTOOL_DB_VERSION
-        ):
-            with self._lock:
-                job.stdout_lines.append(
-                    f"[execution_manager] Note: Excel is version {info.version}, "
-                    f"current FlexTool version is {CURRENT_FLEXTOOL_DB_VERSION}. "
-                    f"Data will be migrated for this run. Consider converting to "
-                    f"database and then back to xlsx to get an updated Excel."
-                )
-            self._notify_status_change(job)
-
-        if info.format == ExcelFormat.SELF_DESCRIBING:
-            # New format: initialize from current master template, import directly
-            self._initialize_db_from_template(
-                db_path, flextool_root / "version" / "flextool_template_master.json",
-            )
-            cmd = [
-                sys.executable, "-m",
-                "flextool.cli.cmd_read_self_describing_tabular_input",
-                str(job.xlsx_path),
-                target_db_url,
-                "--keep-entities",
-            ]
-            # Self-describing files from an older version also need migration
-            if (
-                info.version is not None
-                and info.version < CURRENT_FLEXTOOL_DB_VERSION
-            ):
-                needs_migration = True
-        else:
-            # SPECIFICATION (3.x): initialize from frozen v25 template,
-            # import, then migrate to current version.
-            self._initialize_db_from_template(
-                db_path, flextool_root / "version" / "flextool_template_v25.json",
-            )
-            cmd = [
-                sys.executable, "-m",
-                "flextool.cli.cmd_read_tabular_input",
-                target_db_url,
-                "--tabular-file-path",
-                str(job.xlsx_path),
-            ]
-            needs_migration = True
-
-        with self._lock:
-            job.stdout_lines.append(f"[execution_manager] Converting {job.xlsx_path.name} to sqlite...")
-        self._notify_status_change(job)
-
-        logger.info("xlsx conversion for job %d: %s", job.job_id, " ".join(cmd))
-
-        flextool_root = Path(__file__).resolve().parent.parent.parent
-
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            cwd=str(flextool_root),
-        )
-        killed = False
-        with self._lock:
-            if job.status == JobStatus.KILLED:
-                killed = True
-            else:
-                job.process = proc
-
-        if killed:
-            proc.kill()
-            proc.wait()
-            return False
-
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            stripped = line.rstrip("\n")
-            with self._lock:
-                job.stdout_lines.append(stripped)
-            self._notify_status_change(job)
-
-        return_code = proc.wait()
-
-        with self._lock:
-            job.process = None
-
-        if return_code != 0:
-            now = datetime.now()
-            with self._lock:
-                job.status = JobStatus.FAILED
-                job.end_time = now
-                job.finish_timestamp = now.strftime("%d.%m.%y %H:%M")
-                job.stdout_lines.append(
-                    f"[execution_manager] xlsx conversion failed (exit code {return_code})"
-                )
-            self._notify_status_change(job)
-            return False
-
-        # If needed, migrate the database from v25 to the current version
-        if needs_migration:
-            with self._lock:
-                job.stdout_lines.append("[execution_manager] Migrating database to current version...")
-            self._notify_status_change(job)
-
-            try:
-                from flextool.update_flextool.db_migration import migrate_database
-                migrate_database(db_path)
-                with self._lock:
-                    job.stdout_lines.append("[execution_manager] Database migration completed")
-                self._notify_status_change(job)
-            except Exception as exc:
-                with self._lock:
-                    job.stdout_lines.append(
-                        f"[execution_manager] Database migration failed: {exc}"
-                    )
-                self._notify_status_change(job)
-                return False
-
-        with self._lock:
-            job.stdout_lines.append("[execution_manager] xlsx conversion completed successfully")
-        self._notify_status_change(job)
-        return True
-
-    @staticmethod
-    def _initialize_db_from_template(db_path: str, template_json: Path) -> None:
-        """Initialize a fresh sqlite database from a FlexTool template JSON."""
-        if not template_json.exists():
-            raise FileNotFoundError(
-                f"FlexTool template not found at {template_json}."
-            )
-        from flextool.update_flextool.initialize_database import initialize_database
-        initialize_database(str(template_json), db_path)
 
     def _build_run_command(self, job: ExecutionJob, work_folder: Path) -> list[str]:
         """Build the ``cmd_run_flextool`` command line."""

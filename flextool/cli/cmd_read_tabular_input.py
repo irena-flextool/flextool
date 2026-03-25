@@ -48,6 +48,8 @@ def main():
         input_group = parser.add_mutually_exclusive_group(required=True)
         input_group.add_argument('--tabular-file-path', help= "The file path of a FlexTool input file (either xlsx or ods).")
         input_group.add_argument('--csv-directory-path', help= "Input data as csv files in FlexTool format.")
+        parser.add_argument('--migration-follows', action='store_true',
+                            help="Accept a version mismatch because migration will run after import")
 
         args = parser.parse_args()
 
@@ -68,7 +70,8 @@ def main():
         else:
             raise ValueError("Must provide either tabular_file_path or csv_directory_path")
 
-        write_to_flextool_input_db(input_path, tabular_reader, args.target_db_url, input_type)
+        write_to_flextool_input_db(input_path, tabular_reader, args.target_db_url, input_type,
+                                   migration_follows=args.migration_follows)
 
 
 

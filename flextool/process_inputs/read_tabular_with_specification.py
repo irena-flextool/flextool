@@ -10,6 +10,17 @@ import re
 from spinedb_api import to_database, Map, Array, SpineDBAPIError, dataframes
 from spinedb_api.exception import NothingToCommit
 
+# Backward-compatible value remapping for renamed parameter values.
+_VALUE_REMAP: dict[str, str] = {
+}
+
+
+def _remap_value(value: Any) -> Any:
+    """Return the remapped value if it is a known old name, else unchanged."""
+    if isinstance(value, str):
+        return _VALUE_REMAP.get(value, value)
+    return value
+
 
 class TabularReader:
     """Reads CSV, Excel (.xlsx), or ODS (.ods) files using specification mappings.
@@ -107,9 +118,21 @@ class TabularReader:
 
     # ==================== Add to database methods ====================
 
+    @staticmethod
+    def _is_nan(value) -> bool:
+        """Check if a value is NaN (works for float, str, tuple contents)."""
+        import math
+        if isinstance(value, float) and math.isnan(value):
+            return True
+        if isinstance(value, tuple):
+            return any(isinstance(v, float) and math.isnan(v) for v in value)
+        return False
+
     def _add_entities(self, ent_set_list, db_map, table_name, mapping_name):
         for ent_set in ent_set_list:
             for ent_class, ent in ent_set:
+                if self._is_nan(ent_class) or self._is_nan(ent):
+                    continue  # Skip rows with empty entity names
                 key = (ent_class, ent)
                 if key not in self.entities_added:
                     self.entities_added[key] = {
@@ -120,19 +143,29 @@ class TabularReader:
                         db_map.add_entity(entity_class_name=ent_class,
                             entity_byname=ent)
                     except Exception as e:
-                        raise SpineDBAPIError(f'Could not add entity {ent} from class {ent_class} based on table.mapping {table_name}.{mapping_name} to the database: {e}')
+                        self.logger.warning(
+                            "Could not add entity %s from class %s (table.mapping %s.%s): %s",
+                            ent, ent_class, table_name, mapping_name, e,
+                        )
 
     def _add_alternatives(self, alt_array, db_map, table_name, mapping_name):
         for alt in alt_array:
+            if self._is_nan(alt):
+                continue
             if alt not in self.alternatives_added:
                 self.alternatives_added.add(alt)
                 try:
                     db_map.add_alternative(name=alt)
                 except Exception as e:
-                    raise SpineDBAPIError(f'Could not add alternative {alt} based on table.mapping {table_name}.{mapping_name} to the database: {e}')
+                    self.logger.warning(
+                        "Could not add alternative %s (table.mapping %s.%s): %s",
+                        alt, table_name, mapping_name, e,
+                    )
 
     def _add_entity_alternatives(self, ent_act_zip, db_map, table_name, mapping_name):
         for ent_class, ent, alt, value in ent_act_zip:
+            if self._is_nan(ent) or self._is_nan(alt):
+                continue
             key = (ent_class, ent, alt)
             if key not in self.entity_alternatives_added:
                 self.entity_alternatives_added[key] = {
@@ -146,7 +179,10 @@ class TabularReader:
                         alternative_name=alt,
                         active=bool(value)),
                 except Exception as e:
-                    raise SpineDBAPIError(f'Could not add entity_alternative {ent}, {alt} from class {ent_class} based on table.mapping {table_name}.{mapping_name} to the database: {e}')
+                    self.logger.warning(
+                        "Could not add entity_alternative %s, %s from class %s (table.mapping %s.%s): %s",
+                        ent, alt, ent_class, table_name, mapping_name, e,
+                    )
 
     def _add_scenario_alternatives(self, scen_alt_df, db_map, table_name, mapping_name):
         # First, add any missing alternatives
@@ -161,7 +197,10 @@ class TabularReader:
                         alternative_name=alt,
                         rank=i)
                 except Exception as e:
-                    raise SpineDBAPIError(f'Could not add scenario {scen} - alternative {alt} to the database: {e}')
+                    self.logger.warning(
+                        "Could not add scenario %s - alternative %s (table.mapping %s.%s): %s",
+                        scen, alt, table_name, mapping_name, e,
+                    )
 
     def _add_parameters(self, data_df: pd.DataFrame, db_map, table_name, mapping_name: str, value_type: str) -> None:
         """Add extracted parameter data to the Spine database.
@@ -192,8 +231,18 @@ class TabularReader:
         if value_type == 'constant':
             # Scalar
             for col_name, col_data in data_df.items():
-                value, type_ = to_database(col_data.iloc[0])
-        
+                # After unstack, each column is sparse — the single value may
+                # not be at row 0.  Use the first non-NaN entry instead.
+                non_nan = col_data.dropna()
+                if non_nan.empty:
+                    continue
+                raw_value = non_nan.iloc[0]
+                # Skip empty cells (nan from "edited but empty" Excel cells)
+                if self._is_nan(raw_value):
+                    continue
+                raw_value = _remap_value(raw_value)
+                value, type_ = to_database(raw_value)
+
                 # Add parameter value
                 try:
                     db_map.add_parameter_value(
@@ -210,7 +259,10 @@ class TabularReader:
         elif value_type == 'array':
             # Array
             for col_name, col_data in data_df.items():
-                array_obj = Array(values=col_data.dropna().to_list(), index_name=col_data.index.name)
+                clean_data = col_data.dropna()
+                if clean_data.empty:
+                    continue  # Skip entirely empty arrays
+                array_obj = Array(values=clean_data.to_list(), index_name=col_data.index.name)
                 value, type_ = to_database(array_obj)
 
                 # Add parameter value
@@ -230,6 +282,8 @@ class TabularReader:
             # Map
             for col_name, col_data in data_df.items():
                 df_col = data_df[col_name].dropna()
+                if df_col.empty:
+                    continue  # Skip entirely empty maps
                 map_obj = Map(indexes=df_col.index.to_list(), values=df_col.values.tolist(), index_name=df_col.index.name)
                 value, type_ = to_database(map_obj)
 
@@ -246,11 +300,13 @@ class TabularReader:
                 except Exception as e:
                     errors.append(f"Failed to add a map for (class, parameter, alternative, entity): {col_name[0]}, {col_name[1]}, {col_name[2]}, {col_name[3]} based on table.mapping {table_name}.{mapping_name}.\n    {e}")
 
-        # Raise errors if any occurred
+        # Report errors as warnings — individual cells that can't be imported
+        # should not abort the entire import
         if errors:
-            error_msg = f"\nErrors occurred while processing mapping '{mapping_name}':\n"
+            import sys
+            error_msg = f"\nWarnings while processing sheet '{table_name}', mapping '{mapping_name}':\n"
             error_msg += "\n".join(f"  - {err}" for err in errors)
-            raise SpineDBAPIError(error_msg)
+            print(error_msg, file=sys.stderr)
 
 
     # ==================== Reading Methods ====================
@@ -278,20 +334,33 @@ class TabularReader:
         # Check if table is selected for processing
         if not self.is_table_selected(sheet_name):
             self.logger.info(f"Skipping {sheet_name} - not in selected tables")
-            return pd.DataFrame(), {}, {}
+            return pd.DataFrame(), {}
 
         # Get column type specifications
         table_column_types = self.get_table_column_types(sheet_name.lower())
         default_column_type = self.specifications['tables']['node_c']['default_column_type']
 
+        # Check if the sheet exists in the file before trying to read it
+        import openpyxl
         try:
-            raw_df = pd.read_excel(excel_file_path, sheet_name=sheet_name, engine='openpyxl', header=None, na_filter=True)
+            wb_check = openpyxl.load_workbook(excel_file_path, read_only=True, data_only=True)
+            available_sheets = wb_check.sheetnames
+            wb_check.close()
+        except Exception:
+            available_sheets = []
+
+        if sheet_name not in available_sheets:
+            self.logger.info(f"Sheet '{sheet_name}' not found in file — skipping.")
+            return pd.DataFrame(), {}
+
+        try:
+            raw_df = pd.read_excel(excel_file_path, sheet_name=sheet_name, engine='calamine', header=None, na_filter=True)
         except Exception as e1:
             try:
-                print(f"The fast Calamine engine could not read sheet {sheet_name}, trying OpenPyxl.")
-                raw_df = pd.read_excel(excel_file_path, sheet_name=sheet_name, engine='calamine', header=None, na_filter=True)
+                self.logger.info(f"Calamine engine could not read sheet '{sheet_name}', trying openpyxl.")
+                raw_df = pd.read_excel(excel_file_path, sheet_name=sheet_name, engine='openpyxl', header=None, na_filter=True)
             except Exception as e2:
-                raise ValueError(f"Both calamine and openpyxl engines failed for sheet {sheet_name}") from e2
+                raise ValueError(f"Both calamine and openpyxl engines failed for sheet '{sheet_name}'") from e2
 
         # Note: Column type conversions are applied after dataframe processing
         # in the extraction methods, not here on the raw dataframe
@@ -325,7 +394,7 @@ class TabularReader:
         # Check if table is selected for processing
         if not self.is_table_selected(filename):
             self.logger.info(f"Skipping {filename} - not in selected tables")
-            return pd.DataFrame(), {}, {}
+            return pd.DataFrame(), {}
 
         # Get column type specifications
         table_column_types = self.get_table_column_types(filename.lower())
@@ -376,7 +445,8 @@ class TabularReader:
         return parsed
 
     def _extract_data(self, df: pd.DataFrame, mapping_info: Dict, table_options: Dict,
-                        table_column_types: Dict = None) -> (pd.DataFrame, list, zip):
+                        table_column_types: Dict = None,
+                        table_name: str = "", mapping_name: str = "") -> (pd.DataFrame, list, zip):
         """Extract data from pivoted (tabular) format.
 
         In pivoted data:
@@ -586,8 +656,9 @@ class TabularReader:
                             df_work.iloc[:, orig_col_idx] = pd.to_numeric(
                                 df_work.iloc[:, orig_col_idx], errors='raise')
                         except (ValueError, TypeError) as e:
+                            sheet_info = f"Sheet '{table_name}'" if table_name else "Sheet"
                             self.logger.warning(
-                                f" Column {orig_col_idx} contains non-numeric values: {e}. "
+                                f" {sheet_info}, column {orig_col_idx} contains non-numeric values: {e}. "
                                 f"Converting invalid values to NaN and continuing.\n{' ':<30}"
                             )
                             df_work.iloc[:, orig_col_idx] = pd.to_numeric(

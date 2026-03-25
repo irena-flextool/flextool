@@ -120,6 +120,12 @@ class MainWindow(tk.Tk):
         self._lock_check_timer_id: str | None = None
         self.db_editor_mgr = DbEditorManager()
 
+        # Pre-conversion state for xlsx→sqlite before execution
+        self._xlsx_converting_sources: set[str] = set()
+        self._xlsx_conversion_log: OutputLogWindow | None = None
+        self._xlsx_pending_scenarios: list[ScenarioInfo] = []
+        self._xlsx_conversion_queue: list[tuple[str, Path]] = []
+
         # ── Window sizing ────────────────────────────────────────────
         cw = self._char_width
         lh = self._line_height
@@ -740,6 +746,17 @@ class MainWindow(tk.Tk):
         except Exception:
             pass
 
+        # Close xlsx pre-conversion window if open
+        try:
+            if self._xlsx_conversion_log is not None and self._xlsx_conversion_log.winfo_exists():
+                self._xlsx_conversion_log.destroy()
+        except Exception:
+            pass
+        self._xlsx_converting_sources.clear()
+        self._xlsx_conversion_queue.clear()
+        self._xlsx_pending_scenarios.clear()
+        self._xlsx_conversion_log = None
+
         # Close execution window if open
         try:
             if self.execution_window is not None and self.execution_window.winfo_exists():
@@ -820,6 +837,9 @@ class MainWindow(tk.Tk):
                 and source_name.lower().endswith(".sqlite")
                 and self.db_editor_mgr.is_editor_running(source_name)
             ):
+                is_locked = True
+            # Also treat sources being pre-converted as locked
+            if not is_locked and source_name in self._xlsx_converting_sources:
                 is_locked = True
             if is_locked and old_status_char != STATUS_EDITING:
                 self.input_sources_tree.set(item, "status", STATUS_EDITING)
@@ -1367,6 +1387,7 @@ class MainWindow(tk.Tk):
                 target_db_url,
                 "--tabular-file-path",
                 str(xlsx_path),
+                "--migration-follows",
             ]
         elif info.format == ExcelFormat.OLD_V2:
             cmd = [
@@ -1559,6 +1580,195 @@ class MainWindow(tk.Tk):
             save_project_settings(project_path, self.project_settings)
 
         self._refresh_input_sources()
+
+    # ── xlsx pre-conversion pipeline (before execution) ──────────
+
+    def _start_xlsx_preconversion(self, scenarios: list[ScenarioInfo]) -> None:
+        """Convert unique xlsx sources to intermediate sqlite, then dispatch jobs."""
+        project_path = get_projects_dir() / self.current_project
+        intermediate_dir = project_path / "intermediate"
+        intermediate_dir.mkdir(parents=True, exist_ok=True)
+
+        # Identify unique xlsx sources that need conversion
+        seen: set[str] = set()
+        queue: list[tuple[str, Path]] = []
+        for s in scenarios:
+            if s.source_name not in seen:
+                seen.add(s.source_name)
+                if s.source_name not in self.execution_mgr._converted_xlsx:
+                    xlsx_path = project_path / "input_sources" / s.source_name
+                    queue.append((s.source_name, xlsx_path))
+
+        self._xlsx_pending_scenarios = list(scenarios)
+
+        if not queue:
+            # All already converted — dispatch immediately
+            self._xlsx_preconversion_done(success=True)
+            return
+
+        self._xlsx_conversion_queue = queue
+        self._xlsx_converting_sources = {name for name, _ in queue}
+
+        # Update UI to show sources as locked/red
+        self._update_available_scenario_tags()
+
+        # Close any previous minimized conversion window
+        if self._xlsx_conversion_log is not None and self._xlsx_conversion_log.winfo_exists():
+            self._xlsx_conversion_log.destroy()
+
+        self._xlsx_conversion_log = OutputLogWindow(
+            self,
+            "Pre-conversion: xlsx \u2192 sqlite",
+            on_abort=self._xlsx_preconversion_aborted,
+        )
+        self._xlsx_convert_next()
+
+    def _xlsx_convert_next(self) -> None:
+        """Convert the next xlsx source in the queue."""
+        if not self._xlsx_conversion_queue:
+            self._xlsx_preconversion_done(success=True)
+            return
+
+        source_name, xlsx_path = self._xlsx_conversion_queue.pop(0)
+        log = self._xlsx_conversion_log
+        if log is None or not log.winfo_exists():
+            # Window was destroyed (shouldn't happen if not aborted)
+            return
+
+        project_path = get_projects_dir() / self.current_project
+        stem = Path(source_name).stem
+        db_path = project_path / "intermediate" / f"{stem}.sqlite"
+        target_db_url = f"sqlite:///{db_path}"
+
+        # Remove stale intermediate file
+        if db_path.exists():
+            db_path.unlink()
+
+        # Detect format and build command
+        from flextool.process_inputs import (
+            detect_excel_format, ExcelFormat, CURRENT_FLEXTOOL_DB_VERSION,
+        )
+        info = detect_excel_format(xlsx_path)
+        flextool_root = Path(__file__).resolve().parent.parent.parent
+        migrate_db_path: str | None = None
+
+        if info.format == ExcelFormat.SELF_DESCRIBING:
+            template = flextool_root / "version" / "flextool_template_master.json"
+            cmd = [
+                sys.executable, "-m",
+                "flextool.cli.cmd_read_self_describing_tabular_input",
+                str(xlsx_path), target_db_url, "--keep-entities",
+            ]
+            if info.version is not None and info.version < CURRENT_FLEXTOOL_DB_VERSION:
+                migrate_db_path = str(db_path)
+        else:
+            template = flextool_root / "version" / "flextool_template_v25.json"
+            cmd = [
+                sys.executable, "-m",
+                "flextool.cli.cmd_read_tabular_input",
+                target_db_url, "--tabular-file-path", str(xlsx_path),
+                "--migration-follows",
+            ]
+            migrate_db_path = str(db_path)
+
+        # Initialize database from template
+        from flextool.update_flextool.initialize_database import initialize_database
+        initialize_database(str(template), str(db_path))
+
+        log.append_line(f"{'=' * 60}")
+        log.append_line(f"Converting {source_name} ...")
+        log.append_line(" ".join(cmd))
+        log.append_line("")
+
+        def _worker() -> None:
+            success = False
+            try:
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1, cwd=str(flextool_root),
+                )
+                if log.winfo_exists():
+                    log.after(0, log.set_process, proc)
+
+                for line in proc.stdout:  # type: ignore[union-attr]
+                    if log.winfo_exists():
+                        log.after(0, log.append_line, line.rstrip("\n"))
+
+                proc.wait()
+                success = proc.returncode == 0
+
+                if success and migrate_db_path:
+                    if log.winfo_exists():
+                        log.after(0, log.append_line, "\nMigrating database...")
+                    try:
+                        from flextool.update_flextool.db_migration import migrate_database
+                        migrate_database(migrate_db_path)
+                        if log.winfo_exists():
+                            log.after(0, log.append_line, "Migration completed.")
+                    except Exception as exc:
+                        if log.winfo_exists():
+                            log.after(0, log.append_line, f"Migration failed: {exc}")
+                        success = False
+
+                status = "succeeded" if success else f"failed (exit code {proc.returncode})"
+                if log.winfo_exists():
+                    log.after(0, log.append_line, f"\n{source_name}: {status}\n")
+            except Exception as exc:
+                if log.winfo_exists():
+                    log.after(0, log.append_line, f"\nError: {exc}")
+
+            self.after(0, self._xlsx_one_source_finished, source_name, success)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+    def _xlsx_one_source_finished(self, source_name: str, success: bool) -> None:
+        """Called on main thread when one xlsx source conversion finishes."""
+        if success:
+            self.execution_mgr._converted_xlsx.add(source_name)
+            self._xlsx_converting_sources.discard(source_name)
+            self._xlsx_convert_next()
+        else:
+            self._xlsx_preconversion_done(success=False)
+
+    def _xlsx_preconversion_done(self, success: bool) -> None:
+        """Called when all xlsx conversions are done (or one failed)."""
+        self._xlsx_converting_sources.clear()
+        self._xlsx_conversion_queue.clear()
+        self._update_available_scenario_tags()
+
+        scenarios = self._xlsx_pending_scenarios
+        self._xlsx_pending_scenarios = []
+
+        if success:
+            # Minimize the log window (user can review it later)
+            log = self._xlsx_conversion_log
+            if log is not None and log.winfo_exists():
+                log.mark_finished(True)
+                log.minimize()
+
+            # Dispatch the xlsx scenarios
+            if scenarios:
+                added = self.execution_mgr.add_jobs(scenarios)
+                self.execution_mgr.start()
+                self._update_execution_menu_style()
+                self._open_or_raise_execution_window()
+                if added and self.execution_window is not None:
+                    self.execution_window.select_job(added[-1].job_id)
+        else:
+            # Keep log window open for review
+            log = self._xlsx_conversion_log
+            if log is not None and log.winfo_exists():
+                log.mark_finished(False)
+                log.append_line("\nConversion failed. Scenarios will not be executed.")
+
+    def _xlsx_preconversion_aborted(self) -> None:
+        """Called when user aborts xlsx pre-conversion (closes window or clicks Abort)."""
+        self._xlsx_converting_sources.clear()
+        self._xlsx_conversion_queue.clear()
+        self._xlsx_pending_scenarios = []
+        self._xlsx_conversion_log = None
+        self._update_available_scenario_tags()
 
     # ── File conflict resolution helpers ─────────────────────────
 
@@ -1878,6 +2088,15 @@ class MainWindow(tk.Tk):
         if not self.avail_scenario_mgr or not self.current_project:
             return
 
+        if self._xlsx_converting_sources:
+            messagebox.showwarning(
+                "Conversion in progress",
+                "An xlsx conversion is already running.\n"
+                "Wait for it to finish or abort it first.",
+                parent=self,
+            )
+            return
+
         checked = self.avail_scenario_mgr.get_checked_scenarios(self.available_tree)
         if not checked:
             logger.info("No scenarios checked for execution")
@@ -1961,17 +2180,23 @@ class MainWindow(tk.Tk):
         names = [s.name for s in new_scenarios]
         logger.info("Scenarios queued for execution: %s", names)
 
-        # Add jobs to the manager and start execution automatically
-        added_jobs = self.execution_mgr.add_jobs(new_scenarios)
-        self.execution_mgr.start()
+        # Partition into xlsx and sqlite scenarios
+        xlsx_scenarios = [s for s in new_scenarios
+                          if s.source_name.lower().endswith((".xlsx", ".xls", ".ods"))]
+        sqlite_scenarios = [s for s in new_scenarios if s not in xlsx_scenarios]
 
-        # Update execution menu button highlight
-        self._update_execution_menu_style()
+        # Dispatch sqlite scenarios immediately
+        if sqlite_scenarios:
+            added = self.execution_mgr.add_jobs(sqlite_scenarios)
+            self.execution_mgr.start()
+            self._update_execution_menu_style()
+            self._open_or_raise_execution_window()
+            if added and self.execution_window is not None:
+                self.execution_window.select_job(added[-1].job_id)
 
-        # Open the execution window (or raise it) and select the last added job
-        self._open_or_raise_execution_window()
-        if added_jobs and self.execution_window is not None:
-            self.execution_window.select_job(added_jobs[-1].job_id)
+        # Handle xlsx scenarios through pre-conversion
+        if xlsx_scenarios:
+            self._start_xlsx_preconversion(xlsx_scenarios)
 
     # ── Execution menu handler ───────────────────────────────────
 

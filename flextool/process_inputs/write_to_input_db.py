@@ -5,7 +5,8 @@ from flextool.update_flextool import FLEXTOOL_DB_VERSION
 
 flextool_db_version = FLEXTOOL_DB_VERSION
 
-def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_type='excel'):
+def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_type='excel',
+                               migration_follows: bool = False):
     """Write tabular data to FlexTool input database, reading one sheet/file at a time.
 
     Args:
@@ -13,6 +14,8 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
         tabular_reader: TabularReader instance with loaded specification
         target_db_url: URL to target SQLite database
         input_type: Either 'excel' or 'csv' to determine reading method
+        migration_follows: If True, accept a version mismatch because
+            the caller will migrate the database after import
 
     This function reads sheets/files one at a time to minimize memory usage.
     """
@@ -35,6 +38,8 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
             version = from_database(version_parameter.default_value, version_parameter.default_type)
             if version == flextool_db_version:
                 print(f"Valid FlexTool input database with correct version: {flextool_db_version}")
+            elif migration_follows:
+                print(f"FlexTool input database version: {version} (will be migrated to {flextool_db_version})")
             else:
                 print(f"Wrong FlexTool input database version: {version}. Should be: {flextool_db_version}")
                 exit(-1)
@@ -100,7 +105,7 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
 
                 # Read data and process the dataframe
                 try:
-                    (data_df, ent_zip_list, ent_act_zip, scen_array, scen_alt_df) = tabular_reader._extract_data(raw_df, mapping_info, table_options, column_types)
+                    (data_df, ent_zip_list, ent_act_zip, scen_array, scen_alt_df) = tabular_reader._extract_data(raw_df, mapping_info, table_options, column_types, table_name, mapping_name)
                 except Exception as e:
                     print(f"\n  Error processing mapping '{mapping_name}': {e}")
                     continue  # Continue to next mapping on processing error
