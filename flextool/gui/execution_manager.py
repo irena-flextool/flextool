@@ -207,13 +207,17 @@ class ExecutionManager:
                 continue  # Re-check immediately for more slots
 
             if not any_active:
-                # All jobs finished (or killed / failed)
-                self._run_post_execution()
-                if self._on_all_finished is not None:
-                    try:
-                        self._on_all_finished()
-                    except Exception:
-                        logger.exception("on_all_finished callback failed")
+                # All jobs finished — run post-execution in a separate thread
+                # so the scheduler exits promptly and start() can launch a new
+                # scheduler if the user submits more jobs.
+                def _post():
+                    self._run_post_execution()
+                    if self._on_all_finished is not None:
+                        try:
+                            self._on_all_finished()
+                        except Exception:
+                            logger.exception("on_all_finished callback failed")
+                threading.Thread(target=_post, daemon=True).start()
                 break
 
             time.sleep(0.1)
@@ -307,6 +311,7 @@ class ExecutionManager:
                     job.stdout_lines.append(
                         f"[execution_manager] Process exited with code {return_code}"
                     )
+                self._prune_old_jobs(job)
             self._notify_status_change(job)
 
         except Exception:
@@ -550,6 +555,32 @@ class ExecutionManager:
                 job.finish_timestamp = job.end_time.strftime("%d.%m.%y %H:%M")
         if job:
             self._notify_status_change(job)
+
+    def _prune_old_jobs(self, finished_job: ExecutionJob) -> None:
+        """Remove previous jobs for the same scenario after a job finishes.
+
+        Must be called while holding ``self._lock``.
+
+        Rules:
+        - New job succeeded → remove all previous jobs for this scenario.
+        - New job failed    → remove previous failed/killed jobs, keep successful ones.
+        """
+        to_remove = []
+        for old in self._jobs:
+            if old is finished_job:
+                continue
+            if old.scenario_name != finished_job.scenario_name:
+                continue
+            if old.status in (JobStatus.PENDING, JobStatus.RUNNING):
+                continue
+            if finished_job.status == JobStatus.SUCCESS:
+                # New run succeeded — all old runs are superseded
+                to_remove.append(old)
+            elif old.status in (JobStatus.FAILED, JobStatus.KILLED):
+                # New run failed — remove old failures, keep old successes
+                to_remove.append(old)
+        for old in to_remove:
+            self._jobs.remove(old)
 
     def remove_job(self, job_id: int) -> None:
         """Remove a finished or pending job from the list."""
