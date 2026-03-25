@@ -41,8 +41,15 @@
 #     'independent' — each subplot auto-scales independently (default)
 #     Single pair [min, max] applies to all subplots
 #     List of pairs [[0,1],[],[0,100]] applies per subplot (empty entry = auto-scale)
-# - axis_tick_format: Python format spec for value-axis tick labels (default '1,.0f').
+# - axis_tick_format: Python format spec for value-axis tick labels (default 'dynamic').
+#     'dynamic' adapts to data range: commas for thousands, decimals for small values,
+#     engineering notation (×10⁹) for values > 990M. Shows ~2 significant digits.
 #     Single string applies to all subplots; list applies per subplot, e.g. [',.0f', '.2%']
+# - value_label: Show value labels on bar charts. Options:
+#     true or 'dynamic' — show labels using dynamic formatting (adapts to data range)
+#     A Python format spec string (e.g. '.2f') — show labels with that format
+#     false or omitted — no value labels (default)
+#     When enabled, the axis is extended by 10% to make room for labels within the plot area.
 # - always_include_zero_in_axis: true/false (default true). Zero will always be within the axis bounds (preventing automatic behaviour where it can be hard to see the scale of the plot)
 # - skip_data_with_only_zeroes: true/false (default false). Drops all-zero columns (and all-zero rows for bar charts) before plotting
 
@@ -54,7 +61,6 @@ plots:
       map_dimensions_for_plots: [dt_se, tt_lu]
       legend: shared
       skip_data_with_only_zeroes: true
-      axis_tick_format: '1,.0f'
       ylabel: MWh
     chunks:
       plot_name: '0.0.C Loss of load weekly avg (upward slack)'
@@ -64,7 +70,6 @@ plots:
       time_average_duration: 168
       subplots_per_row: 2
       skip_data_with_only_zeroes: true
-      axis_tick_format: '1,.0f'
       ylabel: MWh
   node_slack_up_d_e:
     default:
@@ -76,14 +81,12 @@ plots:
       subplots_per_row: 2
       xlabel: MWh
       skip_data_with_only_zeroes: true
-      axis_tick_format: '1,.0f'
   node_slack_down_dt_e:
     default:
       plot_name: '0.1.T Excess load + spill (downward slack)'
       map_dimensions_for_plots: [dt_se, tt_lu]
       legend: shared
       skip_data_with_only_zeroes: true
-      axis_tick_format: '1,.0f'
       ylabel: MWh
     chunks:
       plot_name: '0.1.C Excess load + spill weekly avg (downward slack)'
@@ -93,7 +96,6 @@ plots:
       time_average_duration: 168
       subplots_per_row: 2
       skip_data_with_only_zeroes: true
-      axis_tick_format: '1,.0f'
       ylabel: MWh
   node_slack_down_d_e:
     default:
@@ -104,28 +106,24 @@ plots:
       max_subplots_per_file: 2
       subplots_per_row: 2
       xlabel: MWh
-      axis_tick_format: '1,.0f'
       skip_data_with_only_zeroes: true
   nodeGroup_slack_reserve_dt_eeg:
     plot_name: '0.2.T Lack of reserves'
     map_dimensions_for_plots: [dt_seeg, tt_luug]
     legend: shared
     skip_data_with_only_zeroes: true
-    axis_tick_format: '1,.0f'
     ylabel: MWh/h
   nodeGroup_slack_inertia_dt_g:
     plot_name: '0.3.T Lack of inertia'
     map_dimensions_for_plots: [dt_sg, tt_lu]
     legend: shared
     skip_data_with_only_zeroes: true
-    axis_tick_format: '1,.0f'
     ylabel: MWs
   nodeGroup_slack_nonsync_dt_g:
     plot_name: '0.4.T Lack of nonsynchronous sources'
     map_dimensions_for_plots: [dt_sg, tt_lu]
     legend: shared
     skip_data_with_only_zeroes: true
-    axis_tick_format: '1,.0f'
     ylabel: MWh
   nodeGroup_slack_capacity_margin_d_g:
     plot_name: '0.5.P Violation of capacity margin'
@@ -134,7 +132,6 @@ plots:
     max_subplots_per_file: 2
     subplots_per_row: 2
     xlabel: MWh
-    axis_tick_format: '1,.0f'
 
   # Curtailments
   unit_curtailment_outputNode_d_ee:
@@ -144,7 +141,6 @@ plots:
       legend: shared
       axis_bounds: shared
       skip_data_with_only_zeroes: true
-      axis_tick_format: '1,.0f'
       xlabel: MWh
   unit_curtailment_outputNode_dt_ee:
     default:
@@ -153,7 +149,6 @@ plots:
       legend: shared
       axis_bounds: shared
       skip_data_with_only_zeroes: true
-      axis_tick_format: '1,.0f'
       ylabel: MWh
   unit_curtailment_share_outputNode_d_ee:
     default:
@@ -247,20 +242,17 @@ plots:
       max_subplots_per_file: 1
       xlabel: 'Millions of Currency'
       map_dimensions_for_plots: [d_sp, e_bs]
-      axis_tick_format: '1,.0f'
     sum_periods:
       plot_name: '3.0.S Costs annualized sum periods'
       base_length: 10
       map_dimensions_for_plots: [d_sp, m_gb]
       legend: shared
-      axis_tick_format: '1,.0f'
   costs_dt_p:
     default:
       plot_name: '3.1.T Costs stack'
       map_dimensions_for_plots: [dt_sp, tt_us]
       max_items_per_plot: 20
       axis_bounds: shared
-      axis_tick_format: '1,.0f'
       ylabel: 'Currency'
     lines:
       plot_name: '3.1.T Costs lines'
@@ -268,7 +260,6 @@ plots:
       legend: shared
       max_items_per_plot: 20
       axis_bounds: shared
-      axis_tick_format: '1,.0f'
       ylabel: 'Millions of Currency'
     chunks:
       plot_name: '3.1.C Costs time chunks'
@@ -278,7 +269,6 @@ plots:
       max_subplots_per_file: 12
       time_average_duration: 24
       axis_bounds: shared
-      axis_tick_format: '1,.0f'
       ylabel: 'Currency'
   costs_discounted_d_p:
     default:
@@ -287,7 +277,6 @@ plots:
       max_items_per_plot: 40
       base_length: 8
       map_dimensions_for_plots: [d_sp, b_es]
-      axis_tick_format: '1,.0f'
       ylabel: 'Millions of Currency'
   costs_discounted_p_:
     default:
@@ -297,7 +286,6 @@ plots:
       max_subplots_per_file: 1
       subplots_per_row: 1
       base_length: 10
-      axis_tick_format: '1,.0f'
       # axis_bounds: shared
       xlabel: 'Millions of Currency'
 
@@ -398,7 +386,7 @@ plots:
       max_subplots_per_file: 2
       base_length: 12
       map_dimensions_for_plots: [d_sgpe, m_buss]
-      axis_tick_format: '1,.0f'
+
       ylabel: MWh
   # nodeGroup_flows_dt_gpe:
   #   plot_name: '6.0.T NodeGroup dispatch'
@@ -414,7 +402,7 @@ plots:
     subplots_per_row: 2
     map_dimensions_for_plots: [gd_sp, fg_bu]
     axis_bounds: [[0,1], [0,1], [0,1], [0,1], [], [0,1]]
-    axis_tick_format: ['.0%', '.0%', '.0%', '.0%', '1,.0f', '.0%']
+    axis_tick_format: ['.0%', '.0%', '.0%', '.0%', 'dynamic', '.0%']
     xlabel: [percent, percent, percent, percent, MWh, percent]
 
   nodeGroup_VRE_share_d_g:
@@ -572,7 +560,6 @@ plots:
       plot_name: '8.7.P Connection cf'
       map_dimensions_for_plots: [d_se, b_ge]
       legend: shared
-      axis_tick_format: '.0%'
 
   # Extras
   process_reserve_upDown_node_dt_eppe:

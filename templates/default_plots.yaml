@@ -39,8 +39,15 @@
 #     'independent' — each subplot auto-scales independently (default)
 #     Single pair [min, max] applies to all subplots
 #     List of pairs [[0,1],[],[0,100]] applies per subplot (empty entry = auto-scale)
-# - axis_tick_format: Python format spec for value-axis tick labels (default '1,.0f').
+# - axis_tick_format: Python format spec for value-axis tick labels (default 'dynamic').
+#     'dynamic' adapts to data range: commas for thousands, decimals for small values,
+#     engineering notation (×10⁹) for values > 990M. Shows ~2 significant digits.
 #     Single string applies to all subplots; list applies per subplot, e.g. [',.0f', '.2%']
+# - value_label: Show value labels on bar charts. Options:
+#     true or 'dynamic' — show labels using dynamic formatting (adapts to data range)
+#     A Python format spec string (e.g. '.2f') — show labels with that format
+#     false or omitted — no value labels (default)
+#     When enabled, the axis is extended by 10% to make room for labels within the plot area.
 # - always_include_zero_in_axis: true/false (default true). Zero will always be within the axis bounds (preventing automatic behaviour where it can be hard to see the scale of the plot)
 # - skip_data_with_only_zeroes: true/false (default false). Drops all-zero columns (and all-zero rows for bar charts) before plotting
 #
@@ -50,7 +57,7 @@ plots:
   # Infeasibilities
   node_slack_up_d_e:
     plot_name: '0.0.P Loss of load (upward slack)'
-    value_label: '1,.0f'
+    value_label: dynamic
     map_dimensions_for_plots: [d_e, s_b]
     xlabel: MWh
     ylabel: Node
@@ -66,7 +73,7 @@ plots:
     skip_data_with_only_zeroes: true
   node_slack_down_d_e:
     plot_name: '0.1.P Excess load + spill (downward slack)'
-    value_label: '1,.0f'
+    value_label: dynamic
     map_dimensions_for_plots: [d_e, s_b]
     xlabel: MWh
     ylabel: Node
@@ -115,7 +122,7 @@ plots:
   unit_curtailment_outputNode_d_ee:
     plot_name: '1.0.P Curtail. amount'
     map_dimensions_for_plots: [d_ee, g_bx]
-    value_label: '1,.0f'
+    value_label: dynamic
     skip_data_with_only_zeroes: true
     axis_tick_format: '1,.0f'
   unit_curtailment_outputNode_dt_ee:
@@ -159,7 +166,7 @@ plots:
       plot_name: '2.0.P Flows unit to node'
       map_dimensions_for_plots: [d_ee, m_bu]
       ylabel: Node
-      value_label: '1,.0f'
+      value_label: dynamic
       xlabel: MWh
       max_items_per_plot: 20
       max_subplots_per_file: 6
@@ -168,7 +175,7 @@ plots:
       plot_name: '2.0.S Flows unit to node total'
       map_dimensions_for_plots: [d_ee, m_mb]
       ylabel: Node
-      value_label: '1,.0f'
+      value_label: dynamic
       xlabel: MWh (total)
       axis_bounds: shared
       max_items_per_plot: 20
@@ -339,7 +346,7 @@ plots:
     max_subplots_per_file: 2
     xlabel: MWh
     skip_data_with_only_zeroes: true
-    value_label: '1,.0f'
+    value_label: dynamic
   unit_capacity_ed_p:
     plot_name: '4.1.P Capacity units'
     map_dimensions_for_plots: [ed_p, bg_u]
@@ -348,7 +355,7 @@ plots:
     max_subplots_per_file: 2
     xlabel: MW
     skip_data_with_only_zeroes: true
-    value_label: '1,.0f'
+    value_label: dynamic
   connection_capacity_ed_p:
     plot_name: '4.2.P Capacity connections'
     map_dimensions_for_plots: [ed_p, bg_u]
@@ -357,7 +364,7 @@ plots:
     max_subplots_per_file: 2
     xlabel: MW
     skip_data_with_only_zeroes: true
-    value_label: '1,.0f'
+    value_label: dynamic
 
   # Emissions
   CO2__:

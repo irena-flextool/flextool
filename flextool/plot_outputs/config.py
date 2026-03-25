@@ -47,7 +47,7 @@ class PlotConfig:
     ylabel: str | None = None
     value_label: str | None = None
     axis_bounds: dict | list | str | None = None
-    axis_tick_format: str = '1,.0f'
+    axis_tick_format: str = 'dynamic'
     always_include_zero_in_axis: bool = True
     skip_data_with_only_zeroes: bool = False
     multiply_by: float | None = None

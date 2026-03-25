@@ -7,6 +7,7 @@ Each function receives an axes object and renders one subplot's bars.
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from flextool.plot_outputs.format_helpers import DynamicFormatter
 
 
 def _stack_label(stack_idx: int, stacks: list, labeled_stacks: set) -> str:
@@ -132,7 +133,11 @@ def _plot_grouped_bars(
                                    label=label,
                                    color=colors[grouped_idx % len(colors)])
             if value_fmt:
-                ax.bar_label(container, fmt=lambda x: format(x, value_fmt), padding=3)
+                if value_fmt == 'dynamic':
+                    _dfmt = DynamicFormatter()
+                    ax.bar_label(container, fmt=lambda x, _f=_dfmt: _f(x, None), padding=3)
+                else:
+                    ax.bar_label(container, fmt=lambda x, _s=value_fmt: format(x, _s), padding=3)
 
     # Add invisible bars for zero-value grouped bars (for legend completeness)
     for grouped_idx in range(len(grouped_bars)):
@@ -325,4 +330,8 @@ def _plot_simple_bars(
         else:  # vertical
             container = ax.bar(bar_idx, value, color='steelblue')
         if value_fmt:
-            ax.bar_label(container, fmt=lambda x: format(x, value_fmt), padding=3)
+            if value_fmt == 'dynamic':
+                _dfmt = DynamicFormatter()
+                ax.bar_label(container, fmt=lambda x, _f=_dfmt: _f(x, None), padding=3)
+            else:
+                ax.bar_label(container, fmt=lambda x, _s=value_fmt: format(x, _s), padding=3)

@@ -590,18 +590,8 @@ def _render_bar_figure(
                 ax.legend(handles, labels_leg, title=legend_title,
                         bbox_to_anchor=(legend_x, 1), loc='upper left', borderaxespad=0)
 
-        # Value axis: pad for bar labels -> apply explicit scale -> formatter -> labels
         row = idx // n_cols
         col = idx % n_cols
-        if value_fmt:
-            if bar_orientation == 'horizontal':
-                xmin, xmax = ax.get_xlim()
-                pad = (xmax - xmin) * 0.12
-                ax.set_xlim(xmin - pad, xmax + pad)
-            else:
-                ymin, ymax = ax.get_ylim()
-                pad = (ymax - ymin) * 0.12
-                ax.set_ylim(ymin - pad, ymax + pad)
         if always_include_zero_in_axis:
             if bar_orientation == 'horizontal':
                 lo, hi = ax.get_xlim()
@@ -630,6 +620,23 @@ def _render_bar_figure(
             nbins = _estimate_value_nbins(lo, hi, layout.base_bar_length, _fmt, is_horizontal_axis=False)
             ax.yaxis.set_major_locator(MaxNLocator(nbins=nbins, prune=prune))
             ax.yaxis.set_major_formatter(_fmt)
+        # Extend axis limits AFTER tick locator to create room for value labels
+        # within the plot area (13% on each side that has data).
+        if value_fmt:
+            if bar_orientation == 'horizontal':
+                xmin, xmax = ax.get_xlim()
+                if xmax > 0:
+                    xmax *= 1.13
+                if xmin < 0:
+                    xmin *= 1.13
+                ax.set_xlim(xmin, xmax)
+            else:
+                ymin, ymax = ax.get_ylim()
+                if ymax > 0:
+                    ymax *= 1.13
+                if ymin < 0:
+                    ymin *= 1.13
+                ax.set_ylim(ymin, ymax)
         # When expand-axis is active, push ylabel further left to avoid overlapping
         # the secondary y-axis group labels. The pad is based on group_label_width in points.
         if expand_axis_levels and bar_orientation == 'horizontal':
@@ -755,9 +762,10 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             "Choose one approach or use neither for simple bars."
         )
 
-    # Resolve value_label to a Python format spec or None
+    # Resolve value_label: True or 'true' → use dynamic formatting,
+    # string → use as Python format spec, falsy → no labels.
     if value_label is True or value_label == 'true':
-        value_fmt = '.3g'
+        value_fmt = 'dynamic'
     elif value_label:
         value_fmt = str(value_label)
     else:
