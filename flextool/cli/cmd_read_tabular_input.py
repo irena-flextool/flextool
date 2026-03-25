@@ -56,9 +56,9 @@ def main():
         # Initialize the target database if it doesn't exist yet
         _ensure_target_db_exists(args.target_db_url)
 
-        # Get the path to import_excel_input.json relative to this script
+        # Get the path to the old 3.x format specification in process_inputs/
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        json_path = os.path.join(script_dir, "..", "import_excel_input.json")
+        json_path = os.path.join(script_dir, "..", "process_inputs", "import_old_excel_input.json")
         tabular_reader = TabularReader(json_path)
 
         if args.tabular_file_path:
