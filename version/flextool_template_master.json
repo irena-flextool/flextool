@@ -1069,6 +1069,20 @@
         ],
         [
             "group",
+            "cumulative_max_capacity",
+            null,
+            null,
+            "[MW or MWh] Maximum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period."
+        ],
+        [
+            "group",
+            "cumulative_min_capacity",
+            null,
+            null,
+            "[MW or MWh] Minimum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period."
+        ],
+        [
+            "group",
             "max_cumulative_flow",
             null,
             null,
@@ -2543,6 +2557,30 @@
             "invest_min_total",
             "float",
             0
+        ],
+        [
+            "group",
+            "cumulative_max_capacity",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "cumulative_max_capacity",
+            "map",
+            1
+        ],
+        [
+            "group",
+            "cumulative_min_capacity",
+            "float",
+            0
+        ],
+        [
+            "group",
+            "cumulative_min_capacity",
+            "map",
+            1
         ],
         [
             "group",

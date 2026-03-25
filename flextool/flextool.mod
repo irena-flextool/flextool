@@ -1430,7 +1430,7 @@ set gd_divest_period := {(g, d) in gd_invest : (g, 'retire_period') in group__in
                                                || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
 set g_divest_total := {g in group_divest : (g, 'retire_total') in group__invest_method || (g, 'retire_period_total') in group__invest_method
                                                || (g, 'invest_retire_total') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
-set g_invest_cumulative := {g in group_invest : (g, 'invest_cumulative') in group__invest_method};
+set g_invest_cumulative := {g in group_invest : (g, 'cumulative_limits') in group__invest_method};
 
 param e_invest_max_total{e in entityInvest} :=
   + (if e in process then p_process[e, 'invest_max_total'])
@@ -2926,24 +2926,24 @@ s.t. maxInvestGroup_entity_total {g in g_invest_total, d in period_invest} :
   + p_group[g, 'invest_max_total']
 ;
 
-s.t. maxInvestGroup_entity_cumulative {g in g_invest_cumulative , d in period_invest : p_group[g, 'invest_max_cumulative']} :
+s.t. maxInvestGroup_entity_cumulative {g in g_invest_cumulative , d in period_invest : p_group[g, 'cumulative_max_capacity']} :
   + sum{(g, e) in group_entity, d_invest in period_in_use : (e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e]
   + sum{(g, e) in group_entity} p_entity_previously_invested_capacity[e, d]
 #  - sum{(g, e) in group_entity, d_divest in period_in_use : e in entityDivest} v_divest[e, d_divest] * p_entity_unitsize[e]
 #  - sum{(g, e) in group_entity : e in entityDivest} (if not p_model['solveFirst'] then p_entity_divested[e])
   + sum{(g, e) in group_entity} p_entity_all_existing[e, d]
   <=
-  + p_group[g, 'invest_max_cumulative']
+  + p_group[g, 'cumulative_max_capacity']
 ;
 
-s.t. minInvestGroup_entity_cumulative {g in g_invest_cumulative , d in period_invest: p_group[g, 'invest_min_cumulative']} :
+s.t. minInvestGroup_entity_cumulative {g in g_invest_cumulative , d in period_invest: p_group[g, 'cumulative_min_capacity']} :
   + sum{(g, e) in group_entity, d_invest in period_in_use : (e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e]
   + sum{(g, e) in group_entity} p_entity_previously_invested_capacity[e, d]
   - sum{(g, e) in group_entity, d_divest in period_in_use : e in entityDivest} v_divest[e, d_divest] * p_entity_unitsize[e]
   - sum{(g, e) in group_entity : e in entityDivest} (if not p_model['solveFirst'] then p_entity_divested[e])
   + sum{(g, e) in group_entity} p_entity_all_existing[e, d]
   <=
-  + p_group[g, 'invest_min_cumulative']
+  + p_group[g, 'cumulative_min_capacity']
 ;
 
 s.t. maxDivestGroup_entity_total {g in g_divest_total} :
