@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -1686,9 +1687,10 @@ class MainWindow(tk.Tk):
         def _worker() -> None:
             success = False
             try:
+                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1, cwd=str(flextool_root),
+                    text=True, bufsize=1, cwd=str(flextool_root), env=env,
                 )
                 if log.winfo_exists():
                     log.after(0, log.set_process, proc)

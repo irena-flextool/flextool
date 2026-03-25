@@ -257,6 +257,7 @@ class ExecutionManager:
             # Run from flextool root so relative paths (templates/, etc.) work
             flextool_root = Path(__file__).resolve().parent.parent.parent
 
+            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -264,6 +265,7 @@ class ExecutionManager:
                 text=True,
                 bufsize=1,
                 cwd=str(flextool_root),
+                env=env,
             )
             killed = False
             with self._lock:
@@ -450,6 +452,7 @@ class ExecutionManager:
         flextool_root = Path(__file__).resolve().parent.parent.parent
 
         try:
+            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -457,6 +460,7 @@ class ExecutionManager:
                 text=True,
                 bufsize=1,
                 cwd=str(flextool_root),
+                env=env,
             )
             assert proc.stdout is not None
             for line in proc.stdout:
