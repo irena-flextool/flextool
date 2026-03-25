@@ -350,8 +350,7 @@ class TabularReader:
             available_sheets = []
 
         if sheet_name not in available_sheets:
-            self.logger.info(f"Sheet '{sheet_name}' not found in file — skipping.")
-            return pd.DataFrame(), {}
+            return None, {}
 
         try:
             raw_df = pd.read_excel(excel_file_path, sheet_name=sheet_name, engine='calamine', header=None, na_filter=True)

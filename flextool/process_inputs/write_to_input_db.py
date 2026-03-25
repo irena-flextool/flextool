@@ -75,6 +75,11 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
                 else:
                     raise ValueError(f"Unknown input_type: {input_type}")
 
+                # Skip if sheet not found in the file
+                if raw_df is None:
+                    print(f"Skipping {table_name} - no sheet found")
+                    continue
+
                 # Skip if no data (e.g., sheet not selected)
                 if raw_df.empty:
                     print(f"  Skipping {table_name} - no data")
