@@ -500,14 +500,22 @@ def _render_stack_figure(
         # Reset index to use time only (drop period)
         df_to_plot.index = time_index
 
-        # Split columns with both positive and negative values
+        # Sort columns alphabetically when using shared colors so visual matches legend
+        if shared_color_map:
+            sorted_cols = sorted(df_to_plot.columns, key=str)
+            df_to_plot = df_to_plot[sorted_cols]
+
+        # Split columns with both positive and negative values (preserving order)
+        new_cols: dict[str, pd.Series] = {}
         for col_name in df_to_plot.columns.tolist():
             has_pos = (df_to_plot[col_name] > 0).any()
             has_neg = (df_to_plot[col_name] < 0).any()
             if has_pos and has_neg:
-                df_to_plot[f'{col_name}_pos'] = df_to_plot[col_name].clip(lower=0)
-                df_to_plot[f'{col_name}_neg'] = df_to_plot[col_name].clip(upper=0)
-                df_to_plot = df_to_plot.drop(columns=[col_name])
+                new_cols[f'{col_name}_pos'] = df_to_plot[col_name].clip(lower=0)
+                new_cols[f'{col_name}_neg'] = df_to_plot[col_name].clip(upper=0)
+            else:
+                new_cols[col_name] = df_to_plot[col_name]
+        df_to_plot = pd.DataFrame(new_cols, index=df_to_plot.index)
 
         # Create stacked area plot
         n_columns = len(df_to_plot.columns)
@@ -536,6 +544,20 @@ def _render_stack_figure(
         if _should_show_legend(legend_position, sub_levels, idx, n_cols, n_subs):
             handles, labels = ax.get_legend_handles_labels()
             if handles:
+                # Build legend so visual top-to-bottom matches legend top-to-bottom.
+                # Positive areas stack upward (col 0 = bottom → reverse for legend).
+                # Negative areas stack downward (col 0 = top → keep order for legend).
+                pos_pairs = []
+                neg_pairs = []
+                for h, l in zip(handles, labels):
+                    if l in df_to_plot.columns and (df_to_plot[l] <= 0).all():
+                        neg_pairs.append((h, l))
+                    else:
+                        pos_pairs.append((h, l))
+                pos_pairs.reverse()
+                ordered = pos_pairs + neg_pairs
+                handles = [h for h, _ in ordered]
+                labels = [l for _, l in ordered]
                 legend_x = 1 + LEGEND_GAP / layout.base_width
                 ax.legend(handles, labels, bbox_to_anchor=(legend_x, 1), loc='upper left', fontsize=8, borderaxespad=0)
 
@@ -562,12 +584,15 @@ def _render_stack_figure(
         set_smart_xticks(ax, time_index, ax_width_inches)
 
     # ── Shared legend (one per file, anchored to top-right subplot) ──
+    # Reversed so top-of-stack = top-of-legend
     if legend_position == 'shared' and shared_color_map:
         from matplotlib.patches import Patch
         legend_ax_idx = min(n_cols - 1, n_subs - 1)
         ax_legend = axes[legend_ax_idx]
-        handles = [Patch(facecolor=c) for c in shared_color_map.values()]
-        labels_all = list(shared_color_map.keys())
+        keys = list(shared_color_map.keys())
+        colors_list = list(shared_color_map.values())
+        handles = [Patch(facecolor=c) for c in reversed(colors_list)]
+        labels_all = list(reversed(keys))
         legend_x = 1 + LEGEND_GAP / layout.base_width
         ax_legend.legend(handles, labels_all, bbox_to_anchor=(legend_x, 1),
                          loc='upper left', fontsize=8, borderaxespad=0)

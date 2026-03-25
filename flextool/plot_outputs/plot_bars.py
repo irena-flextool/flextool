@@ -222,24 +222,39 @@ def _render_bar_figure(
     # Left edge padding only for expand-axis plots (secondary y-axis ticks touch edge)
     left_edge_pad = LEFT_PAD + (YLABEL_WIDTH if ylabel else 0)
 
-    # First pass: calculate number of bars for each subplot to determine heights
+    # First pass: calculate number of bars for each subplot to determine heights.
+    # Uses data-aware counting (same filtering as the rendering loop) to avoid
+    # over-allocating space for Cartesian-product bars that don't exist.
     bar_counts = []
     for title, df_sub_temp in effective_plots:
         if not expand_axis_levels:
-            groups_temp = [None]
-        elif len(expand_axis_level_names) == 1:
-            groups_temp = df_sub_temp.columns.get_level_values(expand_axis_level_names[0]).unique().tolist()
+            n_bars = len(df_sub_temp.index)
         else:
-            groups_temp = []
-            for group_level_name in expand_axis_level_names:
-                groups_temp.append(df_sub_temp.columns.get_level_values(group_level_name).tolist())
-            groups_temp = list(zip(*groups_temp))
-
-        periods_temp = df_sub_temp.index.tolist()
-        if not expand_axis_levels:
-            n_bars = len(periods_temp)
-        else:
-            n_bars = len(groups_temp) * len(periods_temp)
+            # Count only group-row pairs with actual data
+            if len(expand_axis_level_names) == 1:
+                groups_temp = df_sub_temp.columns.get_level_values(
+                    expand_axis_level_names[0]).unique().tolist()
+            elif isinstance(df_sub_temp.columns, pd.MultiIndex):
+                gf = df_sub_temp.columns.to_frame()[expand_axis_level_names].drop_duplicates()
+                groups_temp = [tuple(row) for row in gf.values]
+            else:
+                groups_temp = [df_sub_temp.columns.tolist()[0]] if len(df_sub_temp.columns) else []
+            n_bars = 0
+            for group in groups_temp:
+                try:
+                    if not isinstance(df_sub_temp.columns, pd.MultiIndex):
+                        df_g = df_sub_temp[[group]] if group in df_sub_temp.columns else None
+                    elif len(expand_axis_level_names) == 1:
+                        df_g = df_sub_temp.xs(group, level=expand_axis_level_names[0], axis=1)
+                    else:
+                        df_g = df_sub_temp.xs(group, level=expand_axis_level_names, axis=1)
+                except KeyError:
+                    continue
+                if df_g is None:
+                    continue
+                if isinstance(df_g, pd.Series):
+                    df_g = df_g.to_frame()
+                n_bars += int((df_g.abs() > 1e-6).any(axis=1).sum())
         bar_counts.append(n_bars)
 
     # Per-subplot sizes (inches) based on bar counts
@@ -368,16 +383,13 @@ def _render_bar_figure(
         elif len(expand_axis_level_names) == 1:
             groups = df_sub.columns.get_level_values(expand_axis_level_names[0]).unique().tolist()
         else:
-            groups = []
-            for group_level_name in expand_axis_level_names:
-                groups.append(df_sub.columns.get_level_values(group_level_name).tolist())
-            groups = list(zip(*groups))
+            # Deduplicate multi-level expand groups
+            group_frame = df_sub.columns.to_frame()[expand_axis_level_names].drop_duplicates()
+            groups = [tuple(row) for row in group_frame.values]
 
         # Reverse groups order
         if expand_axis_levels:
             groups = groups[::-1]
-            # Format group labels for display (join tuples into strings)
-            group_labels = [' | '.join(str(v) for v in g) if isinstance(g, tuple) else str(g) for g in groups]
         else:
             group_labels = []
 
@@ -396,10 +408,37 @@ def _render_bar_figure(
             for idx_val in df_sub.index[::-1]:
                 all_bars.append([None, idx_val])
         else:
-            # Each group has one bar per period (use original values for data lookup)
+            # Only include group-row pairs that have actual data
+            # (avoids Cartesian-product bars when expand levels are hierarchical)
+            groups_with_bars: list[tuple] = []  # (group, [row_items])
             for group in groups:
-                for idx_val in df_sub.index[::-1]:
-                    all_bars.append([group, idx_val])
+                try:
+                    if not isinstance(df_sub.columns, pd.MultiIndex):
+                        # Single-level columns after subplot extraction
+                        if group in df_sub.columns:
+                            df_group = df_sub[[group]]
+                        else:
+                            continue
+                    elif len(expand_axis_level_names) == 1:
+                        df_group = df_sub.xs(group, level=expand_axis_level_names[0], axis=1)
+                    else:
+                        df_group = df_sub.xs(group, level=expand_axis_level_names, axis=1)
+                except KeyError:
+                    continue
+                if isinstance(df_group, pd.Series):
+                    df_group = df_group.to_frame()
+                has_data = (df_group.abs() > 1e-6).any(axis=1)
+                row_items = [v for v in df_sub.index[::-1]
+                             if v in has_data.index and has_data.loc[v]]
+                if row_items:
+                    groups_with_bars.append((group, row_items))
+                    for idx_val in row_items:
+                        all_bars.append([group, idx_val])
+            # Format group labels from the filtered groups only
+            group_labels = [
+                ' | '.join(str(v) for v in g) if isinstance(g, tuple) else str(g)
+                for g, _ in groups_with_bars
+            ]
 
         # Create figure for single plot (now that we know bar count)
         if n_subs == 1 and fig is None:
@@ -457,10 +496,13 @@ def _render_bar_figure(
         if not expand_axis_levels:
             display_bar_labels = subplot_bar_labels
         else:
-            # For expand_axis: bar labels repeat for each group
+            # Build labels from filtered all_bars (each entry has its own label)
             display_bar_labels = []
-            for _ in groups:
-                display_bar_labels.extend(subplot_bar_labels)
+            for _, idx_val in all_bars:
+                if isinstance(idx_val, tuple):
+                    display_bar_labels.append(' | '.join(map(str, idx_val)))
+                else:
+                    display_bar_labels.append(str(idx_val))
 
         # Set main axis for individual bars
         if bar_orientation == 'horizontal':
@@ -477,13 +519,12 @@ def _render_bar_figure(
 
         if expand_axis_levels:
             # Multiple groups - add two-level axis
-            # Calculate group centers and separators
+            # Calculate group centers and separators (using actual bar counts per group)
             group_centers = []
             group_lefts = []
             bar_idx = 0
-            for group in groups:
-                # Count bars in this group (one per period)
-                n_bars_in_group = len(subplot_bar_labels)
+            for _, row_items in groups_with_bars:
+                n_bars_in_group = len(row_items)
                 group_center = bar_idx + (n_bars_in_group - 1) / 2
                 group_centers.append(group_center)
                 group_lefts.append(bar_idx - 0.5)
@@ -583,10 +624,8 @@ def _render_bar_figure(
                 else:
                     axes_width = BAR_HEIGHT * len(all_bars)
                 legend_x = 1 + LEGEND_GAP / axes_width
-                # For stacked bars, _plot_stacked_bars already builds legend entries
-                # in the desired order; for grouped bars, reverse to match visual order
-                if grouped_bar_levels:
-                    handles, labels_leg = handles[::-1], labels_leg[::-1]
+                # _plot_stacked_bars and _plot_grouped_bars build legend entries
+                # in the correct visual order — no reversal needed here.
                 ax.legend(handles, labels_leg, title=legend_title,
                         bbox_to_anchor=(legend_x, 1), loc='upper left', borderaxespad=0)
 
@@ -606,17 +645,23 @@ def _render_bar_figure(
             else:
                 ax.set_ylim(scale[0], scale[1])
         _fmt = _get_value_formatter(axis_tick_format, idx)
-        # Prune the tick at the figure edge to prevent label overflow, but
-        # never prune the 0 tick (it anchors the zero-line visually).
+        # Prune the outermost tick (away from zero) to prevent label overflow.
         if bar_orientation == 'horizontal':
             lo, hi = ax.get_xlim()
-            prune = 'upper' if hi != 0 else 'lower'
+            # Prune the end farthest from zero
+            if abs(hi) >= abs(lo):
+                prune = 'upper'
+            else:
+                prune = 'lower'
             nbins = _estimate_value_nbins(lo, hi, layout.base_bar_length, _fmt, is_horizontal_axis=True)
             ax.xaxis.set_major_locator(MaxNLocator(nbins=nbins, prune=prune))
             ax.xaxis.set_major_formatter(_fmt)
         else:
             lo, hi = ax.get_ylim()
-            prune = 'upper' if hi != 0 else 'lower'
+            if abs(hi) >= abs(lo):
+                prune = 'upper'
+            else:
+                prune = 'lower'
             nbins = _estimate_value_nbins(lo, hi, layout.base_bar_length, _fmt, is_horizontal_axis=False)
             ax.yaxis.set_major_locator(MaxNLocator(nbins=nbins, prune=prune))
             ax.yaxis.set_major_formatter(_fmt)
@@ -794,10 +839,16 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
     # Compute expand-group count so max_items_per_plot accounts for total bars
     # (each row item produces n_expand_groups visual bars)
     if expand_axis_levels and isinstance(df.columns, pd.MultiIndex):
-        expand_level_name = expand_axis_level_names[0]
-        n_expand_groups = len(
-            df.columns.get_level_values(expand_level_name).unique()
-        )
+        if len(expand_axis_level_names) == 1:
+            expand_level_name = expand_axis_level_names[0]
+            n_expand_groups = len(
+                df.columns.get_level_values(expand_level_name).unique()
+            )
+        else:
+            # Multiple expand levels: count unique combinations across all of them
+            expand_level_name = expand_axis_level_names[0]
+            expand_frame = df.columns.to_frame()[expand_axis_level_names].drop_duplicates()
+            n_expand_groups = len(expand_frame)
     else:
         expand_level_name = None
         n_expand_groups = 1
@@ -815,12 +866,11 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             ' | '.join(str(v) for v in sub) if isinstance(sub, tuple)
             else str(sub) if sub is not None else None
         )
-        # Compute total visual bars for this subplot
+        # Limit by row items (text lines on the y-axis).
+        # Grouped bars don't add lines; expand-axis groups are handled in rendering.
         n_rows = len(df_sub)
-        total_bars = n_rows * n_expand_groups
-        if max_items_per_plot and total_bars > max_items_per_plot:
-            # Try splitting by row items first
-            max_row_items = max(1, max_items_per_plot // n_expand_groups)
+        if max_items_per_plot and n_rows > max_items_per_plot:
+            max_row_items = max_items_per_plot
             if n_rows > max_row_items:
                 # Split by rows
                 for i in range(0, n_rows, max_row_items):

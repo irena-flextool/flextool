@@ -43,6 +43,12 @@ def _plot_grouped_bars(
         grouped_bar_df = df_sub.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
         grouped_bars = [tuple(row) for row in grouped_bar_df.values]
 
+    # Sort groups alphabetically when using shared colors so visual order matches legend
+    if shared_color_map:
+        def _group_key(gb):
+            return ' | '.join(str(v) for v in gb) if isinstance(gb, (tuple, list)) else str(gb)
+        grouped_bars.sort(key=_group_key)
+
     # Colors for grouped bars
     n_grouped = len(grouped_bars)
     if shared_color_map:
@@ -55,14 +61,23 @@ def _plot_grouped_bars(
         if n_grouped > 10:
             colors = list(plt.colormaps['tab20'].colors[:n_grouped])
 
-    # Calculate bar width and offsets for side-by-side positioning
+    # Calculate bar width and offsets for side-by-side positioning.
+    # Horizontal: group 0 at top (positive offset) so visual top-to-bottom = legend top-to-bottom.
+    # Vertical: group 0 at left (negative offset) so visual left-to-right = legend top-to-bottom.
     total_bar_width = 0.8
     bar_width = total_bar_width / n_grouped
-    bar_offsets = np.linspace(
-        -total_bar_width / 2 + bar_width / 2,
-        total_bar_width / 2 - bar_width / 2,
-        n_grouped,
-    )
+    if bar_orientation == 'horizontal':
+        bar_offsets = np.linspace(
+            total_bar_width / 2 - bar_width / 2,      # top
+            -total_bar_width / 2 + bar_width / 2,      # bottom
+            n_grouped,
+        )
+    else:
+        bar_offsets = np.linspace(
+            -total_bar_width / 2 + bar_width / 2,      # left
+            total_bar_width / 2 - bar_width / 2,        # right
+            n_grouped,
+        )
 
     # Track which grouped bars have been labeled
     labeled_grouped_bars: set = set()
@@ -178,6 +193,12 @@ def _plot_stacked_bars(
         stack_df = df_sub.columns.to_frame()[stack_level_names].drop_duplicates()
         stacks = [tuple(row) for row in stack_df.values]
 
+    # Sort stacks alphabetically when using shared colors so visual order matches legend
+    if shared_color_map:
+        def _stack_key(s):
+            return ' | '.join(str(v) for v in s) if isinstance(s, (tuple, list)) else str(s)
+        stacks.sort(key=_stack_key)
+
     # Colors for stacking
     if shared_color_map:
         colors = []
@@ -275,16 +296,19 @@ def _plot_stacked_bars(
                            color=colors[stack_idx % len(colors)])
                 left_neg += value
 
-    # Build legend handles in desired order:
-    # - Positives first, then negatives
-    # - Horizontal: positives in bar order [0,...,N], negatives reversed [N,...,0]
-    # - Vertical: positives reversed [N,...,0] (top-of-bar first), negatives reversed [N,...,0]
+    # Build legend handles so visual order matches legend top-to-bottom:
+    # - Horizontal: left-to-right = top-to-bottom.
+    #   Full bar reads: [negatives far-left → 0 → positives far-right]
+    #   Legend: negative-only first (sorted), then positives (sorted).
+    # - Vertical: top-to-bottom = top-to-bottom.
+    #   Full bar reads: [positives top → 0 → negatives bottom]
+    #   Legend: positives first (reversed), then negative-only (reversed).
     from matplotlib.patches import Patch
     pos_indices = sorted(pos_stacks)
     neg_only_indices = sorted(neg_stacks - pos_stacks)  # stacks that are only negative
 
     if bar_orientation == 'horizontal':
-        legend_order = pos_indices + list(reversed(neg_only_indices))
+        legend_order = neg_only_indices + pos_indices
     else:
         legend_order = list(reversed(pos_indices)) + list(reversed(neg_only_indices))
 
