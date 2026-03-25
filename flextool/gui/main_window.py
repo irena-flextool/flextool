@@ -1589,15 +1589,17 @@ class MainWindow(tk.Tk):
         intermediate_dir = project_path / "intermediate"
         intermediate_dir.mkdir(parents=True, exist_ok=True)
 
-        # Identify unique xlsx sources that need conversion
+        # Identify unique xlsx sources that need conversion.
+        # Always reconvert — the user may have edited the xlsx since last run.
         seen: set[str] = set()
         queue: list[tuple[str, Path]] = []
         for s in scenarios:
             if s.source_name not in seen:
                 seen.add(s.source_name)
-                if s.source_name not in self.execution_mgr._converted_xlsx:
-                    xlsx_path = project_path / "input_sources" / s.source_name
-                    queue.append((s.source_name, xlsx_path))
+                # Clear stale conversion cache so the source is reconverted
+                self.execution_mgr._converted_xlsx.discard(s.source_name)
+                xlsx_path = project_path / "input_sources" / s.source_name
+                queue.append((s.source_name, xlsx_path))
 
         self._xlsx_pending_scenarios = list(scenarios)
 
@@ -1632,7 +1634,8 @@ class MainWindow(tk.Tk):
         source_name, xlsx_path = self._xlsx_conversion_queue.pop(0)
         log = self._xlsx_conversion_log
         if log is None or not log.winfo_exists():
-            # Window was destroyed (shouldn't happen if not aborted)
+            # Window was destroyed — treat as abort
+            self._xlsx_preconversion_aborted()
             return
 
         project_path = get_projects_dir() / self.current_project
@@ -1761,6 +1764,13 @@ class MainWindow(tk.Tk):
             if log is not None and log.winfo_exists():
                 log.mark_finished(False)
                 log.append_line("\nConversion failed. Scenarios will not be executed.")
+            messagebox.showerror(
+                "Conversion failed",
+                "xlsx \u2192 sqlite conversion failed.\n\n"
+                "Check the conversion log window for details.\n"
+                "Scenarios will not be executed.",
+                parent=self,
+            )
 
     def _xlsx_preconversion_aborted(self) -> None:
         """Called when user aborts xlsx pre-conversion (closes window or clicks Abort)."""
