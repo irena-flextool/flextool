@@ -115,12 +115,13 @@ class OutputLogWindow(tk.Toplevel):
         return self._aborted
 
     def minimize(self) -> None:
-        """Minimize the window.
+        """Minimize the window to the taskbar.
 
-        Transient windows cannot be iconified in tkinter, so we withdraw
-        (hide) the window instead.
+        Transient windows cannot be iconified, so we first remove the
+        transient binding, then iconify normally.
         """
-        self.withdraw()
+        self.transient('')  # remove transient parent → gets own taskbar entry
+        self.iconify()
 
     # ── Event handlers ───────────────────────────────────────────
 

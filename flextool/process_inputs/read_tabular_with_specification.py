@@ -40,7 +40,6 @@ class TabularReader:
         self.spec_file_path = Path(spec_file_path)
         self.specifications = self._load_specifications()
         self.handler = logging.StreamHandler()
-        self.handler.terminator = ""
         self.logger = logging.getLogger(__name__)
         self.logger.addHandler(self.handler)
         self.alternatives_added = set()

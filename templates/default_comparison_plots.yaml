@@ -247,6 +247,8 @@ plots:
       base_length: 10
       map_dimensions_for_plots: [d_sp, m_gb]
       legend: shared
+      max_items_per_plot: 12
+      subplots_per_row: 1
   costs_dt_p:
     default:
       plot_name: '3.1.t Costs stack'
@@ -261,6 +263,7 @@ plots:
       max_items_per_plot: 20
       axis_bounds: shared
       ylabel: 'Millions of Currency'
+      always_include_zero_in_axis: false
     chunks:
       plot_name: '3.1.g Costs time chunks'
       map_dimensions_for_plots: [dt_sp, ti_lu]
@@ -287,6 +290,7 @@ plots:
       max_subplots_per_file: 1
       subplots_per_row: 1
       base_length: 10
+      always_include_zero_in_axis: false
       # axis_bounds: shared
       xlabel: 'Millions of Currency'
 
@@ -369,7 +373,7 @@ plots:
   process_co2_d_eee:
     bar:
       plot_name: '5.2.d Process CO2 emissions'
-      map_dimensions_for_plots: [d_seeee, f_gebee]
+      map_dimensions_for_plots: [d_seeee, f_gxbxe]
       legend: shared
       subplots_per_row: 2
       max_items_per_plot: 40

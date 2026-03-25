@@ -358,12 +358,43 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 else:
                     all_file_members = [None]  # single pass, no file-dim split
 
-                # Resolve 'shared' axis_bounds: compute global min/max from full data
+                # Resolve 'shared' axis_bounds: compute global min/max from full data.
+                # For stacked plots, sum the stacked columns within each subplot,
+                # then take the max/min across subplots.
                 if axis_bounds == 'shared':
                     numeric_df = df.select_dtypes(include='number')
                     if not numeric_df.empty:
-                        global_min = float(numeric_df.min().min())
-                        global_max = float(numeric_df.max().max())
+                        if stack_levels and subplot_levels:
+                            # Sum stacked columns per subplot, then take max across subplots
+                            global_max = float('-inf')
+                            global_min = float('inf')
+                            for sub_val in (
+                                numeric_df.columns.get_level_values(subplot_levels[0]).unique()
+                                if len(subplot_levels) == 1
+                                else [None]
+                            ):
+                                if sub_val is not None:
+                                    try:
+                                        sub_df = numeric_df.xs(sub_val, level=subplot_levels[0], axis=1)
+                                    except KeyError:
+                                        continue
+                                else:
+                                    sub_df = numeric_df
+                                if isinstance(sub_df, pd.Series):
+                                    sub_df = sub_df.to_frame()
+                                pos_sum = sub_df.clip(lower=0).sum(axis=1)
+                                neg_sum = sub_df.clip(upper=0).sum(axis=1)
+                                global_max = max(global_max, float(pos_sum.max()))
+                                global_min = min(global_min, float(neg_sum.min()))
+                        elif stack_levels:
+                            # No subplots — sum all stacked columns
+                            pos_sum = numeric_df.clip(lower=0).sum(axis=1)
+                            neg_sum = numeric_df.clip(upper=0).sum(axis=1)
+                            global_max = float(pos_sum.max())
+                            global_min = float(neg_sum.min())
+                        else:
+                            global_min = float(numeric_df.min().min())
+                            global_max = float(numeric_df.max().max())
                         if cfg.always_include_zero_in_axis:
                             global_min = min(global_min, 0.0)
                             global_max = max(global_max, 0.0)
