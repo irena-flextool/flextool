@@ -217,6 +217,28 @@ def _render_bar_figure(
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
+    # Effective bar height: when grouped bars exceed 3, scale up the slot height
+    # so each individual bar stays at least 1/3 of the font height (~10pt).
+    FONT_HEIGHT = 10 / 72  # 10pt in inches
+    MIN_INDIVIDUAL_BAR = FONT_HEIGHT / 3
+    TOTAL_BAR_WIDTH = 0.8  # fraction of slot used by bars
+    if grouped_bar_levels:
+        # Determine n_grouped from the first subplot's data
+        sample_df = effective_plots[0][1] if effective_plots else df
+        if isinstance(sample_df.columns, pd.MultiIndex) and grouped_bar_level_names:
+            if len(grouped_bar_level_names) == 1:
+                n_grp = len(sample_df.columns.get_level_values(grouped_bar_level_names[0]).unique())
+            else:
+                gf = sample_df.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
+                n_grp = len(gf)
+        else:
+            n_grp = 1
+        # Each bar gets TOTAL_BAR_WIDTH / n_grp of the slot; ensure >= MIN_INDIVIDUAL_BAR
+        needed = MIN_INDIVIDUAL_BAR * n_grp / TOTAL_BAR_WIDTH
+        eff_bar_height = max(BAR_HEIGHT, needed)
+    else:
+        eff_bar_height = BAR_HEIGHT
+
     # Add extra bottom space when xlabel is present
     bottom_pad = BOTTOM_PAD + (XLABEL_HEIGHT if xlabel else 0)
     # Left edge padding only for expand-axis plots (secondary y-axis ticks touch edge)
@@ -259,7 +281,7 @@ def _render_bar_figure(
 
     # Per-subplot sizes (inches) based on bar counts
     subplot_sizes: list[float] = [
-        BAR_HEIGHT * bc + SUBPLOT_VPAD for bc in bar_counts
+        eff_bar_height * bc + SUBPLOT_VPAD for bc in bar_counts
     ]
 
     # Create figure and axes using layout-derived margins
@@ -326,7 +348,7 @@ def _render_bar_figure(
             # For vertical: x-axis = bar labels (rotated), y-axis = values
             # Each subplot cell: value_axis_labels + bars + right_pad
             vert_subplot_widths = [
-                layout.value_axis_width + BAR_HEIGHT * bc + RIGHT_PAD
+                layout.value_axis_width + eff_bar_height * bc + RIGHT_PAD
                 for bc in bar_counts
             ]
             cell_height = layout.base_bar_length + layout.total_label_width + SUBPLOT_VPAD
@@ -440,10 +462,16 @@ def _render_bar_figure(
                 for g, _ in groups_with_bars
             ]
 
+        # Skip subplot if no bars have data (avoids zero-height axes)
+        if not all_bars:
+            if n_subs == 1:
+                return 0 if 'skipped' not in dir() else skipped
+            continue
+
         # Create figure for single plot (now that we know bar count)
         if n_subs == 1 and fig is None:
-            subplot_h = BAR_HEIGHT * len(all_bars) + SUBPLOT_VPAD
-            bars_only_h = BAR_HEIGHT * len(all_bars)
+            subplot_h = eff_bar_height * len(all_bars) + SUBPLOT_VPAD
+            bars_only_h = eff_bar_height * len(all_bars)
             if bar_orientation == 'horizontal':
                 fig_w = _single_width
                 fig_h = subplot_h + TITLE_PAD + bottom_pad
@@ -618,11 +646,11 @@ def _render_bar_figure(
 
             if _should_show_legend(legend_position, sub_levels, idx, n_cols, n_subs):
                 # Axes width depends on orientation: horizontal uses base_bar_length,
-                # vertical uses bar area width (BAR_HEIGHT * n_bars)
+                # vertical uses bar area width (eff_bar_height * n_bars)
                 if bar_orientation == 'horizontal':
                     axes_width = layout.base_bar_length
                 else:
-                    axes_width = BAR_HEIGHT * len(all_bars)
+                    axes_width = eff_bar_height * len(all_bars)
                 legend_x = 1 + LEGEND_GAP / axes_width
                 # _plot_stacked_bars and _plot_grouped_bars build legend entries
                 # in the correct visual order — no reversal needed here.
@@ -720,7 +748,7 @@ def _render_bar_figure(
         if bar_orientation == 'horizontal':
             axes_width = layout.base_bar_length
         else:
-            axes_width = BAR_HEIGHT * max(
+            axes_width = eff_bar_height * max(
                 (len(ep[1]) for ep in effective_plots), default=1
             )
         legend_x = 1 + LEGEND_GAP / axes_width
