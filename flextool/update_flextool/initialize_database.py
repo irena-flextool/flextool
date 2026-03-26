@@ -15,9 +15,13 @@ def initialize_database(json_template, database_name="new_database.sqlite"):
 
 
     with DatabaseMapping('sqlite:///' + database_name, create = True) as new_db:
+        # Remove any default alternatives created by spinedb_api (e.g. 'Base')
+        # so they don't conflict with the template's own alternatives.
         for alt in new_db.find_alternatives():
-            if alt['name'] == 'Base':
+            try:
                 new_db.remove_alternative(name=alt['name'])
+            except Exception:
+                pass
         (num,log) = import_data(new_db,**template)
         print(str(num)+" imports made")
         print("Initialized " + database_name)
