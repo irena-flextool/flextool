@@ -182,9 +182,11 @@ def create_dispatch_plots(
     if scenarios is None:
         scenarios = get_scenarios_from_config(config)
 
-    # Merge colors from inline positive/negative sections, preserving config order
+    # Merge colors from inline positive/negative sections, preserving config order.
+    # The config lists items top-to-bottom (first = on top of stack), but
+    # matplotlib stacks bottom-to-top, so we reverse the order.
     colors: dict[str, str] = {}
-    config_order: list[str] = []  # ordered column names from config (negative then positive)
+    config_order: list[str] = []
     for section_key in ['negative', 'positive']:
         section = config.get(section_key, {})
         for cat in ['processGroups', 'processes_not_aggregated']:
@@ -192,6 +194,7 @@ def create_dispatch_plots(
             if isinstance(cat_dict, dict):
                 colors.update(cat_dict)
                 config_order.extend(cat_dict.keys())
+    config_order.reverse()
 
     # Fallback to special colors for any missing
     for col, color in DEFAULT_SPECIAL_COLORS.items():

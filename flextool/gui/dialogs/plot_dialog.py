@@ -6,6 +6,8 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+import yaml
+
 from flextool.gui.config_parser import parse_plot_configs
 from flextool.gui.dialogs.file_picker import FilePickerDialog
 from flextool.gui.data_models import PlotSettings, ProjectSettings
@@ -43,9 +45,11 @@ class _PlotSection:
         settings: PlotSettings,
         default_config_file: str,
         show_dispatch: bool = False,
+        project_path: Path | None = None,
     ) -> None:
         self._settings = settings
         self._default_config_file = default_config_file
+        self._project_path = project_path
 
         self.frame = ttk.LabelFrame(parent, text=label, padding=10)
         self.frame.columnconfigure(1, weight=1)
@@ -90,14 +94,22 @@ class _PlotSection:
             row=0, column=2, sticky="e",
         )
 
-        # ── Dispatch checkbox (comparison section only) ────────────
+        # ── Dispatch checkbox + edit button (comparison section only) ─
         self._dispatch_var: tk.BooleanVar | None = None
         if show_dispatch:
             row = 3
+            dispatch_row = ttk.Frame(self.frame)
+            dispatch_row.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(4, 2))
+
             self._dispatch_var = tk.BooleanVar(value=settings.dispatch_plots)
             ttk.Checkbutton(
-                self.frame, text="Dispatch plots", variable=self._dispatch_var,
-            ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 2))
+                dispatch_row, text="Dispatch plots", variable=self._dispatch_var,
+            ).pack(side="left")
+
+            ttk.Button(
+                dispatch_row, text="Edit dispatch plot config",
+                command=self._on_edit_dispatch_config,
+            ).pack(side="left", padx=(15, 0))
 
         # ── "Just one file per plot" checkbox ─────────────────────
         row = 4 if show_dispatch else 3
@@ -212,6 +224,27 @@ class _PlotSection:
             current = self._config_tree.set(item, "check")
             new_val = self._CHECK_OFF if current == self._CHECK_ON else self._CHECK_ON
             self._config_tree.set(item, "check", new_val)
+
+    def _on_edit_dispatch_config(self) -> None:
+        """Open the dispatch plot config.yaml in a text editor dialog."""
+        if self._project_path is None:
+            messagebox.showinfo(
+                "No project",
+                "No project is loaded.",
+                parent=self.frame,
+            )
+            return
+        config_path = self._project_path / "output_plot_comparisons" / "config.yaml"
+        if not config_path.exists():
+            messagebox.showinfo(
+                "No config file",
+                "Dispatch plot config.yaml does not exist yet.\n\n"
+                "It will be created automatically when dispatch plots\n"
+                "are generated for the first time.",
+                parent=self.frame,
+            )
+            return
+        DispatchConfigEditor(self.frame, config_path)
 
     def _on_change_config(self) -> None:
         """Open a file chooser to select a different YAML config file."""
@@ -338,6 +371,7 @@ class PlotDialog(tk.Toplevel):
             settings=self._settings.comparison_plot_settings,
             default_config_file="templates/default_comparison_plots.yaml",
             show_dispatch=True,
+            project_path=self._project_path,
         )
         self._comp_section.frame.grid(
             row=0, column=1, sticky="nsew", padx=(5, 10), pady=(10, 5),
@@ -368,6 +402,133 @@ class PlotDialog(tk.Toplevel):
                 parent=self,
             )
 
+        self.grab_release()
+        self.destroy()
+
+
+class DispatchConfigEditor(tk.Toplevel):
+    """Modal text editor for the dispatch plot config.yaml.
+
+    Shows an instruction area above the editable text, validates YAML on
+    save, and refuses to save invalid syntax.
+    """
+
+    def __init__(self, parent: tk.Misc, config_path: Path) -> None:
+        super().__init__(parent)
+        self.title(f"Edit dispatch plot config — {config_path.name}")
+        self._config_path = config_path
+
+        self.transient(parent)
+        self.grab_set()
+
+        # ── Sizing ────────────────────────────────────────────────
+        default_font = tkfont.nametofont("TkDefaultFont")
+        cw = default_font.measure("0")
+        lh = default_font.metrics("linespace")
+        mono_font = tkfont.nametofont("TkFixedFont")
+
+        self.geometry(f"{cw * 90}x{lh * 40}")
+        self.resizable(True, True)
+        self.minsize(cw * 60, lh * 20)
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+
+        # ── Instructions ──────────────────────────────────────────
+        info_frame = ttk.LabelFrame(self, text="Instructions", padding=6)
+        info_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
+
+        info_text = (
+            "Define colors for entities and groups — they will persist over "
+            "scenarios as best they can.\n"
+            "The order defines the stacking order in dispatch plots "
+            "(first item is on top).\n"
+            "Use named colors from: "
+            "https://matplotlib.org/stable/gallery/color/named_colors.html\n"
+            "Deleting this file resets all colors."
+        )
+        ttk.Label(info_frame, text=info_text, wraplength=cw * 80).pack(
+            fill="x",
+        )
+
+        # ── Text editor ──────────────────────────────────────────
+        edit_frame = ttk.Frame(self)
+        edit_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=4)
+        edit_frame.columnconfigure(0, weight=1)
+        edit_frame.rowconfigure(0, weight=1)
+
+        self._text = tk.Text(edit_frame, wrap="none", font=mono_font, undo=True)
+        self._text.grid(row=0, column=0, sticky="nsew")
+
+        vscroll = ttk.Scrollbar(edit_frame, orient="vertical", command=self._text.yview)
+        vscroll.grid(row=0, column=1, sticky="ns")
+        self._text.configure(yscrollcommand=vscroll.set)
+
+        hscroll = ttk.Scrollbar(edit_frame, orient="horizontal", command=self._text.xview)
+        hscroll.grid(row=1, column=0, sticky="ew")
+        self._text.configure(xscrollcommand=hscroll.set)
+
+        # Load file content
+        try:
+            content = config_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            content = f"# Error reading file: {exc}"
+        self._text.insert("1.0", content)
+
+        # ── Buttons ───────────────────────────────────────────────
+        btn_frame = ttk.Frame(self)
+        btn_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(4, 10))
+
+        ttk.Button(btn_frame, text="Cancel", command=self._on_cancel).pack(
+            side="right", padx=(5, 0),
+        )
+        ttk.Button(btn_frame, text="Save and close", command=self._on_save).pack(
+            side="right",
+        )
+
+        # ── Keyboard shortcuts ────────────────────────────────────
+        self.bind("<Escape>", lambda e: self._on_cancel())
+
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+
+        # Centre on parent
+        self.update_idletasks()
+        try:
+            px, py = parent.winfo_rootx(), parent.winfo_rooty()
+            pw, ph = parent.winfo_width(), parent.winfo_height()
+        except Exception:
+            px, py, pw, ph = 100, 100, 800, 600
+        w, h = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{px + (pw - w) // 2}+{py + (ph - h) // 2}")
+
+        parent.wait_window(self)
+
+    def _on_save(self) -> None:
+        """Validate YAML and save if valid."""
+        content = self._text.get("1.0", "end-1c")
+
+        # Validate YAML syntax
+        try:
+            yaml.safe_load(content)
+        except yaml.YAMLError as exc:
+            messagebox.showerror(
+                "Invalid YAML",
+                f"The file contains YAML syntax errors and cannot be saved:\n\n{exc}",
+                parent=self,
+            )
+            return
+
+        try:
+            self._config_path.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            messagebox.showerror("Save error", f"Could not write file:\n{exc}", parent=self)
+            return
+
+        self.grab_release()
+        self.destroy()
+
+    def _on_cancel(self) -> None:
+        """Close without saving."""
         self.grab_release()
         self.destroy()
 

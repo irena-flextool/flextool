@@ -146,9 +146,12 @@ def write_config_with_comments(config_path: str, config_dict: dict,
     """
     lines = []
 
-    lines.append("# The color codes in the config file can be replaced by appropriate colors.")
+    lines.append("# Define colors for entities and groups - they will persist over")
+    lines.append("# scenarios as best they can. The order defines the stacking order")
+    lines.append("# in dispatch plots (first item is on top).")
+    lines.append("#")
     lines.append("# You can use named colors from: https://matplotlib.org/stable/gallery/color/named_colors.html")
-    lines.append("# Deleting the config files resets the colors.")
+    lines.append("# Deleting this file resets all colors.")
     lines.append("")
 
     # time_to_plot
