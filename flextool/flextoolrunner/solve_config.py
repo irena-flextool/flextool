@@ -328,6 +328,10 @@ class SolveConfig:
                 self.solver_settings.arguments,
                 self.contains_solves,
                 self.rolling_times,
+                self.realized_periods,
+                self.realized_invest_periods,
+                self.invest_periods,
+                self.fix_storage_periods,
             ]
             for dup_map in dup_map_list:
                 if old_solve in dup_map.keys():
