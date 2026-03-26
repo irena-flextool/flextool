@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 import logging
 from flextool.plot_outputs.format_helpers import (
     generate_split_filename, split_into_chunks, _chunk_average_df,
+    insert_timeline_breaks,
 )
 from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config
 from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
@@ -63,7 +64,8 @@ def _plan_file_splits(
 
 def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         active_settings=['default'], plot_rows=(0, 167), delete_existing_plots=True,
-        plot_file_format='png', only_first_file=False):
+        plot_file_format='png', only_first_file=False,
+        break_times: set[str] | None = None):
     """
     Plot dataframes from a dictionary according to key suffixes.
 
@@ -477,6 +479,10 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                     # Apply unit conversion multiplier
                     if cfg.multiply_by is not None:
                         df_fm = df_fm * cfg.multiply_by
+
+                    # Insert NaN rows at timeline breaks for visual gaps
+                    if chart_type == 'time' and break_times:
+                        df_fm = insert_timeline_breaks(df_fm, break_times)
 
                     # Determine items and per-file limits
                     if chart_type == 'time':

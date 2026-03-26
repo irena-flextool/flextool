@@ -4699,6 +4699,15 @@ for {s in solve_current, d in d_realize_invest} {
     printf "%s,%s\n", s, d >> "output_raw/set_d_realize_invest.csv";
 }
 
+# Timeline breaks: timesteps where the timeline has a discontinuity.
+# Each row marks a timestep where dt_jump != 1 (excluding the very first
+# timestep of each period, which always has a non-1 jump from wrap-around).
+# The plotting code inserts a NaN gap BEFORE these timesteps.
+if p_model["solveFirst"] == 1 then printf "period,time\n" > "output_raw/timeline_breaks.csv";
+for {s in solve_current, (d, t) in dt_realize_dispatch: dt_jump[d, t] != 1 && (d, t) not in period__time_first} {
+    printf "%s,%s\n", d, t >> "output_raw/timeline_breaks.csv";
+}
+
 # ed_invest - (entity, period) pairs where investment occurs
 if p_model["solveFirst"] == 1 then printf "solve,entity,period\n" > "output_raw/set_ed_invest.csv";
 for {s in solve_current, (e, d) in ed_invest : d in d_realize_invest} {

@@ -83,8 +83,13 @@ def parse_config_with_comments(config_path: str) -> tuple[dict, dict[str, dict[s
                 commented_entries['nodes'].add(item)
 
     # Load the actual YAML (uncommented parts)
-    with open(config_path, 'r') as f:
-        config_dict = yaml.safe_load(f) or {}
+    try:
+        with open(config_path, 'r') as f:
+            config_dict = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        print(f"Warning: Could not parse {config_path}: {e}\n"
+              f"  The file will be regenerated with defaults.")
+        config_dict = {}
 
     return config_dict, commented_entries
 

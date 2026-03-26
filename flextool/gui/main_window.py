@@ -38,7 +38,7 @@ from flextool.gui.platform_utils import (
     open_spine_db_editor,
 )
 from flextool.gui.db_editor_integration import DbEditorManager
-from flextool.gui.output_log_window import OutputLogWindow
+
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,6 @@ class MainWindow(tk.Tk):
 
         # Pre-conversion state for xlsx→sqlite before execution
         self._xlsx_converting_sources: set[str] = set()
-        self._xlsx_conversion_log: OutputLogWindow | None = None
         self._xlsx_pending_scenarios: list[ScenarioInfo] = []
         self._xlsx_conversion_queue: list[tuple[str, Path]] = []
 
@@ -694,7 +693,7 @@ class MainWindow(tk.Tk):
         self.output_action_mgr = OutputActionManager(
             project_path=project_path,
             settings=self.project_settings,
-            parent=self,
+            execution_mgr=self.execution_mgr,
             on_complete=self._on_output_action_complete,
         )
 
@@ -747,16 +746,10 @@ class MainWindow(tk.Tk):
         except Exception:
             pass
 
-        # Close xlsx pre-conversion window if open
-        try:
-            if self._xlsx_conversion_log is not None and self._xlsx_conversion_log.winfo_exists():
-                self._xlsx_conversion_log.destroy()
-        except Exception:
-            pass
+        # Clear xlsx pre-conversion state
         self._xlsx_converting_sources.clear()
         self._xlsx_conversion_queue.clear()
         self._xlsx_pending_scenarios.clear()
-        self._xlsx_conversion_log = None
 
         # Close execution window if open
         try:
@@ -985,10 +978,13 @@ class MainWindow(tk.Tk):
         from flextool.gui.dialogs.add_dialog import AddDialog
 
         project_path = get_projects_dir() / self.current_project
-        dlg = AddDialog(self, project_path)
+        self._ensure_execution_mgr()
+        dlg = AddDialog(self, project_path, execution_mgr=self.execution_mgr)
         if dlg.result:
             self._refresh_input_sources()
             self._autocheck_new_sources(old_sources)
+        if dlg.old_convert_started:
+            self._open_or_raise_execution_window()
 
     def _autocheck_new_sources(self, old_sources: set[str]) -> None:
         """Check (tick) newly added input sources and their available scenarios."""
@@ -1459,10 +1455,9 @@ class MainWindow(tk.Tk):
                 f"You can convert back to xlsx to get an updated Excel."
             )
 
-        log_window = OutputLogWindow(self, f"Convert: {source_name} → sqlite")
         self._run_conversion_subprocess(
-            cmd, log_window, source_name, xlsx_path, target_sqlite,
-            f"'{source_name}' → '{stem}.sqlite'",
+            cmd, source_name, xlsx_path, target_sqlite,
+            f"Convert: {source_name} \u2192 sqlite",
             migrate_db_path=str(target_sqlite) if needs_migration else None,
             version_note=version_note,
         )
@@ -1482,7 +1477,6 @@ class MainWindow(tk.Tk):
         stem = Path(source_name).stem
         target_xlsx = input_dir / f"{stem}.xlsx"
 
-        # Check if target already exists in input_sources/
         if not self._resolve_file_conflict(target_xlsx):
             return
 
@@ -1495,8 +1489,6 @@ class MainWindow(tk.Tk):
             return
 
         db_url = f"sqlite:///{sqlite_path}"
-
-        # Build subprocess command
         cmd = [
             sys.executable, "-m",
             "flextool.cli.cmd_export_to_tabular",
@@ -1504,10 +1496,9 @@ class MainWindow(tk.Tk):
             str(target_xlsx),
         ]
 
-        log_window = OutputLogWindow(self, f"Convert: {source_name} → xlsx")
         self._run_conversion_subprocess(
-            cmd, log_window, source_name, sqlite_path, target_xlsx,
-            f"'{source_name}' → '{stem}.xlsx'",
+            cmd, source_name, sqlite_path, target_xlsx,
+            f"Convert: {source_name} \u2192 xlsx",
         )
 
     # ── Conversion subprocess runner ─────────────────────────────
@@ -1515,7 +1506,6 @@ class MainWindow(tk.Tk):
     def _run_conversion_subprocess(
         self,
         cmd: list[str],
-        log_window: OutputLogWindow,
         source_name: str,
         source_path: Path,
         target_path: Path,
@@ -1523,73 +1513,77 @@ class MainWindow(tk.Tk):
         migrate_db_path: str | None = None,
         version_note: str | None = None,
     ) -> None:
-        """Run a conversion command as a subprocess with output in the log window.
+        """Run a conversion command as an auxiliary job in the execution window.
 
-        After the subprocess completes, optionally runs database migration
-        (for old 3.x format imported against a frozen v25 schema), then moves
-        the source to converted/ and refreshes the input sources list.
+        After the subprocess completes, optionally runs database migration,
+        then moves the source to converted/ and refreshes the input sources.
         """
+        from flextool.gui.execution_manager import JobType
+
+        self._ensure_execution_mgr()
+        if self.execution_mgr is None:
+            return
+
+        job = self.execution_mgr.add_auxiliary_job(
+            JobType.CONVERSION,
+            description,
+            f"format_convert:{source_name}",
+        )
+
         flextool_root = get_projects_dir().parent
         cmd_str = " ".join(cmd)
-        log_window.append_line(f"Converting {description}\n")
-        log_window.append_line(cmd_str)
-        log_window.append_line("")
+        self.execution_mgr.append_stdout(job.job_id, f"Converting {description}\n")
+        self.execution_mgr.append_stdout(job.job_id, cmd_str)
+        self.execution_mgr.append_stdout(job.job_id, "")
+
+        self._open_or_raise_execution_window()
+        if self.execution_window is not None:
+            self.execution_window.select_job(job.job_id)
+
+        mgr = self.execution_mgr  # capture for thread
 
         def _worker() -> None:
             success = False
             try:
+                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
                 proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    cwd=str(flextool_root),
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1, cwd=str(flextool_root), env=env,
                 )
-                log_window.after(0, log_window.set_process, proc)
+                with mgr._lock:
+                    job.process = proc
 
                 for line in proc.stdout:  # type: ignore[union-attr]
-                    log_window.after(0, log_window.append_line, line.rstrip("\n"))
+                    mgr.append_stdout(job.job_id, line.rstrip("\n"))
 
                 proc.wait()
                 success = proc.returncode == 0
 
                 if success and migrate_db_path:
-                    log_window.after(
-                        0, log_window.append_line,
-                        "\nMigrating database to current version...",
-                    )
+                    mgr.append_stdout(job.job_id, "\nMigrating database to current version...")
                     try:
                         from flextool.update_flextool.db_migration import migrate_database
                         migrate_database(migrate_db_path)
-                        log_window.after(
-                            0, log_window.append_line, "Database migration completed.",
-                        )
+                        mgr.append_stdout(job.job_id, "Database migration completed.")
                     except Exception as mig_exc:
-                        log_window.after(
-                            0, log_window.append_line,
-                            f"Database migration failed: {mig_exc}",
-                        )
+                        mgr.append_stdout(job.job_id, f"Database migration failed: {mig_exc}")
                         success = False
 
                 if success:
-                    log_window.after(0, log_window.append_line, "\nConversion succeeded.")
+                    mgr.append_stdout(job.job_id, "\nConversion succeeded.")
                     if version_note:
-                        log_window.after(0, log_window.append_line, f"\n{version_note}")
+                        mgr.append_stdout(job.job_id, f"\n{version_note}")
                 else:
-                    log_window.after(
-                        0, log_window.append_line,
-                        f"\nConversion failed (exit code {proc.returncode}).",
+                    mgr.append_stdout(
+                        job.job_id, f"\nConversion failed (exit code {proc.returncode})."
                     )
             except Exception as exc:
                 logger.error("Conversion subprocess failed: %s", exc, exc_info=True)
-                log_window.after(
-                    0, log_window.append_line, f"\nError: {exc}",
-                )
+                mgr.append_stdout(job.job_id, f"\nError: {exc}")
 
-            # Finish up on the main thread
+            mgr.finish_job(job.job_id, success)
             self.after(0, self._conversion_finished,
-                       success, source_name, source_path, target_path, log_window)
+                       success, source_name, source_path, target_path)
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
@@ -1600,13 +1594,9 @@ class MainWindow(tk.Tk):
         source_name: str,
         source_path: Path,
         target_path: Path,
-        log_window: OutputLogWindow,
     ) -> None:
         """Handle post-conversion tasks on the main thread."""
-        log_window.mark_finished(success)
-
         if not success:
-            # Clean up target if conversion failed
             if target_path.exists():
                 try:
                     target_path.unlink()
@@ -1614,7 +1604,6 @@ class MainWindow(tk.Tk):
                     pass
             return
 
-        # Move source to converted/ folder
         project_path = get_projects_dir() / self.current_project
         converted_dir = project_path / "converted"
         moved = self._move_to_converted(source_path, converted_dir)
@@ -1628,19 +1617,20 @@ class MainWindow(tk.Tk):
     # ── xlsx pre-conversion pipeline (before execution) ──────────
 
     def _start_xlsx_preconversion(self, scenarios: list[ScenarioInfo]) -> None:
-        """Convert unique xlsx sources to intermediate sqlite, then dispatch jobs."""
+        """Convert unique xlsx sources to intermediate sqlite, then dispatch jobs.
+
+        Each source gets its own auxiliary job entry in the execution window.
+        """
         project_path = get_projects_dir() / self.current_project
         intermediate_dir = project_path / "intermediate"
         intermediate_dir.mkdir(parents=True, exist_ok=True)
 
-        # Identify unique xlsx sources that need conversion.
         # Always reconvert — the user may have edited the xlsx since last run.
         seen: set[str] = set()
         queue: list[tuple[str, Path]] = []
         for s in scenarios:
             if s.source_name not in seen:
                 seen.add(s.source_name)
-                # Clear stale conversion cache so the source is reconverted
                 self.execution_mgr._converted_xlsx.discard(s.source_name)
                 xlsx_path = project_path / "input_sources" / s.source_name
                 queue.append((s.source_name, xlsx_path))
@@ -1648,46 +1638,31 @@ class MainWindow(tk.Tk):
         self._xlsx_pending_scenarios = list(scenarios)
 
         if not queue:
-            # All already converted — dispatch immediately
             self._xlsx_preconversion_done(success=True)
             return
 
         self._xlsx_conversion_queue = queue
         self._xlsx_converting_sources = {name for name, _ in queue}
-
-        # Update UI to show sources as locked/red
         self._update_available_scenario_tags()
 
-        # Close any previous minimized conversion window
-        if self._xlsx_conversion_log is not None and self._xlsx_conversion_log.winfo_exists():
-            self._xlsx_conversion_log.destroy()
-
-        self._xlsx_conversion_log = OutputLogWindow(
-            self,
-            "Pre-conversion: xlsx \u2192 sqlite",
-            on_abort=self._xlsx_preconversion_aborted,
-        )
+        # Show progress in the execution window
+        self._open_or_raise_execution_window()
         self._xlsx_convert_next()
 
     def _xlsx_convert_next(self) -> None:
         """Convert the next xlsx source in the queue."""
+        from flextool.gui.execution_manager import JobType
+
         if not self._xlsx_conversion_queue:
             self._xlsx_preconversion_done(success=True)
             return
 
         source_name, xlsx_path = self._xlsx_conversion_queue.pop(0)
-        log = self._xlsx_conversion_log
-        if log is None or not log.winfo_exists():
-            # Window was destroyed — treat as abort
-            self._xlsx_preconversion_aborted()
-            return
-
         project_path = get_projects_dir() / self.current_project
         stem = Path(source_name).stem
         db_path = project_path / "intermediate" / f"{stem}.sqlite"
         target_db_url = f"sqlite:///{db_path}"
 
-        # Remove stale intermediate file
         if db_path.exists():
             db_path.unlink()
 
@@ -1722,10 +1697,20 @@ class MainWindow(tk.Tk):
         from flextool.update_flextool.initialize_database import initialize_database
         initialize_database(str(template), str(db_path))
 
-        log.append_line(f"{'=' * 60}")
-        log.append_line(f"Converting {source_name} ...")
-        log.append_line(" ".join(cmd))
-        log.append_line("")
+        # Create auxiliary job in the execution window
+        job = self.execution_mgr.add_auxiliary_job(
+            JobType.CONVERSION,
+            f"Convert: {source_name}",
+            f"conversion:{source_name}",
+            insert_before_source=source_name,
+        )
+
+        self.execution_mgr.append_stdout(job.job_id, f"Converting {source_name} ...")
+        self.execution_mgr.append_stdout(job.job_id, " ".join(cmd))
+        self.execution_mgr.append_stdout(job.job_id, "")
+
+        if self.execution_window is not None:
+            self.execution_window.select_job(job.job_id)
 
         def _worker() -> None:
             success = False
@@ -1735,36 +1720,31 @@ class MainWindow(tk.Tk):
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1, cwd=str(flextool_root), env=env,
                 )
-                if log.winfo_exists():
-                    log.after(0, log.set_process, proc)
+                with self.execution_mgr._lock:
+                    job.process = proc
 
                 for line in proc.stdout:  # type: ignore[union-attr]
-                    if log.winfo_exists():
-                        log.after(0, log.append_line, line.rstrip("\n"))
+                    self.execution_mgr.append_stdout(job.job_id, line.rstrip("\n"))
 
                 proc.wait()
                 success = proc.returncode == 0
 
                 if success and migrate_db_path:
-                    if log.winfo_exists():
-                        log.after(0, log.append_line, "\nMigrating database...")
+                    self.execution_mgr.append_stdout(job.job_id, "\nMigrating database...")
                     try:
                         from flextool.update_flextool.db_migration import migrate_database
                         migrate_database(migrate_db_path)
-                        if log.winfo_exists():
-                            log.after(0, log.append_line, "Migration completed.")
+                        self.execution_mgr.append_stdout(job.job_id, "Migration completed.")
                     except Exception as exc:
-                        if log.winfo_exists():
-                            log.after(0, log.append_line, f"Migration failed: {exc}")
+                        self.execution_mgr.append_stdout(job.job_id, f"Migration failed: {exc}")
                         success = False
 
                 status = "succeeded" if success else f"failed (exit code {proc.returncode})"
-                if log.winfo_exists():
-                    log.after(0, log.append_line, f"\n{source_name}: {status}\n")
+                self.execution_mgr.append_stdout(job.job_id, f"\n{source_name}: {status}")
             except Exception as exc:
-                if log.winfo_exists():
-                    log.after(0, log.append_line, f"\nError: {exc}")
+                self.execution_mgr.append_stdout(job.job_id, f"\nError: {exc}")
 
+            self.execution_mgr.finish_job(job.job_id, success)
             self.after(0, self._xlsx_one_source_finished, source_name, success)
 
         thread = threading.Thread(target=_worker, daemon=True)
@@ -1789,13 +1769,6 @@ class MainWindow(tk.Tk):
         self._xlsx_pending_scenarios = []
 
         if success:
-            # Minimize the log window (user can review it later)
-            log = self._xlsx_conversion_log
-            if log is not None and log.winfo_exists():
-                log.mark_finished(True)
-                log.minimize()
-
-            # Dispatch the xlsx scenarios
             if scenarios:
                 added = self.execution_mgr.add_jobs(scenarios)
                 self.execution_mgr.start()
@@ -1804,26 +1777,13 @@ class MainWindow(tk.Tk):
                 if added and self.execution_window is not None:
                     self.execution_window.select_job(added[-1].job_id)
         else:
-            # Keep log window open for review
-            log = self._xlsx_conversion_log
-            if log is not None and log.winfo_exists():
-                log.mark_finished(False)
-                log.append_line("\nConversion failed. Scenarios will not be executed.")
             messagebox.showerror(
                 "Conversion failed",
                 "xlsx \u2192 sqlite conversion failed.\n\n"
-                "Check the conversion log window for details.\n"
+                "Check the conversion entry in the execution window.\n"
                 "Scenarios will not be executed.",
                 parent=self,
             )
-
-    def _xlsx_preconversion_aborted(self) -> None:
-        """Called when user aborts xlsx pre-conversion (closes window or clicks Abort)."""
-        self._xlsx_converting_sources.clear()
-        self._xlsx_conversion_queue.clear()
-        self._xlsx_pending_scenarios = []
-        self._xlsx_conversion_log = None
-        self._update_available_scenario_tags()
 
     # ── File conflict resolution helpers ─────────────────────────
 
@@ -2494,14 +2454,21 @@ class MainWindow(tk.Tk):
     def _ensure_output_action_mgr(self) -> OutputActionManager | None:
         """Return the OutputActionManager, creating it if needed."""
         if self.output_action_mgr is not None:
+            # Ensure execution_mgr reference is up-to-date (it may have
+            # been None when the OutputActionManager was first created
+            # during project load, before any scenarios were queued).
+            if self.output_action_mgr._execution_mgr is None:
+                self._ensure_execution_mgr()
+                self.output_action_mgr._execution_mgr = self.execution_mgr
             return self.output_action_mgr
         if not self.current_project:
             return None
         project_path = get_projects_dir() / self.current_project
+        self._ensure_execution_mgr()
         self.output_action_mgr = OutputActionManager(
             project_path=project_path,
             settings=self.project_settings,
-            parent=self,
+            execution_mgr=self.execution_mgr,
             on_complete=self._on_output_action_complete,
         )
         return self.output_action_mgr
@@ -2522,6 +2489,8 @@ class MainWindow(tk.Tk):
         self._output_action_failed.discard(key)
         self.output_status_labels[key].configure(state="disabled")
         self._start_spinner(key)
+        # Show progress in the execution window
+        self._open_or_raise_execution_window()
         return names
 
     @safe_callback

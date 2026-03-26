@@ -30,17 +30,36 @@ class JobStatus(Enum):
     KILLED = auto()
 
 
+class JobType(Enum):
+    """Distinguishes different kinds of jobs in the execution list."""
+
+    SCENARIO = auto()       # FlexTool scenario run
+    CONVERSION = auto()     # xlsx → sqlite pre-conversion
+    OUTPUT_ACTION = auto()  # output generation (plots, Excel, CSV, comparison)
+    OLD_CONVERT = auto()    # old FlexTool 2.0 import
+
+
 @dataclass
 class ExecutionJob:
-    """Represents a single scenario execution."""
+    """Represents a single job in the execution list.
+
+    For scenario runs, the scenario-specific fields (``scenario_name``,
+    ``source_name``, etc.) are populated.  For auxiliary jobs (conversions,
+    output actions) only ``display_name`` and ``action_key`` are used.
+    """
 
     job_id: int
-    scenario_name: str
-    source_name: str
-    source_number: int
-    input_db_url: str  # sqlite:///path/to/input.sqlite
-    is_xlsx_source: bool  # If True, needs xlsx->sqlite conversion first
-    xlsx_path: Path | None  # Path to xlsx if is_xlsx_source
+    job_type: JobType = JobType.SCENARIO
+    display_name: str = ""   # Shown in the tree for non-scenario jobs
+    action_key: str = ""     # For replacement: same key → old entry removed
+    # --- Scenario-specific fields ---
+    scenario_name: str = ""
+    source_name: str = ""
+    source_number: int = 0
+    input_db_url: str = ""   # sqlite:///path/to/input.sqlite
+    is_xlsx_source: bool = False
+    xlsx_path: Path | None = None
+    # --- Common fields ---
     status: JobStatus = JobStatus.PENDING
     stdout_lines: list[str] = field(default_factory=list)
     start_time: datetime | None = None
@@ -147,6 +166,93 @@ class ExecutionManager:
                 new_jobs.append(job)
         return new_jobs
 
+    # ------------------------------------------------------------------
+    # Auxiliary (non-scenario) jobs
+    # ------------------------------------------------------------------
+
+    def add_auxiliary_job(
+        self,
+        job_type: JobType,
+        display_name: str,
+        action_key: str,
+        *,
+        insert_before_source: str | None = None,
+    ) -> ExecutionJob:
+        """Create a non-scenario job (conversion, output action, etc.).
+
+        Auxiliary jobs are **not** managed by the scheduler — the caller is
+        responsible for running them in a thread and calling
+        :meth:`append_stdout` / :meth:`finish_job`.
+
+        If a finished or running job with the same *action_key* already
+        exists, it is killed (if running) and removed first.
+
+        Args:
+            job_type: The kind of auxiliary job.
+            display_name: What to show in the job tree.
+            action_key: Unique key for replacement logic.
+            insert_before_source: If given, insert the job right before the
+                first SCENARIO job with this ``source_name`` (used for
+                conversion jobs).  Otherwise appended at end.
+        """
+        with self._lock:
+            # Kill and remove old job with the same action_key
+            for old in list(self._jobs):
+                if old.action_key and old.action_key == action_key:
+                    if old.status == JobStatus.RUNNING and old.process:
+                        try:
+                            old.process.kill()
+                        except OSError:
+                            pass
+                    self._jobs.remove(old)
+
+            job = ExecutionJob(
+                job_id=self._next_id,
+                job_type=job_type,
+                display_name=display_name,
+                action_key=action_key,
+                status=JobStatus.RUNNING,
+                start_time=datetime.now(),
+            )
+            self._next_id += 1
+
+            # Determine insertion position
+            if insert_before_source is not None:
+                idx = len(self._jobs)
+                for i, j in enumerate(self._jobs):
+                    if (
+                        j.job_type == JobType.SCENARIO
+                        and j.source_name == insert_before_source
+                    ):
+                        idx = i
+                        break
+                self._jobs.insert(idx, job)
+            else:
+                self._jobs.append(job)
+
+        self._notify_status_change(job)
+        return job
+
+    def append_stdout(self, job_id: int, line: str) -> None:
+        """Thread-safe append of a stdout line to a job."""
+        with self._lock:
+            job = self._get_job(job_id)
+            if job is not None:
+                job.stdout_lines.append(line)
+
+    def finish_job(self, job_id: int, success: bool) -> None:
+        """Mark an auxiliary job as finished (SUCCESS or FAILED)."""
+        with self._lock:
+            job = self._get_job(job_id)
+            if job is None:
+                return
+            now = datetime.now()
+            job.end_time = now
+            job.finish_timestamp = now.strftime("%d.%m.%y %H:%M")
+            job.process = None
+            job.status = JobStatus.SUCCESS if success else JobStatus.FAILED
+        self._notify_status_change(job)
+
     def start(self) -> None:
         """Start executing pending jobs up to *max_workers* concurrently.
 
@@ -180,21 +286,23 @@ class ExecutionManager:
                 if self._stopped:
                     break
 
-                # Find the next pending job if capacity is available
+                # Find the next pending SCENARIO job if capacity is available
                 next_job: ExecutionJob | None = None
                 if not self._wind_down and self._running_count < self._max_workers:
                     for job in self._jobs:
-                        if job.status == JobStatus.PENDING:
+                        if job.job_type == JobType.SCENARIO and job.status == JobStatus.PENDING:
                             next_job = job
                             break
 
                 if next_job is not None:
                     self._running_count += 1
 
-                # Check if everything is done
+                # Check if all SCENARIO jobs are done (auxiliary jobs are
+                # managed externally and don't block the scheduler)
                 any_active = any(
                     j.status in (JobStatus.PENDING, JobStatus.RUNNING)
                     for j in self._jobs
+                    if j.job_type == JobType.SCENARIO
                 )
             # --- lock released ---
 
@@ -461,7 +569,19 @@ class ExecutionManager:
 
         logger.info("Running post-execution comparison:\n%s", format_cmd_for_log(cmd))
 
+        # Create an auxiliary job so comparison output is visible in the
+        # execution window.
+        job = self.add_auxiliary_job(
+            JobType.OUTPUT_ACTION,
+            "Auto-comparison",
+            "output:auto_comparison",
+        )
+        cmd_str = format_cmd_for_log(cmd)
+        self.append_stdout(job.job_id, cmd_str)
+        self.append_stdout(job.job_id, "")
+
         flextool_root = Path(__file__).resolve().parent.parent.parent
+        success = False
 
         try:
             env = {**os.environ, "PYTHONUNBUFFERED": "1"}
@@ -474,14 +594,23 @@ class ExecutionManager:
                 cwd=str(flextool_root),
                 env=env,
             )
+            with self._lock:
+                job.process = proc
             assert proc.stdout is not None
             for line in proc.stdout:
-                logger.info("[comparison] %s", line.rstrip("\n"))
+                stripped = line.rstrip("\n")
+                self.append_stdout(job.job_id, stripped)
             return_code = proc.wait()
-            if return_code != 0:
-                logger.error("Comparison process exited with code %d", return_code)
+            success = return_code == 0
+            if not success:
+                self.append_stdout(
+                    job.job_id, f"Process exited with code {return_code}"
+                )
         except Exception:
             logger.exception("Post-execution comparison failed")
+            self.append_stdout(job.job_id, "Comparison failed with exception")
+        finally:
+            self.finish_job(job.job_id, success)
 
     # ------------------------------------------------------------------
     # Control methods
@@ -561,23 +690,28 @@ class ExecutionManager:
 
         Must be called while holding ``self._lock``.
 
+        Only applies to SCENARIO jobs.  Auxiliary jobs are pruned via
+        ``action_key`` in :meth:`add_auxiliary_job`.
+
         Rules:
         - New job succeeded → remove all previous jobs for this scenario.
         - New job failed    → remove previous failed/killed jobs, keep successful ones.
         """
+        if finished_job.job_type != JobType.SCENARIO:
+            return
         to_remove = []
         for old in self._jobs:
             if old is finished_job:
+                continue
+            if old.job_type != JobType.SCENARIO:
                 continue
             if old.scenario_name != finished_job.scenario_name:
                 continue
             if old.status in (JobStatus.PENDING, JobStatus.RUNNING):
                 continue
             if finished_job.status == JobStatus.SUCCESS:
-                # New run succeeded — all old runs are superseded
                 to_remove.append(old)
             elif old.status in (JobStatus.FAILED, JobStatus.KILLED):
-                # New run failed — remove old failures, keep old successes
                 to_remove.append(old)
         for old in to_remove:
             self._jobs.remove(old)
@@ -640,10 +774,19 @@ class ExecutionManager:
             return list(job.stdout_lines)
 
     def has_pending_or_running(self) -> bool:
-        """Check if there are any pending or running jobs."""
+        """Check if there are any pending or running jobs (any type)."""
         with self._lock:
             return any(
                 j.status in (JobStatus.PENDING, JobStatus.RUNNING) for j in self._jobs
+            )
+
+    def has_pending_or_running_scenarios(self) -> bool:
+        """Check if there are pending or running scenario jobs specifically."""
+        with self._lock:
+            return any(
+                j.status in (JobStatus.PENDING, JobStatus.RUNNING)
+                for j in self._jobs
+                if j.job_type == JobType.SCENARIO
             )
 
     def set_comparison_scenarios(self, scenario_names: list[str]) -> None:

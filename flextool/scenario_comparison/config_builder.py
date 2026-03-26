@@ -215,6 +215,8 @@ def create_or_update_dispatch_config(
     # New scenarios not in config -> add as active
     all_known = set(active_scenarios) | set(commented_scens)
     for name in scenarios:
+        if not name:  # skip empty/None scenario names
+            continue
         if name not in all_known:
             idx = len(active_scenarios) + len(commented_scens)
             active_scenarios[name] = matplotlib.colors.rgb2hex(scenario_colormap[idx % 10])

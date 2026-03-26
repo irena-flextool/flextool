@@ -413,7 +413,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
     if read_parquet_dir:
         results = {}
         for filename in os.listdir(parquet_dir):
-            if filename.endswith('.parquet'):
+            if filename.endswith('.parquet') and filename != 'timeline_breaks.parquet':
                 key = filename[:-8]  # Remove '.parquet' extension
                 filepath = os.path.join(parquet_dir, filename)
                 results[key] = pd.read_parquet(filepath)
@@ -476,6 +476,13 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
             df.to_parquet(f'{parquet_dir}/{name}.parquet')
 
+        # Copy timeline_breaks from output_raw to parquet dir
+        raw_dir = raw_output_dir or 'output_raw'
+        breaks_csv = os.path.join(raw_dir, 'timeline_breaks.csv')
+        if os.path.exists(breaks_csv):
+            breaks_df = pd.read_csv(breaks_csv)
+            breaks_df.to_parquet(f'{parquet_dir}/timeline_breaks.parquet', index=False)
+
         start = log_time("Wrote to parquet", start)
 
     # Plot results
@@ -486,7 +493,10 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # Don't delete existing plots when processing single result
         delete_plots = not bool(single_result)
         results = {k: v.to_frame() if isinstance(v, pd.Series) else v for k, v in results.items()}
-        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file)
+        # Load timeline breaks for visual gaps in time-series plots
+        from flextool.plot_outputs.format_helpers import load_timeline_breaks
+        break_times = load_timeline_breaks(parquet_dir)
+        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_times)
 
         start = log_time('Plotted figures', start)
 

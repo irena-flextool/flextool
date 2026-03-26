@@ -247,6 +247,10 @@ def _render_lines_figure(
             axes[idx] = fig.add_axes([x_left, y_bottom, ax_width, ax_height])
         y_cursor -= cell_height + INTER_ROW_GAP
 
+    # Use integer x-positions so NaN gap rows occupy real horizontal space.
+    # set_smart_xticks handles tick labelling from time_index separately.
+    x_positions = np.arange(len(time_index))
+
     # ── Per-subplot rendering ──
     for idx, (eff_title, df_sub) in enumerate(effective_plots):
         ax = axes[idx]
@@ -255,7 +259,7 @@ def _render_lines_figure(
         if isinstance(df_sub, pd.Series):
             label = str(eff_title)
             color = shared_color_map.get(label) if shared_color_map else None
-            ax.plot(time_index, df_sub.values, label=label, color=color)
+            ax.plot(x_positions, df_sub.values, label=label, color=color)
         else:
             is_multiindex = isinstance(df_sub.columns, pd.MultiIndex)
 
@@ -289,7 +293,7 @@ def _render_lines_figure(
 
                 label = str(line)
                 color = shared_color_map.get(label) if shared_color_map else None
-                ax.plot(time_index, y_data.values, label=label, color=color)
+                ax.plot(x_positions, y_data.values, label=label, color=color)
 
         # Subplot formatting
         if eff_title is not None:

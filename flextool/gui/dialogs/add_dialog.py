@@ -11,7 +11,6 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from flextool.gui.dialogs.file_picker import FilePickerDialog
-from flextool.gui.output_log_window import OutputLogWindow
 from flextool.gui.project_utils import get_projects_dir
 
 logger = logging.getLogger(__name__)
@@ -27,13 +26,18 @@ class AddDialog(tk.Toplevel):
     added (so the caller knows to refresh the input sources list).
     """
 
-    def __init__(self, parent: tk.Misc, project_path: Path) -> None:
+    def __init__(
+        self, parent: tk.Misc, project_path: Path,
+        execution_mgr=None,
+    ) -> None:
         super().__init__(parent)
         self.title("Add input sources")
         self.result: bool = False
+        self.old_convert_started: bool = False  # True if old FlexTool conversion was started
         self._project_path = project_path
         self._input_dir = project_path / "input_sources"
         self._input_dir.mkdir(parents=True, exist_ok=True)
+        self._execution_mgr = execution_mgr
 
         # Root directories for templates
         self._flextool_root = get_projects_dir().parent
@@ -399,10 +403,14 @@ class AddDialog(tk.Toplevel):
         )
 
     def _on_convert_old_flextool(self) -> None:
-        """Open a file chooser for an old FlexTool .xlsm, convert to Spine DB."""
+        """Open a file chooser for an old FlexTool .xlsm, convert to Spine DB.
+
+        The conversion runs as an auxiliary job in the ExecutionManager.
+        The dialog closes immediately and progress is shown in the
+        execution window.
+        """
         initial_dir = self._flextool_root
 
-        # Determine dialog size from the main window (same as choose-and-copy)
         try:
             root = self.winfo_toplevel()
             main_window_width = root.winfo_width()
@@ -440,7 +448,6 @@ class AddDialog(tk.Toplevel):
             )
             if not overwrite:
                 return
-            # Remove the existing file so initialize_database can create fresh
             try:
                 dest.unlink()
             except OSError as exc:
@@ -451,7 +458,6 @@ class AddDialog(tk.Toplevel):
                 )
                 return
 
-        # Locate the FlexTool template for creating a new database
         json_template = (
             self._flextool_root / "version" / "flextool_template_master.json"
         )
@@ -463,7 +469,7 @@ class AddDialog(tk.Toplevel):
             )
             return
 
-        # Step 1: Create empty Spine DB from template
+        # Create empty Spine DB from template
         try:
             from flextool.update_flextool.initialize_database import (
                 initialize_database,
@@ -479,7 +485,7 @@ class AddDialog(tk.Toplevel):
                 dest.unlink(missing_ok=True)
             return
 
-        # Step 2: Run the CLI importer as a subprocess with a log window
+        # Build conversion command
         db_url = f"sqlite:///{dest}"
         cmd = [
             sys.executable, "-m",
@@ -488,68 +494,86 @@ class AddDialog(tk.Toplevel):
             db_url,
         ]
 
-        log_window = OutputLogWindow(
-            self, f"Convert FlexTool 2.0: {filepath.name}"
-        )
-        log_window.append_line(f"Converting '{filepath.name}' → '{dest_name}'\n")
-        log_window.append_line(" ".join(cmd))
-        log_window.append_line("")
+        if self._execution_mgr is not None:
+            # Run as auxiliary job — close dialog, show in execution window
+            from flextool.gui.execution_manager import JobType
 
-        def _worker() -> None:
-            success = False
-            try:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    cwd=str(self._flextool_root),
-                )
-                log_window.after(0, log_window.set_process, proc)
+            job = self._execution_mgr.add_auxiliary_job(
+                JobType.OLD_CONVERT,
+                f"Convert FlexTool 2.0: {filepath.name}",
+                f"old_convert:{filepath.name}",
+            )
+            self._execution_mgr.append_stdout(
+                job.job_id, f"Converting '{filepath.name}' \u2192 '{dest_name}'"
+            )
+            self._execution_mgr.append_stdout(job.job_id, " ".join(cmd))
+            self._execution_mgr.append_stdout(job.job_id, "")
 
-                for line in proc.stdout:  # type: ignore[union-attr]
-                    log_window.after(0, log_window.append_line, line.rstrip("\n"))
+            mgr = self._execution_mgr  # capture for thread
 
-                proc.wait()
-                success = proc.returncode == 0
-
-                if success:
-                    log_window.after(0, log_window.append_line, "\nConversion succeeded.")
-                else:
-                    log_window.after(
-                        0, log_window.append_line,
-                        f"\nConversion failed (exit code {proc.returncode}).",
+            def _worker() -> None:
+                import os as _os
+                success = False
+                try:
+                    env = {**_os.environ, "PYTHONUNBUFFERED": "1"}
+                    proc = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, bufsize=1,
+                        cwd=str(self._flextool_root), env=env,
                     )
+                    with mgr._lock:
+                        job.process = proc
+
+                    for line in proc.stdout:  # type: ignore[union-attr]
+                        mgr.append_stdout(job.job_id, line.rstrip("\n"))
+
+                    proc.wait()
+                    success = proc.returncode == 0
+                    if not success:
+                        mgr.append_stdout(
+                            job.job_id,
+                            f"\nConversion failed (exit code {proc.returncode}).",
+                        )
+                        if dest.exists():
+                            dest.unlink(missing_ok=True)
+                except Exception as exc:
+                    logger.error("Old FlexTool conversion failed: %s", exc, exc_info=True)
+                    mgr.append_stdout(job.job_id, f"\nError: {exc}")
+                    if dest.exists():
+                        dest.unlink(missing_ok=True)
+
+                mgr.finish_job(job.job_id, success)
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+            self.result = True
+            self.old_convert_started = True
+            self._on_back()  # close the dialog
+        else:
+            # Fallback: no execution manager — run synchronously with busy cursor
+            self.config(cursor="watch")
+            self.update()
+            try:
+                from flextool.process_inputs.read_old_flextool import read_old_flextool
+                from flextool.process_inputs.write_old_flextool_to_db import write_old_flextool_to_db
+
+                data = read_old_flextool(str(filepath))
+                write_old_flextool_to_db(data, db_url, alternative_name=_OLD_FLEX_ALTERNATIVE)
             except Exception as exc:
                 logger.error("Old FlexTool conversion failed: %s", exc, exc_info=True)
-                log_window.after(0, log_window.append_line, f"\nError: {exc}")
+                messagebox.showerror("Conversion failed", str(exc), parent=self)
+                if dest.exists():
+                    dest.unlink(missing_ok=True)
+                return
+            finally:
+                self.config(cursor="")
 
-            # Finish on the main thread
-            self.after(0, self._old_convert_finished, success, dest, dest_name, log_window)
-
-        thread = threading.Thread(target=_worker, daemon=True)
-        thread.start()
-
-    def _old_convert_finished(
-        self,
-        success: bool,
-        dest: Path,
-        dest_name: str,
-        log_window: OutputLogWindow,
-    ) -> None:
-        """Handle post-conversion for old FlexTool import."""
-        log_window.mark_finished(success)
-
-        if not success:
-            if dest.exists():
-                try:
-                    dest.unlink()
-                except OSError:
-                    pass
-            return
-
-        self.result = True
+            self.result = True
+            messagebox.showinfo(
+                "Done",
+                f"Converted '{filepath.name}' \u2192 '{dest_name}' in input_sources.",
+                parent=self,
+            )
 
     def _on_back(self) -> None:
         """Close the dialog."""

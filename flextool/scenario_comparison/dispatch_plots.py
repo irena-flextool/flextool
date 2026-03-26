@@ -84,8 +84,11 @@ def plot_dispatch_area(
     timeline: tuple[int, int] = (0, 168),
     show_plot: bool = False,
     ylim: tuple[float, float] | None = None,
+    break_times: set[str] | None = None,
 ) -> None:
     """Create a stacked area dispatch plot with demand line."""
+    from flextool.plot_outputs.format_helpers import insert_timeline_breaks
+
     if colors is None:
         colors = DEFAULT_SPECIAL_COLORS
 
@@ -96,6 +99,14 @@ def plot_dispatch_area(
     # Slice to timeline
     df_plot = df_dispatch.iloc[timeline[0]:timeline[1]]
 
+    # Insert NaN rows at timeline breaks for visual gaps
+    if break_times:
+        df_plot = insert_timeline_breaks(df_plot, break_times)
+        if inflow_series is not None:
+            inflow_series = insert_timeline_breaks(
+                inflow_series.iloc[timeline[0]:timeline[1]].to_frame(), break_times
+            ).iloc[:, 0]
+
     # Check if there's anything to plot (area, curtailed, or demand)
     has_area = bool(plot_cols) and not (df_plot[plot_cols].select_dtypes(include='number').abs() < 1e-6).all().all()
     has_curtailed = 'Curtailed' in df_dispatch.columns and (df_plot['Curtailed'].abs() > 1e-6).any()
@@ -105,7 +116,7 @@ def plot_dispatch_area(
 
     fig, ax = plt.subplots(figsize=(10, 4))
 
-    # Plot area chart (only if there are numeric stacked columns)
+    # Plot area chart (NaN rows create visual gaps at timeline breaks)
     if has_area:
         df_plot[plot_cols].plot.area(
             ax=ax,
@@ -115,15 +126,22 @@ def plot_dispatch_area(
             legend=False
         )
 
-    # Plot curtailed as dashed line if present
+    # Use integer x-positions for line overlays so NaN gap rows create visible gaps
+    # (matching the area chart's internal integer positioning)
+    x_positions = np.arange(len(df_plot))
+
+    # Plot curtailed as dashed line
     if has_curtailed:
         curtailed = df_plot['Curtailed']
-        ax.plot(curtailed.index, curtailed.values, linestyle='--', color='red', linewidth=1, label='Curtailed')
+        ax.plot(x_positions, curtailed.values, linestyle='--', color='red', linewidth=1, label='Curtailed')
 
     # Plot demand line
     if has_demand:
-        inflow_plot = inflow_series.iloc[timeline[0]:timeline[1]]
-        ax.plot(inflow_plot.index, inflow_plot.values, linestyle='solid', color='black', linewidth=1.5, label='Demand')
+        if break_times:
+            inflow_plot = inflow_series
+        else:
+            inflow_plot = inflow_series.iloc[timeline[0]:timeline[1]]
+        ax.plot(np.arange(len(inflow_plot)), inflow_plot.values, linestyle='solid', color='black', linewidth=1.5, label='Demand')
 
     ax.axhline(y=0, color='black', linestyle=':', linewidth=0.5)
 
@@ -155,6 +173,8 @@ def create_dispatch_plots(
     scenarios: list[str] | None = None,
     show_plot: bool = False,
     write_xlsx: bool = False,
+    plot_rows: list[int] | tuple[int, int] | None = None,
+    break_times: set[str] | None = None,
 ) -> None:
     """Create dispatch plots for all configured nodeGroups and nodes."""
     plot_dir = Path(plot_dir)
@@ -178,11 +198,13 @@ def create_dispatch_plots(
         if col not in colors:
             colors[col] = color
 
-    timeline = (
-        config.get('time_to_plot', {}).get('first_timestep', 0),
-        config.get('time_to_plot', {}).get('first_timestep', 0) +
-        config.get('time_to_plot', {}).get('number_of_timesteps', 168)
-    )
+    # Use plot_rows from GUI/CLI if provided, otherwise fall back to config.yaml
+    if plot_rows and len(plot_rows) >= 2:
+        timeline = (int(plot_rows[0]), int(plot_rows[1]) + 1)  # plot_rows is inclusive
+    else:
+        first = config.get('time_to_plot', {}).get('first_timestep', 0)
+        n_steps = config.get('time_to_plot', {}).get('number_of_timesteps', 168)
+        timeline = (first, first + n_steps)
 
     # Get nodeGroups from data (dispatch_groups mapping), not config
     dispatch_groups_df = mappings.dispatch_groups
@@ -264,7 +286,8 @@ def create_dispatch_plots(
                     colors=colors,
                     timeline=timeline,
                     show_plot=show_plot,
-                    ylim=ng_ylims.get(ng)
+                    ylim=ng_ylims.get(ng),
+                    break_times=break_times,
                 )
 
                 if write_xlsx:
@@ -292,7 +315,8 @@ def create_dispatch_plots(
                     colors=node_colors,
                     timeline=timeline,
                     show_plot=show_plot,
-                    ylim=node_ylims.get(node)
+                    ylim=node_ylims.get(node),
+                    break_times=break_times,
                 )
                 if write_xlsx:
                     excel_data[f"node_{node}_{scenario}"] = df_node

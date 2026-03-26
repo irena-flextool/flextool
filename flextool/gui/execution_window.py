@@ -8,7 +8,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, messagebox
 
-from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus
+from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus, JobType
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +109,8 @@ class ExecutionWindow(tk.Toplevel):
         # Also sync the spinbox to the current manager value
         self._max_workers_var.set(self._mgr.max_workers)
 
-        # ── Scenarios list (left) ────────────────────────────────────
-        left_frame = ttk.LabelFrame(self, text="Scenarios", padding=5)
+        # ── Jobs list (left) ──────────────────────────────────────────
+        left_frame = ttk.LabelFrame(self, text="Jobs", padding=5)
         left_frame.grid(row=1, column=0, sticky="nsew", padx=(10, 5), pady=5)
         left_frame.rowconfigure(0, weight=1)
         left_frame.columnconfigure(0, weight=1)
@@ -274,11 +274,14 @@ class ExecutionWindow(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _refresh_job_list(self) -> None:
-        """Rebuild the scenarios Treeview from the ExecutionManager's job list."""
+        """Rebuild the job Treeview from the ExecutionManager's job list."""
         jobs = self._mgr.get_jobs()
 
         # Remember current selection so we can restore it
         prev_selection = set(self._job_tree.selection())
+
+        # Configure tags for failed/killed rows (bright red)
+        self._job_tree.tag_configure("failed", foreground="#ff3333")
 
         # Suppress <<TreeviewSelect>> events while we rebuild the tree
         self._refreshing_list = True
@@ -293,11 +296,24 @@ class ExecutionWindow(tk.Toplevel):
                 icon = _STATUS_ICONS.get(job.status, "?")
                 ts = job.finish_timestamp if job.status in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED) else ""
                 iid = str(job.job_id)
+
+                if job.job_type == JobType.SCENARIO:
+                    source_col = str(job.source_number)
+                    name_col = job.scenario_name
+                else:
+                    source_col = ""
+                    name_col = job.display_name
+
+                tags: tuple[str, ...] = ()
+                if job.status in (JobStatus.FAILED, JobStatus.KILLED):
+                    tags = ("failed",)
+
                 self._job_tree.insert(
                     "",
                     "end",
                     iid=iid,
-                    values=(icon, job.source_number, job.scenario_name, ts),
+                    values=(icon, source_col, name_col, ts),
+                    tags=tags,
                 )
                 if iid in prev_selection:
                     restore_iids.append(iid)
@@ -306,9 +322,7 @@ class ExecutionWindow(tk.Toplevel):
             if restore_iids:
                 self._job_tree.selection_set(restore_iids)
             else:
-                # All previously selected jobs were removed
                 if prev_selection:
-                    # Don't clear the output -- keep showing the last viewed log
                     pass
         finally:
             self._refreshing_list = False
@@ -403,16 +417,21 @@ class ExecutionWindow(tk.Toplevel):
     def _update_button_states(self) -> None:
         """Enable/disable buttons based on current execution state."""
         jobs = self._mgr.get_jobs()
-        has_pending = any(j.status == JobStatus.PENDING for j in jobs)
-        has_running = any(j.status == JobStatus.RUNNING for j in jobs)
-        has_pending_or_running = has_pending or has_running
+        has_pending_or_running = any(
+            j.status in (JobStatus.PENDING, JobStatus.RUNNING) for j in jobs
+        )
+        # Pause only applies to the scenario scheduler
+        has_pending_scenarios = any(
+            j.status == JobStatus.PENDING
+            for j in jobs if j.job_type == JobType.SCENARIO
+        )
         is_paused = self._mgr.is_paused
 
         selected_ids = set(self._get_selected_job_ids())
         job_by_id = {j.job_id: j for j in jobs}
 
-        # Pause/Continue toggle: enabled when there are pending or running jobs
-        if has_pending_or_running:
+        # Pause/Continue toggle: enabled when there are pending scenario jobs
+        if has_pending_scenarios or is_paused:
             self._pause_btn.configure(state="normal")
             if is_paused:
                 self._pause_btn.configure(text="Continue executions")

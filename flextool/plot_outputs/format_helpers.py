@@ -1,6 +1,9 @@
 """Value formatting and filename utilities for plot_outputs."""
+from __future__ import annotations
+
 import logging
 import math
+import os
 
 import numpy as np
 import pandas as pd
@@ -194,3 +197,105 @@ def _chunk_average_df(df: pd.DataFrame, chunk_size: int) -> pd.DataFrame:
     averaged.index = first_labels[:len(averaged)]
     averaged.index.name = df.index.name
     return averaged
+
+
+# ---------------------------------------------------------------------------
+#  Timeline breaks
+# ---------------------------------------------------------------------------
+
+def load_timeline_breaks(*parquet_dirs: str | os.PathLike) -> set[str]:
+    """Load timeline break timesteps from one or more parquet directories.
+
+    Reads ``timeline_breaks.parquet`` from each directory and returns the
+    union of all break timestep identifiers (e.g. ``{'t1336', 't2848'}``).
+    Returns an empty set if no files are found.
+    """
+    break_times: set[str] = set()
+    for d in parquet_dirs:
+        path = os.path.join(str(d), 'timeline_breaks.parquet')
+        if os.path.exists(path):
+            try:
+                df = pd.read_parquet(path)
+                if 'time' in df.columns:
+                    break_times.update(df['time'].astype(str))
+            except Exception:
+                pass
+    return break_times
+
+
+def split_at_timeline_breaks(
+    df: pd.DataFrame,
+    break_times: set[str],
+) -> list[pd.DataFrame]:
+    """Split a DataFrame into contiguous segments at timeline discontinuities.
+
+    Returns a list of DataFrames, one per contiguous block.  Plotting each
+    segment separately produces clean gaps (lines/areas stop and restart)
+    rather than plunging to zero at NaN values.
+
+    Works with both simple and MultiIndex row indices.
+    """
+    if not break_times or df.empty:
+        return [df]
+
+    # Find the time level in the index
+    if isinstance(df.index, pd.MultiIndex):
+        time_level = df.index.nlevels - 1  # default: last level
+        for i, name in enumerate(df.index.names):
+            if name and str(name).lower() in ('time', 't'):
+                time_level = i
+                break
+        time_vals = df.index.get_level_values(time_level).astype(str)
+    else:
+        time_vals = df.index.astype(str)
+
+    # Find integer positions where breaks occur
+    break_positions = [i for i, t in enumerate(time_vals) if t in break_times]
+    if not break_positions:
+        return [df]
+
+    # Split into contiguous segments
+    segments: list[pd.DataFrame] = []
+    prev = 0
+    for pos in break_positions:
+        if prev < pos:
+            segments.append(df.iloc[prev:pos])
+        prev = pos
+    if prev < len(df):
+        segments.append(df.iloc[prev:])
+
+    return segments
+
+
+def insert_timeline_breaks(
+    df: pd.DataFrame,
+    break_times: set[str],
+    gap_rows: int = 3,
+) -> pd.DataFrame:
+    """Insert NaN rows before timeline discontinuities for visual gaps.
+
+    Inserts *gap_rows* NaN rows (default 3) between contiguous blocks
+    so the gap is clearly visible in plots.
+    """
+    if not break_times or df.empty:
+        return df
+
+    segments = split_at_timeline_breaks(df, break_times)
+    if len(segments) <= 1:
+        return df
+
+    # Insert NaN rows between segments
+    parts: list[pd.DataFrame] = []
+    for i, seg in enumerate(segments):
+        if i > 0:
+            prev_seg = parts[-1]
+            gap_index = prev_seg.index[-1:].repeat(gap_rows)
+            nan_block = pd.DataFrame(
+                np.nan,
+                index=gap_index,
+                columns=df.columns,
+            )
+            parts.append(nan_block)
+        parts.append(seg)
+
+    return pd.concat(parts)

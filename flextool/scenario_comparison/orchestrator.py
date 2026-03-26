@@ -97,12 +97,25 @@ def run(
                     if isinstance(plot_cfg, dict) and plot_cfg.get('legend') == 'shared':
                         plot_cfg['legend'] = 'right'
 
+    # Load timeline breaks from all scenario parquet dirs.
+    # For --parquet-base-dir mode (subdir=''): parquets at base_dir/name/
+    # For DB mode (subdir='output_parquet'): parquets at folder/subdir/name/
+    from flextool.plot_outputs.format_helpers import load_timeline_breaks
+    break_dirs = []
+    for name, folder in scenario_folders.items():
+        if parquet_subdir:
+            break_dirs.append(os.path.join(folder, parquet_subdir, name))
+        else:
+            break_dirs.append(os.path.join(folder, name))
+    break_times = load_timeline_breaks(*break_dirs)
+
     # Generate original comparison plots (from default_comparison_plots.yaml)
     plot_dict_of_dataframes(
         combined_dfs, plot_dir, settings['plots'],
         active_settings=active_configs, plot_rows=plot_rows,
         delete_existing_plots=True, plot_file_format=plot_file_format,
         only_first_file=only_first_file,
+        break_times=break_times,
     )
     print(f'\nPlotted comparison of {len(scenario_folders)} scenarios to folder: {plot_dir}')
 
@@ -115,6 +128,8 @@ def run(
                 scenarios=get_scenarios_from_config(dispatch_config),
                 show_plot=show_plots,
                 write_xlsx=write_dispatch_xlsx,
+                break_times=break_times,
+                plot_rows=plot_rows,
             )
         else:
             print("Warning: Cannot generate dispatch plots - missing dispatch mappings")

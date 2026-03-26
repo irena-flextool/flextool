@@ -91,6 +91,10 @@ def collect_parquet_files(
         for parquet_file in sorted(parquet_dir.glob("*.parquet")):
             filename = parquet_file.name
 
+            # Skip metadata files (not result variables)
+            if filename == 'timeline_breaks.parquet':
+                continue
+
             if filename not in files_by_name:
                 files_by_name[filename] = []
 
