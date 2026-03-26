@@ -583,10 +583,6 @@ def _write_units(
                        alt_name, counters)
             _add_param(db, "unit", (unit_name,), "invest_max_total",
                        unit.max_invest_mw, alt_name, counters)
-            cap = unit.capacity_mw if unit.capacity_mw is not None else 0.0
-            if cap > 0:
-                _add_param(db, "unit", (unit_name,), "virtual_unitsize", cap,
-                           alt_name, counters)
 
         # -- Unit relationships --
 
@@ -767,7 +763,55 @@ def _write_inflow_units(
 
         count += 1
 
-    logger.info("Wrote %d inflow unit nodes.", count)
+    # Create standalone inflow nodes for profiles not referenced by any unit
+    used_profiles = {unit.inflow_profile for unit in data.units if unit.inflow_profile}
+    for inflow_ts in data.inflow_profiles:
+        if inflow_ts.name in used_profiles:
+            continue
+        if not inflow_ts.data:
+            continue
+
+        node_name = f"{inflow_ts.name}_inflow"
+        inflow_map = _make_time_map(inflow_ts.data)
+
+        # Create the entity but set it inactive — it's not connected to any
+        # unit, so having it active would cause infeasibilities/penalties.
+        key = ("node", (node_name,))
+        if key not in entities_added:
+            entities_added.add(key)
+            try:
+                db.add_entity(entity_class_name="node", name=node_name)
+                counters.entities += 1
+            except SpineDBAPIError:
+                pass
+        ea_key = ("node", (node_name,), alt_name)
+        if ea_key not in entity_alts_added:
+            entity_alts_added.add(ea_key)
+            try:
+                db.add_entity_alternative(
+                    entity_class_name="node",
+                    entity_byname=(node_name,),
+                    alternative_name=alt_name,
+                    active=False,
+                )
+                counters.entity_alternatives += 1
+            except SpineDBAPIError:
+                pass
+
+        _add_param(db, "node", (node_name,), "has_balance", "yes",
+                   alt_name, counters)
+        _add_param(db, "node", (node_name,), "has_storage", "yes",
+                   alt_name, counters)
+        _add_param(db, "node", (node_name,), "storage_binding_method",
+                   "bind_within_solve", alt_name, counters)
+        _add_param(db, "node", (node_name,), "inflow", inflow_map,
+                   alt_name, counters)
+        _add_param(db, "node", (node_name,), "inflow_method",
+                   "use_original", alt_name, counters)
+        count += 1
+        logger.info("Created standalone inflow node '%s' (inactive — not connected to any unit).", node_name)
+
+    logger.info("Wrote %d inflow nodes total.", count)
 
 
 def _write_connections(
@@ -906,6 +950,9 @@ def _write_groups(
                 _add_param(db, "group", (ng.name,), "penalty_inertia",
                            lack_inertia_penalty, alt_name, counters)
 
+        _add_param(db, "group", (ng.name,), "output_results", "yes",
+                   alt_name, counters)
+
         # Link nodes to this group
         for node_name in ng_nodes.get(ng.name, []):
             _add_relationship(db, "group__node", (ng.name, node_name),
@@ -935,6 +982,9 @@ def _write_groups(
                           ug.max_invest_mw, alt_name, counters)
         _add_param_if_set(db, "group", (ug.name,), "invest_min_total",
                           ug.min_invest_mw, alt_name, counters)
+
+        _add_param(db, "group", (ug.name,), "output_aggregate_flows", "yes",
+                   alt_name, counters)
 
         # Link units to this group
         for unit in ug_units.get(ug.name, []):
@@ -970,6 +1020,219 @@ def _write_groups(
                               alt_name, counters, entities_added, entity_alts_added)
 
         logger.info("Wrote CO2 group with cost=%.2f.", co2_cost)
+
+
+def _find_reserve_node_ts(
+    data: OldFlexToolData, node_name: str,
+) -> TimeSeriesData | None:
+    """Find a reserve time series for a specific node."""
+    for ts in data.reserve_node_ts:
+        if ts.name == node_name:
+            return ts
+    return None
+
+
+def _find_reserve_group_ts(
+    data: OldFlexToolData, group_name: str,
+) -> TimeSeriesData | None:
+    """Find a reserve time series for a specific group."""
+    for ts in data.reserve_group_ts:
+        if ts.name == group_name:
+            return ts
+    return None
+
+
+def _get_reserve_method(
+    use_ts_reserve: float | None,
+    use_dynamic_reserve: float | None,
+) -> str | None:
+    """Map old boolean flags to the new reserve_method string.
+
+    Returns None for "no_reserve" (both flags off) to signal the caller
+    should skip creating this reserve.
+    """
+    ts = use_ts_reserve is not None and use_ts_reserve == 1
+    dyn = use_dynamic_reserve is not None and use_dynamic_reserve == 1
+    if ts and dyn:
+        return "timeseries_and_dynamic"
+    if ts:
+        return "timeseries_only"
+    if dyn:
+        return "dynamic_only"
+    return None  # no_reserve — skip
+
+
+def _write_reserves(
+    data: OldFlexToolData,
+    db: DatabaseMapping,
+    alt_name: str,
+    counters: _Counters,
+    entities_added: set[tuple[str, tuple[str, ...]]],
+    entity_alts_added: set[tuple[str, tuple[str, ...], str]],
+) -> None:
+    """Write reserve entities, relationships, and parameters (Section 8b).
+
+    Creates the "primary" reserve entity and builds reserve__upDown__group
+    and reserve__upDown__unit__node relationships from old FlexTool reserve
+    data (node groups, grid nodes, unit types, and reserve time series).
+    """
+    penalty_reserve = _get_master_param(data, "loss of reserves penalty")
+
+    # 1. Create the "primary" reserve and "up" upDown entities
+    #    (both exist in the template but are removed by purge)
+    _add_entity(db, "reserve", "primary", alt_name, counters,
+                entities_added, entity_alts_added)
+    _add_entity(db, "upDown", "up", alt_name, counters,
+                entities_added, entity_alts_added)
+
+    # Build lookup: node_group_name -> list of node names (from gridNode)
+    ng_nodes: dict[str, list[str]] = {}
+    for gn in data.grid_nodes:
+        for ng_name in gn.node_groups:
+            ng_nodes.setdefault(ng_name, []).append(gn.node)
+
+    # Track which nodes are covered by a group-level reserve
+    # and which group each node belongs to (for unit matching)
+    nodes_with_reserves: set[str] = set()
+    node_to_reserve_group: dict[str, str] = {}
+    reserve_count = 0
+
+    # 2. Node groups with reserves
+    for ng in data.node_groups:
+        reserve_method = _get_reserve_method(ng.use_ts_reserve, ng.use_dynamic_reserve)
+        if reserve_method is None:
+            continue
+
+        group_name = ng.name
+
+        # The group entity may not exist yet (if it had no capacity/inertia
+        # constraints, _write_groups would have skipped it).
+        _add_entity(db, "group", group_name, alt_name, counters,
+                    entities_added, entity_alts_added)
+
+        # Ensure group__node links exist for this group
+        for node_name in ng_nodes.get(group_name, []):
+            _add_relationship(db, "group__node", (group_name, node_name),
+                              alt_name, counters, entities_added, entity_alts_added)
+
+        # Create reserve__upDown__group relationship
+        rel_elements = ("primary", "up", group_name)
+        _add_relationship(db, "reserve__upDown__group", rel_elements,
+                          alt_name, counters, entities_added, entity_alts_added)
+
+        # Set reserve_method
+        _add_param(db, "reserve__upDown__group", rel_elements,
+                   "reserve_method", reserve_method, alt_name, counters)
+
+        # Set penalty_reserve from master params
+        _add_param_if_set(db, "reserve__upDown__group", rel_elements,
+                          "penalty_reserve", penalty_reserve, alt_name, counters)
+
+        # Reserve time series for this group
+        group_ts = _find_reserve_group_ts(data, group_name)
+        if group_ts and group_ts.data:
+            reservation_map = _make_time_map(group_ts.data)
+            _add_param(db, "reserve__upDown__group", rel_elements,
+                       "reservation", reservation_map, alt_name, counters)
+
+        # Record which nodes are covered
+        for node_name in ng_nodes.get(group_name, []):
+            nodes_with_reserves.add(node_name)
+            node_to_reserve_group[node_name] = group_name
+
+        reserve_count += 1
+
+    logger.info("Wrote %d node-group reserves.", reserve_count)
+
+    # 3. Grid nodes with reserves (only if not already covered by a nodeGroup)
+    node_reserve_count = 0
+    for gn in data.grid_nodes:
+        # Skip if this node is already in a reserve-enabled group
+        if gn.node in nodes_with_reserves:
+            continue
+
+        reserve_method = _get_reserve_method(gn.use_ts_reserve, gn.use_dynamic_reserve)
+        if reserve_method is None:
+            continue
+
+        # Create a single-node reserve group
+        reserve_group_name = f"reserve_{gn.node}"
+
+        _add_entity(db, "group", reserve_group_name, alt_name, counters,
+                    entities_added, entity_alts_added)
+
+        # Link node to the new group
+        _add_relationship(db, "group__node", (reserve_group_name, gn.node),
+                          alt_name, counters, entities_added, entity_alts_added)
+
+        # Create reserve__upDown__group relationship
+        rel_elements = ("primary", "up", reserve_group_name)
+        _add_relationship(db, "reserve__upDown__group", rel_elements,
+                          alt_name, counters, entities_added, entity_alts_added)
+
+        # Set reserve_method
+        _add_param(db, "reserve__upDown__group", rel_elements,
+                   "reserve_method", reserve_method, alt_name, counters)
+
+        # Set penalty_reserve
+        _add_param_if_set(db, "reserve__upDown__group", rel_elements,
+                          "penalty_reserve", penalty_reserve, alt_name, counters)
+
+        # Reserve time series for this node
+        node_ts = _find_reserve_node_ts(data, gn.node)
+        if node_ts and node_ts.data:
+            reservation_map = _make_time_map(node_ts.data)
+            _add_param(db, "reserve__upDown__group", rel_elements,
+                       "reservation", reservation_map, alt_name, counters)
+
+        # Record this node as having reserves
+        nodes_with_reserves.add(gn.node)
+        node_to_reserve_group[gn.node] = reserve_group_name
+        node_reserve_count += 1
+
+    logger.info("Wrote %d single-node reserve groups.", node_reserve_count)
+
+    # 5. Unit reserve participation
+    unit_reserve_count = 0
+    for unit in data.units:
+        if unit.output_node is None:
+            continue
+
+        # Look up max_reserve from unit_type
+        max_reserve = _get_unit_type_param(data, unit, "max reserve")
+        if max_reserve is None or max_reserve == 0:
+            continue
+
+        # Determine which node to use: check output_node first, then input_node
+        # (skip output2 — reserves are electrical grid only)
+        reserve_node: str | None = None
+        if unit.output_node in nodes_with_reserves:
+            reserve_node = unit.output_node
+        elif unit.input_node is not None and unit.input_node in nodes_with_reserves:
+            reserve_node = unit.input_node
+
+        if reserve_node is None:
+            continue
+
+        unit_name = _get_unit_name(unit)
+
+        # Create reserve__upDown__unit__node relationship
+        rel_elements = ("primary", "up", unit_name, reserve_node)
+        _add_relationship(db, "reserve__upDown__unit__node", rel_elements,
+                          alt_name, counters, entities_added, entity_alts_added)
+
+        # Set max_share
+        _add_param(db, "reserve__upDown__unit__node", rel_elements,
+                   "max_share", max_reserve, alt_name, counters)
+
+        # Set increase_reserve_ratio if present
+        _add_param_if_set(db, "reserve__upDown__unit__node", rel_elements,
+                          "increase_reserve_ratio",
+                          unit.reserve_increase_ratio, alt_name, counters)
+
+        unit_reserve_count += 1
+
+    logger.info("Wrote %d unit reserve participations.", unit_reserve_count)
 
 
 def _write_chp_constraints(
@@ -1109,7 +1372,11 @@ def _write_timeline_and_solve(
         _add_param(db, "timeset", ("invest_set",), "timeset_duration",
                    invest_duration, alt_name, counters)
 
-    # -- Solve (dispatch) --
+    # -- Solve entities (always create both dispatch and invest) --
+    mode_invest = _get_master_param(data, "mode invest") == 1
+    mode_dispatch = _get_master_param(data, "mode dispatch") == 1
+
+    # Dispatch solve
     _add_entity(db, "solve", "dispatch", alt_name, counters,
                  entities_added, entity_alts_added)
     _add_param(db, "solve", ("dispatch",), "solve_mode", "single_solve",
@@ -1122,41 +1389,54 @@ def _write_timeline_and_solve(
     _add_param(db, "solve", ("dispatch",), "solver", "highs",
                alt_name, counters)
 
-    # -- Solve (invest) if mode_invest --
-    mode_invest = _get_master_param(data, "mode invest") == 1
-    if mode_invest:
-        _add_entity(db, "solve", "invest", alt_name, counters,
-                     entities_added, entity_alts_added)
-        _add_param(db, "solve", ("invest",), "solve_mode", "single_solve",
-                   alt_name, counters)
-        _add_param(db, "solve", ("invest",), "period_timeset",
-                   Map(["p2020"], [invest_set_name], index_name="period"),
-                   alt_name, counters)
-        _add_param(db, "solve", ("invest",), "invest_periods",
-                   Array(["p2020"]), alt_name, counters)
-        _add_param(db, "solve", ("invest",), "realized_invest_periods",
-                   Array(["p2020"]), alt_name, counters)
+    # Invest solve
+    _add_entity(db, "solve", "invest", alt_name, counters,
+                 entities_added, entity_alts_added)
+    _add_param(db, "solve", ("invest",), "solve_mode", "single_solve",
+               alt_name, counters)
+    _add_param(db, "solve", ("invest",), "period_timeset",
+               Map(["p2020"], [invest_set_name], index_name="period"),
+               alt_name, counters)
+    _add_param(db, "solve", ("invest",), "invest_periods",
+               Array(["p2020"]), alt_name, counters)
+    _add_param(db, "solve", ("invest",), "realized_invest_periods",
+               Array(["p2020"]), alt_name, counters)
+    # realized_periods on invest only when dispatch is not active
+    # (when dispatch is active, realization happens in the dispatch solve)
+    if not mode_dispatch:
         _add_param(db, "solve", ("invest",), "realized_periods",
                    Array(["p2020"]), alt_name, counters)
+    _add_param(db, "solve", ("invest",), "solver", "highs",
+               alt_name, counters)
+
+    # Model solves based on active modes
+    if mode_invest and mode_dispatch:
+        # Invest nests dispatch
         _add_param(db, "solve", ("invest",), "contains_solves", "dispatch",
                    alt_name, counters)
-        _add_param(db, "solve", ("invest",), "solver", "highs",
-                   alt_name, counters)
+        model_solves = Array(["invest"])
+    elif mode_invest:
+        # Invest only (no nested dispatch)
+        model_solves = Array(["invest"])
+    else:
+        # Dispatch only (default)
+        model_solves = Array(["dispatch"])
 
     # -- Model --
     _add_entity(db, "model", "flexTool", alt_name, counters,
                  entities_added, entity_alts_added)
-    if mode_invest:
-        _add_param(db, "model", ("flexTool",), "solves",
-                   Array(["invest"]), alt_name, counters)
-    else:
-        _add_param(db, "model", ("flexTool",), "solves",
-                   Array(["dispatch"]), alt_name, counters)
+    _add_param(db, "model", ("flexTool",), "solves", model_solves,
+               alt_name, counters)
 
+    modes = []
+    if mode_invest:
+        modes.append("invest")
+    if mode_dispatch:
+        modes.append("dispatch")
     logger.info(
-        "Wrote timeline (%d steps), timeset, solve%s, and model.",
+        "Wrote timeline (%d steps), timeset, solve (%s), and model.",
         len(data.time_steps),
-        "+invest" if mode_invest else "",
+        "+".join(modes) if modes else "dispatch",
     )
 
 
@@ -1300,6 +1580,10 @@ def write_old_flextool_to_db(
         # 8. Groups (grid, node, unit, CO2)
         _write_groups(data, db, alternative_name, counters,
                       entities_added, entity_alts_added)
+
+        # 8b. Reserves (depends on groups existing)
+        _write_reserves(data, db, alternative_name, counters,
+                        entities_added, entity_alts_added)
 
         # 9. CHP constraints
         _write_chp_constraints(data, db, alternative_name, counters,

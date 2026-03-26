@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import logging
 import shutil
+import subprocess
+import sys
+import threading
 import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import messagebox, ttk
 
 from flextool.gui.dialogs.file_picker import FilePickerDialog
+from flextool.gui.output_log_window import OutputLogWindow
 from flextool.gui.project_utils import get_projects_dir
 
 logger = logging.getLogger(__name__)
@@ -171,8 +175,8 @@ class AddDialog(tk.Toplevel):
             title="Select input source files",
             initialdir=str(initial_dir),
             filetypes=[
-                ("FlexTool inputs", "*.xlsx *.ods *.sqlite"),
-                ("Excel files", "*.xlsx *.ods"),
+                ("FlexTool inputs", "*.xlsx *.xlsm *.ods *.sqlite"),
+                ("Excel files", "*.xlsx *.xlsm *.ods"),
                 ("SQLite databases", "*.sqlite"),
                 ("All files", "*"),
             ],
@@ -184,11 +188,61 @@ class AddDialog(tk.Toplevel):
         if not filepaths:
             return
 
-        # Copy files immediately
+        # Validate and copy files
+        from flextool.process_inputs import (
+            detect_excel_format, ExcelFormat, CURRENT_FLEXTOOL_DB_VERSION,
+        )
+
         errors: list[str] = []
         copied_names: list[str] = []
         for fp in filepaths:
             fp = Path(fp)
+
+            # Validate Excel files before copying
+            if fp.suffix.lower() in (".xlsx", ".xlsm", ".ods"):
+                info = detect_excel_format(fp)
+
+                if info.format == ExcelFormat.OLD_V2:
+                    messagebox.showwarning(
+                        "FlexTool 2.0 file",
+                        f"'{fp.name}' is a FlexTool 2.0 file.\n\n"
+                        "Use 'Convert from FlexTool 2.0 input file' instead.",
+                        parent=self,
+                    )
+                    continue
+
+                if info.format == ExcelFormat.SPECIFICATION:
+                    if info.version is not None and info.version < CURRENT_FLEXTOOL_DB_VERSION:
+                        messagebox.showwarning(
+                            "Cannot convert safely",
+                            f"'{fp.name}' is an older FlexTool 3.0 file "
+                            f"(version {info.version}).\n\n"
+                            f"It should be version {CURRENT_FLEXTOOL_DB_VERSION} "
+                            f"or higher to be converted safely.",
+                            parent=self,
+                        )
+                        continue
+                    # v25 or higher — warn but continue
+                    proceed = messagebox.askokcancel(
+                        "Older FlexTool 3.0 format",
+                        f"'{fp.name}' uses the older FlexTool 3.0 Excel format "
+                        f"(with separate version sheet).\n\n"
+                        f"It will be copied to the project and can be used, but "
+                        f"consider converting to the new format for best results.",
+                        parent=self,
+                    )
+                    if not proceed:
+                        continue
+
+                if info.format == ExcelFormat.UNKNOWN:
+                    messagebox.showwarning(
+                        "Unrecognised format",
+                        f"'{fp.name}' does not appear to be a valid FlexTool "
+                        f"input file (no scenario sheet found).",
+                        parent=self,
+                    )
+                    continue
+
             dest = self._input_dir / fp.name
             if dest.exists():
                 overwrite = messagebox.askyesno(
@@ -346,7 +400,7 @@ class AddDialog(tk.Toplevel):
 
     def _on_convert_old_flextool(self) -> None:
         """Open a file chooser for an old FlexTool .xlsm, convert to Spine DB."""
-        initial_dir = Path.home()
+        initial_dir = self._flextool_root
 
         # Determine dialog size from the main window (same as choose-and-copy)
         try:
@@ -409,62 +463,93 @@ class AddDialog(tk.Toplevel):
             )
             return
 
-        # Show busy cursor during conversion
-        self.config(cursor="watch")
-        self.update()
-
+        # Step 1: Create empty Spine DB from template
         try:
-            # Step 1: Create empty Spine DB from template
             from flextool.update_flextool.initialize_database import (
                 initialize_database,
             )
             initialize_database(str(json_template), str(dest))
-
-            # Step 2: Read old FlexTool data
-            from flextool.process_inputs.read_old_flextool import (
-                read_old_flextool,
-            )
-            data = read_old_flextool(str(filepath))
-
-            # Step 3: Write to the new database
-            from flextool.process_inputs.write_old_flextool_to_db import (
-                write_old_flextool_to_db,
-            )
-            db_url = f"sqlite:///{dest}"
-            write_old_flextool_to_db(
-                data, db_url, alternative_name=_OLD_FLEX_ALTERNATIVE
-            )
-
-        except ImportError as exc:
-            messagebox.showerror(
-                "Missing dependency",
-                f"A required package is not installed:\n{exc}",
-                parent=self,
-            )
-            # Clean up partial database
-            if dest.exists():
-                dest.unlink(missing_ok=True)
-            return
         except Exception as exc:
-            logger.error("Old FlexTool conversion failed: %s", exc, exc_info=True)
             messagebox.showerror(
-                "Conversion failed",
-                f"Failed to convert '{filepath.name}':\n{exc}",
+                "Initialisation failed",
+                f"Could not create target database:\n{exc}",
                 parent=self,
             )
-            # Clean up partial database
             if dest.exists():
                 dest.unlink(missing_ok=True)
             return
-        finally:
-            self.config(cursor="")
+
+        # Step 2: Run the CLI importer as a subprocess with a log window
+        db_url = f"sqlite:///{dest}"
+        cmd = [
+            sys.executable, "-m",
+            "flextool.cli.cmd_read_old_flextool",
+            str(filepath),
+            db_url,
+        ]
+
+        log_window = OutputLogWindow(
+            self, f"Convert FlexTool 2.0: {filepath.name}"
+        )
+        log_window.append_line(f"Converting '{filepath.name}' → '{dest_name}'\n")
+        log_window.append_line(" ".join(cmd))
+        log_window.append_line("")
+
+        def _worker() -> None:
+            success = False
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    cwd=str(self._flextool_root),
+                )
+                log_window.after(0, log_window.set_process, proc)
+
+                for line in proc.stdout:  # type: ignore[union-attr]
+                    log_window.after(0, log_window.append_line, line.rstrip("\n"))
+
+                proc.wait()
+                success = proc.returncode == 0
+
+                if success:
+                    log_window.after(0, log_window.append_line, "\nConversion succeeded.")
+                else:
+                    log_window.after(
+                        0, log_window.append_line,
+                        f"\nConversion failed (exit code {proc.returncode}).",
+                    )
+            except Exception as exc:
+                logger.error("Old FlexTool conversion failed: %s", exc, exc_info=True)
+                log_window.after(0, log_window.append_line, f"\nError: {exc}")
+
+            # Finish on the main thread
+            self.after(0, self._old_convert_finished, success, dest, dest_name, log_window)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+    def _old_convert_finished(
+        self,
+        success: bool,
+        dest: Path,
+        dest_name: str,
+        log_window: OutputLogWindow,
+    ) -> None:
+        """Handle post-conversion for old FlexTool import."""
+        log_window.mark_finished(success)
+
+        if not success:
+            if dest.exists():
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+            return
 
         self.result = True
-        messagebox.showinfo(
-            "Done",
-            f"Converted '{filepath.name}' → '{dest_name}' in input_sources.",
-            parent=self,
-        )
 
     def _on_back(self) -> None:
         """Close the dialog."""

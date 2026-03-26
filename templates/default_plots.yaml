@@ -291,19 +291,19 @@ plots:
   # Costs
   annualized_costs_d_p:
     default:
-      plot_name: '3.0.d Costs annualized costs'
+      plot_name: '3.0.d Costs annualized'
       bar_orientation: vertical
       base_length: 6
       ylabel: Currency
-      xlabel: Currency
       map_dimensions_for_plots: [d_p, b_s]
       skip_data_with_only_zeroes: true
     sum_periods:
-      plot_name: '3.0.a Costs annualized costs sum periods'
+      plot_name: '3.0.a Costs annualized'
       bar_orientation: vertical
       base_length: 6
       map_dimensions_for_plots: [d_p, m_s]
       skip_data_with_only_zeroes: true
+      ylabel: Currency
   costs_dt_p:
     default:
       plot_name: '3.1.t Costs stack'
@@ -330,7 +330,7 @@ plots:
       ylabel: Currency
       skip_data_with_only_zeroes: true
     sum_periods:
-      plot_name: '3.2.a Costs discounted sum periods'
+      plot_name: '3.2.a Costs discounted'
       bar_orientation: vertical
       base_length: 6
       map_dimensions_for_plots: [d_p, m_s]
@@ -409,14 +409,16 @@ plots:
     default:
       plot_name: '6.0.t NodeGroup dispatch'
       subplots_per_row: 2
-      max_subplots_per_file: 6
+      max_subplots_per_file: 4
+      max_items_per_plot: 30
       legend: all
       map_dimensions_for_plots: [dt_gpe, tt_uss]
       ylabel: MWh/h
     chunks:
       plot_name: '6.0.g NodeGroup dispatch weekly avg'
       subplots_per_row: 2
-      max_subplots_per_file: 6
+      max_subplots_per_file: 4
+      max_items_per_plot: 30
       legend: all
       map_dimensions_for_plots: [dt_gpe, ui_uss]
       time_average_duration: 168

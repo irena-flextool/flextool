@@ -2926,7 +2926,7 @@ s.t. maxInvestGroup_entity_total {g in g_invest_total, d in period_invest} :
   + p_group[g, 'invest_max_total']
 ;
 
-s.t. maxInvestGroup_entity_cumulative {g in g_invest_cumulative , d in period_invest : p_group[g, 'cumulative_max_capacity']} :
+s.t. maxInvestGroup_entity_cumulative {g in g_invest_cumulative, d in period_invest : p_group[g, 'cumulative_max_capacity']} :
   + sum{(g, e) in group_entity, d_invest in period_in_use : (e, d_invest, d) in edd_invest} v_invest[e, d_invest] * p_entity_unitsize[e]
   + sum{(g, e) in group_entity} p_entity_previously_invested_capacity[e, d]
 #  - sum{(g, e) in group_entity, d_divest in period_in_use : e in entityDivest} v_divest[e, d_divest] * p_entity_unitsize[e]

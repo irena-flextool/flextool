@@ -977,12 +977,55 @@ class MainWindow(tk.Tk):
             messagebox.showinfo("No project", "No project is currently loaded.")
             return
 
+        # Remember existing sources so we can detect what's new
+        old_sources: set[str] = set()
+        if self.input_source_mgr:
+            old_sources = {s.name for s in self.input_source_mgr._sources}
+
         from flextool.gui.dialogs.add_dialog import AddDialog
 
         project_path = get_projects_dir() / self.current_project
         dlg = AddDialog(self, project_path)
         if dlg.result:
             self._refresh_input_sources()
+            self._autocheck_new_sources(old_sources)
+
+    def _autocheck_new_sources(self, old_sources: set[str]) -> None:
+        """Check (tick) newly added input sources and their available scenarios."""
+        # 1. Check the new input sources in the input_sources_tree
+        new_source_numbers: set[int] = set()
+        for item in self.input_sources_tree.get_children():
+            values = self.input_sources_tree.item(item, "values")
+            if values and values[1] not in old_sources:
+                self.input_sources_tree.set(item, "check", CHECK_ON)
+                try:
+                    new_source_numbers.add(int(values[2]))
+                except (ValueError, IndexError):
+                    pass
+
+        if not new_source_numbers:
+            return
+
+        # 2. Save input source check state so _update_available_scenarios sees them
+        self._save_checked_input_sources()
+
+        # 3. Rebuild available scenarios with the new sources included
+        self._update_available_scenarios()
+
+        # 4. Check all scenarios that belong to the new sources
+        for item in self.available_tree.get_children():
+            values = self.available_tree.item(item, "values")
+            if values:
+                try:
+                    src_num = int(values[1])  # source_number column
+                except (ValueError, IndexError):
+                    continue
+                if src_num in new_source_numbers:
+                    self.available_tree.set(item, "check", CHECK_ON)
+
+        # 5. Persist the updated check states
+        self._save_checked_available_scenarios()
+        self._update_add_to_execution_style()
 
     def _on_refresh_sources(self) -> None:
         """Refresh input sources by re-scanning the directory."""

@@ -292,28 +292,43 @@ def create_or_update_dispatch_config(
         color_idx += 1
         return color
 
-    # Order positive processGroups: special first, then regular by std dev
-    pos_special = [c for c in ['LossOfLoad', 'Discharge', 'Import'] if c in positive_groups]
-    pos_regular = positive_groups - set(POSITIVE_SPECIAL) - set(NEGATIVE_SPECIAL)
-    pos_regular_ordered = compute_process_group_std_order(
-        results, mappings, active_scenario_names, pos_regular
-    )
-    ordered_pos_groups = pos_special + pos_regular_ordered
+    # --- Preserve existing order, append new items at end ---
+    # Extract existing ordered lists from config (dict key order = insertion order)
+    existing_pos_pg = list((existing_pos.get('processGroups') or {}).keys())
+    existing_pos_pna = list((existing_pos.get('processes_not_aggregated') or {}).keys())
+    existing_neg_pg = list((existing_neg.get('processGroups') or {}).keys())
+    existing_neg_pna = list((existing_neg.get('processes_not_aggregated') or {}).keys())
 
-    # Order negative processGroups: Charge, Export first, regular, then internal_losses
-    neg_special_top = [c for c in ['Charge', 'Export'] if c in negative_groups]
-    neg_regular = negative_groups - set(POSITIVE_SPECIAL) - set(NEGATIVE_SPECIAL)
-    neg_regular_ordered = compute_process_group_std_order(
-        results, mappings, active_scenario_names, neg_regular
-    )
-    neg_special_bottom = ['internal_losses'] if 'internal_losses' in negative_groups else []
-    ordered_neg_groups = neg_special_top + neg_regular_ordered + neg_special_bottom
+    def _ordered_with_new(existing: list[str], current_set: set[str]) -> list[str]:
+        """Keep existing order for known items, append new items sorted by std dev."""
+        # Existing items that are still present
+        kept = [name for name in existing if name in current_set]
+        # New items not in existing config
+        new = current_set - set(existing)
+        if new:
+            new_ordered = compute_process_group_std_order(
+                results, mappings, active_scenario_names, new
+            )
+        else:
+            new_ordered = []
+        return kept + new_ordered
+
+    def _ordered_processes_with_new(existing: list[str], current_set: set[str]) -> list[str]:
+        """Keep existing order for known items, append new items sorted."""
+        kept = [name for name in existing if name in current_set]
+        new = sorted(current_set - set(existing))
+        return kept + new
+
+    ordered_pos_groups = _ordered_with_new(existing_pos_pg, positive_groups)
+    ordered_neg_groups = _ordered_with_new(existing_neg_pg, negative_groups)
+    ordered_pos_processes = _ordered_processes_with_new(existing_pos_pna, positive_processes)
+    ordered_neg_processes = _ordered_processes_with_new(existing_neg_pna, negative_processes)
 
     # Build positive/negative config with inline colors
     pos_pg_dict = {name: _assign_color(name) for name in ordered_pos_groups}
-    pos_pna_dict = {name: _assign_color(name) for name in sorted(positive_processes)}
+    pos_pna_dict = {name: _assign_color(name) for name in ordered_pos_processes}
     neg_pg_dict = {name: _assign_color(name) for name in ordered_neg_groups}
-    neg_pna_dict = {name: _assign_color(name) for name in sorted(negative_processes)}
+    neg_pna_dict = {name: _assign_color(name) for name in ordered_neg_processes}
 
     new_config['positive'] = {
         'processGroups': pos_pg_dict,

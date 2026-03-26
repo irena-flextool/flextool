@@ -42,13 +42,36 @@ def get_color_for_column(col: str, colors_dict: dict[str, str | None]) -> str:
     return 'lightgray'
 
 
-def _compute_ylim(df: pd.DataFrame, timeline: tuple[int, int]) -> tuple[float, float]:
-    """Compute stacked area y-axis range from a dispatch DataFrame."""
+def _compute_ylim(
+    df: pd.DataFrame,
+    timeline: tuple[int, int],
+    inflow: pd.Series | None = None,
+) -> tuple[float, float]:
+    """Compute y-axis range from a dispatch DataFrame, including line overlays.
+
+    Accounts for the stacked area, the Curtailed dashed line, and the
+    Demand (inflow) solid line so that nothing is clipped.
+    """
+    df_slice = df.iloc[timeline[0]:timeline[1]]
     plot_cols = [col for col in df.columns if col != 'Curtailed']
-    df_slice = df[plot_cols].iloc[timeline[0]:timeline[1]]
-    pos_sum = df_slice.clip(lower=0).sum(axis=1).max()
-    neg_sum = df_slice.clip(upper=0).sum(axis=1).min()
-    return (neg_sum, pos_sum)
+    area_slice = df_slice[plot_cols]
+    pos_max = area_slice.clip(lower=0).sum(axis=1).max()
+    neg_min = area_slice.clip(upper=0).sum(axis=1).min()
+
+    # Include Curtailed line
+    if 'Curtailed' in df.columns:
+        curtailed_max = df_slice['Curtailed'].max()
+        curtailed_min = df_slice['Curtailed'].min()
+        pos_max = max(pos_max, curtailed_max)
+        neg_min = min(neg_min, curtailed_min)
+
+    # Include Demand (inflow) line
+    if inflow is not None and not inflow.empty:
+        inflow_slice = inflow.iloc[timeline[0]:timeline[1]]
+        pos_max = max(pos_max, inflow_slice.max())
+        neg_min = min(neg_min, inflow_slice.min())
+
+    return (neg_min, pos_max)
 
 
 def plot_dispatch_area(
@@ -73,24 +96,32 @@ def plot_dispatch_area(
     # Slice to timeline
     df_plot = df_dispatch.iloc[timeline[0]:timeline[1]]
 
+    # Check if there's anything to plot (area, curtailed, or demand)
+    has_area = bool(plot_cols) and not (df_plot[plot_cols].select_dtypes(include='number').abs() < 1e-6).all().all()
+    has_curtailed = 'Curtailed' in df_dispatch.columns and (df_plot['Curtailed'].abs() > 1e-6).any()
+    has_demand = inflow_series is not None and not inflow_series.empty
+    if not has_area and not has_curtailed and not has_demand:
+        return
+
     fig, ax = plt.subplots(figsize=(10, 4))
 
-    # Plot area chart
-    df_plot[plot_cols].plot.area(
-        ax=ax,
-        stacked=True,
-        linewidth=0,
-        color=plot_colors,
-        legend=False
-    )
+    # Plot area chart (only if there are numeric stacked columns)
+    if has_area:
+        df_plot[plot_cols].plot.area(
+            ax=ax,
+            stacked=True,
+            linewidth=0,
+            color=plot_colors,
+            legend=False
+        )
 
     # Plot curtailed as dashed line if present
-    if 'Curtailed' in df_dispatch.columns:
+    if has_curtailed:
         curtailed = df_plot['Curtailed']
         ax.plot(curtailed.index, curtailed.values, linestyle='--', color='red', linewidth=1, label='Curtailed')
 
     # Plot demand line
-    if inflow_series is not None:
+    if has_demand:
         inflow_plot = inflow_series.iloc[timeline[0]:timeline[1]]
         ax.plot(inflow_plot.index, inflow_plot.values, linestyle='solid', color='black', linewidth=1.5, label='Demand')
 
@@ -131,14 +162,16 @@ def create_dispatch_plots(
     if scenarios is None:
         scenarios = get_scenarios_from_config(config)
 
-    # Merge colors from inline positive/negative sections
+    # Merge colors from inline positive/negative sections, preserving config order
     colors: dict[str, str] = {}
-    for section_key in ['positive', 'negative']:
+    config_order: list[str] = []  # ordered column names from config (negative then positive)
+    for section_key in ['negative', 'positive']:
         section = config.get(section_key, {})
         for cat in ['processGroups', 'processes_not_aggregated']:
             cat_dict = section.get(cat, {})
             if isinstance(cat_dict, dict):
                 colors.update(cat_dict)
+                config_order.extend(cat_dict.keys())
 
     # Fallback to special colors for any missing
     for col, color in DEFAULT_SPECIAL_COLORS.items():
@@ -168,12 +201,12 @@ def create_dispatch_plots(
 
     for scenario in scenarios:
         for ng in node_groups:
-            df_dispatch, _ = prepare_dispatch_data(
+            df_dispatch, inflow = prepare_dispatch_data(
                 results, mappings, scenario, ng,
-                colors=colors
+                colors=colors, config_order=config_order,
             )
             if df_dispatch is not None and not df_dispatch.empty:
-                ymin, ymax = _compute_ylim(df_dispatch, timeline)
+                ymin, ymax = _compute_ylim(df_dispatch, timeline, inflow)
                 if ng in ng_ylims:
                     ng_ylims[ng] = (min(ng_ylims[ng][0], ymin), max(ng_ylims[ng][1], ymax))
                     # Add any new columns preserving existing order
@@ -185,11 +218,11 @@ def create_dispatch_plots(
                     ng_columns[ng] = list(df_dispatch.columns)
 
         for node in nodes:
-            df_node, _ = prepare_node_dispatch_data(
+            df_node, inflow_node = prepare_node_dispatch_data(
                 results, scenario, node
             )
             if df_node is not None and not df_node.empty:
-                ymin, ymax = _compute_ylim(df_node, timeline)
+                ymin, ymax = _compute_ylim(df_node, timeline, inflow_node)
                 if node in node_ylims:
                     node_ylims[node] = (min(node_ylims[node][0], ymin), max(node_ylims[node][1], ymax))
                     for col in df_node.columns:
@@ -214,7 +247,7 @@ def create_dispatch_plots(
         for ng in node_groups:
             df_dispatch, inflow = prepare_dispatch_data(
                 results, mappings, scenario, ng,
-                colors=colors
+                colors=colors, config_order=config_order,
             )
 
             if df_dispatch is not None and not df_dispatch.empty:

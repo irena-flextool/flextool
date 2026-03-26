@@ -55,11 +55,16 @@ def _slice_scenario_df(
 def _order_dispatch_columns(
     df: pd.DataFrame,
     plot_name: str = "",
+    config_order: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Validate signs, sort by std dev, return reordered DataFrame.
+    """Validate signs, sort columns, return reordered DataFrame.
 
     Mixed-sign columns are split into ``<col>_pos`` / ``<col>_neg`` parts
     so they can be stacked correctly in area plots.
+
+    When *config_order* is provided (from config.yaml positive/negative
+    sections), columns are ordered to match the config.  Columns not in
+    the config fall back to std-dev sorting.
     """
     positive_cols: list[str] = []
     negative_cols: list[str] = []
@@ -97,28 +102,70 @@ def _order_dispatch_columns(
         if col in positive_cols:
             print(f"  Warning: '{col}' is expected to be negative but has positive values")
 
-    # --- Sort columns by std dev, with special columns in fixed positions ---
-    pos_special = [c for c in positive_cols if c in POSITIVE_SPECIAL]
-    pos_regular = [c for c in positive_cols if c not in POSITIVE_SPECIAL]
-    neg_special = [c for c in negative_cols if c in NEGATIVE_SPECIAL]
-    neg_regular = [c for c in negative_cols if c not in NEGATIVE_SPECIAL]
+    if config_order:
+        # Use config order: columns present in config come first (in config order),
+        # then any remaining columns sorted by std dev.
+        # Also match _pos/_neg split columns to their base name in the config.
+        config_set = set(config_order)
+        ordered_from_config_neg: list[str] = []
+        ordered_from_config_pos: list[str] = []
+        remaining_neg: list[str] = []
+        remaining_pos: list[str] = []
+        for col in negative_cols:
+            base = col.removesuffix('_neg') if col.endswith('_neg') else col
+            if base in config_set or col in config_set:
+                ordered_from_config_neg.append(col)
+            else:
+                remaining_neg.append(col)
+        for col in positive_cols:
+            base = col.removesuffix('_pos') if col.endswith('_pos') else col
+            if base in config_set or col in config_set:
+                ordered_from_config_pos.append(col)
+            else:
+                remaining_pos.append(col)
+        # Sort config-matched columns by their position in config_order
+        def _config_key(col):
+            base = col.removesuffix('_pos').removesuffix('_neg')
+            try:
+                return config_order.index(base)
+            except ValueError:
+                try:
+                    return config_order.index(col)
+                except ValueError:
+                    return len(config_order)
+        ordered_from_config_neg.sort(key=_config_key)
+        ordered_from_config_pos.sort(key=_config_key)
+        # Sort remaining by std dev
+        if remaining_neg:
+            col_std = {col: df[col].abs().std() for col in remaining_neg}
+            remaining_neg.sort(key=lambda c: col_std.get(c, 0))
+        if remaining_pos:
+            col_std = {col: df[col].std() for col in remaining_pos}
+            remaining_pos.sort(key=lambda c: col_std.get(c, 0))
+        ordered_cols = ordered_from_config_neg + remaining_neg + ordered_from_config_pos + remaining_pos
+    else:
+        # Fallback: sort by std dev with special columns in fixed positions
+        pos_special = [c for c in positive_cols if c in POSITIVE_SPECIAL]
+        pos_regular = [c for c in positive_cols if c not in POSITIVE_SPECIAL]
+        neg_special = [c for c in negative_cols if c in NEGATIVE_SPECIAL]
+        neg_regular = [c for c in negative_cols if c not in NEGATIVE_SPECIAL]
 
-    if pos_regular:
-        col_std = {col: df[col].std() for col in pos_regular}
-        pos_regular = sorted(pos_regular, key=lambda c: col_std.get(c, 0))
-    if neg_regular:
-        col_std = {col: df[col].abs().std() for col in neg_regular}
-        neg_regular = sorted(neg_regular, key=lambda c: col_std.get(c, 0))
+        if pos_regular:
+            col_std = {col: df[col].std() for col in pos_regular}
+            pos_regular = sorted(pos_regular, key=lambda c: col_std.get(c, 0))
+        if neg_regular:
+            col_std = {col: df[col].abs().std() for col in neg_regular}
+            neg_regular = sorted(neg_regular, key=lambda c: col_std.get(c, 0))
 
-    ordered_cols: list[str] = []
-    ordered_cols.extend(neg_regular)
-    for col in ['internal_losses', 'Export', 'Charge']:
-        if col in neg_special:
-            ordered_cols.append(col)
-    ordered_cols.extend(pos_regular)
-    for col in ['Import', 'Discharge', 'LossOfLoad']:
-        if col in pos_special:
-            ordered_cols.append(col)
+        ordered_cols: list[str] = []
+        ordered_cols.extend(neg_regular)
+        for col in ['internal_losses', 'Export', 'Charge']:
+            if col in neg_special:
+                ordered_cols.append(col)
+        ordered_cols.extend(pos_regular)
+        for col in ['Import', 'Discharge', 'LossOfLoad']:
+            if col in pos_special:
+                ordered_cols.append(col)
 
     # Line overlay
     if 'Curtailed' in df.columns:
@@ -140,6 +187,7 @@ def prepare_dispatch_data(
     scenario: str,
     output_node_group: str,
     colors: dict | None = None,
+    config_order: list[str] | None = None,
 ) -> tuple[pd.DataFrame | None, pd.Series | None]:
     """Prepare dispatch data for a specific outputNodeGroup.
 
@@ -415,7 +463,7 @@ def prepare_dispatch_data(
                         df_dispatch['Curtailed'] = curtailed
 
         # --- Order columns (S6) ---
-        df_dispatch = _order_dispatch_columns(df_dispatch, plot_name=f"{output_node_group} ({scenario})")
+        df_dispatch = _order_dispatch_columns(df_dispatch, plot_name=f"{output_node_group} ({scenario})", config_order=config_order)
 
         # --- Get demand from node_inflow__dt ---
         inflow_series = None
