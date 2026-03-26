@@ -28,6 +28,7 @@ from flextool.process_inputs.read_old_flextool import (
     NodeGroup,
     NodeNodeConnection,
     OldFlexToolData,
+    SensitivityOverride,
     TimeSeriesData,
     UnitGroup,
     UnitInstance,
@@ -1610,3 +1611,726 @@ def write_old_flextool_to_db(
             logger.info("No new data to commit.")
         except SpineDBAPIError as exc:
             raise RuntimeError(f"Failed to commit imported data: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Sensitivity import
+# ---------------------------------------------------------------------------
+
+
+def _build_existing_entity_set(db: DatabaseMapping) -> set[tuple[str, tuple[str, ...]]]:
+    """Build a lookup set of (class_name, entity_byname) for all entities in the DB."""
+    existing: set[tuple[str, tuple[str, ...]]] = set()
+    for item in db.get_entity_items():
+        class_name = item["entity_class_name"]
+        byname = tuple(item["entity_byname"])
+        existing.add((class_name, byname))
+    return existing
+
+
+def _entity_exists(
+    existing_entities: set[tuple[str, tuple[str, ...]]],
+    class_name: str,
+    entity_byname: tuple[str, ...],
+) -> bool:
+    """Check if an entity exists in the lookup set."""
+    return (class_name, entity_byname) in existing_entities
+
+
+def _get_effective_master_params(
+    data: OldFlexToolData,
+    overrides: list[SensitivityOverride],
+) -> dict[str, float]:
+    """Merge base master params with all master overrides for a scenario.
+
+    Returns a dict of all master params with overrides applied on top.
+    """
+    params = dict(data.master.params)
+    for ov in overrides:
+        if ov.section == "master" and isinstance(ov.value, (int, float)):
+            params[ov.param_name] = float(ov.value)
+    return params
+
+
+def _apply_master_override(
+    ov: SensitivityOverride,
+    data: OldFlexToolData,
+    effective_master: dict[str, float],
+    db: DatabaseMapping,
+    alt_name: str,
+    counters: _Counters,
+    existing_entities: set[tuple[str, tuple[str, ...]]],
+) -> None:
+    """Apply a single master-section sensitivity override."""
+    param = ov.param_name.lower().replace("_", " ")
+    value = ov.value
+
+    if "co2" in param and "cost" in param:
+        # co2_cost -> group.co2_price on the co2_price group
+        if _entity_exists(existing_entities, "group", ("co2_price",)):
+            _add_param(db, "group", ("co2_price",), "co2_price", value, alt_name, counters)
+        else:
+            logger.warning("co2_price group not found; skipping co2_cost override.")
+
+    elif "loss of load penalty" in param or "loss_of_load_penalty" in ov.param_name.lower():
+        # Set penalty_up and penalty_down on ALL balance nodes
+        for gn in data.grid_nodes:
+            if _entity_exists(existing_entities, "node", (gn.node,)):
+                _add_param(db, "node", (gn.node,), "penalty_up", value, alt_name, counters)
+                _add_param(db, "node", (gn.node,), "penalty_down", value, alt_name, counters)
+
+    elif "loss of reserves penalty" in param or "loss_of_reserves_penalty" in ov.param_name.lower():
+        # Set penalty_reserve on all reserve groups
+        for ng in data.node_groups:
+            reserve_method = _get_reserve_method(ng.use_ts_reserve, ng.use_dynamic_reserve)
+            if reserve_method is not None:
+                rel = ("primary", "up", ng.name)
+                if _entity_exists(existing_entities, "reserve__upDown__group", rel):
+                    _add_param(db, "reserve__upDown__group", rel,
+                               "penalty_reserve", value, alt_name, counters)
+
+    elif "lack of inertia penalty" in param or "lack_of_inertia_penalty" in ov.param_name.lower():
+        for ng in data.node_groups:
+            if ng.inertia_limit_mws is not None and ng.inertia_limit_mws > 0:
+                if _entity_exists(existing_entities, "group", (ng.name,)):
+                    _add_param(db, "group", (ng.name,), "penalty_inertia",
+                               value, alt_name, counters)
+
+    elif "lack of capacity penalty" in param or "lack_of_capacity_penalty" in ov.param_name.lower():
+        for ng in data.node_groups:
+            if ng.capacity_margin_mw is not None and ng.capacity_margin_mw > 0:
+                if _entity_exists(existing_entities, "group", (ng.name,)):
+                    _add_param(db, "group", (ng.name,), "penalty_capacity_margin",
+                               value, alt_name, counters)
+
+    elif "use capacity margin" in param or "use_capacity_margin" in ov.param_name.lower():
+        enabled = float(value) == 1 if isinstance(value, (int, float)) else False
+        for ng in data.node_groups:
+            if ng.capacity_margin_mw is not None and ng.capacity_margin_mw > 0:
+                if _entity_exists(existing_entities, "group", (ng.name,)):
+                    if enabled:
+                        _add_param(db, "group", (ng.name,), "has_capacity_margin",
+                                   "yes", alt_name, counters)
+                        _add_param(db, "group", (ng.name,), "capacity_margin",
+                                   ng.capacity_margin_mw, alt_name, counters)
+                    else:
+                        _add_param(db, "group", (ng.name,), "has_capacity_margin",
+                                   "no", alt_name, counters)
+
+    elif "use online" in param or "use_online" in ov.param_name.lower():
+        # Affects startup_method on units with startup costs
+        enabled = float(value) == 1 if isinstance(value, (int, float)) else False
+        for unit in data.units:
+            if unit.output_node is None:
+                continue
+            ut = _get_unit_type(data, unit)
+            startup_cost = ut.params.get("startup cost") if ut else None
+            if startup_cost is not None and startup_cost > 0:
+                unit_name = _get_unit_name(unit)
+                if _entity_exists(existing_entities, "unit", (unit_name,)):
+                    if enabled:
+                        _add_param(db, "unit", (unit_name,), "startup_method",
+                                   "linear", alt_name, counters)
+                        _add_param(db, "unit", (unit_name,), "startup_cost",
+                                   startup_cost, alt_name, counters)
+                    else:
+                        _add_param(db, "unit", (unit_name,), "startup_method",
+                                   "no_startup", alt_name, counters)
+
+    elif "use ramps" in param or "use_ramps" in ov.param_name.lower():
+        enabled = float(value) == 1 if isinstance(value, (int, float)) else False
+        for unit in data.units:
+            if unit.output_node is None:
+                continue
+            ut = _get_unit_type(data, unit)
+            ramp_up = ut.params.get("ramp up (p.u. per min)") if ut else None
+            ramp_down = ut.params.get("ramp down (p.u. per min)") if ut else None
+            if (ramp_up and ramp_up > 0) or (ramp_down and ramp_down > 0):
+                unit_name = _get_unit_name(unit)
+                rel = (unit_name, unit.output_node)
+                if _entity_exists(existing_entities, "unit__outputNode", rel):
+                    if enabled:
+                        _add_param(db, "unit__outputNode", rel,
+                                   "ramp_method", "ramp_limit", alt_name, counters)
+                    else:
+                        _add_param(db, "unit__outputNode", rel,
+                                   "ramp_method", "no_ramp", alt_name, counters)
+
+    elif "use non synchronous" in param or "use_non_synchronous" in ov.param_name.lower():
+        enabled = float(value) == 1 if isinstance(value, (int, float)) else False
+        for ng in data.node_groups:
+            if ng.non_synchronous_share is not None and ng.non_synchronous_share > 0:
+                if _entity_exists(existing_entities, "group", (ng.name,)):
+                    if enabled:
+                        _add_param(db, "group", (ng.name,), "has_non_synchronous",
+                                   "yes", alt_name, counters)
+                        _add_param(db, "group", (ng.name,), "non_synchronous_limit",
+                                   ng.non_synchronous_share, alt_name, counters)
+                    else:
+                        _add_param(db, "group", (ng.name,), "has_non_synchronous",
+                                   "no", alt_name, counters)
+
+    elif "use inertia limit" in param or "use_inertia_limit" in ov.param_name.lower():
+        enabled = float(value) == 1 if isinstance(value, (int, float)) else False
+        for ng in data.node_groups:
+            if ng.inertia_limit_mws is not None and ng.inertia_limit_mws > 0:
+                if _entity_exists(existing_entities, "group", (ng.name,)):
+                    if enabled:
+                        _add_param(db, "group", (ng.name,), "has_inertia",
+                                   "yes", alt_name, counters)
+                        _add_param(db, "group", (ng.name,), "inertia_limit",
+                                   ng.inertia_limit_mws, alt_name, counters)
+                    else:
+                        _add_param(db, "group", (ng.name,), "has_inertia",
+                                   "no", alt_name, counters)
+
+    elif "mode invest" in param or "mode dispatch" in param:
+        # Handled separately in _apply_mode_overrides
+        pass
+
+    else:
+        logger.warning("Unknown master sensitivity param: '%s'", ov.param_name)
+
+
+def _apply_mode_overrides(
+    effective_master: dict[str, float],
+    db: DatabaseMapping,
+    alt_name: str,
+    counters: _Counters,
+    existing_entities: set[tuple[str, tuple[str, ...]]],
+) -> None:
+    """Apply mode_invest / mode_dispatch overrides by computing effective mode."""
+    mode_invest = False
+    mode_dispatch = False
+    for key, val in effective_master.items():
+        key_lower = key.lower().replace("_", " ")
+        if "mode invest" in key_lower and val == 1:
+            mode_invest = True
+        if "mode dispatch" in key_lower and val == 1:
+            mode_dispatch = True
+
+    if mode_invest and mode_dispatch:
+        model_solves = Array(["invest"])
+        if _entity_exists(existing_entities, "model", ("flexTool",)):
+            _add_param(db, "model", ("flexTool",), "solves", model_solves, alt_name, counters)
+        if _entity_exists(existing_entities, "solve", ("invest",)):
+            _add_param(db, "solve", ("invest",), "contains_solves", "dispatch",
+                       alt_name, counters)
+    elif mode_invest:
+        model_solves = Array(["invest"])
+        if _entity_exists(existing_entities, "model", ("flexTool",)):
+            _add_param(db, "model", ("flexTool",), "solves", model_solves, alt_name, counters)
+    elif mode_dispatch:
+        model_solves = Array(["dispatch"])
+        if _entity_exists(existing_entities, "model", ("flexTool",)):
+            _add_param(db, "model", ("flexTool",), "solves", model_solves, alt_name, counters)
+
+
+def _apply_node_group_override(
+    ov: SensitivityOverride,
+    db: DatabaseMapping,
+    alt_name: str,
+    counters: _Counters,
+    existing_entities: set[tuple[str, tuple[str, ...]]],
+) -> None:
+    """Apply a nodeGroup-section sensitivity override."""
+    group_name = ov.entity_ids.get("nodeGroup")
+    if not group_name:
+        logger.warning("nodeGroup override missing 'nodeGroup' identifier; skipping.")
+        return
+
+    if not _entity_exists(existing_entities, "group", (group_name,)):
+        logger.warning("Group '%s' not found in DB; skipping nodeGroup override.", group_name)
+        return
+
+    param_lower = ov.param_name.lower()
+    value = ov.value
+
+    if "capacity margin" in param_lower:
+        _add_param(db, "group", (group_name,), "capacity_margin", value, alt_name, counters)
+        _add_param(db, "group", (group_name,), "has_capacity_margin", "yes", alt_name, counters)
+    elif "non synchronous" in param_lower:
+        _add_param(db, "group", (group_name,), "non_synchronous_limit", value, alt_name, counters)
+        _add_param(db, "group", (group_name,), "has_non_synchronous", "yes", alt_name, counters)
+    elif "inertia limit" in param_lower:
+        _add_param(db, "group", (group_name,), "inertia_limit", value, alt_name, counters)
+        _add_param(db, "group", (group_name,), "has_inertia", "yes", alt_name, counters)
+    elif "use ts_reserve" in param_lower or "use dynamic reserve" in param_lower:
+        # Need both flags to determine reserve method; just set the one we have
+        # The reserve_method logic needs both flags, so we compute from the override
+        use_ts = None
+        use_dyn = None
+        if "ts_reserve" in param_lower:
+            use_ts = float(value) if isinstance(value, (int, float)) else None
+        if "dynamic reserve" in param_lower:
+            use_dyn = float(value) if isinstance(value, (int, float)) else None
+        reserve_method = _get_reserve_method(use_ts, use_dyn)
+        if reserve_method is not None:
+            rel = ("primary", "up", group_name)
+            if _entity_exists(existing_entities, "reserve__upDown__group", rel):
+                _add_param(db, "reserve__upDown__group", rel,
+                           "reserve_method", reserve_method, alt_name, counters)
+    else:
+        logger.warning("Unknown nodeGroup sensitivity param: '%s'", ov.param_name)
+
+
+def _apply_unit_type_override(
+    ov: SensitivityOverride,
+    data: OldFlexToolData,
+    db: DatabaseMapping,
+    alt_name: str,
+    counters: _Counters,
+    existing_entities: set[tuple[str, tuple[str, ...]]],
+) -> None:
+    """Apply a unit_type-section override to ALL units of that type."""
+    type_name = ov.entity_ids.get("unit type")
+    if not type_name:
+        logger.warning("unit_type override missing 'unit type' identifier; skipping.")
+        return
+
+    param_lower = ov.param_name.lower()
+    value = ov.value
+
+    # Find all units with this unit_type
+    matching_units = [u for u in data.units if u.unit_type == type_name and u.output_node]
+
+    if not matching_units:
+        logger.warning("No units found for unit_type '%s'; skipping override.", type_name)
+        return
+
+    for unit in matching_units:
+        unit_name = _get_unit_name(unit)
+        if not _entity_exists(existing_entities, "unit", (unit_name,)):
+            logger.warning("Unit '%s' not found in DB; skipping.", unit_name)
+            continue
+
+        if "efficiency" == param_lower:
+            _add_param(db, "unit", (unit_name,), "efficiency", value, alt_name, counters)
+        elif "eff at min load" in param_lower:
+            _add_param(db, "unit", (unit_name,), "efficiency_at_min_load", value, alt_name, counters)
+        elif "min load" == param_lower:
+            _add_param(db, "unit", (unit_name,), "min_load", value, alt_name, counters)
+        elif "availability" == param_lower:
+            _add_param(db, "unit", (unit_name,), "availability", value, alt_name, counters)
+        elif "inv.cost/kw" in param_lower or "inv cost" in param_lower:
+            _add_param(db, "unit", (unit_name,), "invest_cost", value, alt_name, counters)
+        elif "fixed cost" in param_lower:
+            _add_param(db, "unit", (unit_name,), "fixed_cost", value, alt_name, counters)
+        elif "lifetime" == param_lower:
+            _add_param(db, "unit", (unit_name,), "lifetime", value, alt_name, counters)
+        elif "interest" == param_lower:
+            _add_param(db, "unit", (unit_name,), "interest_rate", value, alt_name, counters)
+        elif "startup cost" in param_lower:
+            _add_param(db, "unit", (unit_name,), "startup_cost", value, alt_name, counters)
+        elif "o&m cost" in param_lower:
+            rel = (unit_name, unit.output_node)
+            if _entity_exists(existing_entities, "unit__outputNode", rel):
+                _add_param(db, "unit__outputNode", rel,
+                           "other_operational_cost", value, alt_name, counters)
+        elif "ramp up" in param_lower:
+            rel = (unit_name, unit.output_node)
+            if _entity_exists(existing_entities, "unit__outputNode", rel):
+                _add_param(db, "unit__outputNode", rel,
+                           "ramp_speed_up", value, alt_name, counters)
+        elif "ramp down" in param_lower:
+            rel = (unit_name, unit.output_node)
+            if _entity_exists(existing_entities, "unit__outputNode", rel):
+                _add_param(db, "unit__outputNode", rel,
+                           "ramp_speed_down", value, alt_name, counters)
+        elif "self discharge" in param_lower:
+            # Self discharge applies to the unit's storage node
+            storage_node = f"{unit_name}_storage"
+            if _entity_exists(existing_entities, "node", (storage_node,)):
+                _add_param(db, "node", (storage_node,), "self_discharge_loss",
+                           value, alt_name, counters)
+        elif "non synchronous" in param_lower:
+            rel = (unit_name, unit.output_node)
+            if _entity_exists(existing_entities, "unit__outputNode", rel):
+                is_ns = "yes" if (isinstance(value, (int, float)) and float(value) == 1) else "no"
+                _add_param(db, "unit__outputNode", rel,
+                           "is_non_synchronous", is_ns, alt_name, counters)
+        elif "inertia constant" in param_lower:
+            rel = (unit_name, unit.output_node)
+            if _entity_exists(existing_entities, "unit__outputNode", rel):
+                _add_param(db, "unit__outputNode", rel,
+                           "inertia_constant", value, alt_name, counters)
+        else:
+            logger.warning(
+                "Unknown unit_type sensitivity param: '%s' for type '%s'",
+                ov.param_name, type_name,
+            )
+
+
+def _apply_fuel_override(
+    ov: SensitivityOverride,
+    db: DatabaseMapping,
+    alt_name: str,
+    counters: _Counters,
+    existing_entities: set[tuple[str, tuple[str, ...]]],
+) -> None:
+    """Apply a fuel-section sensitivity override."""
+    fuel_name = ov.entity_ids.get("fuel")
+    if not fuel_name:
+        logger.warning("fuel override missing 'fuel' identifier; skipping.")
+        return
+
+    if not _entity_exists(existing_entities, "commodity", (fuel_name,)):
+        logger.warning("Commodity '%s' not found in DB; skipping fuel override.", fuel_name)
+        return
+
+    param_lower = ov.param_name.lower()
+    value = ov.value
+
+    if "price" in param_lower:
+        _add_param(db, "commodity", (fuel_name,), "price", value, alt_name, counters)
+    elif "co2" in param_lower:
+        _add_param(db, "commodity", (fuel_name,), "co2_content", value, alt_name, counters)
+    else:
+        logger.warning("Unknown fuel sensitivity param: '%s'", ov.param_name)
+
+
+def _apply_unit_group_override(
+    ov: SensitivityOverride,
+    db: DatabaseMapping,
+    alt_name: str,
+    counters: _Counters,
+    existing_entities: set[tuple[str, tuple[str, ...]]],
+) -> None:
+    """Apply a unitGroup-section sensitivity override."""
+    group_name = ov.entity_ids.get("unitGroup")
+    if not group_name:
+        logger.warning("unitGroup override missing 'unitGroup' identifier; skipping.")
+        return
+
+    if not _entity_exists(existing_entities, "group", (group_name,)):
+        logger.warning("Group '%s' not found in DB; skipping unitGroup override.", group_name)
+        return
+
+    param_lower = ov.param_name.lower()
+    value = ov.value
+
+    if "max invest" in param_lower:
+        _add_param(db, "group", (group_name,), "invest_max_total", value, alt_name, counters)
+    elif "min invest" in param_lower:
+        _add_param(db, "group", (group_name,), "invest_min_total", value, alt_name, counters)
+    else:
+        logger.warning("Unknown unitGroup sensitivity param: '%s'", ov.param_name)
+
+
+def _apply_units_override(
+    ov: SensitivityOverride,
+    db: DatabaseMapping,
+    alt_name: str,
+    counters: _Counters,
+    existing_entities: set[tuple[str, tuple[str, ...]]],
+) -> None:
+    """Apply a units-section sensitivity override."""
+    unit_type = ov.entity_ids.get("unittype")
+    output_node = ov.entity_ids.get("output node")
+
+    if not unit_type or not output_node:
+        logger.warning(
+            "units override missing 'unittype' or 'output node'; skipping. IDs: %s",
+            ov.entity_ids,
+        )
+        return
+
+    unit_name = f"{unit_type}_{output_node}"
+    if not _entity_exists(existing_entities, "unit", (unit_name,)):
+        logger.warning("Unit '%s' not found in DB; skipping units override.", unit_name)
+        return
+
+    param_lower = ov.param_name.lower()
+    value = ov.value
+
+    if "capacity (mw)" == param_lower or param_lower == "capacity":
+        _add_param(db, "unit", (unit_name,), "existing", value, alt_name, counters)
+    elif "invested capacity" in param_lower:
+        _add_param(db, "unit", (unit_name,), "invest_max_total", value, alt_name, counters)
+        _add_param(db, "unit", (unit_name,), "invest_min_total", value, alt_name, counters)
+        _add_param(db, "unit", (unit_name,), "invest_method", "invest_total",
+                   alt_name, counters)
+    elif "max invest" in param_lower:
+        _add_param(db, "unit", (unit_name,), "invest_max_total", value, alt_name, counters)
+    elif "storage (mwh)" == param_lower or "storage" in param_lower and "invest" not in param_lower:
+        storage_node = f"{unit_name}_storage"
+        if _entity_exists(existing_entities, "node", (storage_node,)):
+            _add_param(db, "node", (storage_node,), "existing", value, alt_name, counters)
+    elif "inv.cost/kw" in param_lower or "inv cost" in param_lower:
+        _add_param(db, "unit", (unit_name,), "invest_cost", value, alt_name, counters)
+    elif "efficiency" == param_lower:
+        _add_param(db, "unit", (unit_name,), "efficiency", value, alt_name, counters)
+    elif "min load" in param_lower:
+        _add_param(db, "unit", (unit_name,), "min_load", value, alt_name, counters)
+    else:
+        logger.warning("Unknown units sensitivity param: '%s' for unit '%s'",
+                       ov.param_name, unit_name)
+
+
+def _apply_grid_node_override(
+    ov: SensitivityOverride,
+    data: OldFlexToolData,
+    db: DatabaseMapping,
+    alt_name: str,
+    counters: _Counters,
+    existing_entities: set[tuple[str, tuple[str, ...]]],
+) -> None:
+    """Apply a gridNode-section sensitivity override."""
+    node_name = ov.entity_ids.get("node")
+    if not node_name:
+        logger.warning("gridNode override missing 'node' identifier; skipping.")
+        return
+
+    if not _entity_exists(existing_entities, "node", (node_name,)):
+        logger.warning("Node '%s' not found in DB; skipping gridNode override.", node_name)
+        return
+
+    param_lower = ov.param_name.lower()
+    value = ov.value
+
+    if "demand" in param_lower:
+        _add_param(db, "node", (node_name,), "annual_flow", value, alt_name, counters)
+    elif "capacity margin" in param_lower:
+        # This applies to the node's group, find the group
+        for gn in data.grid_nodes:
+            if gn.node == node_name:
+                for ng_name in gn.node_groups:
+                    if _entity_exists(existing_entities, "group", (ng_name,)):
+                        _add_param(db, "group", (ng_name,), "capacity_margin",
+                                   value, alt_name, counters)
+                        _add_param(db, "group", (ng_name,), "has_capacity_margin",
+                                   "yes", alt_name, counters)
+    elif "non synchronous" in param_lower:
+        for gn in data.grid_nodes:
+            if gn.node == node_name:
+                for ng_name in gn.node_groups:
+                    if _entity_exists(existing_entities, "group", (ng_name,)):
+                        _add_param(db, "group", (ng_name,), "non_synchronous_limit",
+                                   value, alt_name, counters)
+                        _add_param(db, "group", (ng_name,), "has_non_synchronous",
+                                   "yes", alt_name, counters)
+    elif "use ts_reserve" in param_lower or "use dynamic reserve" in param_lower:
+        use_ts = None
+        use_dyn = None
+        if "ts_reserve" in param_lower:
+            use_ts = float(value) if isinstance(value, (int, float)) else None
+        if "dynamic reserve" in param_lower:
+            use_dyn = float(value) if isinstance(value, (int, float)) else None
+        reserve_method = _get_reserve_method(use_ts, use_dyn)
+        if reserve_method is not None:
+            # Find the reserve group for this node
+            for gn in data.grid_nodes:
+                if gn.node == node_name:
+                    for ng_name in gn.node_groups:
+                        rel = ("primary", "up", ng_name)
+                        if _entity_exists(existing_entities, "reserve__upDown__group", rel):
+                            _add_param(db, "reserve__upDown__group", rel,
+                                       "reserve_method", reserve_method, alt_name, counters)
+    else:
+        logger.warning("Unknown gridNode sensitivity param: '%s'", ov.param_name)
+
+
+def _apply_node_node_override(
+    ov: SensitivityOverride,
+    db: DatabaseMapping,
+    alt_name: str,
+    counters: _Counters,
+    existing_entities: set[tuple[str, tuple[str, ...]]],
+) -> None:
+    """Apply a nodeNode-section sensitivity override."""
+    node1 = ov.entity_ids.get("node1")
+    node2 = ov.entity_ids.get("node2")
+
+    if not node1 or not node2:
+        logger.warning("nodeNode override missing 'node1' or 'node2'; skipping.")
+        return
+
+    conn_name = f"{node1}_{node2}"
+    if not _entity_exists(existing_entities, "connection", (conn_name,)):
+        logger.warning("Connection '%s' not found in DB; skipping nodeNode override.", conn_name)
+        return
+
+    param_lower = ov.param_name.lower()
+    value = ov.value
+
+    if "invested capacity" in param_lower:
+        _add_param(db, "connection", (conn_name,), "invest_max_total", value, alt_name, counters)
+        _add_param(db, "connection", (conn_name,), "invest_min_total", value, alt_name, counters)
+        _add_param(db, "connection", (conn_name,), "invest_method", "invest_total",
+                   alt_name, counters)
+    elif "cap.rightward" in param_lower or "cap.leftward" in param_lower:
+        # Use the value as existing capacity
+        _add_param(db, "connection", (conn_name,), "existing", value, alt_name, counters)
+    elif "max invest" in param_lower:
+        _add_param(db, "connection", (conn_name,), "invest_max_total", value, alt_name, counters)
+    elif "loss" == param_lower:
+        eff = 1.0 - float(value) if isinstance(value, (int, float)) else 1.0
+        _add_param(db, "connection", (conn_name,), "efficiency", eff, alt_name, counters)
+    elif "inv.cost/kw" in param_lower or "inv cost" in param_lower:
+        _add_param(db, "connection", (conn_name,), "invest_cost", value, alt_name, counters)
+    elif "lifetime" == param_lower:
+        _add_param(db, "connection", (conn_name,), "lifetime", value, alt_name, counters)
+    elif "interest" == param_lower:
+        _add_param(db, "connection", (conn_name,), "interest_rate", value, alt_name, counters)
+    else:
+        logger.warning("Unknown nodeNode sensitivity param: '%s' for connection '%s'",
+                       ov.param_name, conn_name)
+
+
+def write_sensitivities_to_db(
+    sensitivities: dict[str, list[SensitivityOverride]],
+    data: OldFlexToolData,
+    db_url: str,
+    base_alternative: str = "base",
+) -> None:
+    """Write sensitivity alternatives and scenarios on top of an already-imported DB.
+
+    This does NOT purge the database. It layers sensitivity alternatives on top
+    of the base import.
+
+    Args:
+        sensitivities: Dict mapping scenario_name -> list of SensitivityOverride.
+        data: The base OldFlexToolData (needed for unit_type->unit mapping, etc.).
+        db_url: Spine database URL.
+        base_alternative: Name of the base alternative already in the DB.
+    """
+    if not sensitivities:
+        logger.info("No sensitivities to write.")
+        return
+
+    logger.info(
+        "Writing %d sensitivity scenarios to: %s",
+        len(sensitivities), db_url,
+    )
+
+    with DatabaseMapping(db_url, create=False, upgrade=True) as db:
+        counters = _Counters()
+        entities_added: set[tuple[str, tuple[str, ...]]] = set()
+        entity_alts_added: set[tuple[str, tuple[str, ...], str]] = set()
+
+        # Build entity existence lookup from DB
+        existing_entities = _build_existing_entity_set(db)
+
+        # Ensure base alternative exists
+        try:
+            db.add_alternative(name=base_alternative)
+        except SpineDBAPIError:
+            pass
+
+        # Create a "base" scenario with just the base alternative
+        try:
+            db.add_scenario_item(name="base")
+        except SpineDBAPIError:
+            pass
+        try:
+            db.add_scenario_alternative_item(
+                scenario_name="base",
+                alternative_name=base_alternative,
+                rank=1,
+            )
+        except SpineDBAPIError:
+            pass
+
+        for scenario_name, overrides in sensitivities.items():
+            logger.info("Processing sensitivity scenario: '%s' (%d overrides)",
+                        scenario_name, len(overrides))
+
+            # 1. Create alternative for this scenario
+            try:
+                db.add_alternative(name=scenario_name)
+            except SpineDBAPIError:
+                pass
+
+            # 2. Compute effective master params (base + all master overrides)
+            effective_master = _get_effective_master_params(data, overrides)
+
+            # 3. Check if mode overrides are present
+            has_mode_override = any(
+                ov.section == "master"
+                and ("mode invest" in ov.param_name.lower().replace("_", " ")
+                     or "mode dispatch" in ov.param_name.lower().replace("_", " "))
+                for ov in overrides
+            )
+
+            # 4. Process each override
+            for ov in overrides:
+                if ov.section == "master":
+                    _apply_master_override(
+                        ov, data, effective_master, db, scenario_name,
+                        counters, existing_entities,
+                    )
+                elif ov.section == "nodeGroup":
+                    _apply_node_group_override(
+                        ov, db, scenario_name, counters, existing_entities,
+                    )
+                elif ov.section == "gridNode":
+                    _apply_grid_node_override(
+                        ov, data, db, scenario_name, counters, existing_entities,
+                    )
+                elif ov.section == "unit_type":
+                    _apply_unit_type_override(
+                        ov, data, db, scenario_name, counters, existing_entities,
+                    )
+                elif ov.section == "fuel":
+                    _apply_fuel_override(
+                        ov, db, scenario_name, counters, existing_entities,
+                    )
+                elif ov.section == "unitGroup":
+                    _apply_unit_group_override(
+                        ov, db, scenario_name, counters, existing_entities,
+                    )
+                elif ov.section == "units":
+                    _apply_units_override(
+                        ov, db, scenario_name, counters, existing_entities,
+                    )
+                elif ov.section == "nodeNode":
+                    _apply_node_node_override(
+                        ov, db, scenario_name, counters, existing_entities,
+                    )
+                else:
+                    logger.warning("Unknown sensitivity section: '%s'", ov.section)
+
+            # 5. Apply mode overrides if present
+            if has_mode_override:
+                _apply_mode_overrides(
+                    effective_master, db, scenario_name, counters, existing_entities,
+                )
+
+            # 6. Create scenario with base + sensitivity alternatives
+            try:
+                db.add_scenario_item(name=scenario_name)
+            except SpineDBAPIError:
+                pass
+            try:
+                db.add_scenario_alternative_item(
+                    scenario_name=scenario_name,
+                    alternative_name=base_alternative,
+                    rank=1,
+                )
+            except SpineDBAPIError:
+                pass
+            try:
+                db.add_scenario_alternative_item(
+                    scenario_name=scenario_name,
+                    alternative_name=scenario_name,
+                    rank=2,
+                )
+            except SpineDBAPIError:
+                pass
+
+            logger.info("Created scenario '%s' with alternatives: [%s, %s]",
+                        scenario_name, base_alternative, scenario_name)
+
+        # Commit everything
+        try:
+            db.commit_session("Import sensitivity overrides")
+            logger.info(
+                "Successfully committed sensitivity data. Summary: %s",
+                counters.summary(),
+            )
+        except NothingToCommit:
+            logger.info("No new sensitivity data to commit.")
+        except SpineDBAPIError as exc:
+            raise RuntimeError(
+                f"Failed to commit sensitivity data: {exc}"
+            ) from exc

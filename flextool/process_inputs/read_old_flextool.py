@@ -83,6 +83,15 @@ _UNIT_STRING_FIELDS = frozenset({
 # ---------------------------------------------------------------------------
 
 @dataclass
+class SensitivityOverride:
+    """A single parameter override from the Sensitivity definitions sheet."""
+    section: str          # "master", "nodeGroup", "gridNode", "unit_type", "fuel", "unitGroup", "units", "nodeNode"
+    entity_ids: dict[str, str]  # entity identifier columns, e.g. {"nodeGroup": "reserve1"}
+    param_name: str       # column header name, e.g. "co2_cost", "invested capacity (MW)"
+    value: float | str    # the override value
+
+
+@dataclass
 class MasterParams:
     """Global model parameters from 'master' sheet."""
     params: dict[str, float]
@@ -1106,3 +1115,174 @@ def read_old_flextool(file_path: str) -> OldFlexToolData:
         )
     finally:
         wb.close()
+
+
+# ---------------------------------------------------------------------------
+# Entity identifier columns by section type
+# ---------------------------------------------------------------------------
+
+_SENSITIVITY_ENTITY_ID_COLS: dict[str, set[str]] = {
+    "master": set(),
+    "nodeGroup": {"nodegroup"},
+    "gridNode": {"grid", "node", "nodegroup", "nodegroup2", "nodegroup3"},
+    "unit_type": {"unit type"},
+    "fuel": {"fuel"},
+    "unitGroup": {"unitgroup"},
+    "units": {
+        "unitgroup", "unittype", "fuel", "cf profile", "inflow",
+        "input grid", "input node", "output grid", "output node",
+    },
+    "nodeNode": {"grid", "node1", "node2"},
+}
+
+# String-typed entity ID columns (stay as strings, never float-convert)
+_SENSITIVITY_STRING_COLS: set[str] = {
+    "nodegroup", "nodegroup2", "nodegroup3",
+    "grid", "node", "node1", "node2",
+    "unit type", "unittype", "unitgroup",
+    "fuel", "cf profile", "inflow",
+    "input grid", "input node", "output grid", "output node",
+}
+
+
+def read_old_flextool_sensitivities(
+    file_path: str,
+) -> dict[str, list[SensitivityOverride]]:
+    """Read the 'Sensitivity definitions' sheet and return per-scenario overrides.
+
+    The sheet contains multiple sections separated by empty rows. Each section
+    starts with a header row like "Scenario definitions master:" followed by
+    column headers and data rows.
+
+    Args:
+        file_path: Path to the old FlexTool .xlsm file.
+
+    Returns:
+        A dict mapping scenario_name -> list of SensitivityOverride objects.
+    """
+    logger.info("Reading sensitivities from: %s", file_path)
+    wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+
+    try:
+        ws = _get_sheet(wb, "Sensitivity definitions")
+        if ws is None:
+            logger.warning("No 'Sensitivity definitions' sheet found.")
+            return {}
+
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return {}
+
+        result: dict[str, list[SensitivityOverride]] = {}
+        _parse_sensitivity_sections(rows, result)
+
+        total = sum(len(v) for v in result.values())
+        logger.info(
+            "Parsed %d sensitivity scenarios with %d total overrides.",
+            len(result), total,
+        )
+        return result
+
+    finally:
+        wb.close()
+
+
+def _parse_sensitivity_sections(
+    rows: list[tuple[Any, ...]],
+    result: dict[str, list[SensitivityOverride]],
+) -> None:
+    """Parse all sections from the Sensitivity definitions sheet rows."""
+    i = 0
+    while i < len(rows):
+        row = rows[i]
+        # Detect section header: col 0 starts with "Scenario definitions"
+        cell0 = _safe_str(row[0]) if len(row) > 0 else None
+        if cell0 is not None and cell0.lower().startswith("scenario definitions"):
+            # This row is the header row with column names in col 2+
+            headers = [_safe_str(c) for c in row]
+            # Extract the section type from the header text after ":"
+            # e.g. "Scenario definitions master:" -> determine from data rows
+            i += 1
+            # Parse data rows until next empty row or next section header
+            i = _parse_sensitivity_data_rows(rows, i, headers, result)
+        else:
+            i += 1
+
+
+def _parse_sensitivity_data_rows(
+    rows: list[tuple[Any, ...]],
+    start: int,
+    headers: list[str | None],
+    result: dict[str, list[SensitivityOverride]],
+) -> int:
+    """Parse data rows for one section. Returns the index after the section."""
+    i = start
+    while i < len(rows):
+        row = rows[i]
+        if _row_is_empty(row):
+            # Empty row signals end of section
+            return i + 1
+
+        # Check if this is the start of a new section header
+        cell0 = _safe_str(row[0]) if len(row) > 0 else None
+        if cell0 is not None and cell0.lower().startswith("scenario definitions"):
+            return i  # Don't advance — let the caller re-process this row
+
+        # Col 0: scenario name, Col 1: sheet/section type
+        scenario_name = cell0
+        section_type = _safe_str(row[1]) if len(row) > 1 else None
+
+        # Skip rows where col 0 is empty (placeholder rows with just sheet name)
+        if scenario_name is None or section_type is None:
+            i += 1
+            continue
+
+        # Determine entity ID vs parameter columns based on section type
+        entity_id_col_names = _SENSITIVITY_ENTITY_ID_COLS.get(section_type, set())
+
+        # Build entity_ids from the ID columns
+        entity_ids: dict[str, str] = {}
+        for col_idx in range(2, min(len(headers), len(row))):
+            header = headers[col_idx]
+            if header is None:
+                continue
+            header_lower = header.strip().lower()
+            if header_lower in entity_id_col_names:
+                val = _safe_str(row[col_idx])
+                if val is not None:
+                    entity_ids[header.strip()] = val
+
+        # Create overrides for each non-empty parameter cell
+        for col_idx in range(2, min(len(headers), len(row))):
+            header = headers[col_idx]
+            if header is None:
+                continue
+            header_lower = header.strip().lower()
+            if header_lower in entity_id_col_names:
+                continue  # Skip entity ID columns
+
+            raw_value = row[col_idx]
+            if raw_value is None:
+                continue
+
+            # Try float first, fall back to string
+            float_val = _safe_float(raw_value)
+            if float_val is not None:
+                value: float | str = float_val
+            else:
+                str_val = _safe_str(raw_value)
+                if str_val is None:
+                    continue
+                value = str_val
+
+            override = SensitivityOverride(
+                section=section_type,
+                entity_ids=dict(entity_ids),  # copy
+                param_name=header.strip(),
+                value=value,
+            )
+            result.setdefault(scenario_name, []).append(override)
+
+        i += 1
+
+    return i

@@ -611,6 +611,11 @@ class ExecutionManager:
             self.append_stdout(job.job_id, "Comparison failed with exception")
         finally:
             self.finish_job(job.job_id, success)
+            # Record which scenarios were compared so the Show button works
+            if do_comp_plots:
+                settings.comp_plots_scenarios = list(all_scenarios)
+            if do_comp_excel:
+                settings.comp_excel_scenarios = list(all_scenarios)
 
     # ------------------------------------------------------------------
     # Control methods

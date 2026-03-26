@@ -48,10 +48,14 @@ def _get_column_items(df_sub, level_names):
 
 def _filter_columns_by_items(df_sub, items, level_names):
     """Filter DataFrame columns to only include specified items."""
+    if df_sub.empty or len(df_sub.columns) == 0:
+        return df_sub
     if len(level_names) == 1:
         mask = df_sub.columns.get_level_values(level_names[0]).isin(items)
     else:
         col_frame = df_sub.columns.to_frame()[level_names]
+        if col_frame.empty:
+            return df_sub
         mask = col_frame.apply(tuple, axis=1).isin(items).values
     return df_sub.loc[:, mask]
 

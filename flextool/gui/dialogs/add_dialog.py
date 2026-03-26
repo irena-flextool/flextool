@@ -148,6 +148,18 @@ class AddDialog(tk.Toplevel):
         )
         convert_btn.pack(fill="x")
 
+        self._import_sens_btn = ttk.Button(
+            old_frame,
+            text="Import sensitivities from master file...",
+            command=self._on_import_sensitivities,
+            state="disabled",
+        )
+        self._import_sens_btn.pack(fill="x", pady=(5, 0))
+
+        # Stored after successful 2.0 base conversion
+        self._last_base_xlsm: Path | None = None
+        self._last_target_sqlite: Path | None = None
+
         # ── Close button (very bottom) ───────────────────────────────
         close_frame = ttk.Frame(self)
         close_frame.pack(fill="x", side="bottom", padx=10, pady=(15, 10))
@@ -548,7 +560,10 @@ class AddDialog(tk.Toplevel):
 
             self.result = True
             self.old_convert_started = True
-            self._on_back()  # close the dialog
+            # Store paths so sensitivity import can find them
+            self._last_base_xlsm = filepath
+            self._last_target_sqlite = dest
+            self._import_sens_btn.configure(state="normal")
         else:
             # Fallback: no execution manager — run synchronously with busy cursor
             self.config(cursor="watch")
@@ -569,9 +584,138 @@ class AddDialog(tk.Toplevel):
                 self.config(cursor="")
 
             self.result = True
+            self._last_base_xlsm = filepath
+            self._last_target_sqlite = dest
+            self._import_sens_btn.configure(state="normal")
             messagebox.showinfo(
                 "Done",
-                f"Converted '{filepath.name}' \u2192 '{dest_name}' in input_sources.",
+                f"Converted '{filepath.name}' \u2192 '{dest_name}' in input_sources.\n\n"
+                "You can now import sensitivities from a master file, "
+                "or close this dialog.",
+                parent=self,
+            )
+
+    def _on_import_sensitivities(self) -> None:
+        """Import sensitivities from a FlexTool 2.0 master file into the
+        database that was just created by the base conversion."""
+        if self._last_base_xlsm is None or self._last_target_sqlite is None:
+            return
+
+        try:
+            root = self.winfo_toplevel()
+            main_window_width = root.winfo_width()
+            screen_height = root.winfo_screenheight()
+        except Exception:
+            main_window_width = 700
+            screen_height = 800
+
+        # Let user pick the master file (start in same directory as base)
+        picker = FilePickerDialog(
+            self,
+            title="Select FlexTool 2.0 master file (with sensitivity definitions)",
+            initialdir=str(self._last_base_xlsm.parent),
+            filetypes=[
+                ("Old FlexTool Excel", "*.xlsm *.xlsx"),
+                ("All files", "*"),
+            ],
+            multiple=False,
+            width=main_window_width,
+            height=int(screen_height * 0.75),
+        )
+        master_path = picker.result
+        if not master_path:
+            return
+
+        target_db_url = f"sqlite:///{self._last_target_sqlite}"
+        cmd = [
+            sys.executable, "-m",
+            "flextool.cli.cmd_import_sensitivities",
+            str(master_path),
+            str(self._last_base_xlsm),
+            target_db_url,
+        ]
+
+        if self._execution_mgr is not None:
+            from flextool.gui.execution_manager import JobType
+
+            job = self._execution_mgr.add_auxiliary_job(
+                JobType.CONVERSION,
+                f"Import sensitivities → '{self._last_target_sqlite.name}'",
+                f"import_sensitivities:{self._last_target_sqlite.name}",
+            )
+            self._execution_mgr.append_stdout(
+                job.job_id,
+                f"Importing sensitivities from '{Path(master_path).name}'\n",
+            )
+            self._execution_mgr.append_stdout(job.job_id, " ".join(cmd))
+            self._execution_mgr.append_stdout(job.job_id, "")
+
+            mgr = self._execution_mgr
+
+            def _worker() -> None:
+                import os as _os
+                success = False
+                try:
+                    env = {**_os.environ, "PYTHONUNBUFFERED": "1"}
+                    proc = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, bufsize=1,
+                        cwd=str(self._flextool_root), env=env,
+                    )
+                    with mgr._lock:
+                        job.process = proc
+
+                    for line in proc.stdout:  # type: ignore[union-attr]
+                        mgr.append_stdout(job.job_id, line.rstrip("\n"))
+
+                    proc.wait()
+                    success = proc.returncode == 0
+                    if success:
+                        mgr.append_stdout(job.job_id, "\nSensitivity import succeeded.")
+                    else:
+                        mgr.append_stdout(
+                            job.job_id,
+                            f"\nSensitivity import failed (exit code {proc.returncode}).",
+                        )
+                except Exception as exc:
+                    logger.error("Sensitivity import failed: %s", exc, exc_info=True)
+                    mgr.append_stdout(job.job_id, f"\nError: {exc}")
+
+                mgr.finish_job(job.job_id, success)
+
+            threading.Thread(target=_worker, daemon=True).start()
+            self._import_sens_btn.configure(state="disabled")
+            self.result = True
+        else:
+            # Fallback: run synchronously
+            self.config(cursor="watch")
+            self.update()
+            try:
+                from flextool.process_inputs.read_old_flextool import (
+                    read_old_flextool, read_old_flextool_sensitivities,
+                )
+                from flextool.process_inputs.write_old_flextool_to_db import (
+                    write_sensitivities_to_db,
+                )
+
+                data = read_old_flextool(str(self._last_base_xlsm))
+                sensitivities = read_old_flextool_sensitivities(str(master_path))
+                write_sensitivities_to_db(
+                    sensitivities, data, target_db_url,
+                    base_alternative=_OLD_FLEX_ALTERNATIVE,
+                )
+            except Exception as exc:
+                logger.error("Sensitivity import failed: %s", exc, exc_info=True)
+                messagebox.showerror("Import failed", str(exc), parent=self)
+                return
+            finally:
+                self.config(cursor="")
+
+            self._import_sens_btn.configure(state="disabled")
+            self.result = True
+            messagebox.showinfo(
+                "Done",
+                f"Sensitivities imported into '{self._last_target_sqlite.name}'.",
                 parent=self,
             )
 
