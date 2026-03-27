@@ -1,0 +1,33 @@
+name: Build glpsol for macOS
+on: workflow_dispatch
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-13
+            arch: x86_64
+          - runner: macos-14
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout mingodad/GLPK
+        uses: actions/checkout@v4
+        with:
+          repository: mingodad/GLPK
+
+      - name: Build glpsol
+        run: |
+          cd glpk
+          autoreconf -fi || true
+          ./configure
+          make -j$(sysctl -n hw.ncpu)
+          file src/glpsol
+          src/glpsol --version || true
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: glpsol-macos-${{ matrix.arch }}
+          path: glpk/src/glpsol
