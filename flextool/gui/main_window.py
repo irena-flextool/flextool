@@ -1908,6 +1908,15 @@ class MainWindow(tk.Tk):
                 del self.project_settings.input_source_numbers[source_name]
 
         save_project_settings(project_path, self.project_settings)
+
+        # Remove related entries from the execution list
+        if self.execution_mgr is not None:
+            for source_name in names:
+                self.execution_mgr.remove_jobs_for_source(source_name)
+            # Refresh the execution window if open
+            if self.execution_window is not None and self.execution_window.winfo_exists():
+                self.execution_window.schedule_refresh()
+
         self._refresh_input_sources()
 
     # ── Ctrl-A select all ────────────────────────────────────────

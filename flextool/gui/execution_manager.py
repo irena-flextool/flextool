@@ -101,6 +101,7 @@ class ExecutionManager:
         self._on_all_finished = on_all_finished
         self._scheduler_thread: threading.Thread | None = None
         self._comparison_scenarios: list[str] = []
+        self._pending_select_job_id: int | None = None  # for auto-selecting new jobs in UI
 
         self._converted_xlsx: set[str] = set()  # source_names already converted
 
@@ -230,6 +231,8 @@ class ExecutionManager:
             else:
                 self._jobs.append(job)
 
+            self._pending_select_job_id = job.job_id
+
         self._notify_status_change(job)
         return job
 
@@ -252,6 +255,43 @@ class ExecutionManager:
             job.process = None
             job.status = JobStatus.SUCCESS if success else JobStatus.FAILED
         self._notify_status_change(job)
+
+    def remove_jobs_for_source(self, source_name: str) -> None:
+        """Remove all jobs related to *source_name*.
+
+        This removes:
+        - Scenario jobs whose ``source_name`` matches
+        - Auxiliary jobs whose ``action_key`` or ``display_name`` contains
+          the source name or its stem (e.g. deleting ``model.sqlite`` also
+          matches ``old_convert:model.xlsm`` because the stem ``model``
+          is the same).
+
+        Running or pending jobs are killed first.
+        """
+        stem = Path(source_name).stem
+        with self._lock:
+            to_remove: list[ExecutionJob] = []
+            for job in self._jobs:
+                match = False
+                if job.job_type == JobType.SCENARIO and job.source_name == source_name:
+                    match = True
+                elif job.action_key and (
+                    source_name in job.action_key or stem in job.action_key
+                ):
+                    match = True
+                elif job.display_name and (
+                    source_name in job.display_name or stem in job.display_name
+                ):
+                    match = True
+                if match:
+                    if job.status == JobStatus.RUNNING and job.process:
+                        try:
+                            job.process.kill()
+                        except OSError:
+                            pass
+                    to_remove.append(job)
+            for job in to_remove:
+                self._jobs.remove(job)
 
     def start(self) -> None:
         """Start executing pending jobs up to *max_workers* concurrently.

@@ -475,7 +475,15 @@ class ExecutionWindow(tk.Toplevel):
         if not self.winfo_exists():
             return
 
-        self._refresh_job_list()
+        # Auto-select newly created auxiliary jobs
+        pending_id = self._mgr._pending_select_job_id
+        if pending_id is not None:
+            self._mgr._pending_select_job_id = None
+            self._refresh_job_list()
+            self.select_job(pending_id)
+        else:
+            self._refresh_job_list()
+
         self._update_output_display()
         self._update_button_states()
 
