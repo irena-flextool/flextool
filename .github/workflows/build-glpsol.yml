@@ -19,8 +19,6 @@ jobs:
 
       - name: Build glpsol
         run: |
-          cd glpk
-          autoreconf -fi || true
           ./configure
           make -j$(sysctl -n hw.ncpu)
           file src/glpsol
@@ -30,4 +28,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: glpsol-macos-${{ matrix.arch }}
-          path: glpk/src/glpsol
+          path: src/glpsol
