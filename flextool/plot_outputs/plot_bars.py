@@ -211,77 +211,104 @@ def _render_bar_figure(
     always_include_zero_in_axis, output_filepath,
     layout: BarLayoutParams | None = None,
     shared_color_map: dict[str, tuple] | None = None,
+    skip_data_with_only_zeroes: bool = False,
 ):
     """Render one file's worth of bar subplots to a single figure/file."""
     # Calculate subplot grid
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
-    # Effective bar height: when grouped bars exceed 3, scale up the slot height
-    # so each individual bar stays at least 1/3 of the font height (~10pt).
+    # Per-position bar height: when grouped bars exceed 3, scale up the slot
+    # so each individual bar stays at least 1/3 of font height (~10pt).
+    # Computed per-position so labels with few bars don't waste space.
     FONT_HEIGHT = 10 / 72  # 10pt in inches
-    MIN_INDIVIDUAL_BAR = FONT_HEIGHT / 3
+    MIN_INDIVIDUAL_BAR = FONT_HEIGHT / 2.5
     TOTAL_BAR_WIDTH = 0.8  # fraction of slot used by bars
-    if grouped_bar_levels:
-        # Determine n_grouped from the first subplot's data
-        sample_df = effective_plots[0][1] if effective_plots else df
-        if isinstance(sample_df.columns, pd.MultiIndex) and grouped_bar_level_names:
+
+    def _slot_height_for_n_grouped(n: int) -> float:
+        """Bar slot height for n grouped bars at one label."""
+        if n <= 0:
+            return BAR_HEIGHT
+        needed = MIN_INDIVIDUAL_BAR * n / TOTAL_BAR_WIDTH
+        return max(BAR_HEIGHT, needed)
+
+    def _count_grouped(df_check: pd.DataFrame) -> int:
+        """Count grouped bar members in a DataFrame."""
+        if not grouped_bar_levels:
+            return 1
+        if isinstance(df_check.columns, pd.MultiIndex) and grouped_bar_level_names:
             if len(grouped_bar_level_names) == 1:
-                n_grp = len(sample_df.columns.get_level_values(grouped_bar_level_names[0]).unique())
-            else:
-                gf = sample_df.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
-                n_grp = len(gf)
-        else:
-            n_grp = 1
-        # Each bar gets TOTAL_BAR_WIDTH / n_grp of the slot; ensure >= MIN_INDIVIDUAL_BAR
-        needed = MIN_INDIVIDUAL_BAR * n_grp / TOTAL_BAR_WIDTH
-        eff_bar_height = max(BAR_HEIGHT, needed)
-    else:
-        eff_bar_height = BAR_HEIGHT
+                return len(df_check.columns.get_level_values(
+                    grouped_bar_level_names[0]).unique())
+            gf = df_check.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
+            return len(gf)
+        elif not isinstance(df_check.columns, pd.MultiIndex) and grouped_bar_levels:
+            return len(df_check.columns.unique())
+        return 1
 
     # Add extra bottom space when xlabel is present
     bottom_pad = BOTTOM_PAD + (XLABEL_HEIGHT if xlabel else 0)
-    # Left edge padding only for expand-axis plots (secondary y-axis ticks touch edge)
     left_edge_pad = LEFT_PAD + (YLABEL_WIDTH if ylabel else 0)
 
-    # First pass: calculate number of bars for each subplot to determine heights.
-    # Uses data-aware counting (same filtering as the rendering loop) to avoid
-    # over-allocating space for Cartesian-product bars that don't exist.
-    bar_counts = []
-    for title, df_sub_temp in effective_plots:
-        if not expand_axis_levels:
-            n_bars = len(df_sub_temp.index)
-        else:
-            # Count only group-row pairs with actual data
-            if len(expand_axis_level_names) == 1:
-                groups_temp = df_sub_temp.columns.get_level_values(
-                    expand_axis_level_names[0]).unique().tolist()
-            elif isinstance(df_sub_temp.columns, pd.MultiIndex):
-                gf = df_sub_temp.columns.to_frame()[expand_axis_level_names].drop_duplicates()
-                groups_temp = [tuple(row) for row in gf.values]
-            else:
-                groups_temp = [df_sub_temp.columns.tolist()[0]] if len(df_sub_temp.columns) else []
-            n_bars = 0
-            for group in groups_temp:
-                try:
-                    if not isinstance(df_sub_temp.columns, pd.MultiIndex):
-                        df_g = df_sub_temp[[group]] if group in df_sub_temp.columns else None
-                    elif len(expand_axis_level_names) == 1:
-                        df_g = df_sub_temp.xs(group, level=expand_axis_level_names[0], axis=1)
-                    else:
-                        df_g = df_sub_temp.xs(group, level=expand_axis_level_names, axis=1)
-                except KeyError:
-                    continue
-                if df_g is None:
-                    continue
-                if isinstance(df_g, pd.Series):
-                    df_g = df_g.to_frame()
-                n_bars += int((df_g.abs() > 1e-6).any(axis=1).sum())
-        bar_counts.append(n_bars)
+    # ── Height estimation pass ────────────────────────────────────
+    # Compute accurate bars_only_h per subplot (with pruning) so the
+    # figure is sized correctly. Pruning is cheap (column/row masks)
+    # and will be re-done in the render pass — no data is stored.
+    def _estimate_subplot_height(df_sub_raw: pd.DataFrame) -> float:
+        """Return bars_only_h for one subplot, applying pruning."""
+        df_s = df_sub_raw
+        if skip_data_with_only_zeroes:
+            df_s = df_s.loc[:, (df_s.abs() > 1e-6).any(axis=0)]
+            df_s = df_s.loc[(df_s.abs() > 1e-6).any(axis=1)]
+        if df_s.empty:
+            return BAR_HEIGHT  # minimum
 
-    # Per-subplot sizes (inches) based on bar counts
+        def _sum_row_heights(df_data: pd.DataFrame) -> float:
+            """Sum per-row slot heights, using per-row n_grp."""
+            total = 0.0
+            for row_idx in df_data.index:
+                row = df_data.loc[[row_idx]]
+                if skip_data_with_only_zeroes:
+                    row = row.loc[:, (row.abs() > 1e-6).any(axis=0)]
+                    if row.empty or (row.abs() < 1e-6).all().all():
+                        continue  # skip zero rows only when skip is enabled
+                n = _count_grouped(row) if grouped_bar_levels else 1
+                total += _slot_height_for_n_grouped(n)
+            return total
+
+        if not expand_axis_levels:
+            return max(_sum_row_heights(df_s), BAR_HEIGHT)
+
+        # Per expand group: extract slice, sum per-row heights
+        total_h = 0.0
+        if len(expand_axis_level_names) == 1:
+            groups_est = df_s.columns.get_level_values(expand_axis_level_names[0]).unique()
+        elif isinstance(df_s.columns, pd.MultiIndex):
+            gf = df_s.columns.to_frame()[expand_axis_level_names].drop_duplicates()
+            groups_est = [tuple(r) for r in gf.values]
+        else:
+            groups_est = [df_s.columns[0]] if len(df_s.columns) else []
+
+        for grp in groups_est:
+            try:
+                if not isinstance(df_s.columns, pd.MultiIndex):
+                    df_g = df_s[[grp]] if grp in df_s.columns else None
+                elif len(expand_axis_level_names) == 1:
+                    df_g = df_s.xs(grp, level=expand_axis_level_names[0], axis=1)
+                else:
+                    df_g = df_s.xs(grp, level=expand_axis_level_names, axis=1)
+            except KeyError:
+                continue
+            if df_g is None:
+                continue
+            if isinstance(df_g, pd.Series):
+                df_g = df_g.to_frame()
+            total_h += _sum_row_heights(df_g)
+        return max(total_h, BAR_HEIGHT)
+
     subplot_sizes: list[float] = [
-        eff_bar_height * bc + SUBPLOT_VPAD for bc in bar_counts
+        _estimate_subplot_height(df_sub_raw) + SUBPLOT_VPAD
+        for _, df_sub_raw in effective_plots
     ]
 
     # Create figure and axes using layout-derived margins
@@ -348,8 +375,8 @@ def _render_bar_figure(
             # For vertical: x-axis = bar labels (rotated), y-axis = values
             # Each subplot cell: value_axis_labels + bars + right_pad
             vert_subplot_widths = [
-                layout.value_axis_width + eff_bar_height * bc + RIGHT_PAD
-                for bc in bar_counts
+                layout.value_axis_width + (ss - SUBPLOT_VPAD) + RIGHT_PAD
+                for ss in subplot_sizes
             ]
             cell_height = layout.base_bar_length + layout.total_label_width + SUBPLOT_VPAD
 
@@ -399,6 +426,15 @@ def _render_bar_figure(
                         x_cursor += layout.legend_width + LEGEND_GAP
 
     for idx, (eff_title, df_sub) in enumerate(effective_plots):
+        # Prune zero data close to plotting — take a copy so we don't
+        # modify the shared effective_plots data.
+        if skip_data_with_only_zeroes:
+            df_sub = df_sub.copy()
+            # Drop all-zero columns (removes empty grouped bars)
+            df_sub = df_sub.loc[:, (df_sub.abs() > 1e-6).any(axis=0)]
+            # Drop all-zero rows (removes empty bar positions)
+            df_sub = df_sub.loc[(df_sub.abs() > 1e-6).any(axis=1)]
+
         # Get unique group combinations from df_sub
         if not expand_axis_levels:
             groups = [None]
@@ -423,20 +459,17 @@ def _render_bar_figure(
         # Reverse to match the reversed groups order
         subplot_bar_labels = subplot_bar_labels[::-1]
 
-        # Build list of all bars (for y-axis positioning)
+        # Build list of all bars (for y-axis positioning).
+        # Zero pruning already done on df_sub above (if skip_data_with_only_zeroes).
         all_bars = []
         if not expand_axis_levels:
-            # No groups - just one bar per period (use original index values, not labels)
             for idx_val in df_sub.index[::-1]:
                 all_bars.append([None, idx_val])
         else:
-            # Only include group-row pairs that have actual data
-            # (avoids Cartesian-product bars when expand levels are hierarchical)
             groups_with_bars: list[tuple] = []  # (group, [row_items])
             for group in groups:
                 try:
                     if not isinstance(df_sub.columns, pd.MultiIndex):
-                        # Single-level columns after subplot extraction
                         if group in df_sub.columns:
                             df_group = df_sub[[group]]
                         else:
@@ -449,9 +482,14 @@ def _render_bar_figure(
                     continue
                 if isinstance(df_group, pd.Series):
                     df_group = df_group.to_frame()
-                has_data = (df_group.abs() > 1e-6).any(axis=1)
-                row_items = [v for v in df_sub.index[::-1]
-                             if v in has_data.index and has_data.loc[v]]
+                # Per-group row filtering
+                if skip_data_with_only_zeroes:
+                    has_data = (df_group.abs() > 1e-6).any(axis=1)
+                    row_items = [v for v in df_sub.index[::-1]
+                                 if v in has_data.index and has_data.loc[v]]
+                else:
+                    row_items = [v for v in df_sub.index[::-1]
+                                 if v in df_group.index]
                 if row_items:
                     groups_with_bars.append((group, row_items))
                     for idx_val in row_items:
@@ -466,12 +504,54 @@ def _render_bar_figure(
         if not all_bars:
             if n_subs == 1:
                 return 0 if 'skipped' not in dir() else skipped
+            if n_subs > 1 and axes[idx] is not None:
+                axes[idx].set_visible(False)
             continue
+
+        # Compute per-position slot heights based on actual grouped bar count.
+        # When skip_data_with_only_zeroes: count only non-zero grouped bars
+        # for height calculation (but df_sub is NOT modified — zero bars
+        # Per-row slot heights: count non-zero grouped bars at each position.
+        def _row_height(row_data: pd.DataFrame) -> float:
+            if skip_data_with_only_zeroes:
+                row_data = row_data.loc[:, (row_data.abs() > 1e-6).any(axis=0)]
+            if row_data.empty:
+                return BAR_HEIGHT
+            n = _count_grouped(row_data) if grouped_bar_levels else 1
+            return _slot_height_for_n_grouped(n)
+
+        if expand_axis_levels and groups_with_bars:
+            per_bar_heights: list[float] = []
+            for group, row_items in groups_with_bars:
+                try:
+                    if not isinstance(df_sub.columns, pd.MultiIndex):
+                        df_g = df_sub[[group]] if group in df_sub.columns else df_sub
+                    elif len(expand_axis_level_names) == 1:
+                        df_g = df_sub.xs(group, level=expand_axis_level_names[0], axis=1)
+                    else:
+                        df_g = df_sub.xs(group, level=expand_axis_level_names, axis=1)
+                except KeyError:
+                    df_g = df_sub
+                if isinstance(df_g, pd.Series):
+                    df_g = df_g.to_frame()
+                for ri in row_items:
+                    per_bar_heights.append(_row_height(df_g.loc[[ri]]))
+        else:
+            per_bar_heights = []
+            for _, ri in all_bars:
+                per_bar_heights.append(_row_height(df_sub.loc[[ri]]))
+
+        # Cumulative y-positions (center of each slot)
+        y_positions: list[float] = []
+        cumulative = 0.0
+        for h in per_bar_heights:
+            y_positions.append(cumulative + h / 2)
+            cumulative += h
+        bars_only_h = cumulative
 
         # Create figure for single plot (now that we know bar count)
         if n_subs == 1 and fig is None:
-            subplot_h = eff_bar_height * len(all_bars) + SUBPLOT_VPAD
-            bars_only_h = eff_bar_height * len(all_bars)
+            subplot_h = bars_only_h + SUBPLOT_VPAD
             if bar_orientation == 'horizontal':
                 fig_w = _single_width
                 fig_h = subplot_h + TITLE_PAD + bottom_pad
@@ -508,16 +588,63 @@ def _render_bar_figure(
 
         # Determine plotting mode and execute appropriate logic
         if grouped_bar_levels:
-            _plot_grouped_bars(ax, df_sub, all_bars, expand_axis_level_names,
-                               grouped_bar_level_names, bar_orientation, value_fmt,
-                               shared_color_map=shared_color_map)
+            # Render per-row: each row gets its own pruned data so only
+            # non-zero grouped bars are drawn (no empty slots).
+            # Track labeled groups to avoid duplicate legend entries.
+            labeled_groups: set[str] = set()
+            bar_offset = 0
+            if expand_axis_levels and groups_with_bars:
+                for group, row_items in groups_with_bars:
+                    try:
+                        if not isinstance(df_sub.columns, pd.MultiIndex):
+                            df_group_slice = df_sub[[group]] if group in df_sub.columns else df_sub
+                        elif len(expand_axis_level_names) == 1:
+                            df_group_slice = df_sub.xs(group, level=expand_axis_level_names[0], axis=1)
+                        else:
+                            df_group_slice = df_sub.xs(group, level=expand_axis_level_names, axis=1)
+                    except KeyError:
+                        bar_offset += len(row_items)
+                        continue
+                    if isinstance(df_group_slice, pd.Series):
+                        df_group_slice = df_group_slice.to_frame()
+                    for i, ri in enumerate(row_items):
+                        row_data = df_group_slice.loc[[ri]]
+                        if skip_data_with_only_zeroes:
+                            row_data = row_data.loc[:, (row_data.abs() > 1e-6).any(axis=0)]
+                        if row_data.empty:
+                            bar_offset += 1
+                            continue
+                        _plot_grouped_bars(ax, row_data, [[None, ri]], [],
+                                           grouped_bar_level_names, bar_orientation, value_fmt,
+                                           shared_color_map=shared_color_map,
+                                           y_positions=[y_positions[bar_offset]],
+                                           slot_heights=[per_bar_heights[bar_offset]],
+                                           labeled_groups=labeled_groups)
+                        bar_offset += 1
+            else:
+                for i, (_, ri) in enumerate(all_bars):
+                    row_data = df_sub.loc[[ri]]
+                    if skip_data_with_only_zeroes:
+                        row_data = row_data.loc[:, (row_data.abs() > 1e-6).any(axis=0)]
+                    if row_data.empty:
+                        bar_offset += 1
+                        continue
+                    _plot_grouped_bars(ax, row_data, [[None, ri]], expand_axis_level_names,
+                                       grouped_bar_level_names, bar_orientation, value_fmt,
+                                       shared_color_map=shared_color_map,
+                                       y_positions=[y_positions[bar_offset]],
+                                       slot_heights=[per_bar_heights[bar_offset]],
+                                       labeled_groups=labeled_groups)
+                    bar_offset += 1
         elif stack_levels:
             _plot_stacked_bars(ax, df_sub, all_bars, expand_axis_level_names,
                                stack_level_names, bar_orientation,
-                               shared_color_map=shared_color_map)
+                               shared_color_map=shared_color_map,
+                               y_positions=y_positions, slot_heights=per_bar_heights)
         else:
             _plot_simple_bars(ax, df_sub, all_bars, expand_axis_level_names,
-                              bar_orientation, value_fmt)
+                              bar_orientation, value_fmt,
+                              y_positions=y_positions, slot_heights=per_bar_heights)
 
         # Set up axis with groups and bars
         # Build bar labels for display (matching all_bars structure)
@@ -532,94 +659,90 @@ def _render_bar_figure(
                 else:
                     display_bar_labels.append(str(idx_val))
 
-        # Set main axis for individual bars
+        # Set main axis for individual bars (use cumulative y_positions)
         if bar_orientation == 'horizontal':
-            ax.set_yticks(range(len(all_bars)), labels=display_bar_labels)
+            ax.set_yticks(y_positions, labels=display_bar_labels)
             ax.tick_params('y', length=0)
-            ax.set_ylim(-0.5, len(all_bars) - 0.5)
+            ax.set_ylim(0, bars_only_h)
             ax.tick_params(labelsize=10)
         else:  # vertical
-            ax.set_xticks(range(len(all_bars)), labels=display_bar_labels)
+            ax.set_xticks(y_positions, labels=display_bar_labels)
             ax.tick_params('x', length=0)
-            ax.set_xlim(-0.5, len(all_bars) - 0.5)
+            ax.set_xlim(0, bars_only_h)
             ax.tick_params(labelsize=10)
             plt.setp(ax.get_xticklabels(), rotation=90, ha='center')
 
         if expand_axis_levels:
             # Multiple groups - add two-level axis
-            # Calculate group centers and separators (using actual bar counts per group)
+            # Compute bar slot boundaries, group centers, and group boundaries
+            # from cumulative y_positions.
+            bar_boundaries = [y_positions[0] - per_bar_heights[0] / 2]
+            for i in range(len(y_positions)):
+                bar_boundaries.append(y_positions[i] + per_bar_heights[i] / 2)
+
             group_centers = []
-            group_lefts = []
-            bar_idx = 0
+            group_boundaries = []
+            pos_idx = 0
             for _, row_items in groups_with_bars:
-                n_bars_in_group = len(row_items)
-                group_center = bar_idx + (n_bars_in_group - 1) / 2
-                group_centers.append(group_center)
-                group_lefts.append(bar_idx - 0.5)
-                bar_idx += n_bars_in_group
-            group_lefts.append(bar_idx - 0.5)
+                n_in_group = len(row_items)
+                first_y = y_positions[pos_idx]
+                last_y = y_positions[pos_idx + n_in_group - 1]
+                group_centers.append((first_y + last_y) / 2)
+                group_boundaries.append(bar_boundaries[pos_idx])
+                pos_idx += n_in_group
+            group_boundaries.append(bar_boundaries[-1])
 
             # Calculate padding using pre-calculated margin values
             if bar_orientation == 'horizontal':
-                # Use pre-calculated margins (convert from inches to points: multiply by 72)
                 if layout.bar_label_width > 0 and layout.group_label_width > 0:
-                    # Bar separators: bar label margin + small offset
                     bar_tick_length = layout.bar_label_width * 72
-                    # Group separators: both label margins + padding
                     group_tick_length = layout.total_label_width * 72
-                    # Group label padding: bar label margin
                     group_label_pad = layout.bar_label_width * 72 + 10
                 else:
-                    # Fallback for single subplot or no expand_axis_levels
                     bar_tick_length = 5
                     group_tick_length = 30
                     group_label_pad = 10
 
-                # Add separators between individual bars
+                # Bar separators (between every slot)
                 bar_sep_ax = ax.secondary_yaxis(location=0)
-                bar_sep_ax.set_yticks([x - 0.5 for x in range(len(all_bars) + 1)], [''] * (len(all_bars) + 1))
+                bar_sep_ax.set_yticks(bar_boundaries, [''] * len(bar_boundaries))
                 bar_sep_ax.tick_params('y', length=bar_tick_length)
 
-                # Add secondary y-axis for groups
+                # Group labels (centered)
                 group_ax = ax.secondary_yaxis(location=0)
                 group_ax.set_yticks(group_centers, labels=group_labels)
                 group_ax.tick_params('y', length=0, pad=group_label_pad)
                 group_ax.tick_params(labelsize=10)
 
-                # Separators for groups
+                # Group separators (between groups)
                 group_sep_ax = ax.secondary_yaxis(location=0)
-                group_sep_ax.set_yticks(group_lefts, [''] * (len(group_labels) + 1))
+                group_sep_ax.set_yticks(group_boundaries, [''] * len(group_boundaries))
                 group_sep_ax.tick_params('y', length=group_tick_length)
             else:  # vertical
-                # Use pre-calculated margins (convert from inches to points: multiply by 72)
                 if layout.bar_label_width > 0 and layout.group_label_width > 0:
-                    # Bar separators: bar label margin + small offset
                     bar_tick_length = layout.bar_label_width * 72
-                    # Group separators: both label margins + padding
                     group_tick_length = layout.total_label_width * 72
-                    # Group label padding: bar label margin
                     group_label_pad = layout.bar_label_width * 72 + 10
                 else:
-                    # Fallback for single subplot or no expand_axis_levels
                     bar_tick_length = 5
                     group_tick_length = 30
                     group_label_pad = 10
 
-                # Add separators between individual bars
+                # Bar separators
                 bar_sep_ax = ax.secondary_xaxis(location=0)
-                bar_sep_ax.set_xticks([x - 0.5 for x in range(len(all_bars) + 1)], [''] * (len(all_bars) + 1))
+                bar_sep_ax.set_xticks(bar_boundaries, [''] * len(bar_boundaries))
                 bar_sep_ax.tick_params('x', length=bar_tick_length)
 
-                # Add secondary x-axis for groups
+                # Group labels
                 group_ax = ax.secondary_xaxis(location=0)
                 group_ax.set_xticks(group_centers, labels=group_labels)
                 group_ax.tick_params('x', length=0, pad=group_label_pad)
                 group_ax.tick_params(labelsize=10)
                 plt.setp(group_ax.get_xticklabels(), rotation=90, ha='center')
 
-                # Separators for groups
+                # Group separators
                 group_sep_ax = ax.secondary_xaxis(location=0)
-                group_sep_ax.set_xticks(group_lefts, [''] * (len(group_labels) + 1))
+                group_sep_ax.set_xticks(group_boundaries, [''] * len(group_boundaries))
                 group_sep_ax.tick_params('x', length=group_tick_length)
 
         # Subplot title (only for actual subplot dimensions, not the figure title)
@@ -646,11 +769,10 @@ def _render_bar_figure(
 
             if _should_show_legend(legend_position, sub_levels, idx, n_cols, n_subs):
                 # Axes width depends on orientation: horizontal uses base_bar_length,
-                # vertical uses bar area width (eff_bar_height * n_bars)
                 if bar_orientation == 'horizontal':
                     axes_width = layout.base_bar_length
                 else:
-                    axes_width = eff_bar_height * len(all_bars)
+                    axes_width = bars_only_h
                 legend_x = 1 + LEGEND_GAP / axes_width
                 # _plot_stacked_bars and _plot_grouped_bars build legend entries
                 # in the correct visual order — no reversal needed here.
@@ -748,9 +870,7 @@ def _render_bar_figure(
         if bar_orientation == 'horizontal':
             axes_width = layout.base_bar_length
         else:
-            axes_width = eff_bar_height * max(
-                (len(ep[1]) for ep in effective_plots), default=1
-            )
+            axes_width = bars_only_h if bars_only_h > 0 else 1.0
         legend_x = 1 + LEGEND_GAP / axes_width
         ax_legend.legend(handles, labels_all, title=legend_title,
                          bbox_to_anchor=(legend_x, 1), loc='upper left', borderaxespad=0)
@@ -779,7 +899,8 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
         value_label=False, axis_bounds=None, axis_tick_format='1,.0f',
         always_include_zero_in_axis=True, max_items_per_plot=10,
         max_subplots_per_file=6, output_filepath=None,
-        only_first_file=False):
+        only_first_file=False,
+        skip_data_with_only_zeroes=False):
     """
     Create horizontal stacked and grouped bar plot.
 
@@ -998,5 +1119,6 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             always_include_zero_in_axis, batch_filepath,
             layout=layout,
             shared_color_map=shared_color_map,
+            skip_data_with_only_zeroes=skip_data_with_only_zeroes,
         )
     return skipped

@@ -523,7 +523,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             max_items_per_plot=max_items,
                             max_subplots_per_file=cfg.max_subplots_per_file,
                             output_filepath=filepath,
-                            only_first_file=only_first_file)
+                            only_first_file=only_first_file,
+                            skip_data_with_only_zeroes=cfg.skip_data_with_only_zeroes)
 
                     elif fm_subplot_levels:
                         # TIME + SUBPLOTS: send all data in one call.

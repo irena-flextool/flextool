@@ -169,7 +169,7 @@ plots:
     max_items_per_plot: 20
     subplots_per_row: 2
     max_subplots_per_file: 6
-    map_dimensions_for_plots: [d_see, m_geu]
+    map_dimensions_for_plots: [d_see, m_gbu]
     legend: shared
     skip_data_with_only_zeroes: true
     xlabel: MWh

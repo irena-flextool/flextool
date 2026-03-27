@@ -34,6 +34,9 @@ def _plot_grouped_bars(
     bar_orientation: str,
     value_fmt: str | None,
     shared_color_map: dict[str, tuple] | None = None,
+    y_positions: list[float] | None = None,
+    slot_heights: list[float] | None = None,
+    labeled_groups: set[str] | None = None,
 ) -> None:
     """Render grouped side-by-side bars onto ax for one subplot."""
     # Get grouped bar combinations
@@ -61,23 +64,9 @@ def _plot_grouped_bars(
         if n_grouped > 10:
             colors = list(plt.colormaps['tab20'].colors[:n_grouped])
 
-    # Calculate bar width and offsets for side-by-side positioning.
-    # Horizontal: group 0 at top (positive offset) so visual top-to-bottom = legend top-to-bottom.
-    # Vertical: group 0 at left (negative offset) so visual left-to-right = legend top-to-bottom.
-    total_bar_width = 0.8
-    bar_width = total_bar_width / n_grouped
-    if bar_orientation == 'horizontal':
-        bar_offsets = np.linspace(
-            total_bar_width / 2 - bar_width / 2,      # top
-            -total_bar_width / 2 + bar_width / 2,      # bottom
-            n_grouped,
-        )
-    else:
-        bar_offsets = np.linspace(
-            -total_bar_width / 2 + bar_width / 2,      # left
-            total_bar_width / 2 - bar_width / 2,        # right
-            n_grouped,
-        )
+    # Bar width/offset are now computed per-position using slot_heights.
+    # The fraction 0.8 of the slot is used for bars.
+    TOTAL_BAR_FRACTION = 0.8
 
     # Track which grouped bars have been labeled
     labeled_grouped_bars: set = set()
@@ -127,24 +116,39 @@ def _plot_grouped_bars(
                         df_grouped = df_grouped.sum(axis=1)
                     value = df_grouped.loc[period] if period in df_grouped.index else 0
 
-            # Create label (only once per grouped bar)
-            if grouped_idx not in labeled_grouped_bars:
-                if isinstance(grouped_bar, (tuple, list)):
-                    label = ' | '.join(str(v) for v in grouped_bar)
+            # Create label (only once per grouped bar across all calls)
+            if isinstance(grouped_bar, (tuple, list)):
+                label_str = ' | '.join(str(v) for v in grouped_bar)
+            else:
+                label_str = str(grouped_bar)
+            if labeled_groups is not None:
+                if label_str in labeled_groups:
+                    label = ''
                 else:
-                    label = str(grouped_bar)
+                    label = label_str
+                    labeled_groups.add(label_str)
+            elif grouped_idx not in labeled_grouped_bars:
+                label = label_str
                 labeled_grouped_bars.add(grouped_idx)
             else:
                 label = ''
 
-            # Plot bar with offset
-            bar_position = bar_idx + bar_offsets[grouped_idx]
+            # Plot bar with per-position offset and width
+            slot_h = slot_heights[bar_idx] if slot_heights else 1.0
+            bar_w = TOTAL_BAR_FRACTION * slot_h / n_grouped
+            total_w = TOTAL_BAR_FRACTION * slot_h
             if bar_orientation == 'horizontal':
-                container = ax.barh(bar_position, value, height=bar_width,
+                offset = total_w / 2 - bar_w / 2 - grouped_idx * bar_w  # top to bottom
+            else:
+                offset = -total_w / 2 + bar_w / 2 + grouped_idx * bar_w  # left to right
+            y_pos = y_positions[bar_idx] if y_positions else bar_idx
+            bar_position = y_pos + offset
+            if bar_orientation == 'horizontal':
+                container = ax.barh(bar_position, value, height=bar_w,
                                     label=label,
                                     color=colors[grouped_idx % len(colors)])
             else:  # vertical
-                container = ax.bar(bar_position, value, width=bar_width,
+                container = ax.bar(bar_position, value, width=bar_w,
                                    label=label,
                                    color=colors[grouped_idx % len(colors)])
             if value_fmt:
@@ -156,20 +160,26 @@ def _plot_grouped_bars(
 
     # Add invisible bars for zero-value grouped bars (for legend completeness)
     for grouped_idx in range(len(grouped_bars)):
-        if grouped_idx not in labeled_grouped_bars:
-            grouped_bar = grouped_bars[grouped_idx]
-            if isinstance(grouped_bar, (tuple, list)):
-                label = ' | '.join(str(v) for v in grouped_bar)
-            else:
-                label = str(grouped_bar)
-            if bar_orientation == 'horizontal':
-                ax.barh(0, 0, height=bar_width, left=0,
-                        label=label,
-                        color=colors[grouped_idx % len(colors)])
-            else:  # vertical
-                ax.bar(0, 0, width=bar_width, bottom=0,
-                       label=label,
-                       color=colors[grouped_idx % len(colors)])
+        grouped_bar = grouped_bars[grouped_idx]
+        if isinstance(grouped_bar, (tuple, list)):
+            label_str = ' | '.join(str(v) for v in grouped_bar)
+        else:
+            label_str = str(grouped_bar)
+        # Skip if already labeled (either locally or across calls)
+        if labeled_groups is not None and label_str in labeled_groups:
+            continue
+        if grouped_idx in labeled_grouped_bars:
+            continue
+        if labeled_groups is not None:
+            labeled_groups.add(label_str)
+        if bar_orientation == 'horizontal':
+            ax.barh(0, 0, height=0.01, left=0,
+                    label=label_str,
+                    color=colors[grouped_idx % len(colors)])
+        else:  # vertical
+            ax.bar(0, 0, width=0.01, bottom=0,
+                   label=label_str,
+                   color=colors[grouped_idx % len(colors)])
 
 
 def _plot_stacked_bars(
@@ -180,6 +190,8 @@ def _plot_stacked_bars(
     stack_level_names: list,
     bar_orientation: str,
     shared_color_map: dict[str, tuple] | None = None,
+    y_positions: list[float] | None = None,
+    slot_heights: list[float] | None = None,
 ) -> None:
     """Render stacked bars onto ax for one subplot.
 
@@ -271,15 +283,19 @@ def _plot_stacked_bars(
             elif value < 0:
                 neg_stacks.add(stack_idx)
 
+        y_pos = y_positions[bar_idx] if y_positions else bar_idx
+        slot_h = slot_heights[bar_idx] if slot_heights else 0.8
+        bar_h = 0.8 * slot_h  # 80% of slot for the bar
+
         # Stack positive values (forward order: 0,1,...,N)
         left_pos = 0
         for stack_idx, value in enumerate(values):
             if value > 0:
                 if bar_orientation == 'horizontal':
-                    ax.barh(bar_idx, value, left=left_pos,
+                    ax.barh(y_pos, value, left=left_pos, height=bar_h,
                             color=colors[stack_idx % len(colors)])
                 else:
-                    ax.bar(bar_idx, value, bottom=left_pos,
+                    ax.bar(y_pos, value, bottom=left_pos, width=bar_h,
                            color=colors[stack_idx % len(colors)])
                 left_pos += value
 
@@ -289,10 +305,10 @@ def _plot_stacked_bars(
             value = values[stack_idx]
             if value < 0:
                 if bar_orientation == 'horizontal':
-                    ax.barh(bar_idx, value, left=left_neg,
+                    ax.barh(y_pos, value, left=left_neg, height=bar_h,
                             color=colors[stack_idx % len(colors)])
                 else:
-                    ax.bar(bar_idx, value, bottom=left_neg,
+                    ax.bar(y_pos, value, bottom=left_neg, width=bar_h,
                            color=colors[stack_idx % len(colors)])
                 left_neg += value
 
@@ -329,6 +345,8 @@ def _plot_simple_bars(
     expand_axis_level_names: list,
     bar_orientation: str,
     value_fmt: str | None,
+    y_positions: list[float] | None = None,
+    slot_heights: list[float] | None = None,
 ) -> None:
     """Render simple single-color bars onto ax for one subplot (no stacking, no grouping)."""
     for bar_idx, (group, period) in enumerate(all_bars):
@@ -348,11 +366,14 @@ def _plot_simple_bars(
         else:
             value = df_bar.loc[period].sum() if period in df_bar.index else 0
 
-        # Plot single-color bar (no label, no legend)
+        # Plot single-color bar
+        y_pos = y_positions[bar_idx] if y_positions else bar_idx
+        slot_h = slot_heights[bar_idx] if slot_heights else 0.8
+        bar_h = 0.8 * slot_h
         if bar_orientation == 'horizontal':
-            container = ax.barh(bar_idx, value, color='steelblue')
+            container = ax.barh(y_pos, value, height=bar_h, color='steelblue')
         else:  # vertical
-            container = ax.bar(bar_idx, value, color='steelblue')
+            container = ax.bar(y_pos, value, width=bar_h, color='steelblue')
         if value_fmt:
             if value_fmt == 'dynamic':
                 _dfmt = DynamicFormatter()
