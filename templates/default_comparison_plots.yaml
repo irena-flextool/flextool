@@ -238,10 +238,10 @@ plots:
     default:
       plot_name: '3.0.d Costs annualized'
       base_length: 10
-      max_items_per_plot: 40
+      max_items_per_plot: 30
       max_subplots_per_file: 1
       xlabel: 'Millions of Currency'
-      map_dimensions_for_plots: [d_sp, e_bs]
+      map_dimensions_for_plots: [d_sp, b_es]
     sum_periods:
       plot_name: '3.0.a Costs annualized sum periods'
       base_length: 10

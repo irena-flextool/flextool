@@ -1016,11 +1016,13 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             ' | '.join(str(v) for v in sub) if isinstance(sub, tuple)
             else str(sub) if sub is not None else None
         )
-        # Limit by row items (text lines on the y-axis).
-        # Grouped bars don't add lines; expand-axis groups are handled in rendering.
+        # Limit total y-axis labels (row items × expand groups) to max_items_per_plot.
+        # Each row appears once per expand group, so divide the limit accordingly.
         n_rows = len(df_sub)
-        if max_items_per_plot and n_rows > max_items_per_plot:
-            max_row_items = max_items_per_plot
+        effective_max = max_items_per_plot // max(n_expand_groups, 1) if max_items_per_plot else 0
+        effective_max = max(effective_max, 1) if effective_max else 0
+        if effective_max and n_rows > effective_max:
+            max_row_items = effective_max
             if n_rows > max_row_items:
                 # Split by rows
                 for i in range(0, n_rows, max_row_items):
