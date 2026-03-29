@@ -391,17 +391,14 @@ plots:
       max_subplots_per_file: 2
       base_length: 12
       map_dimensions_for_plots: [d_sgpe, m_buss]
-
       ylabel: MWh
-  # nodeGroup_flows_dt_gpe:
-  #   plot_name: '6.0.t NodeGroup dispatch'
-  #   map_dimensions_for_plots: [dt_sgpe, tt_fuss]
-  #   subplots_per_row: 2
-  #   max_subplots_per_file: 6
-  #   max_items_per_plot: 30
-  #   base_length: 8
-  # nodeGroup_gdt_p:
-  #   plot_name: '6.1.t NodeGroup indicators'
+  nodeGroup_flows_dt_gpe:
+    plot_name: '6.0.t NodeGroup dispatch'
+    map_dimensions_for_plots: [dt_sgpe, tt_fuss]
+    subplots_per_row: 2
+    max_subplots_per_file: 4
+    max_items_per_plot: 30
+    base_length: 8
   nodeGroup_gd_p:
     plot_name: '6.1.d NodeGroup indicators'
     subplots_per_row: 2
@@ -409,7 +406,8 @@ plots:
     axis_bounds: [[0,1], [0,1], [0,1], [0,1], [], [0,1]]
     axis_tick_format: ['.0%', '.0%', '.0%', '.0%', 'dynamic', '.0%']
     xlabel: [percent, percent, percent, percent, MWh, percent]
-
+  # nodeGroup_gdt_p:
+  #   plot_name: '6.1.t NodeGroup indicators'
   nodeGroup_VRE_share_d_g:
     default:
       plot_name: '6.2.d NodeGroup VRE share'
@@ -461,12 +459,6 @@ plots:
       max_subplots_per_file: 1
       base_length: 8
       map_dimensions_for_plots: [d_sg, m_gb]
-      legend: shared
-      ylabel: MWh
-  nodeGroup_flows_dt_g:
-    default:
-      plot_name: '6.4.t NodeGroup flows'
-      map_dimensions_for_plots: [dt_sg, tt_lu]
       legend: shared
       ylabel: MWh
 

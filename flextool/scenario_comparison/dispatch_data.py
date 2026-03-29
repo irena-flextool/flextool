@@ -277,11 +277,17 @@ def prepare_dispatch_data(
                             node = row['node']
                             col_key = (unit, node)
                             if col_key in unit_input.columns:
-                                flow_sum = flow_sum.add(-unit_input[col_key], fill_value=0)
+                                flow_sum = flow_sum.add(unit_input[col_key], fill_value=0)
 
                         if flow_sum.abs().sum() > 0:
+                            # If this group already has a positive (Unit_to_group)
+                            # column, keep charge as "Charge" so both discharge
+                            # and charge are separately visible in the dispatch.
                             if group_agg in df_dispatch.columns:
-                                df_dispatch[group_agg] = df_dispatch[group_agg].add(flow_sum, fill_value=0)
+                                if 'Charge' in df_dispatch.columns:
+                                    df_dispatch['Charge'] = df_dispatch['Charge'].add(flow_sum, fill_value=0)
+                                else:
+                                    df_dispatch['Charge'] = flow_sum
                             else:
                                 df_dispatch[group_agg] = flow_sum
 
