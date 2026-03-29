@@ -953,6 +953,9 @@ def write_parameter(
     with open(filename, 'w') as realfile:
         realfile.write(header + "\n")
         for param in params:
+            # Skip parameters with None type (value cleared in an alternative)
+            if param["type"] is None:
+                continue
             # This filter ensures that the parameter is of required type (skip to next if not)
             if filter_in_type and param["type"] not in filter_in_type:
                 continue

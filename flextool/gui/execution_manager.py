@@ -543,12 +543,12 @@ class ExecutionManager:
         do_comp_plots = settings.auto_generate_comp_plots
         do_comp_excel = settings.auto_generate_comp_excel
 
-        # Gather scenario names from successful jobs
+        # Gather scenario names from successful SCENARIO jobs only
         with self._lock:
             successful = [
                 j.scenario_name
                 for j in self._jobs
-                if j.status == JobStatus.SUCCESS
+                if j.job_type == JobType.SCENARIO and j.status == JobStatus.SUCCESS
             ]
             # Merge in any externally-specified comparison scenarios
             extra = [s for s in self._comparison_scenarios if s not in successful]

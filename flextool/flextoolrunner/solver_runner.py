@@ -16,6 +16,8 @@ import time
 import xml.etree.ElementTree as ET
 from typing import IO
 
+import highspy
+
 from flextool.flextoolrunner.runner_state import RunnerState, FlexToolSolveError
 
 
@@ -74,15 +76,18 @@ class SolverRunner:
     # ------------------------------------------------------------------
 
     def _platform_binaries(self) -> tuple[str, str]:
-        """Return (glpsol_path, highs_path) and set executable permissions on Linux."""
+        """Return (glpsol_path, highs_path) and set executable permissions on Linux.
+
+        highs_path is kept for backward compatibility but is no longer used
+        (HiGHS is called via highspy Python API).
+        """
         if sys.platform.startswith("linux"):
             glpsol_file = str(self.state.paths.bin_dir / "glpsol")
             highs_file = str(self.state.paths.bin_dir / "highs")
-            for binary in (glpsol_file, highs_file):
-                if os.path.exists(binary):
-                    current_permissions = os.stat(binary).st_mode & 0o777
-                    if current_permissions != 0o755:
-                        os.chmod(binary, 0o755)
+            if os.path.exists(glpsol_file):
+                current_permissions = os.stat(glpsol_file).st_mode & 0o777
+                if current_permissions != 0o755:
+                    os.chmod(glpsol_file, 0o755)
         elif sys.platform.startswith("win32"):
             glpsol_file = str(self.state.paths.bin_dir / "glpsol.exe")
             highs_file = str(self.state.paths.bin_dir / "highs.exe")
@@ -230,28 +235,68 @@ class SolverRunner:
         mps_file: str,
         highs_option_file: str,
     ) -> None:
-        """Run HiGHS solver on an MPS file."""
+        """Run HiGHS solver on an MPS file via highspy Python API."""
         wf = self.state.paths.work_folder
-        highs_step2 = [
-            highs_file, mps_file, f"--options_file={highs_option_file}",
-            f"--presolve={self.state.solve.highs.presolve.get(current_solve, 'on')}",
-            f"--solver={self.state.solve.highs.method.get(current_solve, 'choose')}",
-            f"--parallel={self.state.solve.highs.parallel.get(current_solve, 'off')}",
-        ]
-        completed = subprocess.run(highs_step2, cwd=str(wf))
-        if completed.returncode != 0:
-            message = f'Highs solver failed: {completed.returncode}'
+        h = highspy.Highs()
+
+        # Apply options from highs.opt file
+        # Paths for solution_file and log_file are made absolute to work folder
+        _PATH_OPTIONS = {'solution_file', 'log_file'}
+        if os.path.exists(highs_option_file):
+            with open(highs_option_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    key, _, value = line.partition('=')
+                    key, value = key.strip(), value.strip()
+                    if key in _PATH_OPTIONS:
+                        value = str(wf / value)
+                    h.setOptionValue(key, self._parse_highs_option(value))
+
+        # Ensure log goes to work folder
+        h.setOptionValue('log_file', str(wf / 'HiGHS.log'))
+
+        # Apply per-solve overrides from database
+        h.setOptionValue('presolve', self.state.solve.highs.presolve.get(current_solve, 'on'))
+        h.setOptionValue('solver', self.state.solve.highs.method.get(current_solve, 'choose'))
+        h.setOptionValue('parallel', self.state.solve.highs.parallel.get(current_solve, 'off'))
+
+        # Read and solve
+        status = h.readModel(mps_file)
+        if status != highspy.HighsStatus.kOk:
+            message = f'HiGHS failed to read model: {mps_file}'
             self.logger.error(message)
             raise FlexToolSolveError(message)
+
+        status = h.run()
+        model_status = h.getModelStatus()
+
+        if model_status == highspy.HighsModelStatus.kInfeasible:
+            message = "The model is infeasible. Check the constraints."
+            self.logger.error(message)
+            raise FlexToolSolveError(message)
+
+        if status != highspy.HighsStatus.kOk:
+            message = f'HiGHS solver failed with status: {model_status}'
+            self.logger.error(message)
+            raise FlexToolSolveError(message)
+
         self.logger.info("HiGHS solved the problem")
 
-        # Check if solution is infeasible
-        with open(wf / 'HiGHS.log', 'r') as inf_file:
-            inf_content = inf_file.read()
-            if 'Infeasible' in inf_content:
-                message = "The model is infeasible. Check the constraints."
-                self.logger.error(message)
-                raise FlexToolSolveError(message)
+    @staticmethod
+    def _parse_highs_option(value: str) -> int | float | str:
+        """Parse a HiGHS option value string to the appropriate Python type."""
+        if value.lower() in ('true', 'false'):
+            return value.lower()
+        try:
+            return int(value)
+        except ValueError:
+            pass
+        try:
+            return float(value)
+        except ValueError:
+            return value
 
     def _run_cplex(
         self,

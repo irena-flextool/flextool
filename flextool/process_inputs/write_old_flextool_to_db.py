@@ -378,7 +378,25 @@ def _write_balance_nodes(
     logger.info("Wrote %d balance nodes.", len(data.grid_nodes))
 
 
-def _write_storage_nodes_and_connections(
+def _has_eff_charge(unit: UnitInstance, data: OldFlexToolData) -> bool:
+    """Return True if the unit's unit_type has an eff_charge parameter."""
+    ut = _get_unit_type(data, unit)
+    if ut is None:
+        return False
+    ec = ut.params.get("eff charge")
+    return ec is not None and ec > 0
+
+
+def _needs_charger_discharger(unit: UnitInstance, data: OldFlexToolData) -> bool:
+    """Return True if the unit should be split into charger + discharger.
+
+    Based on the existence of ``eff_charge`` in the unit_type, which indicates
+    the unit has a charging/storage dimension (battery, pumped hydro, etc.).
+    """
+    return _has_eff_charge(unit, data)
+
+
+def _write_storage_units(
     data: OldFlexToolData,
     db: DatabaseMapping,
     alt_name: str,
@@ -386,31 +404,37 @@ def _write_storage_nodes_and_connections(
     entities_added: set[tuple[str, tuple[str, ...]]],
     entity_alts_added: set[tuple[str, tuple[str, ...], str]],
 ) -> None:
-    """Write storage nodes and their connections (Section 3)."""
-    count = 0
-    for unit in data.units:
-        # Units with inflow profiles get their storage handled by _write_inflow_units
-        if unit.inflow_profile:
-            continue
+    """Write storage nodes with charger/discharger units (Section 3).
 
-        has_storage = (
-            (unit.storage_mwh is not None and unit.storage_mwh > 0)
-            or (unit.storage_mwh is not None and unit.storage_mwh == 0
-                and (unit.storage_start is not None or unit.storage_finish is not None))
-        )
-        if not has_storage:
+    For pure storage units (no fuel, no cf_profile, no inflow), creates:
+    - A storage node with has_balance + has_storage
+    - A charger unit: output_node → storage_node
+    - A discharger unit: storage_node → output_node
+    - Investment constraint linking charger and discharger capacities
+    - Optional kW/kWh constraint linking discharger and storage node capacities
+    """
+    use_online = _get_master_param(data, "use online") == 1
+    use_ramps = _get_master_param(data, "use ramps") == 1
+    count = 0
+
+    for unit in data.units:
+        if not _needs_charger_discharger(unit, data):
             continue
 
         unit_name = _get_unit_name(unit)
+        ut = _get_unit_type(data, unit)
         storage_node = f"{unit_name}_storage"
-        conn_name = f"{unit_name}_conn"
+        charger_name = f"{unit_name}_charger"
+        discharger_name = f"{unit_name}_discharger"
         output_node = unit.output_node
 
         if output_node is None:
-            logger.warning("Unit '%s' has storage but no output node; skipping storage.", unit_name)
+            logger.warning("Unit '%s' has no output node; skipping storage.", unit_name)
             continue
 
-        # Storage node
+        capacity = unit.capacity_mw or 0.0
+
+        # ── Storage node ──────────────────────────────────────────
         _add_entity(db, "node", storage_node, alt_name, counters,
                      entities_added, entity_alts_added)
         _add_param(db, "node", (storage_node,), "has_balance", "yes",
@@ -422,37 +446,295 @@ def _write_storage_nodes_and_connections(
         _add_param(db, "node", (storage_node,), "storage_binding_method",
                    "bind_within_solve", alt_name, counters)
 
-        # Self-discharge loss from unit_type
         self_discharge = _get_unit_type_param(data, unit, "self discharge loss")
         _add_param_if_set(db, "node", (storage_node,), "self_discharge_loss",
                           self_discharge, alt_name, counters)
-
-        # Storage state start
         _add_param_if_set(db, "node", (storage_node,), "storage_state_start",
                           unit.storage_start, alt_name, counters, skip_zero=False)
 
-        # Connection entity
-        _add_entity(db, "connection", conn_name, alt_name, counters,
-                     entities_added, entity_alts_added)
+        # Storage node investment (inv.cost/kWh)
+        inv_cost_kwh = _get_unit_type_param(data, unit, "inv.cost/kwh")
+        _add_param_if_set(db, "node", (storage_node,), "invest_cost",
+                          inv_cost_kwh, alt_name, counters)
+        if unit.max_invest_mwh is not None and unit.max_invest_mwh > 0:
+            _add_param(db, "node", (storage_node,), "invest_max_total",
+                       unit.max_invest_mwh, alt_name, counters)
+            _add_param(db, "node", (storage_node,), "invest_method",
+                       "invest_total", alt_name, counters)
 
-        capacity = unit.capacity_mw or unit.invested_capacity_mw or 0.0
-        _add_param_if_set(db, "connection", (conn_name,), "existing", capacity,
-                          alt_name, counters)
+        # Inflow on storage node (pumped hydro pattern)
+        if unit.inflow_profile:
+            inflow_ts = _find_inflow_profile(data, unit.inflow_profile)
+            if inflow_ts and inflow_ts.data:
+                ts_data = inflow_ts.data
+                if unit.inflow_multiplier is not None and unit.inflow_multiplier != 0:
+                    ts_data = {k: v * unit.inflow_multiplier for k, v in ts_data.items()}
+                inflow_map = _make_time_map(ts_data)
+                _add_param(db, "node", (storage_node,), "inflow",
+                           inflow_map, alt_name, counters)
+                _add_param(db, "node", (storage_node,), "inflow_method",
+                           "use_original", alt_name, counters)
+
+        # ── Charger unit ──────────────────────────────────────────
+        _add_entity(db, "unit", charger_name, alt_name, counters,
+                     entities_added, entity_alts_added)
+        _add_param(db, "unit", (charger_name,), "conversion_method",
+                   "constant_efficiency", alt_name, counters)
+        _add_param(db, "unit", (charger_name,), "existing", capacity,
+                   alt_name, counters)
 
         eff_charge = _get_unit_type_param(data, unit, "eff charge")
-        _add_param(db, "connection", (conn_name,), "efficiency",
+        _add_param(db, "unit", (charger_name,), "efficiency",
                    eff_charge if eff_charge is not None else 1.0, alt_name, counters)
-        _add_param(db, "connection", (conn_name,), "transfer_method",
-                   "regular", alt_name, counters)
 
-        # connection__node__node: (conn, output_node, storage_node)
-        _add_relationship(db, "connection__node__node",
-                          (conn_name, output_node, storage_node),
+        avail = _get_unit_type_param(data, unit, "availability")
+        if avail is not None and avail < 1.0:
+            _add_param(db, "unit", (charger_name,), "availability", avail,
+                       alt_name, counters)
+
+        # Charger relationships
+        _add_relationship(db, "unit__inputNode", (charger_name, output_node),
                           alt_name, counters, entities_added, entity_alts_added)
+        _add_relationship(db, "unit__outputNode", (charger_name, storage_node),
+                          alt_name, counters, entities_added, entity_alts_added)
+
+        # Charger ramps
+        if use_ramps:
+            ramp_up = _get_unit_type_param(data, unit, "ramp up (p.u. per min)")
+            ramp_down = _get_unit_type_param(data, unit, "ramp down (p.u. per min)")
+            if ramp_up is not None and ramp_up > 0:
+                _add_param(db, "unit__outputNode",
+                           (charger_name, storage_node),
+                           "ramp_method", "ramp_limit", alt_name, counters)
+                _add_param(db, "unit__outputNode",
+                           (charger_name, storage_node),
+                           "ramp_speed_up", ramp_up, alt_name, counters)
+            if ramp_down is not None and ramp_down > 0:
+                _add_param(db, "unit__outputNode",
+                           (charger_name, storage_node),
+                           "ramp_speed_down", ramp_down, alt_name, counters)
+
+        # Charger non-synchronous / inertia on inputNode (the grid side)
+        non_sync = _get_unit_type_param(data, unit, "non synchronous")
+        if non_sync is not None and non_sync == 1:
+            _add_param(db, "unit__inputNode",
+                       (charger_name, output_node),
+                       "is_non_synchronous", "yes", alt_name, counters)
+        inertia_const = _get_unit_type_param(data, unit, "inertia constant (mws/mw)")
+        _add_param_if_set(db, "unit__inputNode",
+                          (charger_name, output_node),
+                          "inertia_constant", inertia_const, alt_name, counters)
+
+        # ── Discharger unit ───────────────────────────────────────
+        _add_entity(db, "unit", discharger_name, alt_name, counters,
+                     entities_added, entity_alts_added)
+        _add_param(db, "unit", (discharger_name,), "existing", capacity,
+                   alt_name, counters)
+
+        # Discharger conversion method — use min_load_efficiency when applicable
+        eff_val = _get_unit_type_param(data, unit, "efficiency")
+        eff_at_min = _get_unit_type_param(data, unit, "eff at min load")
+        min_load_val = _get_unit_type_param(data, unit, "min load")
+        has_min_load = (
+            min_load_val is not None and min_load_val > 0
+            and eff_at_min is not None
+            and eff_val is not None
+            and eff_at_min != eff_val
+        )
+        if has_min_load:
+            _add_param(db, "unit", (discharger_name,), "conversion_method",
+                       "min_load_efficiency", alt_name, counters)
+            _add_param(db, "unit", (discharger_name,), "startup_method",
+                       "linear", alt_name, counters)
+            _add_param(db, "unit", (discharger_name,), "min_load",
+                       min_load_val, alt_name, counters)
+            _add_param(db, "unit", (discharger_name,), "efficiency_at_min_load",
+                       eff_at_min, alt_name, counters)
+        else:
+            _add_param(db, "unit", (discharger_name,), "conversion_method",
+                       "constant_efficiency", alt_name, counters)
+
+        _add_param(db, "unit", (discharger_name,), "efficiency",
+                   eff_val if eff_val is not None else 1.0, alt_name, counters)
+
+        if avail is not None and avail < 1.0:
+            _add_param(db, "unit", (discharger_name,), "availability", avail,
+                       alt_name, counters)
+
+        # Discharger startup (only on discharger)
+        startup_cost = _get_unit_type_param(data, unit, "startup cost")
+        if use_online and startup_cost is not None and startup_cost > 0:
+            _add_param(db, "unit", (discharger_name,), "startup_cost",
+                       startup_cost, alt_name, counters)
+            _add_param(db, "unit", (discharger_name,), "startup_method",
+                       "linear", alt_name, counters)
+
+        min_uptime = _get_unit_type_param(data, unit, "min uptime (h)")
+        _add_param_if_set(db, "unit", (discharger_name,), "min_uptime",
+                          min_uptime, alt_name, counters)
+        min_downtime = _get_unit_type_param(data, unit, "min downtime (h)")
+        _add_param_if_set(db, "unit", (discharger_name,), "min_downtime",
+                          min_downtime, alt_name, counters)
+
+        # Discharger relationships
+        _add_relationship(db, "unit__inputNode", (discharger_name, storage_node),
+                          alt_name, counters, entities_added, entity_alts_added)
+        _add_relationship(db, "unit__outputNode", (discharger_name, output_node),
+                          alt_name, counters, entities_added, entity_alts_added)
+
+        # Discharger O&M cost (only on discharger output)
+        om_cost = _get_unit_type_param(data, unit, "o&m cost/mwh")
+        _add_param_if_set(db, "unit__outputNode",
+                          (discharger_name, output_node),
+                          "other_operational_cost", om_cost, alt_name, counters)
+
+        # Discharger non-synchronous / inertia on outputNode (the grid side)
+        if non_sync is not None and non_sync == 1:
+            _add_param(db, "unit__outputNode",
+                       (discharger_name, output_node),
+                       "is_non_synchronous", "yes", alt_name, counters)
+        _add_param_if_set(db, "unit__outputNode",
+                          (discharger_name, output_node),
+                          "inertia_constant", inertia_const, alt_name, counters)
+
+        # Discharger ramps
+        if use_ramps:
+            ramp_up = _get_unit_type_param(data, unit, "ramp up (p.u. per min)")
+            ramp_down = _get_unit_type_param(data, unit, "ramp down (p.u. per min)")
+            if ramp_up is not None and ramp_up > 0:
+                _add_param(db, "unit__outputNode",
+                           (discharger_name, output_node),
+                           "ramp_method", "ramp_limit", alt_name, counters)
+                _add_param(db, "unit__outputNode",
+                           (discharger_name, output_node),
+                           "ramp_speed_up", ramp_up, alt_name, counters)
+            if ramp_down is not None and ramp_down > 0:
+                _add_param(db, "unit__outputNode",
+                           (discharger_name, output_node),
+                           "ramp_speed_down", ramp_down, alt_name, counters)
+
+        # ── Investment params ──────────────────────────────────────
+        inv_cost_kw = _get_unit_type_param(data, unit, "inv.cost/kw")
+        lifetime = _get_unit_type_param(data, unit, "lifetime")
+        interest = _get_unit_type_param(data, unit, "interest")
+
+        # Cost on discharger only; lifetime and interest on all three
+        # (always set so sensitivities can enable investment later)
+        _add_param_if_set(db, "unit", (discharger_name,), "invest_cost",
+                          inv_cost_kw, alt_name, counters)
+        _add_param_if_set(db, "unit", (discharger_name,), "lifetime",
+                          lifetime, alt_name, counters)
+        _add_param_if_set(db, "unit", (discharger_name,), "interest_rate",
+                          interest, alt_name, counters)
+        _add_param_if_set(db, "unit", (charger_name,), "lifetime",
+                          lifetime, alt_name, counters)
+        _add_param_if_set(db, "unit", (charger_name,), "interest_rate",
+                          interest, alt_name, counters)
+        _add_param_if_set(db, "node", (storage_node,), "lifetime",
+                          lifetime, alt_name, counters)
+        _add_param_if_set(db, "node", (storage_node,), "interest_rate",
+                          interest, alt_name, counters)
+
+        invested_mw = unit.invested_capacity_mw
+        invested_mwh = unit.invested_storage_mwh
+        has_forced_mw = invested_mw is not None and invested_mw > 0
+        has_forced_mwh = invested_mwh is not None and invested_mwh > 0
+        has_invest = unit.max_invest_mw is not None and unit.max_invest_mw > 0
+
+        if has_forced_mw:
+            # Forced investment on charger and discharger
+            for target in (discharger_name, charger_name):
+                _add_param(db, "unit", (target,), "invest_method",
+                           "invest_total", alt_name, counters)
+                _add_param(db, "unit", (target,), "invest_max_total",
+                           invested_mw, alt_name, counters)
+                _add_param(db, "unit", (target,), "invest_min_total",
+                           invested_mw, alt_name, counters)
+        elif has_invest:
+            for target in (discharger_name, charger_name):
+                _add_param(db, "unit", (target,), "invest_method",
+                           "invest_total", alt_name, counters)
+                _add_param(db, "unit", (target,), "invest_max_total",
+                           unit.max_invest_mw, alt_name, counters)
+
+        if has_forced_mwh:
+            # Forced investment on storage node
+            _add_param(db, "node", (storage_node,), "invest_method",
+                       "invest_total", alt_name, counters)
+            _add_param(db, "node", (storage_node,), "invest_max_total",
+                       invested_mwh, alt_name, counters)
+            _add_param(db, "node", (storage_node,), "invest_min_total",
+                       invested_mwh, alt_name, counters)
+        elif unit.max_invest_mwh is not None and unit.max_invest_mwh > 0:
+            _add_param(db, "node", (storage_node,), "invest_method",
+                       "invest_total", alt_name, counters)
+            _add_param(db, "node", (storage_node,), "invest_max_total",
+                       unit.max_invest_mwh, alt_name, counters)
+
+        # ── Charger ↔ Discharger investment constraint ────────────
+        # Always active — ties charger capacity to discharger capacity
+        charger_link = f"{unit_name}_charger_link"
+        deactivate_storage_link = has_forced_mw and has_forced_mwh
+
+        _add_entity(db, "constraint", charger_link, alt_name, counters,
+                     entities_added, entity_alts_added)
+        _add_param(db, "constraint", (charger_link,), "sense", "equal",
+                   alt_name, counters)
+        _add_param(db, "constraint", (charger_link,), "constant", 0.0,
+                   alt_name, counters)
+
+        # Charger always gets charger_link coefficient
+        _add_param(db, "unit", (charger_name,),
+                   "constraint_capacity_coefficient",
+                   Map([charger_link], [-1.0], index_name="constraint"),
+                   alt_name, counters)
+
+        # Build discharger coefficient Map (always includes charger_link)
+        discharger_coeff_indexes = [charger_link]
+        discharger_coeff_values = [1.0]
+
+        # ── kW/kWh constraint (discharger ↔ storage node) ────────
+        # Deactivated when both MW and MWh are forced (avoids rounding issues)
+        kw_kwh_ratio = _get_unit_type_param(data, unit, "fixed kw/kwh ratio")
+        if kw_kwh_ratio is not None and kw_kwh_ratio > 0:
+            storage_link = f"{unit_name}_storage_link"
+            _add_entity(db, "constraint", storage_link, alt_name, counters,
+                         entities_added, entity_alts_added)
+            _add_param(db, "constraint", (storage_link,), "sense", "equal",
+                       alt_name, counters)
+            _add_param(db, "constraint", (storage_link,), "constant", 0.0,
+                       alt_name, counters)
+
+            if deactivate_storage_link:
+                try:
+                    db.add_or_update_entity_alternative(
+                        entity_class_name="constraint",
+                        entity_byname=(storage_link,),
+                        alternative_name=alt_name,
+                        active=False,
+                    )
+                except SpineDBAPIError:
+                    pass
+            else:
+                # Storage node coefficient — only when constraint is active
+                _add_param(db, "node", (storage_node,),
+                           "constraint_capacity_coefficient",
+                           Map([storage_link], [-1.0], index_name="constraint"),
+                           alt_name, counters)
+                # Add to discharger Map
+                discharger_coeff_indexes.append(storage_link)
+                discharger_coeff_values.append(kw_kwh_ratio)
+
+        # Discharger coefficient Map (charger_link always, storage_link when active)
+        _add_param(db, "unit", (discharger_name,),
+                   "constraint_capacity_coefficient",
+                   Map(discharger_coeff_indexes, discharger_coeff_values,
+                       index_name="constraint"),
+                   alt_name, counters)
 
         count += 1
 
-    logger.info("Wrote %d storage nodes and connections.", count)
+    logger.info("Wrote %d storage charger/discharger pairs.", count)
 
 
 def _write_units(
@@ -472,6 +754,10 @@ def _write_units(
             logger.warning("Unit type '%s' has no output node; skipping.", unit.unit_type)
             continue
 
+        # Pure storage units are handled by _write_storage_units (charger/discharger)
+        if _needs_charger_discharger(unit, data):
+            continue
+
         unit_name = _get_unit_name(unit)
         ut = _get_unit_type(data, unit)
 
@@ -481,23 +767,20 @@ def _write_units(
 
         # -- Determine conversion_method --
         has_cf = unit.cf_profile is not None
-        has_fuel = unit.fuel is not None
         min_load_val = ut.params.get("min load") if ut else None
-        has_min_load = min_load_val is not None and min_load_val > 0
-        is_conversion = (
-            unit.input_grid is not None
-            and unit.output_grid is not None
-            and unit.input_grid != unit.output_grid
+        eff_val = ut.params.get("efficiency") if ut else None
+        eff_at_min = ut.params.get("eff at min load") if ut else None
+        has_min_load = (
+            min_load_val is not None and min_load_val > 0
+            and eff_at_min is not None
+            and eff_val is not None
+            and eff_at_min != eff_val
         )
 
         if has_cf:
             conversion_method = "none"
-        elif has_fuel and has_min_load:
+        elif has_min_load:
             conversion_method = "min_load_efficiency"
-        elif has_fuel:
-            conversion_method = "constant_efficiency"
-        elif is_conversion:
-            conversion_method = "constant_efficiency"
         else:
             conversion_method = "constant_efficiency"
 
@@ -535,16 +818,12 @@ def _write_units(
             _add_param(db, "unit", (unit_name,), "availability", avail,
                        alt_name, counters)
 
-        # -- startup parameters (only if use_online) --
+        # -- startup parameters --
         startup_cost = _get_unit_type_param(data, unit, "startup cost")
-        is_fork = unit.output2_node is not None
-        # Fork units with min_load need startup_method even without startup_cost
+        # min_load_efficiency always requires startup_method = "linear"
         needs_startup = (
-            use_online
-            and (
-                (startup_cost is not None and startup_cost > 0)
-                or (is_fork and has_min_load)
-            )
+            has_min_load
+            or (use_online and startup_cost is not None and startup_cost > 0)
         )
         if needs_startup:
             if startup_cost is not None and startup_cost > 0:
@@ -712,6 +991,11 @@ def _write_inflow_units(
         if not unit.inflow_profile or not unit.output_node:
             continue
 
+        # Units with eff_charge get their inflow on the storage node
+        # via _write_storage_units (pumped hydro pattern)
+        if _has_eff_charge(unit, data):
+            continue
+
         inflow_ts = _find_inflow_profile(data, unit.inflow_profile)
         if inflow_ts is None or not inflow_ts.data:
             logger.warning(
@@ -735,22 +1019,22 @@ def _write_inflow_units(
         _add_param(db, "node", (inflow_node,), "has_balance", "yes",
                    alt_name, counters)
 
-        # Storage properties (Hydro_RES pattern)
-        has_storage = unit.storage_mwh is not None and unit.storage_mwh > 0
-        if has_storage:
-            _add_param(db, "node", (inflow_node,), "has_storage", "yes",
-                       alt_name, counters)
-            _add_param(db, "node", (inflow_node,), "existing",
-                       unit.storage_mwh, alt_name, counters)
-            _add_param(db, "node", (inflow_node,), "storage_binding_method",
-                       "bind_within_solve", alt_name, counters)
-            # Self-discharge loss from unit_type
-            self_discharge = _get_unit_type_param(data, unit, "self discharge loss")
-            _add_param_if_set(db, "node", (inflow_node,), "self_discharge_loss",
-                              self_discharge, alt_name, counters)
-            # Storage state start
-            _add_param_if_set(db, "node", (inflow_node,), "storage_state_start",
-                              unit.storage_start, alt_name, counters, skip_zero=False)
+        # Always set has_storage on inflow nodes — even with 0 capacity this
+        # just creates an unused state variable but allows sensitivities to add
+        # storage capacity later without needing to also set has_storage.
+        _add_param(db, "node", (inflow_node,), "has_storage", "yes",
+                   alt_name, counters)
+        _add_param_if_set(db, "node", (inflow_node,), "existing",
+                          unit.storage_mwh, alt_name, counters, skip_zero=False)
+        _add_param(db, "node", (inflow_node,), "storage_binding_method",
+                   "bind_within_solve", alt_name, counters)
+        # Self-discharge loss from unit_type
+        self_discharge = _get_unit_type_param(data, unit, "self discharge loss")
+        _add_param_if_set(db, "node", (inflow_node,), "self_discharge_loss",
+                          self_discharge, alt_name, counters)
+        # Storage state start
+        _add_param_if_set(db, "node", (inflow_node,), "storage_state_start",
+                          unit.storage_start, alt_name, counters, skip_zero=False)
 
         # Set inflow time series on the node
         _add_param(db, "node", (inflow_node,), "inflow", inflow_map,
@@ -991,12 +1275,28 @@ def _write_groups(
         for unit in ug_units.get(ug.name, []):
             if unit.output_node is None:
                 continue
-            unit_name = _get_unit_name(unit)
-            _add_relationship(db, "group__unit", (ug.name, unit_name),
-                              alt_name, counters, entities_added, entity_alts_added)
-            _add_relationship(db, "group__unit__node",
-                              (ug.name, unit_name, unit.output_node),
-                              alt_name, counters, entities_added, entity_alts_added)
+            if _needs_charger_discharger(unit, data):
+                # Storage units are represented as charger + discharger
+                unit_name = _get_unit_name(unit)
+                charger = f"{unit_name}_charger"
+                discharger = f"{unit_name}_discharger"
+                _add_relationship(db, "group__unit", (ug.name, charger),
+                                  alt_name, counters, entities_added, entity_alts_added)
+                _add_relationship(db, "group__unit__node",
+                                  (ug.name, charger, unit.output_node),
+                                  alt_name, counters, entities_added, entity_alts_added)
+                _add_relationship(db, "group__unit", (ug.name, discharger),
+                                  alt_name, counters, entities_added, entity_alts_added)
+                _add_relationship(db, "group__unit__node",
+                                  (ug.name, discharger, unit.output_node),
+                                  alt_name, counters, entities_added, entity_alts_added)
+            else:
+                unit_name = _get_unit_name(unit)
+                _add_relationship(db, "group__unit", (ug.name, unit_name),
+                                  alt_name, counters, entities_added, entity_alts_added)
+                _add_relationship(db, "group__unit__node",
+                                  (ug.name, unit_name, unit.output_node),
+                                  alt_name, counters, entities_added, entity_alts_added)
 
     logger.info("Wrote %d unit groups.", len(data.unit_groups))
 
@@ -1217,21 +1517,28 @@ def _write_reserves(
 
         unit_name = _get_unit_name(unit)
 
-        # Create reserve__upDown__unit__node relationship
-        rel_elements = ("primary", "up", unit_name, reserve_node)
-        _add_relationship(db, "reserve__upDown__unit__node", rel_elements,
-                          alt_name, counters, entities_added, entity_alts_added)
-
-        # Set max_share
-        _add_param(db, "reserve__upDown__unit__node", rel_elements,
-                   "max_share", max_reserve, alt_name, counters)
-
-        # Set increase_reserve_ratio if present
-        _add_param_if_set(db, "reserve__upDown__unit__node", rel_elements,
-                          "increase_reserve_ratio",
-                          unit.reserve_increase_ratio, alt_name, counters)
-
-        unit_reserve_count += 1
+        if _needs_charger_discharger(unit, data):
+            # Both charger and discharger participate in reserves
+            for sub_name in (f"{unit_name}_charger", f"{unit_name}_discharger"):
+                rel_elements = ("primary", "up", sub_name, reserve_node)
+                _add_relationship(db, "reserve__upDown__unit__node", rel_elements,
+                                  alt_name, counters, entities_added, entity_alts_added)
+                _add_param(db, "reserve__upDown__unit__node", rel_elements,
+                           "max_share", max_reserve, alt_name, counters)
+                _add_param_if_set(db, "reserve__upDown__unit__node", rel_elements,
+                                  "increase_reserve_ratio",
+                                  unit.reserve_increase_ratio, alt_name, counters)
+                unit_reserve_count += 1
+        else:
+            rel_elements = ("primary", "up", unit_name, reserve_node)
+            _add_relationship(db, "reserve__upDown__unit__node", rel_elements,
+                              alt_name, counters, entities_added, entity_alts_added)
+            _add_param(db, "reserve__upDown__unit__node", rel_elements,
+                       "max_share", max_reserve, alt_name, counters)
+            _add_param_if_set(db, "reserve__upDown__unit__node", rel_elements,
+                              "increase_reserve_ratio",
+                              unit.reserve_increase_ratio, alt_name, counters)
+            unit_reserve_count += 1
 
     logger.info("Wrote %d unit reserve participations.", unit_reserve_count)
 
@@ -1559,7 +1866,7 @@ def write_old_flextool_to_db(
                              entities_added, entity_alts_added)
 
         # 3. Storage nodes and connections
-        _write_storage_nodes_and_connections(data, db, alternative_name, counters,
+        _write_storage_units(data, db, alternative_name, counters,
                                              entities_added, entity_alts_added)
 
         # 4. Units (depends on nodes existing)
@@ -1900,60 +2207,116 @@ def _apply_unit_type_override(
 
     for unit in matching_units:
         unit_name = _get_unit_name(unit)
-        if not _entity_exists(existing_entities, "unit", (unit_name,)):
-            logger.warning("Unit '%s' not found in DB; skipping.", unit_name)
-            continue
+        is_storage = _needs_charger_discharger(unit, data)
+
+        if is_storage:
+            charger = f"{unit_name}_charger"
+            discharger = f"{unit_name}_discharger"
+            if not _entity_exists(existing_entities, "unit", (discharger,)):
+                logger.warning("Unit '%s' (discharger) not found in DB; skipping.", discharger)
+                continue
+        else:
+            if not _entity_exists(existing_entities, "unit", (unit_name,)):
+                logger.warning("Unit '%s' not found in DB; skipping.", unit_name)
+                continue
 
         if "efficiency" == param_lower:
-            _add_param(db, "unit", (unit_name,), "efficiency", value, alt_name, counters)
+            if is_storage:
+                _add_param(db, "unit", (discharger,), "efficiency", value, alt_name, counters)
+            else:
+                _add_param(db, "unit", (unit_name,), "efficiency", value, alt_name, counters)
+        elif "eff charge" in param_lower:
+            if is_storage:
+                _add_param(db, "unit", (charger,), "efficiency", value, alt_name, counters)
         elif "eff at min load" in param_lower:
-            _add_param(db, "unit", (unit_name,), "efficiency_at_min_load", value, alt_name, counters)
+            target = discharger if is_storage else unit_name
+            _add_param(db, "unit", (target,), "efficiency_at_min_load", value, alt_name, counters)
         elif "min load" == param_lower:
-            _add_param(db, "unit", (unit_name,), "min_load", value, alt_name, counters)
+            target = discharger if is_storage else unit_name
+            _add_param(db, "unit", (target,), "min_load", value, alt_name, counters)
         elif "availability" == param_lower:
-            _add_param(db, "unit", (unit_name,), "availability", value, alt_name, counters)
+            if is_storage:
+                _add_param(db, "unit", (charger,), "availability", value, alt_name, counters)
+                _add_param(db, "unit", (discharger,), "availability", value, alt_name, counters)
+            else:
+                _add_param(db, "unit", (unit_name,), "availability", value, alt_name, counters)
         elif "inv.cost/kw" in param_lower or "inv cost" in param_lower:
-            _add_param(db, "unit", (unit_name,), "invest_cost", value, alt_name, counters)
+            target = discharger if is_storage else unit_name
+            _add_param(db, "unit", (target,), "invest_cost", value, alt_name, counters)
         elif "fixed cost" in param_lower:
-            _add_param(db, "unit", (unit_name,), "fixed_cost", value, alt_name, counters)
+            target = discharger if is_storage else unit_name
+            _add_param(db, "unit", (target,), "fixed_cost", value, alt_name, counters)
         elif "lifetime" == param_lower:
-            _add_param(db, "unit", (unit_name,), "lifetime", value, alt_name, counters)
+            target = discharger if is_storage else unit_name
+            _add_param(db, "unit", (target,), "lifetime", value, alt_name, counters)
         elif "interest" == param_lower:
-            _add_param(db, "unit", (unit_name,), "interest_rate", value, alt_name, counters)
+            target = discharger if is_storage else unit_name
+            _add_param(db, "unit", (target,), "interest_rate", value, alt_name, counters)
         elif "startup cost" in param_lower:
-            _add_param(db, "unit", (unit_name,), "startup_cost", value, alt_name, counters)
+            target = discharger if is_storage else unit_name
+            _add_param(db, "unit", (target,), "startup_cost", value, alt_name, counters)
         elif "o&m cost" in param_lower:
-            rel = (unit_name, unit.output_node)
+            if is_storage:
+                rel = (discharger, unit.output_node)
+            else:
+                rel = (unit_name, unit.output_node)
             if _entity_exists(existing_entities, "unit__outputNode", rel):
                 _add_param(db, "unit__outputNode", rel,
                            "other_operational_cost", value, alt_name, counters)
         elif "ramp up" in param_lower:
-            rel = (unit_name, unit.output_node)
-            if _entity_exists(existing_entities, "unit__outputNode", rel):
-                _add_param(db, "unit__outputNode", rel,
-                           "ramp_speed_up", value, alt_name, counters)
+            if is_storage:
+                for sub, node in ((charger, f"{unit_name}_storage"), (discharger, unit.output_node)):
+                    rel = (sub, node)
+                    if _entity_exists(existing_entities, "unit__outputNode", rel):
+                        _add_param(db, "unit__outputNode", rel,
+                                   "ramp_speed_up", value, alt_name, counters)
+            else:
+                rel = (unit_name, unit.output_node)
+                if _entity_exists(existing_entities, "unit__outputNode", rel):
+                    _add_param(db, "unit__outputNode", rel,
+                               "ramp_speed_up", value, alt_name, counters)
         elif "ramp down" in param_lower:
-            rel = (unit_name, unit.output_node)
-            if _entity_exists(existing_entities, "unit__outputNode", rel):
-                _add_param(db, "unit__outputNode", rel,
-                           "ramp_speed_down", value, alt_name, counters)
+            if is_storage:
+                for sub, node in ((charger, f"{unit_name}_storage"), (discharger, unit.output_node)):
+                    rel = (sub, node)
+                    if _entity_exists(existing_entities, "unit__outputNode", rel):
+                        _add_param(db, "unit__outputNode", rel,
+                                   "ramp_speed_down", value, alt_name, counters)
+            else:
+                rel = (unit_name, unit.output_node)
+                if _entity_exists(existing_entities, "unit__outputNode", rel):
+                    _add_param(db, "unit__outputNode", rel,
+                               "ramp_speed_down", value, alt_name, counters)
         elif "self discharge" in param_lower:
-            # Self discharge applies to the unit's storage node
             storage_node = f"{unit_name}_storage"
             if _entity_exists(existing_entities, "node", (storage_node,)):
                 _add_param(db, "node", (storage_node,), "self_discharge_loss",
                            value, alt_name, counters)
         elif "non synchronous" in param_lower:
-            rel = (unit_name, unit.output_node)
-            if _entity_exists(existing_entities, "unit__outputNode", rel):
-                is_ns = "yes" if (isinstance(value, (int, float)) and float(value) == 1) else "no"
-                _add_param(db, "unit__outputNode", rel,
-                           "is_non_synchronous", is_ns, alt_name, counters)
+            is_ns = "yes" if (isinstance(value, (int, float)) and float(value) == 1) else "no"
+            if is_storage:
+                for sub, node in ((charger, unit.output_node), (discharger, unit.output_node)):
+                    rel = (sub, node)
+                    if _entity_exists(existing_entities, "unit__outputNode", rel):
+                        _add_param(db, "unit__outputNode", rel,
+                                   "is_non_synchronous", is_ns, alt_name, counters)
+            else:
+                rel = (unit_name, unit.output_node)
+                if _entity_exists(existing_entities, "unit__outputNode", rel):
+                    _add_param(db, "unit__outputNode", rel,
+                               "is_non_synchronous", is_ns, alt_name, counters)
         elif "inertia constant" in param_lower:
-            rel = (unit_name, unit.output_node)
-            if _entity_exists(existing_entities, "unit__outputNode", rel):
-                _add_param(db, "unit__outputNode", rel,
-                           "inertia_constant", value, alt_name, counters)
+            if is_storage:
+                for sub, node in ((charger, unit.output_node), (discharger, unit.output_node)):
+                    rel = (sub, node)
+                    if _entity_exists(existing_entities, "unit__outputNode", rel):
+                        _add_param(db, "unit__outputNode", rel,
+                                   "inertia_constant", value, alt_name, counters)
+            else:
+                rel = (unit_name, unit.output_node)
+                if _entity_exists(existing_entities, "unit__outputNode", rel):
+                    _add_param(db, "unit__outputNode", rel,
+                               "inertia_constant", value, alt_name, counters)
         else:
             logger.warning(
                 "Unknown unit_type sensitivity param: '%s' for type '%s'",
@@ -2017,12 +2380,16 @@ def _apply_unit_group_override(
         logger.warning("Unknown unitGroup sensitivity param: '%s'", ov.param_name)
 
 
+
 def _apply_units_override(
     ov: SensitivityOverride,
+    data: OldFlexToolData,
     db: DatabaseMapping,
     alt_name: str,
     counters: _Counters,
     existing_entities: set[tuple[str, tuple[str, ...]]],
+    entity_alts_added: set[tuple[str, tuple[str, ...], str]],
+    forced_invest: dict[str, set[str]] | None = None,
 ) -> None:
     """Apply a units-section sensitivity override."""
     unit_type = ov.entity_ids.get("unittype")
@@ -2036,32 +2403,143 @@ def _apply_units_override(
         return
 
     unit_name = f"{unit_type}_{output_node}"
-    if not _entity_exists(existing_entities, "unit", (unit_name,)):
-        logger.warning("Unit '%s' not found in DB; skipping units override.", unit_name)
-        return
+
+    # Identify the base unit and whether it's a pure storage pattern
+    base_unit = next(
+        (u for u in data.units
+         if u.unit_type == unit_type and u.output_node == output_node),
+        None,
+    )
+    is_storage = base_unit is not None and _needs_charger_discharger(base_unit, data)
+
+    if is_storage:
+        charger = f"{unit_name}_charger"
+        discharger = f"{unit_name}_discharger"
+        storage_node = f"{unit_name}_storage"
+        if not _entity_exists(existing_entities, "unit", (discharger,)):
+            logger.warning("Unit '%s' (discharger) not found in DB; skipping.", discharger)
+            return
+    else:
+        if not _entity_exists(existing_entities, "unit", (unit_name,)):
+            logger.warning("Unit '%s' not found in DB; skipping units override.", unit_name)
+            return
 
     param_lower = ov.param_name.lower()
     value = ov.value
 
     if "capacity (mw)" == param_lower or param_lower == "capacity":
-        _add_param(db, "unit", (unit_name,), "existing", value, alt_name, counters)
+        if is_storage:
+            _add_param(db, "unit", (charger,), "existing", value, alt_name, counters)
+            _add_param(db, "unit", (discharger,), "existing", value, alt_name, counters)
+        else:
+            _add_param(db, "unit", (unit_name,), "existing", value, alt_name, counters)
     elif "invested capacity" in param_lower:
-        _add_param(db, "unit", (unit_name,), "invest_max_total", value, alt_name, counters)
-        _add_param(db, "unit", (unit_name,), "invest_min_total", value, alt_name, counters)
-        _add_param(db, "unit", (unit_name,), "invest_method", "invest_total",
-                   alt_name, counters)
-    elif "max invest" in param_lower:
-        _add_param(db, "unit", (unit_name,), "invest_max_total", value, alt_name, counters)
-    elif "storage (mwh)" == param_lower or "storage" in param_lower and "invest" not in param_lower:
-        storage_node = f"{unit_name}_storage"
-        if _entity_exists(existing_entities, "node", (storage_node,)):
-            _add_param(db, "node", (storage_node,), "existing", value, alt_name, counters)
+        if is_storage:
+            for target in (charger, discharger):
+                _add_param(db, "unit", (target,), "invest_max_total", value, alt_name, counters)
+                _add_param(db, "unit", (target,), "invest_min_total", value, alt_name, counters)
+                _add_param(db, "unit", (target,), "invest_method", "invest_total",
+                           alt_name, counters)
+            if forced_invest is not None:
+                forced_invest.setdefault(unit_name, set()).add("mw")
+        else:
+            _add_param(db, "unit", (unit_name,), "invest_max_total", value, alt_name, counters)
+            _add_param(db, "unit", (unit_name,), "invest_min_total", value, alt_name, counters)
+            _add_param(db, "unit", (unit_name,), "invest_method", "invest_total",
+                       alt_name, counters)
+    elif "max invest (mw)" in param_lower and "mwh" not in param_lower:
+        if is_storage:
+            _add_param(db, "unit", (charger,), "invest_max_total", value, alt_name, counters)
+            _add_param(db, "unit", (discharger,), "invest_max_total", value, alt_name, counters)
+        else:
+            _add_param(db, "unit", (unit_name,), "invest_max_total", value, alt_name, counters)
+    elif "invested storage" in param_lower:
+        storage_target = storage_node if is_storage else f"{unit_name}_storage"
+        if _entity_exists(existing_entities, "node", (storage_target,)):
+            _add_param(db, "node", (storage_target,), "invest_max_total", value,
+                       alt_name, counters)
+            _add_param(db, "node", (storage_target,), "invest_min_total", value,
+                       alt_name, counters)
+            _add_param(db, "node", (storage_target,), "invest_method", "invest_total",
+                       alt_name, counters)
+            _add_param(db, "node", (storage_target,), "has_balance", "yes",
+                       alt_name, counters)
+            _add_param(db, "node", (storage_target,), "has_storage", "yes",
+                       alt_name, counters)
+            if forced_invest is not None:
+                forced_invest.setdefault(unit_name, set()).add("mwh")
+    elif "max invest (mwh)" in param_lower:
+        storage_target = storage_node if is_storage else f"{unit_name}_storage"
+        if _entity_exists(existing_entities, "node", (storage_target,)):
+            _add_param(db, "node", (storage_target,), "has_balance", "yes",
+                       alt_name, counters)
+            _add_param(db, "node", (storage_target,), "has_storage", "yes",
+                       alt_name, counters)
+            _add_param(db, "node", (storage_target,), "invest_max_total", value,
+                       alt_name, counters)
+            _add_param(db, "node", (storage_target,), "invest_method", "invest_total",
+                       alt_name, counters)
+    elif "storage (mwh)" in param_lower or (
+        "storage" in param_lower and "invest" not in param_lower and "start" not in param_lower and "finish" not in param_lower
+    ):
+        storage_target = storage_node if is_storage else f"{unit_name}_storage"
+        if _entity_exists(existing_entities, "node", (storage_target,)):
+            _add_param(db, "node", (storage_target,), "existing", value,
+                       alt_name, counters)
+            if float(value) > 0:
+                _add_param(db, "node", (storage_target,), "has_balance", "yes",
+                           alt_name, counters)
+                _add_param(db, "node", (storage_target,), "has_storage", "yes",
+                           alt_name, counters)
+            else:
+                _add_param(db, "node", (storage_target,), "has_storage", None,
+                           alt_name, counters)
     elif "inv.cost/kw" in param_lower or "inv cost" in param_lower:
-        _add_param(db, "unit", (unit_name,), "invest_cost", value, alt_name, counters)
+        target = discharger if is_storage else unit_name
+        _add_param(db, "unit", (target,), "invest_cost", value, alt_name, counters)
     elif "efficiency" == param_lower:
-        _add_param(db, "unit", (unit_name,), "efficiency", value, alt_name, counters)
+        target = discharger if is_storage else unit_name
+        _add_param(db, "unit", (target,), "efficiency", value, alt_name, counters)
+    elif "eff charge" in param_lower:
+        if is_storage:
+            _add_param(db, "unit", (charger,), "efficiency", value, alt_name, counters)
     elif "min load" in param_lower:
-        _add_param(db, "unit", (unit_name,), "min_load", value, alt_name, counters)
+        target = discharger if is_storage else unit_name
+        _add_param(db, "unit", (target,), "min_load", value, alt_name, counters)
+    elif "inflow multiplier" in param_lower:
+        # Re-read the original inflow profile, apply the new multiplier,
+        # and write to the unit's inflow node under this alternative
+        multiplier = float(value) if value else 0.0
+        # Find the matching base unit to get its inflow_profile name
+        base_unit = next(
+            (u for u in data.units
+             if u.unit_type == unit_type and u.output_node == output_node),
+            None,
+        )
+        if base_unit and base_unit.inflow_profile:
+            inflow_ts = _find_inflow_profile(data, base_unit.inflow_profile)
+            if inflow_ts and inflow_ts.data:
+                scaled = {k: v * multiplier for k, v in inflow_ts.data.items()}
+                inflow_map = _make_time_map(scaled)
+                inflow_node = f"{unit_name}_inflow"
+                if _entity_exists(existing_entities, "node", (inflow_node,)):
+                    _add_param(db, "node", (inflow_node,), "inflow",
+                               inflow_map, alt_name, counters)
+                else:
+                    logger.warning(
+                        "Inflow node '%s' not found; cannot apply inflow multiplier.",
+                        inflow_node,
+                    )
+            else:
+                logger.warning(
+                    "Inflow profile '%s' not found for unit '%s'; cannot apply multiplier.",
+                    base_unit.inflow_profile, unit_name,
+                )
+        else:
+            logger.warning(
+                "No inflow profile for unit '%s'; cannot apply inflow multiplier.",
+                unit_name,
+            )
     else:
         logger.warning("Unknown units sensitivity param: '%s' for unit '%s'",
                        ov.param_name, unit_name)
@@ -2252,6 +2730,10 @@ def write_sensitivities_to_db(
                 for ov in overrides
             )
 
+            # Track forced investments per unit for constraint deactivation
+            # Keys: unit_name, values: set of "mw" and/or "mwh"
+            forced_invest: dict[str, set[str]] = {}
+
             # 4. Process each override
             for ov in overrides:
                 if ov.section == "master":
@@ -2281,7 +2763,8 @@ def write_sensitivities_to_db(
                     )
                 elif ov.section == "units":
                     _apply_units_override(
-                        ov, db, scenario_name, counters, existing_entities,
+                        ov, data, db, scenario_name, counters, existing_entities,
+                        entity_alts_added, forced_invest,
                     )
                 elif ov.section == "nodeNode":
                     _apply_node_node_override(
@@ -2289,6 +2772,106 @@ def write_sensitivities_to_db(
                     )
                 else:
                     logger.warning("Unknown sensitivity section: '%s'", ov.section)
+
+            # 4b. Handle storage_link constraint activation/deactivation.
+            #     The charger_link (charger ↔ discharger) always stays active.
+            #     The storage_link (discharger ↔ storage node kW/kWh ratio) is
+            #     deactivated when both MW and MWh are forced, to avoid rounding.
+            for unit in data.units:
+                if not _needs_charger_discharger(unit, data):
+                    continue
+                unit_name = _get_unit_name(unit)
+                ut = _get_unit_type(data, unit)
+                kw_kwh_ratio = ut.params.get("fixed kw/kwh ratio") if ut else None
+                if not (kw_kwh_ratio is not None and kw_kwh_ratio > 0):
+                    continue  # No storage_link to manage
+
+                # Base forced state
+                base_forced_mw = (
+                    unit.invested_capacity_mw is not None
+                    and unit.invested_capacity_mw > 0
+                )
+                base_forced_mwh = (
+                    unit.invested_storage_mwh is not None
+                    and unit.invested_storage_mwh > 0
+                )
+                base_both_forced = base_forced_mw and base_forced_mwh
+
+                # Effective forced state (base + sensitivity overrides)
+                sens_types = forced_invest.get(unit_name, set())
+                eff_forced_mw = "mw" in sens_types or (
+                    base_forced_mw and "mw" not in sens_types
+                )
+                eff_forced_mwh = "mwh" in sens_types or (
+                    base_forced_mwh and "mwh" not in sens_types
+                )
+                eff_both_forced = eff_forced_mw and eff_forced_mwh
+
+                if eff_both_forced == base_both_forced:
+                    continue  # No change
+
+                charger_link = f"{unit_name}_charger_link"
+                storage_link = f"{unit_name}_storage_link"
+                discharger = f"{unit_name}_discharger"
+                storage_node = f"{unit_name}_storage"
+
+                if eff_both_forced and not base_both_forced:
+                    # Deactivate storage_link, rewrite discharger coeff without it
+                    if _entity_exists(existing_entities, "constraint", (storage_link,)):
+                        try:
+                            db.add_or_update_entity_alternative(
+                                entity_class_name="constraint",
+                                entity_byname=(storage_link,),
+                                alternative_name=scenario_name,
+                                active=False,
+                            )
+                        except SpineDBAPIError:
+                            pass
+
+                    # Discharger: only charger_link (drop storage_link)
+                    _add_param(db, "unit", (discharger,),
+                               "constraint_capacity_coefficient",
+                               Map([charger_link], [1.0], index_name="constraint"),
+                               scenario_name, counters)
+                    # Storage node: null
+                    null_value, null_type = api.to_database(None)
+                    if _entity_exists(existing_entities, "node", (storage_node,)):
+                        try:
+                            db.add_parameter_value(
+                                entity_class_name="node",
+                                entity_byname=(storage_node,),
+                                parameter_definition_name="constraint_capacity_coefficient",
+                                alternative_name=scenario_name,
+                                value=null_value, type=null_type,
+                            )
+                        except SpineDBAPIError:
+                            pass
+
+                elif base_both_forced and not eff_both_forced:
+                    # Re-activate storage_link, write full coefficients
+                    if _entity_exists(existing_entities, "constraint", (storage_link,)):
+                        try:
+                            db.add_or_update_entity_alternative(
+                                entity_class_name="constraint",
+                                entity_byname=(storage_link,),
+                                alternative_name=scenario_name,
+                                active=True,
+                            )
+                        except SpineDBAPIError:
+                            pass
+
+                    # Discharger: both charger_link + storage_link
+                    _add_param(db, "unit", (discharger,),
+                               "constraint_capacity_coefficient",
+                               Map([charger_link, storage_link],
+                                   [1.0, kw_kwh_ratio],
+                                   index_name="constraint"),
+                               scenario_name, counters)
+                    # Storage node coefficient
+                    _add_param(db, "node", (storage_node,),
+                               "constraint_capacity_coefficient",
+                               Map([storage_link], [-1.0], index_name="constraint"),
+                               scenario_name, counters)
 
             # 5. Apply mode overrides if present
             if has_mode_override:

@@ -555,7 +555,13 @@ class AddDialog(tk.Toplevel):
                         dest.unlink(missing_ok=True)
 
                 mgr.finish_job(job.job_id, success)
+                if success:
+                    try:
+                        main_window.after(0, main_window._refresh_input_sources)
+                    except Exception:
+                        pass
 
+            main_window = self.master
             threading.Thread(target=_worker, daemon=True).start()
 
             self.result = True
@@ -682,7 +688,14 @@ class AddDialog(tk.Toplevel):
                     mgr.append_stdout(job.job_id, f"\nError: {exc}")
 
                 mgr.finish_job(job.job_id, success)
+                # Refresh the main window so new scenarios appear checked
+                if success:
+                    try:
+                        main_window.after(0, main_window._refresh_and_check_new_scenarios)
+                    except Exception:
+                        pass  # Main window may be gone
 
+            main_window = self.master  # capture before thread starts
             threading.Thread(target=_worker, daemon=True).start()
             self._import_sens_btn.configure(state="disabled")
             self.result = True

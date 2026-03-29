@@ -1021,6 +1021,30 @@ class MainWindow(tk.Tk):
 
         # 5. Persist the updated check states
         self._save_checked_available_scenarios()
+
+    def _refresh_and_check_new_scenarios(self) -> None:
+        """Refresh input sources and check any newly appeared scenarios.
+
+        Called after sensitivity import completes — the source already exists
+        but new scenarios have been added to it.
+        """
+        # Remember which scenarios are currently shown
+        old_scenarios: set[str] = set()
+        for item in self.available_tree.get_children():
+            values = self.available_tree.item(item, "values")
+            if values:
+                old_scenarios.add(str(values[0]))  # scenario name
+
+        self._refresh_input_sources()
+
+        # Check any scenarios that weren't there before
+        for item in self.available_tree.get_children():
+            values = self.available_tree.item(item, "values")
+            if values and str(values[0]) not in old_scenarios:
+                self.available_tree.set(item, "check", CHECK_ON)
+
+        self._save_checked_available_scenarios()
+        self._update_add_to_execution_style()
         self._update_add_to_execution_style()
 
     def _on_refresh_sources(self) -> None:

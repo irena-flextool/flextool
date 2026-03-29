@@ -134,6 +134,9 @@ def combine_parquet_files(
         for scenario_name, file_path in scenario_files:
             try:
                 df = pd.read_parquet(file_path)
+                # Deduplicate index (can occur with overlapping solve windows)
+                if df.index.duplicated().any():
+                    df = df[~df.index.duplicated(keep='last')]
                 dfs_to_append.append(df)
 
             except Exception as e:
