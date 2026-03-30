@@ -146,7 +146,17 @@ class ExecutedScenarioManager:
             if not entry.is_dir():
                 continue
             try:
-                mtime = entry.stat().st_mtime
+                # Use the most recent file modification time within the
+                # directory rather than the directory's own mtime.  When a
+                # scenario is re-executed the parquet files are overwritten
+                # in-place (same names), which updates the *file* mtimes but
+                # may leave the directory mtime unchanged.
+                file_mtimes = [
+                    f.stat().st_mtime
+                    for f in entry.iterdir()
+                    if f.is_file()
+                ]
+                mtime = max(file_mtimes) if file_mtimes else entry.stat().st_mtime
                 ts = datetime.fromtimestamp(mtime).strftime("%d.%m.%y %H:%M")
             except OSError:
                 ts = ""

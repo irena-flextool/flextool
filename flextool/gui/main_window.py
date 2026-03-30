@@ -466,7 +466,7 @@ class MainWindow(tk.Tk):
         self.check_btn.grid(row=0, column=0, padx=(0, 10))
 
         self.add_to_execution_btn = ttk.Button(
-            bottom_left, text="Add checked scenarios to\nthe execution list [Alt-A]",
+            bottom_left, text="Add checked scenarios to\nthe execution list [F9]",
             command=self._on_add_to_execution,
         )
         self.add_to_execution_btn.grid(row=0, column=1, padx=(0, 10))
@@ -499,7 +499,7 @@ class MainWindow(tk.Tk):
 
         # ── Keyboard shortcuts ──────────────────────────────────────
         self.bind_all("<Alt-Key-c>", lambda e: self._on_check_selected())
-        self.bind_all("<Alt-Key-a>", lambda e: self._on_add_to_execution())
+        self.bind_all("<F9>", lambda e: self._on_add_to_execution())
         self.bind_all("<Prior>", lambda e: self._on_move_up())
         self.bind_all("<Next>", lambda e: self._on_move_down())
         self.bind_all("<Control-Key-a>", self._on_ctrl_a)
