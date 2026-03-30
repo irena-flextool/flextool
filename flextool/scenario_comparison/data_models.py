@@ -107,8 +107,11 @@ class TimeSeriesResults:
     nodeGroup_inertia_largest_flow_dt_g: pd.DataFrame | None = None
     nodeGroup_unit_node_inertia_dt_gee: pd.DataFrame | None = None
     nodeGroup_slack_capacity_margin_d_g: pd.DataFrame | None = None
+    nodeGroup_slack_inertia_d_g: pd.DataFrame | None = None
     nodeGroup_slack_inertia_dt_g: pd.DataFrame | None = None
+    nodeGroup_slack_nonsync_d_g: pd.DataFrame | None = None
     nodeGroup_slack_nonsync_dt_g: pd.DataFrame | None = None
+    nodeGroup_slack_reserve_d_eeg: pd.DataFrame | None = None
     nodeGroup_slack_reserve_dt_eeg: pd.DataFrame | None = None
 
     # --- Costs ---
