@@ -40,6 +40,7 @@ def read_variables(output_dir):
     v.dual_invest_unit = pd.read_csv(output_path / 'v_dual_invest_unit.csv', index_col=[0, 1]).astype(float)
     v.dual_invest_connection = pd.read_csv(output_path / 'v_dual_invest_connection.csv', index_col=[0, 1]).astype(float)
     v.dual_invest_node = pd.read_csv(output_path / 'v_dual_invest_node.csv', index_col=[0, 1]).astype(float)
+    v.dual_maxInvest_total = pd.read_csv(output_path / 'v_dual_maxInvest_total.csv', index_col=[0, 1]).astype(float)
 
     v.flow.index.names = ['solve', 'period', 'time']
     v.ramp.index.names = ['solve', 'period', 'time']
@@ -65,6 +66,7 @@ def read_variables(output_dir):
     v.dual_invest_unit.index.names = ['solve', 'period']
     v.dual_invest_connection.index.names = ['solve', 'period']
     v.dual_invest_node.index.names = ['solve', 'period']
+    v.dual_maxInvest_total.index.names = ['solve', 'period']
 
     # Create multi-index for variables with single header row
     v.state.columns.name = 'node'
@@ -86,6 +88,7 @@ def read_variables(output_dir):
     v.dual_invest_unit.columns.name = 'unit'
     v.dual_invest_connection.columns.name = 'connection'
     v.dual_invest_node.columns.name = 'node'
+    v.dual_maxInvest_total.columns.name = 'entity'
 
     # Add multi-index to variables with multiple header rows (this multi-index creation works also when the dataframe is empty)
     v.flow.columns = pd.MultiIndex.from_tuples(

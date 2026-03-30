@@ -111,6 +111,26 @@ plots:
     ylabel: NodeGroup
     xlabel: MWh
     skip_data_with_only_zeroes: true
+  nodeGroup_slack_reserve_d_eeg:
+    plot_name: '0.2.d Lack of reserves'
+    map_dimensions_for_plots: [d_eeg, s_bbu]
+    max_subplots_per_file: 6
+    subplots_per_row: 2
+    xlabel: MWh
+    ylabel: NodeGroup
+    skip_data_with_only_zeroes: true
+  nodeGroup_slack_inertia_d_g:
+    plot_name: '0.3.d Lack of inertia'
+    map_dimensions_for_plots: [d_g, s_b]
+    ylabel: NodeGroup
+    xlabel: MWs
+    skip_data_with_only_zeroes: true
+  nodeGroup_slack_nonsync_d_g:
+    plot_name: '0.4.d Lack of nonsynchronous sources'
+    map_dimensions_for_plots: [d_g, s_b]
+    ylabel: NodeGroup
+    xlabel: MWh
+    skip_data_with_only_zeroes: true
   nodeGroup_slack_capacity_margin_d_g:
     plot_name: '0.5.d Violation of capacity margin'
     map_dimensions_for_plots: [d_g, s_b]
@@ -728,8 +748,11 @@ rename:
   nodeGroup_slack_capacity_margin_d_g: slack__capacity_margin__d
   node_slack_down_dt_e: slack__downward__node_state__dt
   node_slack_down_d_e: slack__downward__node_state__d
+  nodeGroup_slack_inertia_d_g: slack__inertia_group__d
   nodeGroup_slack_inertia_dt_g: slack__inertia_group__dt
+  nodeGroup_slack_nonsync_d_g: slack__nonsync_group__d
   nodeGroup_slack_nonsync_dt_g: slack__nonsync_group__dt
+  nodeGroup_slack_reserve_d_eeg: slack__reserve__upDown__group__d
   nodeGroup_slack_reserve_dt_eeg: slack__reserve__upDown__group__dt
   node_slack_up_dt_e: slack__upward__node_state__dt
   node_slack_up_d_e: slack__upward__node_state__d

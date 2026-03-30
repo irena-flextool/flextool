@@ -107,18 +107,39 @@ plots:
       subplots_per_row: 2
       xlabel: MWh
       skip_data_with_only_zeroes: true
+  nodeGroup_slack_reserve_d_eeg:
+    plot_name: '0.2.d Lack of reserves'
+    map_dimensions_for_plots: [d_seeg, b_essu]
+    max_subplots_per_file: 6
+    subplots_per_row: 2
+    skip_data_with_only_zeroes: true
+    ylabel: MWh
   nodeGroup_slack_reserve_dt_eeg:
     plot_name: '0.2.t Lack of reserves'
     map_dimensions_for_plots: [dt_seeg, tt_luug]
     legend: shared
     skip_data_with_only_zeroes: true
     ylabel: MWh/h
+  nodeGroup_slack_inertia_d_g:
+    plot_name: '0.3.d Lack of inertia'
+    map_dimensions_for_plots: [d_sg, b_eu]
+    max_subplots_per_file: 2
+    subplots_per_row: 2
+    skip_data_with_only_zeroes: true
+    ylabel: MWs
   nodeGroup_slack_inertia_dt_g:
     plot_name: '0.3.t Lack of inertia'
     map_dimensions_for_plots: [dt_sg, tt_lu]
     legend: shared
     skip_data_with_only_zeroes: true
     ylabel: MWs
+  nodeGroup_slack_nonsync_d_g:
+    plot_name: '0.4.d Lack of nonsynchronous sources'
+    map_dimensions_for_plots: [d_sg, b_eu]
+    max_subplots_per_file: 2
+    subplots_per_row: 2
+    skip_data_with_only_zeroes: true
+    ylabel: MWh
   nodeGroup_slack_nonsync_dt_g:
     plot_name: '0.4.t Lack of nonsynchronous sources'
     map_dimensions_for_plots: [dt_sg, tt_lu]
@@ -131,6 +152,7 @@ plots:
     max_items_per_plot: 40
     max_subplots_per_file: 2
     subplots_per_row: 2
+    skip_data_with_only_zeroes: true
     xlabel: MWh
 
   # Curtailments
@@ -326,32 +348,32 @@ plots:
     skip_data_with_only_zeroes: true
     xlabel: MW
   dual_invest_node_d_e:
-    foo:
-      plot_name: '4.3.d Node marginal investment value'
-      map_dimensions_for_plots: [d_se, g_ub]
-      subplots_per_row: 2
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      base_length: 4
-      xlabel: Currency / MWh
+    plot_name: '4.3.d Node marginal investment value'
+    map_dimensions_for_plots: [d_se, g_ub]
+    subplots_per_row: 2
+    max_items_per_plot: 40
+    max_subplots_per_file: 2
+    base_length: 4
+    skip_data_with_only_zeroes: false
+    xlabel: Currency / MWh
   dual_invest_unit_d_e:
-    foo:
-      plot_name: '4.4.d Unit marginal investment value'
-      map_dimensions_for_plots: [d_se, g_ub]
-      subplots_per_row: 2
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      base_length: 4
-      xlabel: Currency / MW
+    plot_name: '4.4.d Unit marginal investment value'
+    map_dimensions_for_plots: [d_se, g_ub]
+    subplots_per_row: 2
+    max_items_per_plot: 40
+    max_subplots_per_file: 2
+    base_length: 4
+    skip_data_with_only_zeroes: false
+    xlabel: Currency / MW
   dual_invest_connection_d_e:
-    foo:
-      plot_name: '4.5.d Connection marginal investment value'
-      map_dimensions_for_plots: [d_se, g_ub]
-      subplots_per_row: 2
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      base_length: 4
-      xlabel: Currency / MW
+    plot_name: '4.5.d Connection marginal investment value'
+    map_dimensions_for_plots: [d_se, g_ub]
+    subplots_per_row: 2
+    max_items_per_plot: 40
+    max_subplots_per_file: 2
+    base_length: 4
+    skip_data_with_only_zeroes: false
+    xlabel: Currency / MW
 
 
   # Emissions
@@ -402,6 +424,7 @@ plots:
   nodeGroup_gd_p:
     plot_name: '6.1.d NodeGroup indicators'
     subplots_per_row: 2
+    max_items_per_plot: 100
     map_dimensions_for_plots: [gd_sp, fg_bu]
     axis_bounds: [[0,1], [0,1], [0,1], [0,1], [], [0,1]]
     axis_tick_format: ['.0%', '.0%', '.0%', '.0%', 'dynamic', '.0%']

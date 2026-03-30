@@ -10,6 +10,7 @@ _V_DROP = [
     'q_inertia', 'q_non_synchronous', 'q_state_up_group', 'q_capacity_margin',
     'invest', 'divest',
     'dual_invest_connection', 'dual_invest_node', 'dual_invest_unit',
+    'dual_maxInvest_total',
 ]
 
 # Parameters: droplevel('solve') only

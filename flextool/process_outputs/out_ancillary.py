@@ -82,6 +82,9 @@ def investment_duals(par, s, v, r, debug):
     dual_invest_node = v.dual_invest_node.div(par.entity_unitsize[v.dual_invest_node.columns])
     results.append((dual_invest_node, 'dual_invest_node_d_e'))
 
+    # 4. Dual of total investment constraint (per MW of additional investment capacity)
+    results.append((v.dual_maxInvest_total, 'dual_maxInvest_total_d_e'))
+
     return results
 
 
@@ -212,6 +215,11 @@ def slack_variables(par, s, v, r, debug):
 
     # 4. Capacity margin slack variables (for investment periods only)
     results.append((r.q_capacity_margin_d_not_annualized, 'nodeGroup_slack_capacity_margin_d_g'))
+
+    # 5. Period-level slack variables (annualized)
+    results.append((r.q_reserves_d, 'nodeGroup_slack_reserve_d_eeg'))
+    results.append((r.q_inertia_d, 'nodeGroup_slack_inertia_d_g'))
+    results.append((r.q_non_synchronous_d, 'nodeGroup_slack_nonsync_d_g'))
 
     return results
 
