@@ -347,27 +347,27 @@ plots:
     base_length: 4
     skip_data_with_only_zeroes: true
     xlabel: MW
-  dual_invest_node_d_e:
+  dual_invest_effective_node_d_e:
     plot_name: '4.3.d Node marginal investment value'
-    map_dimensions_for_plots: [d_se, g_ub]
+    map_dimensions_for_plots: [d_se, b_ge]
     subplots_per_row: 2
     max_items_per_plot: 40
     max_subplots_per_file: 2
     base_length: 4
     skip_data_with_only_zeroes: false
     xlabel: Currency / MWh
-  dual_invest_unit_d_e:
+  dual_invest_effective_unit_d_e:
     plot_name: '4.4.d Unit marginal investment value'
-    map_dimensions_for_plots: [d_se, g_ub]
+    map_dimensions_for_plots: [d_se, b_ge]
     subplots_per_row: 2
     max_items_per_plot: 40
     max_subplots_per_file: 2
     base_length: 4
     skip_data_with_only_zeroes: false
     xlabel: Currency / MW
-  dual_invest_connection_d_e:
+  dual_invest_effective_connection_d_e:
     plot_name: '4.5.d Connection marginal investment value'
-    map_dimensions_for_plots: [d_se, g_ub]
+    map_dimensions_for_plots: [d_se, b_ge]
     subplots_per_row: 2
     max_items_per_plot: 40
     max_subplots_per_file: 2

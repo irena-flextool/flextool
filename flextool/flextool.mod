@@ -3800,6 +3800,90 @@ for {s in solve_current, d in d_realize_invest : 'yes' not in exclude_entity_out
       }
   }
 
+# Investment constraint duals - raw output per constraint type
+# Entity-level constraint duals
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period' > "output_raw/v_dual_maxInvest_period.csv";
+    for {e in entityInvest : (e, 'invest_period') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method
+                          || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method}
+      { printf ',%s', e >> "output_raw/v_dual_maxInvest_period.csv"; }
+  }
+for {s in solve_current, d in d_realize_invest : 'yes' not in exclude_entity_outputs}
+  { printf '\n%s,%s', s, d >> "output_raw/v_dual_maxInvest_period.csv";
+    for {e in entityInvest : (e, 'invest_period') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method
+                          || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method}
+      { printf ',%.8g', (if (e, d) in ed_invest_period then maxInvest_entity_period[e, d].dual / scale_the_objective else 0)
+                        >> "output_raw/v_dual_maxInvest_period.csv"; }
+  }
+
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period' > "output_raw/v_dual_maxInvest_total.csv";
+    for {e in e_invest_total}
+	  { printf ',%s', e >> "output_raw/v_dual_maxInvest_total.csv"; }
+  }
+for {s in solve_current, d in d_realize_invest : 'yes' not in exclude_entity_outputs}
+  { printf '\n%s,%s', s, d >> "output_raw/v_dual_maxInvest_total.csv";
+    for {e in e_invest_total}
+      { printf ',%.8g', maxInvest_entity_total[e, d].dual / scale_the_objective >> "output_raw/v_dual_maxInvest_total.csv"; }
+  }
+
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period' > "output_raw/v_dual_maxCumulative.csv";
+    for {e in entityInvest : (e, 'cumulative_limits') in entity__invest_method}
+	  { printf ',%s', e >> "output_raw/v_dual_maxCumulative.csv"; }
+  }
+for {s in solve_current, d in d_realize_invest : 'yes' not in exclude_entity_outputs}
+  { printf '\n%s,%s', s, d >> "output_raw/v_dual_maxCumulative.csv";
+    for {e in entityInvest : (e, 'cumulative_limits') in entity__invest_method}
+      { printf ',%.8g', (if (e, d) in ed_invest_cumulative then maxCumulative_capacity[e, d].dual / scale_the_objective else 0)
+                        >> "output_raw/v_dual_maxCumulative.csv"; }
+  }
+
+# Group-level investment constraint duals
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period' > "output_raw/v_dual_maxInvestGroup_period.csv";
+    for {g in group_invest : (g, 'invest_period') in group__invest_method || (g, 'invest_period_total') in group__invest_method
+                          || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method}
+	  { printf ',%s', g >> "output_raw/v_dual_maxInvestGroup_period.csv"; }
+  }
+for {s in solve_current, d in d_realize_invest : 'yes' not in exclude_entity_outputs}
+  { printf '\n%s,%s', s, d >> "output_raw/v_dual_maxInvestGroup_period.csv";
+    for {g in group_invest : (g, 'invest_period') in group__invest_method || (g, 'invest_period_total') in group__invest_method
+                          || (g, 'invest_retire_period') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method}
+      { printf ',%.8g', (if (g, d) in gd_invest_period then maxInvestGroup_entity_period[g, d].dual / scale_the_objective else 0)
+                        >> "output_raw/v_dual_maxInvestGroup_period.csv"; }
+  }
+
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period' > "output_raw/v_dual_maxInvestGroup_total.csv";
+    for {g in g_invest_total}
+	  { printf ',%s', g >> "output_raw/v_dual_maxInvestGroup_total.csv"; }
+  }
+for {s in solve_current, d in d_realize_invest : 'yes' not in exclude_entity_outputs}
+  { printf '\n%s,%s', s, d >> "output_raw/v_dual_maxInvestGroup_total.csv";
+    for {g in g_invest_total}
+      { printf ',%.8g', maxInvestGroup_entity_total[g, d].dual / scale_the_objective >> "output_raw/v_dual_maxInvestGroup_total.csv"; }
+  }
+
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period' > "output_raw/v_dual_maxInvestGroup_cumulative.csv";
+    for {g in g_invest_cumulative}
+	  { printf ',%s', g >> "output_raw/v_dual_maxInvestGroup_cumulative.csv"; }
+  }
+for {s in solve_current, d in d_realize_invest : 'yes' not in exclude_entity_outputs}
+  { printf '\n%s,%s', s, d >> "output_raw/v_dual_maxInvestGroup_cumulative.csv";
+    for {g in g_invest_cumulative}
+      { printf ',%.8g', (if pdGroup[g, 'cumulative_max_capacity', d] then maxInvestGroup_entity_cumulative[g, d].dual / scale_the_objective else 0)
+                        >> "output_raw/v_dual_maxInvestGroup_cumulative.csv"; }
+  }
+
+# Group-entity mapping for investment groups (needed by Python post-processing)
+if p_model["solveFirst"] == 1 then {
+  printf "group,entity\n" > "output_raw/group_entity_invest.csv";
+  for {(g, e) in group_entity : g in group_invest}
+    { printf "%s,%s\n", g, e >> "output_raw/group_entity_invest.csv"; }
+}
+
 # Parameters with (d, t) dimensions
 # Write step_duration
 if p_model["solveFirst"] == 1 then {

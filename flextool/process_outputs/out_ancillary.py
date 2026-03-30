@@ -82,10 +82,74 @@ def investment_duals(par, s, v, r, debug):
     dual_invest_node = v.dual_invest_node.div(par.entity_unitsize[v.dual_invest_node.columns])
     results.append((dual_invest_node, 'dual_invest_node_d_e'))
 
-    # 4. Dual of total investment constraint (per MW of additional investment capacity)
-    results.append((v.dual_maxInvest_total, 'dual_maxInvest_total_d_e'))
+    # 4. Synthesized effective investment dual per entity type (per MW)
+    # Combines entity-level constraint duals (period, total, cumulative)
+    # and group-level constraint duals (expanded to member entities).
+    combined = _synthesize_invest_dual(v)
+    if not combined.empty:
+        units = [c for c in combined.columns if c in s.process_unit]
+        connections = [c for c in combined.columns if c in s.process_connection]
+        nodes = [c for c in combined.columns if c in s.node]
+        if units:
+            results.append((combined[units], 'dual_invest_effective_unit_d_e'))
+        if connections:
+            results.append((combined[connections], 'dual_invest_effective_connection_d_e'))
+        if nodes:
+            results.append((combined[nodes], 'dual_invest_effective_node_d_e'))
 
     return results
+
+
+def _synthesize_invest_dual(v) -> "pd.DataFrame":
+    """Combine all investment constraint duals into one per-entity, per-period table.
+
+    The v_invest variable bound includes existing capacity, so it never binds when
+    an explicit investment constraint is active.  The actual dual information lives
+    in the constraint duals, which we sum here:
+      - maxInvest_entity_period  (per-entity, per-period cap)
+      - maxInvest_entity_total   (per-entity, total cap across periods)
+      - maxCumulative_capacity   (per-entity, cumulative cap)
+      - maxInvestGroup_*         (group caps, expanded to member entities)
+    All duals are in units of objective per MW.  Non-binding constraints have dual 0.
+    """
+    import pandas as pd
+
+    # Collect all entity-level constraint duals, aligned to the same columns and index
+    entity_duals: list[pd.DataFrame] = []
+    for df in (v.dual_maxInvest_period, v.dual_maxInvest_total, v.dual_maxCumulative):
+        if not df.empty:
+            entity_duals.append(df)
+
+    # Expand group constraint duals to per-entity using the group-entity mapping
+    if not v.group_entity_invest.empty:
+        group_map = v.group_entity_invest  # columns: group, entity
+        for group_df in (v.dual_maxInvestGroup_period, v.dual_maxInvestGroup_total,
+                         v.dual_maxInvestGroup_cumulative):
+            if group_df.empty:
+                continue
+            for group_name in group_df.columns:
+                members = group_map.loc[group_map['group'] == group_name, 'entity'].tolist()
+                if not members:
+                    continue
+                # Create per-entity columns with the group's dual value
+                group_series = group_df[group_name]
+                expanded = pd.DataFrame(
+                    {entity: group_series for entity in members},
+                    index=group_series.index,
+                )
+                expanded.columns.name = 'entity'
+                entity_duals.append(expanded)
+
+    if not entity_duals:
+        return pd.DataFrame()
+
+    # Align all DataFrames to a common (index, columns) and sum
+    combined = entity_duals[0]
+    for df in entity_duals[1:]:
+        combined = combined.add(df, fill_value=0.0)
+    combined = combined.fillna(0.0)
+
+    return combined
 
 
 def inertia_results(par, s, v, r, debug):
