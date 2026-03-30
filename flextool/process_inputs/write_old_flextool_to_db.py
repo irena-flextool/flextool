@@ -2504,7 +2504,7 @@ def _apply_units_override(
                 _add_param(db, "unit", (unit_name,), "invest_method", "invest_total",
                            alt_name, counters)
     elif "invested storage" in param_lower:
-        storage_target = storage_node if is_storage else f"{unit_name}_storage"
+        storage_target = storage_node if is_storage else f"{unit_name}_inflow"
         if _entity_exists(existing_entities, "node", (storage_target,)):
             _add_param(db, "node", (storage_target,), "invest_max_total", value,
                        alt_name, counters)
@@ -2519,7 +2519,7 @@ def _apply_units_override(
             if forced_invest is not None:
                 forced_invest.setdefault(unit_name, set()).add("mwh")
     elif "max invest (mwh)" in param_lower:
-        storage_target = storage_node if is_storage else f"{unit_name}_storage"
+        storage_target = storage_node if is_storage else f"{unit_name}_inflow"
         if _entity_exists(existing_entities, "node", (storage_target,)):
             _add_param(db, "node", (storage_target,), "has_balance", "yes",
                        alt_name, counters)
@@ -2532,7 +2532,9 @@ def _apply_units_override(
     elif "storage (mwh)" in param_lower or (
         "storage" in param_lower and "invest" not in param_lower and "start" not in param_lower and "finish" not in param_lower
     ):
-        storage_target = storage_node if is_storage else f"{unit_name}_storage"
+        # Storage units use {unit_name}_storage; non-storage inflow units
+        # use {unit_name}_inflow (where existing = storage_mwh in the base).
+        storage_target = storage_node if is_storage else f"{unit_name}_inflow"
         if _entity_exists(existing_entities, "node", (storage_target,)):
             _add_param(db, "node", (storage_target,), "existing", value,
                        alt_name, counters)
