@@ -629,8 +629,8 @@
                 "port": null,
                 "database": {
                     "type": "path",
-                    "relative": false,
-                    "path": "/home/jkiviluo/sources/flextool-africa2/input_data.sqlite"
+                    "relative": true,
+                    "path": "input_data.sqlite"
                 },
                 "schema": ""
             }
