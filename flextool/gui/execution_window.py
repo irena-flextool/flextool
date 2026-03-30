@@ -36,7 +36,7 @@ class ExecutionWindow(tk.Toplevel):
     ) -> None:
         super().__init__(parent)
         self.title("Execution Menu")
-        self.transient(parent)
+
 
         self._mgr = execution_mgr
         self._viewed_job_id: int | None = None
