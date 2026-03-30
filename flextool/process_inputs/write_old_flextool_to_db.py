@@ -358,8 +358,8 @@ def _write_balance_nodes(
         if lolp > 0:
             _add_param(db, "node", (gn.node,), "penalty_up", lolp,
                        alt_name, counters)
-            _add_param(db, "node", (gn.node,), "penalty_down", lolp,
-                       alt_name, counters)
+        _add_param(db, "node", (gn.node,), "penalty_down", 0.0,
+                   alt_name, counters)
 
         # Demand as negative inflow
         demand_ts = _find_demand_ts(data, gn.grid, gn.node)
@@ -415,6 +415,7 @@ def _write_storage_units(
     """
     use_online = _get_master_param(data, "use online") == 1
     use_ramps = _get_master_param(data, "use ramps") == 1
+    lolp = _get_master_param(data, "loss of load penalty")
     count = 0
 
     for unit in data.units:
@@ -445,6 +446,12 @@ def _write_storage_units(
                           unit.storage_mwh, alt_name, counters, skip_zero=False)
         _add_param(db, "node", (storage_node,), "storage_binding_method",
                    "bind_within_solve", alt_name, counters)
+
+        if lolp > 0:
+            _add_param(db, "node", (storage_node,), "penalty_up", lolp,
+                       alt_name, counters)
+        _add_param(db, "node", (storage_node,), "penalty_down", 0.0,
+                   alt_name, counters)
 
         self_discharge = _get_unit_type_param(data, unit, "self discharge loss")
         _add_param_if_set(db, "node", (storage_node,), "self_discharge_loss",
@@ -858,7 +865,20 @@ def _write_units(
                           alt_name, counters)
 
         # -- investment --
-        if unit.max_invest_mw is not None and unit.max_invest_mw > 0:
+        has_forced_invest = (
+            unit.invested_capacity_mw is not None and unit.invested_capacity_mw > 0
+        )
+        has_max_invest = (
+            unit.max_invest_mw is not None and unit.max_invest_mw > 0
+        )
+        if has_forced_invest:
+            _add_param(db, "unit", (unit_name,), "invest_method", "invest_total",
+                       alt_name, counters)
+            _add_param(db, "unit", (unit_name,), "invest_max_total",
+                       unit.invested_capacity_mw, alt_name, counters)
+            _add_param(db, "unit", (unit_name,), "invest_min_total",
+                       unit.invested_capacity_mw, alt_name, counters)
+        elif has_max_invest:
             _add_param(db, "unit", (unit_name,), "invest_method", "invest_total",
                        alt_name, counters)
             _add_param(db, "unit", (unit_name,), "invest_max_total",
@@ -986,6 +1006,7 @@ def _write_inflow_units(
     The inflow time series is set on this node and the unit draws from it
     via a unit__inputNode relationship.
     """
+    lolp = _get_master_param(data, "loss of load penalty")
     count = 0
     for unit in data.units:
         if not unit.inflow_profile or not unit.output_node:
@@ -1017,6 +1038,11 @@ def _write_inflow_units(
         _add_entity(db, "node", inflow_node, alt_name, counters,
                      entities_added, entity_alts_added)
         _add_param(db, "node", (inflow_node,), "has_balance", "yes",
+                   alt_name, counters)
+        if lolp > 0:
+            _add_param(db, "node", (inflow_node,), "penalty_up", lolp,
+                       alt_name, counters)
+        _add_param(db, "node", (inflow_node,), "penalty_down", 0.0,
                    alt_name, counters)
 
         # Always set has_storage on inflow nodes — even with 0 capacity this
@@ -1085,6 +1111,11 @@ def _write_inflow_units(
 
         _add_param(db, "node", (node_name,), "has_balance", "yes",
                    alt_name, counters)
+        if lolp > 0:
+            _add_param(db, "node", (node_name,), "penalty_up", lolp,
+                       alt_name, counters)
+        _add_param(db, "node", (node_name,), "penalty_down", 0.0,
+                   alt_name, counters)
         _add_param(db, "node", (node_name,), "has_storage", "yes",
                    alt_name, counters)
         _add_param(db, "node", (node_name,), "storage_binding_method",
@@ -1137,7 +1168,20 @@ def _write_connections(
         _add_param_if_set(db, "connection", (conn_name,), "interest_rate",
                           conn.interest, alt_name, counters)
 
-        if conn.max_invest_mw is not None and conn.max_invest_mw > 0:
+        has_forced_invest = (
+            conn.invested_capacity_mw is not None and conn.invested_capacity_mw > 0
+        )
+        has_max_invest = (
+            conn.max_invest_mw is not None and conn.max_invest_mw > 0
+        )
+        if has_forced_invest:
+            _add_param(db, "connection", (conn_name,), "invest_method",
+                       "invest_total", alt_name, counters)
+            _add_param(db, "connection", (conn_name,), "invest_max_total",
+                       conn.invested_capacity_mw, alt_name, counters)
+            _add_param(db, "connection", (conn_name,), "invest_min_total",
+                       conn.invested_capacity_mw, alt_name, counters)
+        elif has_max_invest:
             _add_param(db, "connection", (conn_name,), "invest_method",
                        "invest_total", alt_name, counters)
             _add_param(db, "connection", (conn_name,), "invest_max_total",
@@ -1234,9 +1278,6 @@ def _write_groups(
             if lack_inertia_penalty > 0:
                 _add_param(db, "group", (ng.name,), "penalty_inertia",
                            lack_inertia_penalty, alt_name, counters)
-
-        _add_param(db, "group", (ng.name,), "output_results", "yes",
-                   alt_name, counters)
 
         # Link nodes to this group
         for node_name in ng_nodes.get(ng.name, []):
@@ -2374,6 +2415,9 @@ def _apply_unit_group_override(
 
     if "max invest" in param_lower:
         _add_param(db, "group", (group_name,), "invest_max_total", value, alt_name, counters)
+        if isinstance(value, (int, float)) and float(value) > 0:
+            _add_param(db, "group", (group_name,), "invest_method", "invest_total",
+                       alt_name, counters)
     elif "min invest" in param_lower:
         _add_param(db, "group", (group_name,), "invest_min_total", value, alt_name, counters)
     else:
@@ -2449,10 +2493,16 @@ def _apply_units_override(
                        alt_name, counters)
     elif "max invest (mw)" in param_lower and "mwh" not in param_lower:
         if is_storage:
-            _add_param(db, "unit", (charger,), "invest_max_total", value, alt_name, counters)
-            _add_param(db, "unit", (discharger,), "invest_max_total", value, alt_name, counters)
+            for target in (charger, discharger):
+                _add_param(db, "unit", (target,), "invest_max_total", value, alt_name, counters)
+                if isinstance(value, (int, float)) and float(value) > 0:
+                    _add_param(db, "unit", (target,), "invest_method", "invest_total",
+                               alt_name, counters)
         else:
             _add_param(db, "unit", (unit_name,), "invest_max_total", value, alt_name, counters)
+            if isinstance(value, (int, float)) and float(value) > 0:
+                _add_param(db, "unit", (unit_name,), "invest_method", "invest_total",
+                           alt_name, counters)
     elif "invested storage" in param_lower:
         storage_target = storage_node if is_storage else f"{unit_name}_storage"
         if _entity_exists(existing_entities, "node", (storage_target,)):
@@ -2641,6 +2691,9 @@ def _apply_node_node_override(
         _add_param(db, "connection", (conn_name,), "existing", value, alt_name, counters)
     elif "max invest" in param_lower:
         _add_param(db, "connection", (conn_name,), "invest_max_total", value, alt_name, counters)
+        if isinstance(value, (int, float)) and float(value) > 0:
+            _add_param(db, "connection", (conn_name,), "invest_method", "invest_total",
+                       alt_name, counters)
     elif "loss" == param_lower:
         eff = 1.0 - float(value) if isinstance(value, (int, float)) else 1.0
         _add_param(db, "connection", (conn_name,), "efficiency", eff, alt_name, counters)
