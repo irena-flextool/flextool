@@ -223,6 +223,25 @@ def _get_unit_name(unit: UnitInstance) -> str:
     return f"{unit.unit_type}_{unit.output_node}"
 
 
+def _unit_has_storage(unit: UnitInstance) -> bool:
+    """Return True if the unit has existing or investable storage capacity."""
+    return (
+        (unit.storage_mwh is not None and unit.storage_mwh != 0)
+        or (unit.invested_storage_mwh is not None and unit.invested_storage_mwh > 0)
+        or (unit.max_invest_mwh is not None and unit.max_invest_mwh > 0)
+    )
+
+
+def _get_unit_node_name(unit: UnitInstance) -> str:
+    """Generate the input node name for a non-charger/discharger unit.
+
+    Uses '_storage' if the unit has storage capacity or investment,
+    '_node' otherwise (pure inflow / run-of-river).
+    """
+    suffix = "_storage" if _unit_has_storage(unit) else "_node"
+    return f"{_get_unit_name(unit)}{suffix}"
+
+
 def _get_master_param(data: OldFlexToolData, key: str, default: float = 0.0) -> float:
     """Get a master parameter with a default fallback.
 
@@ -358,8 +377,8 @@ def _write_balance_nodes(
         if lolp > 0:
             _add_param(db, "node", (gn.node,), "penalty_up", lolp,
                        alt_name, counters)
-        _add_param(db, "node", (gn.node,), "penalty_down", 0.0,
-                   alt_name, counters)
+            _add_param(db, "node", (gn.node,), "penalty_down", lolp,
+                       alt_name, counters)
 
         # Demand as negative inflow
         demand_ts = _find_demand_ts(data, gn.grid, gn.node)
@@ -1026,7 +1045,7 @@ def _write_inflow_units(
             continue
 
         unit_name = _get_unit_name(unit)
-        inflow_node = f"{unit_name}_inflow"
+        inflow_node = _get_unit_node_name(unit)
 
         # Apply inflow multiplier if set
         ts_data = inflow_ts.data
@@ -1082,7 +1101,7 @@ def _write_inflow_units(
         if not inflow_ts.data:
             continue
 
-        node_name = f"{inflow_ts.name}_inflow"
+        node_name = f"{inflow_ts.name}_node"
         inflow_map = _make_time_map(inflow_ts.data)
 
         # Create the entity but set it inactive — it's not connected to any
@@ -2504,7 +2523,7 @@ def _apply_units_override(
                 _add_param(db, "unit", (unit_name,), "invest_method", "invest_total",
                            alt_name, counters)
     elif "invested storage" in param_lower:
-        storage_target = storage_node if is_storage else f"{unit_name}_inflow"
+        storage_target = storage_node if is_storage else _get_unit_node_name(base_unit)
         if _entity_exists(existing_entities, "node", (storage_target,)):
             _add_param(db, "node", (storage_target,), "invest_max_total", value,
                        alt_name, counters)
@@ -2519,7 +2538,7 @@ def _apply_units_override(
             if forced_invest is not None:
                 forced_invest.setdefault(unit_name, set()).add("mwh")
     elif "max invest (mwh)" in param_lower:
-        storage_target = storage_node if is_storage else f"{unit_name}_inflow"
+        storage_target = storage_node if is_storage else _get_unit_node_name(base_unit)
         if _entity_exists(existing_entities, "node", (storage_target,)):
             _add_param(db, "node", (storage_target,), "has_balance", "yes",
                        alt_name, counters)
@@ -2532,9 +2551,7 @@ def _apply_units_override(
     elif "storage (mwh)" in param_lower or (
         "storage" in param_lower and "invest" not in param_lower and "start" not in param_lower and "finish" not in param_lower
     ):
-        # Storage units use {unit_name}_storage; non-storage inflow units
-        # use {unit_name}_inflow (where existing = storage_mwh in the base).
-        storage_target = storage_node if is_storage else f"{unit_name}_inflow"
+        storage_target = storage_node if is_storage else _get_unit_node_name(base_unit)
         if _entity_exists(existing_entities, "node", (storage_target,)):
             _add_param(db, "node", (storage_target,), "existing", value,
                        alt_name, counters)
@@ -2562,18 +2579,12 @@ def _apply_units_override(
         # Re-read the original inflow profile, apply the new multiplier,
         # and write to the unit's inflow node under this alternative
         multiplier = float(value) if value else 0.0
-        # Find the matching base unit to get its inflow_profile name
-        base_unit = next(
-            (u for u in data.units
-             if u.unit_type == unit_type and u.output_node == output_node),
-            None,
-        )
         if base_unit and base_unit.inflow_profile:
             inflow_ts = _find_inflow_profile(data, base_unit.inflow_profile)
             if inflow_ts and inflow_ts.data:
                 scaled = {k: v * multiplier for k, v in inflow_ts.data.items()}
                 inflow_map = _make_time_map(scaled)
-                inflow_node = f"{unit_name}_inflow"
+                inflow_node = _get_unit_node_name(base_unit)
                 if _entity_exists(existing_entities, "node", (inflow_node,)):
                     _add_param(db, "node", (inflow_node,), "inflow",
                                inflow_map, alt_name, counters)
