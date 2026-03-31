@@ -56,6 +56,12 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
             obj = obj[~obj.index.duplicated(keep='last')]
         setattr(v, attr, obj)
 
+    # v_angle: drop solve level only when non-empty (may be empty when no DC PF nodes)
+    if not v.angle.empty:
+        v.angle = v.angle.droplevel('solve')
+        if v.angle.index.duplicated().any():
+            v.angle = v.angle[~v.angle.index.duplicated(keep='last')]
+
     for attr in _PAR_DROP:
         obj = getattr(par, attr)
         obj = obj.droplevel('solve')

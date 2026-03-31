@@ -37,6 +37,19 @@ def read_variables(output_dir):
     v.divest = pd.read_csv(output_path / 'v_divest.csv', index_col=[0, 1]).astype(float)
     v.dual_node_balance = pd.read_csv(output_path / 'v_dual_node_balance.csv', index_col=[0, 1, 2]).astype(float)
     v.dual_reserve_balance = pd.read_csv(output_path / 'v_dual_reserve__upDown__group__period__t.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
+
+    # DC power flow voltage angles (may be empty when no DC PF nodes exist)
+    angle_path = output_path / 'v_angle.csv'
+    if angle_path.exists():
+        v.angle = pd.read_csv(angle_path, index_col=[0, 1, 2]).astype(float)
+        if v.angle.empty:
+            v.angle = pd.DataFrame()
+        else:
+            v.angle.index.names = ['solve', 'period', 'time']
+            v.angle.columns.name = 'node'
+    else:
+        v.angle = pd.DataFrame()
+
     v.dual_invest_unit = pd.read_csv(output_path / 'v_dual_invest_unit.csv', index_col=[0, 1]).astype(float)
     v.dual_invest_connection = pd.read_csv(output_path / 'v_dual_invest_connection.csv', index_col=[0, 1]).astype(float)
     v.dual_invest_node = pd.read_csv(output_path / 'v_dual_invest_node.csv', index_col=[0, 1]).astype(float)

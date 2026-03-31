@@ -22,7 +22,7 @@ from flextool.process_outputs.out_costs import generic, cost_summaries, CO2
 from flextool.process_outputs.out_ancillary import (
     connection, connection_wards, connection_cf,
     reserves, investment_duals, inertia_results,
-    slack_variables, input_sets,
+    slack_variables, input_sets, dc_power_flow,
 )
 from flextool.process_outputs.out_group import (
     nodeGroup_indicators, nodeGroup_VRE_share,
@@ -256,6 +256,7 @@ ALL_OUTPUTS = [
     unit_cf_inputNode,
     unit_VRE_curtailment_and_potential,
     unit_ramps,
+    dc_power_flow,
 ]
 
 

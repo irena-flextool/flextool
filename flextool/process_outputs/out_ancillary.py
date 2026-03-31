@@ -288,6 +288,28 @@ def slack_variables(par, s, v, r, debug):
     return results
 
 
+def dc_power_flow(par, s, v, r, debug):
+    """DC power flow voltage angles and angle differences per connection"""
+
+    results = []
+
+    # Voltage angles per node (may be empty when no DC PF nodes exist)
+    if not r.angle_dt.empty:
+        results.append((r.angle_dt, 'dc_angle_dt_e'))
+
+    # Angle difference per connection
+    if not r.connection_angle_diff_dt.empty:
+        results.append((r.connection_angle_diff_dt, 'dc_angle_diff_dt_e'))
+
+    # DC PF structural sets (Index objects become parquet mapping files)
+    if not s.node_dc_power_flow.empty:
+        results.append((s.node_dc_power_flow, 'node_dc_power_flow'))
+    if not s.connection_dc_power_flow.empty:
+        results.append((s.connection_dc_power_flow, 'connection_dc_power_flow'))
+
+    return results if results else None
+
+
 def input_sets(par, s, v, r, debug):
     """Input sets needed for scenario results"""
 

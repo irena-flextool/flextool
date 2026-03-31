@@ -37,6 +37,9 @@ _DISPATCH_MAPPING_FILENAMES: frozenset[str] = frozenset({
     'outputNodeGroup_does_generic_flows',
     'outputGroup_does_generic_flows',
     'outputGroup_does_specified_flows',
+    # DC power flow structural sets:
+    'node_dc_power_flow',
+    'connection_dc_power_flow',
 })
 
 
@@ -126,6 +129,10 @@ class TimeSeriesResults:
     process_co2_d_eee: pd.DataFrame | None = None
     process_reserve_average_d_eppe: pd.DataFrame | None = None
     process_reserve_upDown_node_dt_eppe: pd.DataFrame | None = None
+
+    # --- DC power flow ---
+    dc_angle_dt_e: pd.DataFrame | None = None
+    dc_angle_diff_dt_e: pd.DataFrame | None = None
 
     # --- Other ---
     reserve_prices_dt_ppg: pd.DataFrame | None = None

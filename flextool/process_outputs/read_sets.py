@@ -139,4 +139,31 @@ def read_sets(output_dir):
     df = pd.read_csv(output_path / 'set_enable_optional_outputs.csv')
     s.enable_optional_outputs = set(df.iloc[:, 0])
 
+    # DC power flow sets (read from input/ directory, sibling of output_raw/)
+    # These may not exist or may be empty when no DC PF is configured.
+    input_path = output_path.parent / 'input'
+    node_dc_pf_path = input_path / 'node_dc_power_flow.csv'
+    if node_dc_pf_path.exists():
+        df = pd.read_csv(node_dc_pf_path)
+        s.node_dc_power_flow = pd.Index(df.iloc[:, 0]) if not df.empty else pd.Index([], dtype=str)
+    else:
+        s.node_dc_power_flow = pd.Index([], dtype=str)
+
+    conn_dc_pf_path = input_path / 'connection_dc_power_flow.csv'
+    if conn_dc_pf_path.exists():
+        df = pd.read_csv(conn_dc_pf_path)
+        s.connection_dc_power_flow = pd.Index(df.iloc[:, 0]) if not df.empty else pd.Index([], dtype=str)
+    else:
+        s.connection_dc_power_flow = pd.Index([], dtype=str)
+
+    susceptance_path = input_path / 'p_connection_susceptance.csv'
+    if susceptance_path.exists():
+        df = pd.read_csv(susceptance_path)
+        if not df.empty and len(df.columns) >= 2:
+            s.connection_susceptance = df.set_index(df.columns[0])[df.columns[1]]
+        else:
+            s.connection_susceptance = pd.Series(dtype=float)
+    else:
+        s.connection_susceptance = pd.Series(dtype=float)
+
     return s
