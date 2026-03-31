@@ -549,6 +549,14 @@ plots:
       time_average_duration: 168
       max_items_per_plot: 10
       ylabel: MWh
+    full_timeline_state:
+      plot_name: '7.2.tf Node state'
+      map_dimensions_for_plots: [dt_e, tt_l]
+      full_timeline: true
+      subplots_by_magnitudes: true
+      skip_data_with_only_zeroes: true
+      legend: all
+      ylabel: MWh
   dual_invest_node_d_e:
     plot_name: '7.3.D Node marginal investment value'
     map_dimensions_for_plots: [d_e, g_b]
