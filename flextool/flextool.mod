@@ -633,28 +633,9 @@ set ed_history_realized := ed_history_realized_read union ed_history_realized_fi
 set process_delayed__duration := process_delay_weighted__delay_duration union process_delay_single__delay_duration;
 set process_delayed := setof {(p, td) in process_delayed__duration} (p);
 
-set process__fork_method_yes dimen 2 within {process, fork_method} :=
-    {p in process, m in fork_method
-	  : (    sum{(p, source) in process_source} 1 > 1
-	      || sum{(p, sink) in process_sink} 1 > 1
-	      || p in process_delayed
-	    ) && m in fork_method_yes};
-set process__fork_method_no dimen 2 within {process, fork_method} :=
-    {p in process, m in fork_method
-	  : (    sum{(p, source) in process_source} 1 < 2
-	      && sum{(p, sink) in process_sink} 1 < 2
-	      && p not in process_delayed
-	    ) && m in fork_method_no};
-set process__fork_method := process__fork_method_yes union process__fork_method_no;
-set process_ct_startup_fork_method :=
-    { p in process, m1 in ct_method, m2 in startup_method, m3 in fork_method, m in method
-	    : (m1, m2, m3, m) in methods
-	    && (p, m1) in process__ct_method
-	    && (p, m2) in process__startup_method
-		&& (p, m3) in process__fork_method
-	};
-
-set process_method := setof {(p, m1, m2, m3, m) in process_ct_startup_fork_method} (p, m);
+# process_method is now resolved in Python (input_writer.py) and read from CSV
+set process_method dimen 2 within {process, method};
+table data IN 'CSV' 'input/process_method.csv' : process_method <- [process,method];
 set process__profileProcess__toSink__profile__profile_method :=
     { p in process, (p2, sink, f, fm) in process__node__profile__profile_method
 	    :  p = p2
@@ -1809,7 +1790,7 @@ if p_model["solveFirst"] == 1 && 'read' in phase then {
   check {p in process_minload, (d,t) in dt} pdtProcess[p, 'min_load', d, t] < 1.0;
 
   printf 'Checking: Invalid combinations between conversion/transfer methods and the startup method\n';
-  check {(p, ct_m, s_m, f_m, m) in process_ct_startup_fork_method} : not (p, ct_m, s_m, f_m, 'not_applicable') in process_ct_startup_fork_method;
+  check {(p, m) in process_method} : m != 'not_applicable';
 
   printf 'Checking: Is there a timeline connected to a timeset\n';
   check sum{(tb, tl) in timeset__timeline} 1 > 0;

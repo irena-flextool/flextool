@@ -858,6 +858,142 @@ _DEFAULT_VALUES_SPECS: list[dict] = [
 
 
 # ---------------------------------------------------------------------------
+# Methods mapping — must stay in sync with flextool_base.dat ``set methods``
+# ---------------------------------------------------------------------------
+
+# (ct_method, startup_method, fork_method) -> method
+METHODS_MAPPING: dict[tuple[str, str, str], str] = {
+    ("constant_efficiency", "no_startup", "fork_no"): "method_1way_1var_off",
+    ("constant_efficiency", "no_startup", "fork_yes"): "method_1way_nvar_off",
+    ("constant_efficiency", "linear", "fork_no"): "method_1way_1var_LP",
+    ("constant_efficiency", "linear", "fork_yes"): "method_1way_nvar_LP",
+    ("constant_efficiency", "binary", "fork_no"): "method_1way_1var_MIP",
+    ("constant_efficiency", "binary", "fork_yes"): "method_1way_nvar_MIP",
+    ("no_losses_no_variable_cost", "no_startup", "fork_no"): "method_2way_1var_off",
+    ("no_losses_no_variable_cost", "no_startup", "fork_yes"): "method_2way_nvar_off",
+    ("variable_cost_only", "no_startup", "fork_no"): "method_2way_2var_off",
+    ("variable_cost_only", "no_startup", "fork_yes"): "method_2way_nvar_off",
+    ("regular", "no_startup", "fork_no"): "method_2way_2var_exclude",
+    ("regular", "no_startup", "fork_yes"): "not_applicable",
+    ("exact", "no_startup", "fork_no"): "method_2way_2var_MIP_exclude",
+    ("exact", "no_startup", "fork_yes"): "not_applicable",
+    ("min_load_efficiency", "no_startup", "fork_no"): "not_applicable",
+    ("min_load_efficiency", "no_startup", "fork_yes"): "not_applicable",
+    ("min_load_efficiency", "linear", "fork_no"): "method_1way_1var_LP",
+    ("min_load_efficiency", "linear", "fork_yes"): "method_1way_nvar_LP",
+    ("min_load_efficiency", "binary", "fork_no"): "method_1way_1var_MIP",
+    ("min_load_efficiency", "binary", "fork_yes"): "method_1way_nvar_MIP",
+    ("none", "no_startup", "fork_no"): "method_1way_1var_off",
+    ("none", "no_startup", "fork_yes"): "method_1way_nvar_off",
+    ("none", "linear", "fork_no"): "method_1way_1var_LP",
+    ("none", "linear", "fork_yes"): "method_1way_nvar_LP",
+    ("none", "binary", "fork_no"): "method_1way_1var_MIP",
+    ("none", "binary", "fork_yes"): "method_1way_nvar_MIP",
+}
+
+
+def _write_process_method(db, wf: Path, logger: logging.Logger) -> None:
+    """Resolve (ct_method, startup_method, fork_method) -> method for each
+    process and write ``input/process_method.csv``.
+
+    This replaces the GMPL set computation that was formerly in flextool.mod
+    (process__fork_method_yes/no, process_ct_startup_fork_method, process_method).
+    """
+
+    # --- Collect ct_method per process ---
+    ct_method_map: dict[str, str] = {}
+    for cl, par in [("unit", "conversion_method"), ("connection", "transfer_method")]:
+        for pv in db.find_parameter_values(entity_class_name=cl, parameter_definition_name=par):
+            if pv["type"] is None:
+                continue
+            process_name = pv["entity_byname"][0]
+            ct_method_map[process_name] = str(pv["parsed_value"])
+
+    # --- Collect startup_method per process ---
+    startup_method_map: dict[str, str] = {}
+    for cl in ["unit", "connection"]:
+        for pv in db.find_parameter_values(entity_class_name=cl, parameter_definition_name="startup_method"):
+            if pv["type"] is None:
+                continue
+            process_name = pv["entity_byname"][0]
+            startup_method_map[process_name] = str(pv["parsed_value"])
+
+    # --- Collect sources and sinks per process ---
+    source_counts: dict[str, int] = {}
+    for ent_class, dim_idx in [("unit__inputNode", [0, 1]), ("connection__node__node", [0, 1])]:
+        for entity in db.find_entities(entity_class_name=ent_class):
+            process_name = entity["entity_byname"][dim_idx[0]]
+            source_counts[process_name] = source_counts.get(process_name, 0) + 1
+
+    sink_counts: dict[str, int] = {}
+    for ent_class, dim_idx in [("unit__outputNode", [0, 1]), ("connection__node__node", [0, 2])]:
+        for entity in db.find_entities(entity_class_name=ent_class):
+            process_name = entity["entity_byname"][dim_idx[0]]
+            sink_counts[process_name] = sink_counts.get(process_name, 0) + 1
+
+    # --- Collect delayed processes ---
+    delayed_processes: set[str] = set()
+    for cl in ["unit", "connection"]:
+        for pv in db.find_parameter_values(entity_class_name=cl, parameter_definition_name="delay"):
+            if pv["type"] is None:
+                continue
+            delayed_processes.add(pv["entity_byname"][0])
+
+    # --- Collect all processes and which class they belong to ---
+    all_processes: dict[str, str] = {}  # process_name -> "unit" or "connection"
+    for entity in db.find_entities(entity_class_name="unit"):
+        all_processes[entity["entity_byname"][0]] = "unit"
+    for entity in db.find_entities(entity_class_name="connection"):
+        all_processes[entity["entity_byname"][0]] = "connection"
+
+    # --- Resolve method for each process ---
+    rows: list[tuple[str, str]] = []
+    for process_name, process_class in all_processes.items():
+        # ct_method defaults must match flextool_base.dat:
+        #   ct_method_constant (units) = "constant_efficiency"
+        #   ct_method_regular (connections) = "regular"
+        if process_name in ct_method_map:
+            ct = ct_method_map[process_name]
+        elif process_class == "connection":
+            ct = "regular"
+        else:
+            ct = "constant_efficiency"
+
+        # startup_method: default "no_startup"
+        startup = startup_method_map.get(process_name, "no_startup")
+
+        # fork_method: fork_yes if >1 source OR >1 sink OR delayed
+        n_sources = source_counts.get(process_name, 0)
+        n_sinks = sink_counts.get(process_name, 0)
+        is_delayed = process_name in delayed_processes
+        fork = "fork_yes" if (n_sources > 1 or n_sinks > 1 or is_delayed) else "fork_no"
+
+        key = (ct, startup, fork)
+        method = METHODS_MAPPING.get(key)
+        if method is None:
+            logger.warning(
+                "process_method: no mapping for process '%s' with "
+                "(ct_method=%s, startup_method=%s, fork_method=%s) — skipping",
+                process_name, ct, startup, fork,
+            )
+            continue
+        if method == "not_applicable":
+            logger.warning(
+                "process_method: method resolves to 'not_applicable' for "
+                "process '%s' (ct_method=%s, startup_method=%s, fork_method=%s)",
+                process_name, ct, startup, fork,
+            )
+        rows.append((process_name, method))
+
+    # --- Write CSV ---
+    filepath = wf / "input" / "process_method.csv"
+    with open(filepath, "w") as f:
+        f.write("process,method\n")
+        for process_name, method in rows:
+            f.write(f"{process_name},{method}\n")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -886,6 +1022,8 @@ def write_input(input_db_url: str, scenario_name: str | None, logger: logging.Lo
             prefixed_spec = dict(spec)
             prefixed_spec["filename"] = str(wf / spec["filename"])
             write_parameter(db, **prefixed_spec)
+
+        _write_process_method(db, wf, logger)
 
 
 def write_entity(
