@@ -503,10 +503,20 @@ plots:
     legend: shared
     ylabel: Currency / MWh
   node_state_dt_e:
-    plot_name: '7.2.t Node state'
-    map_dimensions_for_plots: [dt_se, tt_lu]
-    legend: shared
-    ylabel: MWh
+    default:
+      plot_name: '7.2.t Node state'
+      map_dimensions_for_plots: [dt_se, tt_lu]
+      skip_data_with_only_zeroes: true
+      legend: shared
+      ylabel: MWh
+    full_timeline_state:
+      plot_name: '7.2.tf Node state'
+      map_dimensions_for_plots: [dt_se, tt_lu]
+      full_timeline: true
+      subplots_by_magnitudes: true
+      skip_data_with_only_zeroes: true
+      legend: all
+      ylabel: MWh
 
   # Unit and connection (process) details
   unit_inputs_cf_d_ee:

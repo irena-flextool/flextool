@@ -1,3 +1,4 @@
+import math
 import os
 import numpy as np
 import pandas as pd
@@ -60,25 +61,99 @@ def _filter_columns_by_items(df_sub, items, level_names):
     return df_sub.loc[:, mask]
 
 
-def _build_effective_plots(df_plot, sub_levels, item_level_names, max_items_per_plot):
-    """Pre-expand subplots into effective_plots with item splitting."""
+def _magnitude_label(mag: int) -> str:
+    """Return a human-readable label for a magnitude bucket.
+
+    mag is the floor(log10(max_abs)) value.  The special sentinel
+    ``mag = -999`` stands for the "< 1" catch-all bucket.
+    """
+    if mag == -999:
+        return '0\u20131'          # 0–1  (all values with max abs < 1)
+    lo = 10 ** mag
+    hi = 10 ** (mag + 1)
+    def _fmt(v):
+        if v >= 1:
+            return f'{v:,.0f}'     # e.g. 1,000
+        return f'{v:g}'            # e.g. 0.1
+    return f'{_fmt(lo)}\u2013{_fmt(hi)}'
+
+
+def _group_items_by_magnitude(
+    df_sub: pd.DataFrame,
+    item_level_names: list[str],
+) -> dict[int, list]:
+    """Group column items by order-of-magnitude of their max absolute value.
+
+    Returns ``{magnitude_key: [items]}`` sorted by magnitude ascending.
+    Items with max abs < 1 all share the key ``-999``.
+    """
+    items = _get_column_items(df_sub, item_level_names)
+    buckets: dict[int, list] = {}
+    for item in items:
+        col_data = _filter_columns_by_items(df_sub, [item], item_level_names)
+        max_abs = col_data.abs().max().max()
+        if not np.isfinite(max_abs) or max_abs < 1e-15:
+            mag = -999
+        elif max_abs < 1.0:
+            mag = -999              # lump everything < 1 together
+        else:
+            mag = math.floor(math.log10(max_abs))
+        buckets.setdefault(mag, []).append(item)
+    return dict(sorted(buckets.items()))
+
+
+def _build_effective_plots(df_plot, sub_levels, item_level_names,
+                           max_items_per_plot, subplots_by_magnitudes=False):
+    """Pre-expand subplots into effective_plots with item splitting.
+
+    When *subplots_by_magnitudes* is True the columns are first grouped
+    by order-of-magnitude of their max absolute value (within each 'u'
+    subplot group) and each magnitude bucket becomes its own subplot.
+    """
     subs = _get_unique_levels(df_plot.columns, sub_levels)
     effective_plots = []
     for sub in subs:
         df_sub = _extract_subplot_data(df_plot, sub, sub_levels)
-        title = (
+        base_title = (
             ' | '.join(str(v) for v in sub) if isinstance(sub, tuple)
             else str(sub) if sub is not None else None
         )
-        items = _get_column_items(df_sub, item_level_names)
-        if max_items_per_plot and len(items) > max_items_per_plot:
-            for i in range(0, len(items), max_items_per_plot):
-                chunk_items = items[i:i + max_items_per_plot]
-                df_chunk = _filter_columns_by_items(df_sub, chunk_items, item_level_names)
-                chunk_idx = i // max_items_per_plot + 1
-                effective_plots.append((f"{title}_{chunk_idx}", df_chunk))
+
+        if subplots_by_magnitudes:
+            mag_groups = _group_items_by_magnitude(df_sub, item_level_names)
+            for mag, mag_items in mag_groups.items():
+                mag_str = _magnitude_label(mag)
+                if base_title:
+                    mag_title = f'{base_title} ({mag_str})'
+                else:
+                    mag_title = f'({mag_str})'
+
+                if max_items_per_plot and len(mag_items) > max_items_per_plot:
+                    n_chunks = math.ceil(len(mag_items) / max_items_per_plot)
+                    for ci in range(n_chunks):
+                        start = ci * max_items_per_plot
+                        chunk_items = mag_items[start:start + max_items_per_plot]
+                        df_chunk = _filter_columns_by_items(
+                            df_sub, chunk_items, item_level_names
+                        )
+                        # mag_title ends with ')'; insert chunk index before it
+                        title = f'{mag_title[:-1]}, {ci + 1}/{n_chunks})'
+                        effective_plots.append((title, df_chunk))
+                else:
+                    df_mag = _filter_columns_by_items(
+                        df_sub, mag_items, item_level_names
+                    )
+                    effective_plots.append((mag_title, df_mag))
         else:
-            effective_plots.append((title, df_sub))
+            items = _get_column_items(df_sub, item_level_names)
+            if max_items_per_plot and len(items) > max_items_per_plot:
+                for i in range(0, len(items), max_items_per_plot):
+                    chunk_items = items[i:i + max_items_per_plot]
+                    df_chunk = _filter_columns_by_items(df_sub, chunk_items, item_level_names)
+                    chunk_idx = i // max_items_per_plot + 1
+                    effective_plots.append((f"{base_title}_{chunk_idx}", df_chunk))
+            else:
+                effective_plots.append((base_title, df_sub))
     return effective_plots
 
 
@@ -359,7 +434,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
     axis_bounds=None, axis_tick_format='1,.0f', always_include_zero_in_axis=True,
     max_items_per_plot=10, max_subplots_per_file=6, output_filepath=None,
-    only_first_file=False):
+    only_first_file=False, subplots_by_magnitudes=False):
 
     # Convert level indices to level names
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -373,9 +448,10 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     else:
         time_index = df_plot.index.astype(str)
 
-    # Build effective_plots with item splitting
+    # Build effective_plots with item splitting (and optional magnitude splitting)
     effective_plots = _build_effective_plots(
-        df_plot, sub_levels, line_level_names, max_items_per_plot
+        df_plot, sub_levels, line_level_names, max_items_per_plot,
+        subplots_by_magnitudes=subplots_by_magnitudes,
     )
     if not effective_plots:
         return 0

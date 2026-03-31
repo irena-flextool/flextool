@@ -148,7 +148,10 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
 
             if 't' in rules and 'i' not in rules:
                 chart_type = 'time'
-                df = df_orig.iloc[plot_rows[0]:plot_rows[1]].copy()
+                if cfg.full_timeline:
+                    df = df_orig.copy()
+                else:
+                    df = df_orig.iloc[plot_rows[0]:plot_rows[1]].copy()
             elif 'i' in rules:
                 chart_type = 'time'
                 df = df_orig.copy()
@@ -526,8 +529,10 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                             only_first_file=only_first_file,
                             skip_data_with_only_zeroes=cfg.skip_data_with_only_zeroes)
 
-                    elif fm_subplot_levels:
-                        # TIME + SUBPLOTS: send all data in one call.
+                    elif fm_subplot_levels or (
+                        cfg.subplots_by_magnitudes and not fm_stack_levels
+                    ):
+                        # TIME + SUBPLOTS (or magnitude-split lines): send all data in one call.
                         # The plot functions handle item splitting and file splitting internally.
                         filepath = generate_split_filename(
                             plot_name, plot_dir, plot_file_format,
@@ -560,7 +565,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                                 max_items_per_plot=max_items,
                                 max_subplots_per_file=cfg.max_subplots_per_file,
                                 output_filepath=filepath,
-                                only_first_file=only_first_file)
+                                only_first_file=only_first_file,
+                                subplots_by_magnitudes=cfg.subplots_by_magnitudes)
 
                     else:
                         # TIME without subplots — split items into files

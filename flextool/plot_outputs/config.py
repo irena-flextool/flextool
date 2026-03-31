@@ -23,7 +23,7 @@ PLOT_FIELD_NAMES = {
     'time_average_duration', 'xlabel', 'ylabel', 'value_label', 'axis_bounds',
     'axis_scale_min_max',  # backward compat alias for axis_bounds
     'axis_tick_format', 'always_include_zero_in_axis', 'skip_data_with_only_zeroes',
-    'multiply_by',
+    'multiply_by', 'full_timeline', 'subplots_by_magnitudes',
 }
 
 
@@ -51,6 +51,8 @@ class PlotConfig:
     always_include_zero_in_axis: bool = True
     skip_data_with_only_zeroes: bool = False
     multiply_by: float | None = None
+    full_timeline: bool = False
+    subplots_by_magnitudes: bool = False
 
 
 def _is_single_config(d: dict) -> bool:
