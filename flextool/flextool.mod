@@ -247,6 +247,10 @@ set process_sink dimen 2 within {process, entity};
 set process__sink_nonSync_unit dimen 2 within {process, node};
 set process_nonSync_connection dimen 1 within {process};
 
+set node_dc_power_flow 'nodes participating in DC power flow' within node;
+set connection_dc_power_flow 'connections with DC power flow angle constraints' within process_connection;
+set node_reference_angle 'reference bus nodes (angle fixed to 0)' within node;
+
 set process_reserve_upDown_node dimen 4;
 set process_node_flow_constraint dimen 3 within {process, node, constraint};
 set process_capacity_constraint dimen 2 within {process, constraint};
@@ -354,6 +358,7 @@ param p_process_reserve_upDown_node {p in process, r in reserve, ud in upDown, n
 param p_process {process, processParam} default 0;
 param pd_process {process, processPeriodParam, periodAll} default 0;
 param pt_process {process, processTimeParam, time} default 0;
+param p_connection_susceptance {p in connection_dc_power_flow};
 
 param p_constraint_constant {constraint} default 0;
 param p_process_node_constraint_flow_coefficient {process, node, constraint};
@@ -459,6 +464,10 @@ table data IN 'CSV' 'input/periods_available.csv': period_from_model <- [period_
 # Single dimension membership sets
 table data IN 'CSV' 'input/process_connection.csv': process_connection <- [process_connection];
 table data IN 'CSV' 'input/process_nonSync_connection.csv': process_nonSync_connection <- [process];
+table data IN 'CSV' 'input/node_dc_power_flow.csv' : node_dc_power_flow <- [node];
+table data IN 'CSV' 'input/connection_dc_power_flow.csv' : connection_dc_power_flow <- [process];
+table data IN 'CSV' 'input/node_reference_angle.csv' : node_reference_angle <- [node];
+table data IN 'CSV' 'input/p_connection_susceptance.csv' : [process], p_connection_susceptance;
 table data IN 'CSV' 'input/process_unit.csv': process_unit <- [process_unit];
 
 # Multi dimension membership sets
@@ -1747,6 +1756,9 @@ param dq_reserve {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} default 0
 #########################
 # Variable declarations
 var v_flow {(p, source, sink, d, t) in peedt} >= p_flow_min[p, source, sink, d, t], <= p_flow_max[p, source, sink, d, t];
+param p_angle_lower{n in node_dc_power_flow} := if n in node_reference_angle then 0 else -3.14159265;
+param p_angle_upper{n in node_dc_power_flow} := if n in node_reference_angle then 0 else 3.14159265;
+var v_angle {n in node_dc_power_flow, (d, t) in dt} >= p_angle_lower[n], <= p_angle_upper[n];
 var v_ramp {(p, source, sink) in process_source_sink_ramp, (d, t) in dt} >=-p_entity_max_units[p, d], <= p_entity_max_units[p, d];
 var v_reserve {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } >= 0, <= p_entity_max_units[p, d];
 var v_state {n in nodeState, (d, t) in dt} >= 0, <= p_entity_max_units[n, d];
@@ -2693,6 +2705,16 @@ s.t. minToSource {(p, source, sink) in process__source__sinkIsNode_2way2var, (d,
   + (if p in process_online_integer then v_online_integer[p, d, t] * p_process[p, 'min_load'] * p_process_source_coefficient[p, source] else 0)
 ;
 
+# DC power flow: flow on connection equals susceptance * angle difference
+s.t. dc_flow_eq {p in connection_dc_power_flow,
+                 (p, source, sink) in process_source_toSink,
+                 (d, t) in dt
+                 : source in node_dc_power_flow && sink in node_dc_power_flow} :
+  v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
+  =
+  p_connection_susceptance[p] * (v_angle[source, d, t] - v_angle[sink, d, t])
+;
+
 s.t. maxOnline {p in process_online, (d, t) in dt} :
   + (if p in process_online_linear then v_online_linear[p, d, t])
   + (if p in process_online_integer then v_online_integer[p, d, t])
@@ -3574,6 +3596,18 @@ for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_shutdown_integer.csv";
     for {p in process_online_integer} {
         printf ",%.6g", v_shutdown_integer[p, d, t].val >> "output_raw/v_shutdown_integer.csv";
+    }
+}
+
+# Write v_angle (DC power flow voltage angles)
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time" > "output_raw/v_angle.csv";
+  for {n in node_dc_power_flow} {printf ",%s", n >> "output_raw/v_angle.csv";}
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s", s, d, t >> "output_raw/v_angle.csv";
+    for {n in node_dc_power_flow} {
+        printf ",%.8g", v_angle[n, d, t].val >> "output_raw/v_angle.csv";
     }
 }
 
