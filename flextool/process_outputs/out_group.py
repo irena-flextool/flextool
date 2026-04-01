@@ -360,22 +360,24 @@ def nodeGroup_flows(par, s, v, r, debug):
     result_multi_dt[r.group_node_inflow_dt.columns] = r.group_node_inflow_dt
 
     # Internal losses - connections (sum across processes, negate)
-    r.group_output_Internal_connection_losses__dt = r.group_output_Internal_connection_losses__dt.T.groupby('group').sum().T
-    r.group_output_Internal_connection_losses__dt.columns = pd.MultiIndex.from_arrays([
-        r.group_output_Internal_connection_losses__dt.columns,
-        ['internal_losses'] * len(r.group_output_Internal_connection_losses__dt.columns),
-        ['connections'] * len(r.group_output_Internal_connection_losses__dt.columns)
-    ], names=['group', 'type', 'item'])
-    result_multi_dt[r.group_output_Internal_connection_losses__dt.columns] = r.group_output_Internal_connection_losses__dt
+    if not r.group_output_Internal_connection_losses__dt.empty:
+        r.group_output_Internal_connection_losses__dt = r.group_output_Internal_connection_losses__dt.T.groupby('group').sum().T
+        r.group_output_Internal_connection_losses__dt.columns = pd.MultiIndex.from_arrays([
+            r.group_output_Internal_connection_losses__dt.columns,
+            ['internal_losses'] * len(r.group_output_Internal_connection_losses__dt.columns),
+            ['connections'] * len(r.group_output_Internal_connection_losses__dt.columns)
+        ], names=['group', 'type', 'item'])
+        result_multi_dt[r.group_output_Internal_connection_losses__dt.columns] = r.group_output_Internal_connection_losses__dt
 
     # Internal losses - units (sum across processes, negate)
-    r.group_output_Internal_unit_losses__dt = r.group_output_Internal_unit_losses__dt.T.groupby('group').sum().T
-    r.group_output_Internal_unit_losses__dt.columns = pd.MultiIndex.from_arrays([
-        r.group_output_Internal_unit_losses__dt.columns,
-        ['internal_losses'] * len(r.group_output_Internal_unit_losses__dt.columns),
-        ['units'] * len(r.group_output_Internal_unit_losses__dt.columns)
-    ], names=['group', 'type', 'item'])
-    result_multi_dt[r.group_output_Internal_unit_losses__dt.columns] = r.group_output_Internal_unit_losses__dt
+    if not r.group_output_Internal_unit_losses__dt.empty:
+        r.group_output_Internal_unit_losses__dt = r.group_output_Internal_unit_losses__dt.T.groupby('group').sum().T
+        r.group_output_Internal_unit_losses__dt.columns = pd.MultiIndex.from_arrays([
+            r.group_output_Internal_unit_losses__dt.columns,
+            ['internal_losses'] * len(r.group_output_Internal_unit_losses__dt.columns),
+            ['units'] * len(r.group_output_Internal_unit_losses__dt.columns)
+        ], names=['group', 'type', 'item'])
+        result_multi_dt[r.group_output_Internal_unit_losses__dt.columns] = r.group_output_Internal_unit_losses__dt
 
     # Internal losses - storages (negate)
     r.group_node_state_losses__dt.columns = pd.MultiIndex.from_arrays([

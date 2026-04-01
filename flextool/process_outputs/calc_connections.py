@@ -25,7 +25,13 @@ def compute_connection_flows(par, s, v, r) -> None:
         parts.append(all_conn_flows[cols_1var])  # keep sign
     if cols_2var:
         parts.append(all_conn_flows[cols_2var].clip(lower=0.0))  # clip
-    conn_flows = pd.concat(parts, axis=1) if len(parts) > 1 else parts[0] if parts else pd.DataFrame()
+    if len(parts) > 1:
+        conn_flows = pd.concat(parts, axis=1)
+    elif parts:
+        conn_flows = parts[0]
+    else:
+        # No connections: preserve the 3-level MultiIndex so droplevel() works downstream
+        conn_flows = all_conn_flows  # already empty with correct column names
 
     # Split into the four directional flows present in one connection.
     # For 2var: both forward and reverse entries exist in process_source_sink.
