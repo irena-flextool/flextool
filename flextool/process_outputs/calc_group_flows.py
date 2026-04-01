@@ -6,42 +6,62 @@ def compute_group_flows(par, s, v, r) -> None:
 
     # --- Group connection flows (uses r.from_conn and r.to_conn from compute_connection_flows) ---
 
+    # Helper: create an empty DataFrame with the expected MultiIndex column structure
+    _empty_gp = pd.DataFrame(columns=pd.MultiIndex(levels=[[], []], codes=[[], []], names=['group', 'process']))
+    _empty_gga = pd.DataFrame(columns=pd.MultiIndex(levels=[[], [], []], codes=[[], [], []], names=['group', 'group_aggregate', 'process']))
+
     from_conn_set = s.outputNodeGroup__process__connection__to_node_Not_in_aggregate.droplevel('connection')
-    group_sets = r.from_conn.columns.join(from_conn_set, how='inner')
-    from_conn_selected = r.from_conn[group_sets.droplevel('group')]
-    from_conn_selected.columns = group_sets
-    r.group_output__from_connection_not_in_aggregate__dt = from_conn_selected
+    if not from_conn_set.empty and not r.from_conn.empty:
+        group_sets = r.from_conn.columns.join(from_conn_set, how='inner')
+        from_conn_selected = r.from_conn[group_sets.droplevel('group')]
+        from_conn_selected.columns = group_sets
+        r.group_output__from_connection_not_in_aggregate__dt = from_conn_selected
+    else:
+        r.group_output__from_connection_not_in_aggregate__dt = _empty_gp.copy()
 
     to_conn_set = s.outputNodeGroup__process__node__to_connection_Not_in_aggregate.droplevel('connection')
-    group_sets = r.to_conn.columns.join(to_conn_set, how='inner')
-    to_conn_selected = r.to_conn[group_sets.droplevel('group')]
-    to_conn_selected.columns = group_sets
-    r.group_output__to_connection_not_in_aggregate__dt = to_conn_selected
+    if not to_conn_set.empty and not r.to_conn.empty:
+        group_sets = r.to_conn.columns.join(to_conn_set, how='inner')
+        to_conn_selected = r.to_conn[group_sets.droplevel('group')]
+        to_conn_selected.columns = group_sets
+        r.group_output__to_connection_not_in_aggregate__dt = to_conn_selected
+    else:
+        r.group_output__to_connection_not_in_aggregate__dt = _empty_gp.copy()
 
-    r.group_output__from_connection_not_in_aggregate__d = r.group_output__from_connection_not_in_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
-    r.group_output__to_connection_not_in_aggregate__d = r.group_output__to_connection_not_in_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    r.group_output__from_connection_not_in_aggregate__d = r.group_output__from_connection_not_in_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0) if not r.group_output__from_connection_not_in_aggregate__dt.empty else _empty_gp.copy()
+    r.group_output__to_connection_not_in_aggregate__d = r.group_output__to_connection_not_in_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0) if not r.group_output__to_connection_not_in_aggregate__dt.empty else _empty_gp.copy()
 
     from_conn_agg_set = s.outputNodeGroup__processGroup__process__connection__to_node.droplevel('connection')
-    group_agg_sets = r.from_conn.columns.join(from_conn_agg_set, how='inner')
-    from_conn_agg_selected = r.from_conn[group_agg_sets.droplevel(['group', 'group_aggregate'])]
-    from_conn_agg_selected.columns = group_agg_sets
-    r.group_output__from_connection_aggregate__dt = from_conn_agg_selected.T.groupby(level=['group', 'group_aggregate']).sum().T
+    if not from_conn_agg_set.empty and not r.from_conn.empty:
+        group_agg_sets = r.from_conn.columns.join(from_conn_agg_set, how='inner')
+        from_conn_agg_selected = r.from_conn[group_agg_sets.droplevel(['group', 'group_aggregate'])]
+        from_conn_agg_selected.columns = group_agg_sets
+        r.group_output__from_connection_aggregate__dt = from_conn_agg_selected.T.groupby(level=['group', 'group_aggregate']).sum().T
+    else:
+        r.group_output__from_connection_aggregate__dt = _empty_gga.copy()
 
     to_conn_agg_set = s.outputNodeGroup__processGroup__process__node__to_connection.droplevel('connection')
-    group_agg_sets = to_conn_agg_set.join(r.to_conn.columns)
-    to_conn_agg_selected = r.to_conn[group_agg_sets.droplevel(['group', 'group_aggregate'])]
-    to_conn_agg_selected.columns = group_agg_sets
-    r.group_output__to_connection_aggregate__dt = to_conn_agg_selected.T.groupby(level=['group', 'group_aggregate']).sum().T
+    if not to_conn_agg_set.empty and not r.to_conn.empty:
+        group_agg_sets = to_conn_agg_set.join(r.to_conn.columns)
+        to_conn_agg_selected = r.to_conn[group_agg_sets.droplevel(['group', 'group_aggregate'])]
+        to_conn_agg_selected.columns = group_agg_sets
+        r.group_output__to_connection_aggregate__dt = to_conn_agg_selected.T.groupby(level=['group', 'group_aggregate']).sum().T
+    else:
+        r.group_output__to_connection_aggregate__dt = _empty_gga.copy()
 
-    r.group_output__from_connection_aggregate__d = r.group_output__from_connection_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
-    r.group_output__to_connection_aggregate__d = r.group_output__to_connection_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    r.group_output__from_connection_aggregate__d = r.group_output__from_connection_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0) if not r.group_output__from_connection_aggregate__dt.empty else _empty_gga.copy()
+    r.group_output__to_connection_aggregate__d = r.group_output__to_connection_aggregate__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0) if not r.group_output__to_connection_aggregate__dt.empty else _empty_gga.copy()
 
     losses_set = s.outputNodeGroup__process_fully_inside
-    group_losses_sets = r.connection_losses_dt.columns.join(losses_set, how='inner')
-    losses_selected = r.connection_losses_dt[group_losses_sets.droplevel('group')]
-    losses_selected.columns = group_losses_sets
-    r.group_output_Internal_connection_losses__dt = losses_selected
-    r.group_output_Internal_connection_losses__d = r.group_output_Internal_connection_losses__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    if not losses_set.empty and not r.connection_losses_dt.empty:
+        group_losses_sets = r.connection_losses_dt.columns.join(losses_set, how='inner')
+        losses_selected = r.connection_losses_dt[group_losses_sets.droplevel('group')]
+        losses_selected.columns = group_losses_sets
+        r.group_output_Internal_connection_losses__dt = losses_selected
+        r.group_output_Internal_connection_losses__d = r.group_output_Internal_connection_losses__dt.groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    else:
+        r.group_output_Internal_connection_losses__dt = pd.DataFrame()
+        r.group_output_Internal_connection_losses__d = pd.DataFrame()
 
     # --- Group unit flows ---
 

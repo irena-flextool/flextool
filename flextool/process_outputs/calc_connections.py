@@ -5,12 +5,33 @@ def compute_connection_flows(par, s, v, r) -> None:
     """Compute connection flow quantities and expose from_conn/to_conn for group aggregations."""
     step_duration = par.step_duration
 
-    # Filter to connection processes and clip negatives
-    conn_flows = r.flow_dt[
-        r.flow_dt.columns[r.flow_dt.columns.get_level_values('process').isin(s.process_connection)]
-    ].clip(lower=0.0)
+    # Identify method_2way_1var connections (single signed flow variable).
+    # These include DC power flow connections (no_losses_no_variable_cost).
+    conn_1var: set[str] = set()
+    for proc, method in s.process_method:
+        if proc in s.process_connection and method == 'method_2way_1var_off':
+            conn_1var.add(proc)
 
-    # Split into the four directional flows present in one connection
+    # Filter to connection processes.
+    # For 2var connections: clip to non-negative (each direction is a separate variable).
+    # For 1var connections: keep sign (positive = left→right, negative = right→left).
+    all_conn_flows = r.flow_dt[
+        r.flow_dt.columns[r.flow_dt.columns.get_level_values('process').isin(s.process_connection)]
+    ]
+    cols_1var = [c for c in all_conn_flows.columns if c[0] in conn_1var]
+    cols_2var = [c for c in all_conn_flows.columns if c[0] not in conn_1var]
+    parts = []
+    if cols_1var:
+        parts.append(all_conn_flows[cols_1var])  # keep sign
+    if cols_2var:
+        parts.append(all_conn_flows[cols_2var].clip(lower=0.0))  # clip
+    conn_flows = pd.concat(parts, axis=1) if len(parts) > 1 else parts[0] if parts else pd.DataFrame()
+
+    # Split into the four directional flows present in one connection.
+    # For 2var: both forward and reverse entries exist in process_source_sink.
+    # For 1var: only one entry exists — left_to_conn and conn_to_right match,
+    #           conn_to_left and right_to_conn are empty. The signed flow value
+    #           naturally gives correct net flow and directional results.
     conn_to_left = conn_flows[conn_flows.columns[conn_flows.columns.droplevel('source').isin(s.process_source)]]
     left_to_conn = conn_flows[conn_flows.columns[conn_flows.columns.droplevel('sink').isin(s.process_source)]]
     conn_to_right = conn_flows[conn_flows.columns[conn_flows.columns.droplevel('source').isin(s.process_sink)]]
@@ -27,19 +48,17 @@ def compute_connection_flows(par, s, v, r) -> None:
     right_to_conn.columns.names = ['process', 'node']
 
     r.connection_dt = conn_to_right.droplevel('node', axis=1).sub(
-        conn_to_left.droplevel('node', axis=1), axis=1
+        conn_to_left.droplevel('node', axis=1), fill_value=0
     )
     # Losses = total_out - total_in (negative when energy is lost in connections)
-    # The .mod negates at output time (printf '- r_group_output_Internal_connection_losses'),
-    # so this value should be negative when there are losses.
     r.connection_losses_dt = (
         conn_to_left.droplevel('node', axis=1)
         .add(conn_to_right.droplevel('node', axis=1), fill_value=0)
         .sub(left_to_conn.droplevel('node', axis=1), fill_value=0)
         .sub(right_to_conn.droplevel('node', axis=1), fill_value=0)
     )
-    r.connection_to_left_node__dt = conn_to_left.sub(left_to_conn, axis=1)
-    r.connection_to_right_node__dt = conn_to_right.sub(right_to_conn, axis=1)
+    r.connection_to_left_node__dt = conn_to_left.sub(left_to_conn, fill_value=0)
+    r.connection_to_right_node__dt = conn_to_right.sub(right_to_conn, fill_value=0)
     r.connection_to_left_node__d = (
         r.connection_to_left_node__dt.groupby('period').sum()
         .div(par.complete_period_share_of_year, axis=0)
