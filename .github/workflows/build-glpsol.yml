@@ -17,9 +17,10 @@ jobs:
 
       - name: Build glpsol
         run: |
-          ./configure
+          ./configure --disable-shared --enable-static
           make -j$(sysctl -n hw.ncpu)
           file examples/.libs/glpsol
+          ls -lh examples/.libs/glpsol
           examples/.libs/glpsol --version || true
 
       - name: Upload binary
