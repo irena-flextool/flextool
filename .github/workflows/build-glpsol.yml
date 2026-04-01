@@ -6,9 +6,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: macos-13
-            arch: x86_64
-          - runner: macos-14
+          - runner: macos-15
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
@@ -19,15 +17,14 @@ jobs:
 
       - name: Build glpsol
         run: |
-          cd glpk
-          autoreconf -fi || true
-          ./configure
+          ./configure --disable-shared --enable-static
           make -j$(sysctl -n hw.ncpu)
-          file src/glpsol
-          src/glpsol --version || true
+          file examples/glpsol
+          ls -lh examples/glpsol
+          examples/glpsol --version || true
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: glpsol-macos-${{ matrix.arch }}
-          path: glpk/src/glpsol
+          path: examples/glpsol
