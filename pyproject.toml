@@ -21,6 +21,7 @@ dependencies = [
 flextool-gui = "flextool.gui.__main__:main"
 flextool-read-old = "flextool.cli.cmd_read_old_flextool:main"
 flextool-import-sensitivities = "flextool.cli.cmd_import_sensitivities:main"
+flextool-read-matpower = "flextool.cli.cmd_read_matpower:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
