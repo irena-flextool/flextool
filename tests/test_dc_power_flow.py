@@ -8,12 +8,15 @@ These tests verify:
 - CSV file output (node_dc_power_flow, connection_dc_power_flow,
   node_reference_angle, p_connection_susceptance)
 - Process method override via ct_method_overrides
+- Integration test: full FlexTool run on PGLib case14 IEEE (DC-OPF)
 """
 
 import csv
 import logging
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -851,3 +854,131 @@ class TestMultipleDCPFGroups:
             "line_a": "no_losses_no_variable_cost",
             "line_b": "no_losses_no_variable_cost",
         }
+
+
+# ===================================================================
+# Test 11: PGLib case14 IEEE integration test (full FlexTool run)
+# ===================================================================
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_CASE14_PATH = _PROJECT_ROOT / "tests" / "data" / "pglib_opf_case14_ieee.m"
+
+
+@pytest.mark.slow
+class TestPGLibCase14Integration:
+    """Integration test: run FlexTool on PGLib case14 IEEE and validate DC-OPF results.
+
+    The test parses the MATPOWER file, creates a FlexTool Spine DB,
+    runs the full model, and checks the objective value and reference
+    bus angle against known DC-OPF results.
+
+    For case14 with linear costs only (c2=0 for all generators):
+    - Only 2 generators have Pmax > 0: bus 1 (340 MW, $7.92/MWh) and
+      bus 2 (59 MW, $23.27/MWh)
+    - Total demand = 259 MW, all supplied by the cheapest generator
+    - Expected hourly cost = 259 * 7.920951 = $2,051.53/h
+    - FlexTool annualizes: v_obj = hourly_cost * 8760
+    """
+
+    @pytest.fixture()
+    def case14_run(self, tmp_path: Path) -> dict[str, object]:
+        """Parse case14, create DB, run FlexTool, return results dict."""
+        from flextool.process_inputs.read_matpower import (
+            create_flextool_db_from_matpower,
+            read_matpower,
+        )
+
+        # Parse MATPOWER file
+        case = read_matpower(str(_CASE14_PATH))
+        assert case.name == "pglib_opf_case14_ieee"
+        assert len(case.buses) == 14
+        assert len(case.generators) == 5
+        assert len(case.branches) == 20
+
+        # Create FlexTool DB
+        db_path = str(tmp_path / "case14.sqlite")
+        url = create_flextool_db_from_matpower(case, db_path)
+
+        # Run FlexTool with --work-folder to isolate from other runs
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+
+        result = subprocess.run(
+            [
+                sys.executable, "run_flextool.py",
+                url,
+                "--scenario-name", "dc_opf_test",
+                "--work-folder", str(work_dir),
+                "--write-methods", "parquet",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(_PROJECT_ROOT),
+            timeout=120,
+        )
+        assert result.returncode == 0, (
+            f"FlexTool failed (rc={result.returncode}).\n"
+            f"--- stdout ---\n{result.stdout[-2000:]}\n"
+            f"--- stderr ---\n{result.stderr[-2000:]}"
+        )
+
+        # Read v_obj.csv from work directory
+        v_obj_path = work_dir / "output_raw" / "v_obj.csv"
+        assert v_obj_path.exists(), f"v_obj.csv not found at {v_obj_path}"
+        with open(v_obj_path) as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            row = next(reader)
+            obj_value = float(row[1])
+
+        # Read v_angle.csv
+        v_angle_path = work_dir / "output_raw" / "v_angle.csv"
+        assert v_angle_path.exists(), f"v_angle.csv not found at {v_angle_path}"
+        with open(v_angle_path) as f:
+            reader = csv.DictReader(f)
+            angle_row = next(reader)
+
+        # Read v_flow.csv
+        v_flow_path = work_dir / "output_raw" / "v_flow.csv"
+        assert v_flow_path.exists(), f"v_flow.csv not found at {v_flow_path}"
+
+        return {
+            "case": case,
+            "obj_value": obj_value,
+            "angle_row": angle_row,
+            "stdout": result.stdout,
+            "work_dir": work_dir,
+        }
+
+    def test_objective_value(self, case14_run: dict) -> None:
+        """Total annualized cost matches expected DC-OPF result within 1%."""
+        obj_value = case14_run["obj_value"]
+
+        # Expected: all 259 MW demand served by gen at bus 1 ($7.920951/MWh)
+        # Total demand = sum of Pd for all buses
+        total_demand = sum(b.pd for b in case14_run["case"].buses)
+        assert total_demand == pytest.approx(259.0, abs=0.1)
+
+        # Hourly cost = total_demand * cheapest_gen_cost
+        expected_hourly_cost = total_demand * 7.920951  # $2,051.53/h
+        # FlexTool annualizes: objective = hourly_cost * 8760
+        expected_annual = expected_hourly_cost * 8760
+
+        assert obj_value == pytest.approx(expected_annual, rel=0.01), (
+            f"Objective mismatch: got {obj_value:.2f}, "
+            f"expected {expected_annual:.2f} "
+            f"(hourly: {obj_value / 8760:.2f} vs {expected_hourly_cost:.2f})"
+        )
+
+    def test_reference_bus_angle_zero(self, case14_run: dict) -> None:
+        """Reference bus (bus 1, type=3 slack) has angle = 0."""
+        angle_row = case14_run["angle_row"]
+        assert float(angle_row["bus_1"]) == 0.0
+
+    def test_nonreference_buses_have_nonzero_angles(self, case14_run: dict) -> None:
+        """Non-reference buses have non-zero voltage angles."""
+        angle_row = case14_run["angle_row"]
+        for bus_col in ["bus_2", "bus_3", "bus_5", "bus_9", "bus_14"]:
+            assert float(angle_row[bus_col]) != 0.0, (
+                f"{bus_col} should have non-zero angle"
+            )
