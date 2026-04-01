@@ -17,13 +17,14 @@ jobs:
 
       - name: Build glpsol
         run: |
-          ./configure
+          ./configure --prefix=$PWD/install
           make -j$(sysctl -n hw.ncpu)
-          file examples/glpsol
-          examples/glpsol --version || true
+          make install
+          file install/bin/glpsol
+          install/bin/glpsol --version || true
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: glpsol-macos-${{ matrix.arch }}
-          path: examples/glpsol
+          path: install/bin/glpsol
