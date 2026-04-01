@@ -124,7 +124,6 @@ rename_sheets:
 # Sheet ordering
 sheet_order:
   - navigate
-  - version
   - scenario
   - model
   - model_solve_sequence

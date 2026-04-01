@@ -54,7 +54,7 @@ def test_single_subplot_no_layout() -> None:
     """Simple DataFrame, no expand_axis / stack / grouped_bar levels.
 
     Expects bar_label_width > 0, group_label_width == 0,
-    left_margin == bar_label_width, and legend_width == 0.
+    total_label_width == bar_label_width, and legend_width == 0.
     """
     df = pd.DataFrame(
         np.random.default_rng(0).random((3, 2)),
@@ -80,7 +80,7 @@ def test_single_subplot_no_layout() -> None:
     assert isinstance(layout, BarLayoutParams)
     assert layout.bar_label_width > 0
     assert layout.group_label_width == 0
-    assert layout.left_margin == layout.bar_label_width
+    assert layout.total_label_width == layout.bar_label_width
     assert layout.legend_width == 0
 
 
@@ -136,7 +136,7 @@ def test_bar_label_width_scales_with_longest_label() -> None:
 
 def test_group_label_width_with_expand_axis() -> None:
     """When expand_axis_levels is set, group_label_width should be positive
-    and left_margin should equal bar_label_width + group_label_width.
+    and total_label_width should equal bar_label_width + group_label_width.
     """
     index = pd.MultiIndex.from_tuples(
         [("scA", "n1"), ("scA", "n2"), ("scB", "n1"), ("scB", "n2")],
@@ -165,7 +165,7 @@ def test_group_label_width_with_expand_axis() -> None:
     )
 
     assert layout.group_label_width > 0
-    assert layout.left_margin == layout.bar_label_width + layout.group_label_width
+    assert layout.total_label_width == layout.bar_label_width + layout.group_label_width
 
 
 def test_legend_width_with_stacked_bars() -> None:
@@ -206,9 +206,9 @@ def test_legend_width_with_stacked_bars() -> None:
     assert layout.legend_width > 0
 
 
-def test_legend_width_zero_when_right_position() -> None:
-    """With legend_position='right', legend_width should be 0
-    (only 'all' triggers the per-column legend reservation).
+def test_legend_width_positive_when_right_position() -> None:
+    """With legend_position='right' and stack levels, legend_width should
+    still be positive (it measures the legend size for placement).
     """
     columns = pd.MultiIndex.from_tuples(
         [("coal", "s1"), ("coal", "s2"), ("gas", "s1"), ("gas", "s2")],
@@ -240,7 +240,7 @@ def test_legend_width_zero_when_right_position() -> None:
         base_bar_length=4.0,
     )
 
-    assert layout.legend_width == 0
+    assert layout.legend_width > 0
 
 
 def test_layout_params_consistent_across_batches() -> None:
@@ -283,10 +283,10 @@ def test_layout_params_consistent_across_batches() -> None:
     # Verify that key measurements are positive
     assert layout_all.bar_label_width > 0
     assert layout_all.group_label_width > 0
-    assert layout_all.left_margin > 0
+    assert layout_all.total_label_width > 0
 
     # Verify internal consistency
-    assert layout_all.left_margin == layout_all.bar_label_width + layout_all.group_label_width
+    assert layout_all.total_label_width == layout_all.bar_label_width + layout_all.group_label_width
 
     # Compute layout separately for each batch and verify they match
     # (since all subplots share the same DataFrame structure, the label
@@ -296,7 +296,7 @@ def test_layout_params_consistent_across_batches() -> None:
 
     assert layout_b1.bar_label_width == layout_b2.bar_label_width
     assert layout_b1.group_label_width == layout_b2.group_label_width
-    assert layout_b1.left_margin == layout_b2.left_margin
+    assert layout_b1.total_label_width == layout_b2.total_label_width
     assert layout_b1.bar_label_width == layout_all.bar_label_width
     assert layout_b1.group_label_width == layout_all.group_label_width
-    assert layout_b1.left_margin == layout_all.left_margin
+    assert layout_b1.total_label_width == layout_all.total_label_width

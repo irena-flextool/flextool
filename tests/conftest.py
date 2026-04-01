@@ -88,9 +88,24 @@ def test_bin_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     repo_bin = REPO_ROOT / "bin"
     bin_dir = tmp_path_factory.mktemp("bin")
 
-    for binary in ["highs", "glpsol", "highs.exe", "glpsol.exe"]:
-        src = repo_bin / binary
+    # Select platform-appropriate glpsol binary
+    import platform
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        glpsol_candidates = ["glpsol_macos15_arm64", "glpsol"]
+    elif sys.platform.startswith("win"):
+        glpsol_candidates = ["glpsol.exe"]
+    else:
+        glpsol_candidates = ["glpsol"]
+
+    for candidate in glpsol_candidates:
+        src = repo_bin / candidate
         if src.exists():
+            (bin_dir / "glpsol").symlink_to(src)
+            break
+
+    for binary in ["highs", "highs.exe", "glpsol.exe"]:
+        src = repo_bin / binary
+        if src.exists() and not (bin_dir / binary).exists():
             (bin_dir / binary).symlink_to(src)
 
     shutil.copy(TEST_DIR / "highs.opt", bin_dir / "highs.opt")

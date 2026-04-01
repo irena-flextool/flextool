@@ -1,0 +1,41 @@
+name: Tests
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: windows-latest
+            python: "3.12"
+          - os: macos-15
+            python: "3.12"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pytest pyyaml matplotlib
+
+      - name: Set glpsol executable permission
+        if: runner.os != 'Windows'
+        run: |
+          if [ -f bin/glpsol ]; then chmod +x bin/glpsol; fi
+          if [ -f bin/glpsol_macos15_arm64 ]; then chmod +x bin/glpsol_macos15_arm64; fi
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short -x

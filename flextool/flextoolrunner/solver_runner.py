@@ -84,16 +84,20 @@ class SolverRunner:
         if sys.platform.startswith("linux"):
             glpsol_file = str(self.state.paths.bin_dir / "glpsol")
             highs_file = str(self.state.paths.bin_dir / "highs")
+        elif sys.platform.startswith("win32"):
+            glpsol_file = str(self.state.paths.bin_dir / "glpsol.exe")
+            highs_file = str(self.state.paths.bin_dir / "highs.exe")
+        elif sys.platform == "darwin":
+            glpsol_file = str(self.state.paths.bin_dir / "glpsol_macos15_arm64")
+            highs_file = str(self.state.paths.bin_dir / "highs")
+        else:
+            glpsol_file = str(self.state.paths.bin_dir / "glpsol")
+            highs_file = str(self.state.paths.bin_dir / "highs")
+        if sys.platform != "win32":
             if os.path.exists(glpsol_file):
                 current_permissions = os.stat(glpsol_file).st_mode & 0o777
                 if current_permissions != 0o755:
                     os.chmod(glpsol_file, 0o755)
-        elif sys.platform.startswith("win32"):
-            glpsol_file = str(self.state.paths.bin_dir / "glpsol.exe")
-            highs_file = str(self.state.paths.bin_dir / "highs.exe")
-        else:
-            glpsol_file = str(self.state.paths.bin_dir / "glpsol")
-            highs_file = str(self.state.paths.bin_dir / "highs")
         return glpsol_file, highs_file
 
     def _run_glpsol_solver(
