@@ -789,7 +789,7 @@ def _render_bar_figure(
                 lo, hi = ax.get_ylim()
                 ax.set_ylim(min(lo, 0), max(hi, 0))
         scale = _subplot_axis_bounds(axis_bounds, idx)
-        if scale:
+        if scale and scale[0] != scale[1]:
             if bar_orientation == 'horizontal':
                 ax.set_xlim(scale[0], scale[1])
             else:

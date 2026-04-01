@@ -190,12 +190,13 @@ def _estimate_value_label_width(
         vals = df_sub.values
         if len(vals) == 0:
             continue
-        sub_min = np.nanmin(vals)
-        sub_max = np.nanmax(vals)
-        if np.isfinite(sub_min):
-            global_min = min(global_min, sub_min)
-        if np.isfinite(sub_max):
-            global_max = max(global_max, sub_max)
+        finite_mask = np.isfinite(vals)
+        if not finite_mask.any():
+            continue
+        sub_min = np.nanmin(vals[finite_mask])
+        sub_max = np.nanmax(vals[finite_mask])
+        global_min = min(global_min, sub_min)
+        global_max = max(global_max, sub_max)
 
     if not np.isfinite(global_min) or not np.isfinite(global_max):
         return MIN_VALUE_LABEL_WIDTH
@@ -393,7 +394,7 @@ def _render_lines_figure(
             lo, hi = ax.get_ylim()
             ax.set_ylim(min(lo, 0), max(hi, 0))
         scale = _subplot_axis_bounds(axis_bounds, idx)
-        if scale:
+        if scale and scale[0] != scale[1]:
             ax.set_ylim(scale[0], scale[1])
         _fmt = _get_value_formatter(axis_tick_format, idx)
         lo, hi = ax.get_ylim()
@@ -660,7 +661,7 @@ def _render_stack_figure(
             lo, hi = ax.get_ylim()
             ax.set_ylim(min(lo, 0), max(hi, 0))
         scale = _subplot_axis_bounds(axis_bounds, idx)
-        if scale:
+        if scale and scale[0] != scale[1]:
             ax.set_ylim(scale[0], scale[1])
         _fmt = _get_value_formatter(axis_tick_format, idx)
         lo, hi = ax.get_ylim()
