@@ -1733,6 +1733,7 @@ class MainWindow(tk.Tk):
         self.execution_mgr.append_stdout(job.job_id, " ".join(cmd))
         self.execution_mgr.append_stdout(job.job_id, "")
 
+        self._open_or_raise_execution_window()
         if self.execution_window is not None:
             self.execution_window.select_job(job.job_id)
 
@@ -2287,7 +2288,9 @@ class MainWindow(tk.Tk):
             self.execution_window is not None
             and self.execution_window.winfo_exists()
         ):
-            self.execution_window.lift()
+            self.execution_window.deiconify()
+            self.execution_window.attributes("-topmost", True)
+            self.execution_window.attributes("-topmost", False)
             self.execution_window.focus_force()
             return
 

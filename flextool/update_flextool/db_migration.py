@@ -144,6 +144,15 @@ def migrate_database(database_path):
                     parameter_type_list=("str",), parameter_value_list_name=None,
                     description="Name of the reference bus node (angle fixed to zero) for DC power flow. Optional — if not specified, automatically selected as the node with the largest existing capacity in each connected component of the DC power flow network.")
                 db.commit_session("Added DC power flow parameters")
+            elif next_version == 27:
+                add_value_list_manual(db, [["minimum_time_methods", "none"]])
+                db.update_item("parameter_definition", entity_class_name="unit", name="minimum_time_method",
+                    description="Choice between minimum up- and downtimes (none, min_downtime, min_uptime, both). Setting this to anything other than 'none' will activate online variables (at least linear) for the unit. Default: none (no minimum time constraints).")
+                db.update_item("parameter_definition", entity_class_name="unit", name="min_uptime",
+                    description="[hours] Minimum time the unit must stay online after starting up. Requires minimum_time_method set to 'min_uptime' or 'both'. Constant.")
+                db.update_item("parameter_definition", entity_class_name="unit", name="min_downtime",
+                    description="[hours] Minimum time the unit must stay offline after shutting down. Requires minimum_time_method set to 'min_downtime' or 'both'. Constant.")
+                db.commit_session("Added minimum time method support")
             else:
                 print("Version invalid")
             next_version += 1

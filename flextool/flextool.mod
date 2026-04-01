@@ -506,6 +506,13 @@ table data IN 'CSV' 'input/process__sink.csv' : process_sink <- [process,sink];
 table data IN 'CSV' 'input/process__source.csv' : process_source <- [process,source];
 table data IN 'CSV' 'input/process__sink_nonSync_unit.csv' : process__sink_nonSync_unit <- [process,sink];
 table data IN 'CSV' 'input/process__startup_method.csv' : process__startup_method_read <- [process,startup_method];
+
+set process_min_uptime 'processes with minimum uptime constraint' within process;
+table data IN 'CSV' 'input/process_min_uptime.csv' : process_min_uptime <- [process_min_uptime];
+
+set process_min_downtime 'processes with minimum downtime constraint' within process;
+table data IN 'CSV' 'input/process_min_downtime.csv' : process_min_downtime <- [process_min_downtime];
+
 table data IN 'CSV' 'input/process__profile__profile_method.csv' : process__profile__profile_method <- [process,profile,profile_method];
 table data IN 'CSV' 'input/process__node__profile__profile_method.csv' : process__node__profile__profile_method <- [process,node,profile,profile_method];
 table data IN 'CSV' 'input/reserve__upDown__group__method.csv' : reserve__upDown__group__method <- [reserve,upDown,group,method];
@@ -612,6 +619,14 @@ table data IN 'CSV' 'solve_data/solve_branch__time_branch.csv' : solve_branch__t
 table data IN 'CSV' 'solve_data/period_first.csv' : period_first <- [period];
 table data IN 'CSV' 'solve_data/period_last.csv' : period_last <- [period];
 table data IN 'CSV' 'solve_data/period_first_of_solve.csv' : period_first_of_solve <- [period];
+
+set uptime_lookback dimen 5;
+table data IN 'CSV' 'solve_data/uptime_lookback.csv' :
+    uptime_lookback <- [process, period, time, period_back, time_back];
+
+set downtime_lookback dimen 5;
+table data IN 'CSV' 'solve_data/downtime_lookback.csv' :
+    downtime_lookback <- [process, period, time, period_back, time_back];
 
 # Stochastic input data
 table data IN 'CSV' 'solve_data/pbt_node.csv' : node__param__branch__time <- [node, nodeParam, branch, time_start, time], pbt_node~pbt_node;
@@ -809,6 +824,14 @@ set process__source__sinkIsNode := {(p, source, sink) in process_source_sink : (
 set process_online_linear 'processes with an online status using linear variable' := setof {(p, m) in process_method : m in method_LP} p;
 set process_online_integer 'processes with an online status using integer variable' := setof {(p, m) in process_method : m in method_MIP} p;
 set process_online := process_online_linear union process_online_integer;
+
+# Timestep sets that have at least one lookback entry (for min up/downtime constraint indexing)
+set pdt_uptime := setof{(p, d, t, d2, t2) in uptime_lookback} (p, d, t);
+set pdt_downtime := setof{(p, d, t, d2, t2) in downtime_lookback} (p, d, t);
+
+# Next-timestep mapping (inverse of dtttdt) for shutdown tightening
+set dtdt_next := setof{(d, t, t_prev, t_prev_ws, d_prev, t_prev_solve) in dtttdt} (d_prev, t_prev_solve, d, t);
+
 set peedt := {(p, source, sink) in process_source_sink, (d, t) in dt};
 
 set process_source_undelayed := {(p, e) in process_source : p not in process_delayed};
@@ -1534,6 +1557,37 @@ set process_reserve_upDown_node_large_failure_ratio :=
 		    p_process_reserve_upDown_node[p, r, ud, n, 'large_failure_ratio'] > 0
 		};
 set process_large_failure := setof {(p, r, ud, n) in process_reserve_upDown_node_large_failure_ratio} p;
+
+# Morales-Espana startup/shutdown capacity reduction parameters
+# If ramp_speed > 0: reduction = max(0, 1 - min_load - ramp_speed * 60 * step_duration)
+# If no ramp: reduction = 0 (unit can reach full power instantly)
+param p_startup_cap_reduction_sink {(p, sink) in process_sink, (d, t) in dt
+                                    : p in process_online} :=
+  if p_process_sink[p, sink, 'ramp_speed_up'] > 0 then
+    max(0, 1 - p_process[p, 'min_load']
+            - p_process_sink[p, sink, 'ramp_speed_up'] * 60 * step_duration[d, t])
+  else 0;
+
+param p_shutdown_cap_reduction_sink {(p, sink) in process_sink, (d, t) in dt
+                                     : p in process_online} :=
+  if p_process_sink[p, sink, 'ramp_speed_down'] > 0 then
+    max(0, 1 - p_process[p, 'min_load']
+            - p_process_sink[p, sink, 'ramp_speed_down'] * 60 * step_duration[d, t])
+  else 0;
+
+param p_startup_cap_reduction_source {(p, source) in process_source, (d, t) in dt
+                                      : p in process_online} :=
+  if p_process_source[p, source, 'ramp_speed_up'] > 0 then
+    max(0, 1 - p_process[p, 'min_load']
+            - p_process_source[p, source, 'ramp_speed_up'] * 60 * step_duration[d, t])
+  else 0;
+
+param p_shutdown_cap_reduction_source {(p, source) in process_source, (d, t) in dt
+                                       : p in process_online} :=
+  if p_process_source[p, source, 'ramp_speed_down'] > 0 then
+    max(0, 1 - p_process[p, 'min_load']
+            - p_process_source[p, source, 'ramp_speed_down'] * 60 * step_duration[d, t])
+  else 0;
 
 set gcndt_co2_price :=
         {g in group, (c,n) in commodity_node, d in period_in_use, t in time_in_use: (d,t) in dt
@@ -2597,6 +2651,34 @@ s.t. maxToSink {(p, source, sink) in process__source__sinkIsNode, (d, t) in dt :
 		* p_entity_unitsize[p]
         * pdtProcess[p, 'availability', d, t]
     )
+  # Morales-Espana startup tightening: reduce max output in startup timestep
+  - ( if p in process_online_linear && p_startup_cap_reduction_sink[p, sink, d, t] then
+      + p_startup_cap_reduction_sink[p, sink, d, t]
+        * p_process_sink_coefficient[p, sink]
+        * v_startup_linear[p, d, t]
+        * p_entity_unitsize[p]
+    )
+  - ( if p in process_online_integer && p_startup_cap_reduction_sink[p, sink, d, t] then
+      + p_startup_cap_reduction_sink[p, sink, d, t]
+        * p_process_sink_coefficient[p, sink]
+        * v_startup_integer[p, d, t]
+        * p_entity_unitsize[p]
+    )
+  # Morales-Espana shutdown tightening: reduce max output in pre-shutdown timestep
+  - sum{(d, t, d2, t2) in dtdt_next} (
+      + ( if p in process_online_linear && p_shutdown_cap_reduction_sink[p, sink, d, t] then
+          + p_shutdown_cap_reduction_sink[p, sink, d, t]
+            * p_process_sink_coefficient[p, sink]
+            * v_shutdown_linear[p, d2, t2]
+            * p_entity_unitsize[p]
+        )
+      + ( if p in process_online_integer && p_shutdown_cap_reduction_sink[p, sink, d, t] then
+          + p_shutdown_cap_reduction_sink[p, sink, d, t]
+            * p_process_sink_coefficient[p, sink]
+            * v_shutdown_integer[p, d2, t2]
+            * p_entity_unitsize[p]
+        )
+    )
 ;
 
 s.t. minToSink {(p, source, sink) in process__source__sinkIsNode_not2way1var, (d, t) in dt : p_process_sink_coefficient[p, sink]} :
@@ -2629,6 +2711,30 @@ s.t. maxFromSource {(p, source, sink) in process__sourceIsNode__sink_1way_noSink
       + v_online_integer[p, d, t]
 		* p_entity_unitsize[p]
         * pdtProcess[p, 'availability', d, t]
+    )
+  # Morales-Espana startup tightening: reduce max output in startup timestep
+  - ( if p in process_online_linear && p_startup_cap_reduction_source[p, source, d, t] then
+      + p_startup_cap_reduction_source[p, source, d, t]
+        * v_startup_linear[p, d, t]
+        * p_entity_unitsize[p]
+    )
+  - ( if p in process_online_integer && p_startup_cap_reduction_source[p, source, d, t] then
+      + p_startup_cap_reduction_source[p, source, d, t]
+        * v_startup_integer[p, d, t]
+        * p_entity_unitsize[p]
+    )
+  # Morales-Espana shutdown tightening: reduce max output in pre-shutdown timestep
+  - sum{(d, t, d2, t2) in dtdt_next} (
+      + ( if p in process_online_linear && p_shutdown_cap_reduction_source[p, source, d, t] then
+          + p_shutdown_cap_reduction_source[p, source, d, t]
+            * v_shutdown_linear[p, d2, t2]
+            * p_entity_unitsize[p]
+        )
+      + ( if p in process_online_integer && p_shutdown_cap_reduction_source[p, source, d, t] then
+          + p_shutdown_cap_reduction_source[p, source, d, t]
+            * v_shutdown_integer[p, d2, t2]
+            * p_entity_unitsize[p]
+        )
     )
 ;
 
@@ -2770,25 +2876,30 @@ s.t. maxShutdown {p in process_online, (d, t) in dt} :
   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
 ;
 
-#s.t. minimum_downtime {p in process_online, t : p_process[u,'min_downtime'] >= step_duration[t]} :
-#  + v_online_linear[p, d, t]
-#  <=
-#  + p_entity_all_existing[p, d] / p_entity_unitsize[p]
-#  + sum {(p, d_invest, d) in edd_invest} [p, d_invest]
-#   - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
-#  - sum{(d, t_) in dt : t_ > t && t_ <= t + p_process[u,'min_downtime'] / time_period_duration} (
-#      + v_startup_linear[g, n, u, t_]
-#	)
-#;
+# Minimum downtime: if a unit shut down within the last min_downtime hours, it must still be offline
+s.t. minimum_downtime {(p, d, t) in pdt_downtime : p in process_online} :
+  + p_entity_all_existing[p, d] / p_entity_unitsize[p]
+  + sum {(p, d_invest, d) in edd_invest} v_invest[p, d_invest]
+  - sum {(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d_divest]
+  - (if p in process_online_linear then v_online_linear[p, d, t])
+  - (if p in process_online_integer then v_online_integer[p, d, t])
+  >=
+  + sum{(p, d, t, d2, t2) in downtime_lookback}
+    ( + (if p in process_online_linear then v_shutdown_linear[p, d2, t2])
+      + (if p in process_online_integer then v_shutdown_integer[p, d2, t2])
+    )
+;
 
-# Minimum operational time
-#s.t. minimum_uptime {(g, n, u, t) in gnut : u in unit_online && p_unittype[u,'min_uptime_h'] >= time_period_duration / 60 && t >= p_unittype[u,'min_uptime_h'] * 60 #/ time_period_duration} :
-#  + v_online[g, n, u, t]
-#  >=
-#  + sum{t_ in time_in_use : t_ > t - 1 - p_unittype[u,'min_uptime_h'] * 60 / time_period_duration && t_ < t} (
-#      + v_startup_linear[g, n, u, t_]
-#	)
-#;
+# Minimum uptime: if a unit started up within the last min_uptime hours, it must still be online
+s.t. minimum_uptime {(p, d, t) in pdt_uptime : p in process_online} :
+  + (if p in process_online_linear then v_online_linear[p, d, t])
+  + (if p in process_online_integer then v_online_integer[p, d, t])
+  >=
+  + sum{(p, d, t, d2, t2) in uptime_lookback}
+    ( + (if p in process_online_linear then v_startup_linear[p, d2, t2])
+      + (if p in process_online_integer then v_startup_integer[p, d2, t2])
+    )
+;
 
 s.t. ramp_up_variable {(p, source, sink) in process_source_sink_ramp, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
   + v_ramp[p, source, sink, d, t]

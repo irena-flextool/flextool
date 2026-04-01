@@ -79,6 +79,18 @@
     - unit_online__dt.csv
     - costs__dt.csv
 
+- scenario: coal_wind_min_uptime
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_online__dt.csv
+    - costs__dt.csv
+
+- scenario: coal_wind_min_uptime_MIP
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_online__dt.csv
+    - costs__dt.csv
+
 - scenario: coal_ramp_limit
   csvs:
     - unit__outputNode__dt.csv

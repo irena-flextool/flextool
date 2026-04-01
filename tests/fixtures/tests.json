@@ -9787,6 +9787,46 @@
         "float"
       ],
       "fusion"
+    ],
+    [
+      "timeset",
+      "2day",
+      "timeset_duration",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIDE2OC4wXV0sICJ0eXBlIjogIm1hcCJ9",
+        "map"
+      ],
+      "coal_min_updowntime"
+    ],
+    [
+      "unit",
+      "coal_plant",
+      "min_downtime",
+      [
+        "NQ==",
+        "float"
+      ],
+      "coal_min_updowntime"
+    ],
+    [
+      "unit",
+      "coal_plant",
+      "min_uptime",
+      [
+        "NQ==",
+        "float"
+      ],
+      "coal_min_updowntime"
+    ],
+    [
+      "unit",
+      "coal_plant",
+      "minimum_time_method",
+      [
+        "ImJvdGgi",
+        "str"
+      ],
+      "coal_min_updowntime"
     ]
   ],
   "alternatives": [
@@ -9996,6 +10036,10 @@
     ],
     [
       "wind_invest",
+      ""
+    ],
+    [
+      "coal_min_updowntime",
       ""
     ]
   ],
@@ -10262,6 +10306,16 @@
     ],
     [
       "y2020_2029_2x5y",
+      false,
+      ""
+    ],
+    [
+      "coal_wind_min_uptime",
+      false,
+      ""
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
       false,
       ""
     ]
@@ -12415,6 +12469,71 @@
     [
       "y2020_2029_2x5y",
       "2x5y",
+      null
+    ],
+    [
+      "coal_wind_min_uptime",
+      "init",
+      "west"
+    ],
+    [
+      "coal_wind_min_uptime",
+      "west",
+      "coal"
+    ],
+    [
+      "coal_wind_min_uptime",
+      "coal",
+      "coal_min_load"
+    ],
+    [
+      "coal_wind_min_uptime",
+      "coal_min_load",
+      "wind"
+    ],
+    [
+      "coal_wind_min_uptime",
+      "wind",
+      "coal_min_updowntime"
+    ],
+    [
+      "coal_wind_min_uptime",
+      "coal_min_updowntime",
+      null
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "init",
+      "west"
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "west",
+      "coal"
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "coal",
+      "coal_min_load"
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "coal_min_load",
+      "coal_min_load_MIP"
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "coal_min_load_MIP",
+      "wind"
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "wind",
+      "coal_min_updowntime"
+    ],
+    [
+      "coal_wind_min_uptime_MIP",
+      "coal_min_updowntime",
       null
     ]
   ]

@@ -4,6 +4,7 @@ input_writer.py — Write input/ CSV files from the database.
 Entry point: write_input(input_db_url, scenario_name, logger)
 All write_entity / write_parameter / write_default_values calls are internal helpers.
 """
+import csv
 import logging
 import os
 from pathlib import Path
@@ -1210,6 +1211,28 @@ def _write_process_method(
             process_name = pv["entity_byname"][0]
             startup_method_map[process_name] = str(pv["parsed_value"])
 
+    # --- Collect minimum_time_method per process ---
+    minimum_time_method_map: dict[str, str] = {}
+    for pv in db.find_parameter_values(
+        entity_class_name="unit", parameter_definition_name="minimum_time_method"
+    ):
+        if pv["type"] is None:
+            continue
+        process_name = pv["entity_byname"][0]
+        minimum_time_method_map[process_name] = str(pv["parsed_value"])
+
+    # --- Override startup_method if minimum_time_method requires online variables ---
+    for process_name, mtm in minimum_time_method_map.items():
+        if mtm in ("min_uptime", "min_downtime", "both"):
+            current_startup = startup_method_map.get(process_name, "no_startup")
+            if current_startup == "no_startup":
+                startup_method_map[process_name] = "linear"
+                logger.info(
+                    "Process '%s': startup_method overridden to 'linear' "
+                    "because minimum_time_method='%s' requires online variables",
+                    process_name, mtm,
+                )
+
     # --- Collect sources and sinks per process ---
     source_counts: dict[str, int] = {}
     for ent_class, dim_idx in [("unit__inputNode", [0, 1]), ("connection__node__node", [0, 1])]:
@@ -1283,6 +1306,42 @@ def _write_process_method(
         f.write("process,method\n")
         for process_name, method in rows:
             f.write(f"{process_name},{method}\n")
+
+    # --- Write process_min_uptime.csv and process_min_downtime.csv ---
+    # Collect min_uptime and min_downtime values to determine which processes have nonzero values
+    min_uptime_values: dict[str, float] = {}
+    min_downtime_values: dict[str, float] = {}
+    for pv in db.find_parameter_values(
+        entity_class_name="unit", parameter_definition_name="min_uptime"
+    ):
+        if pv["type"] is not None and pv["parsed_value"]:
+            min_uptime_values[pv["entity_byname"][0]] = float(pv["parsed_value"])
+    for pv in db.find_parameter_values(
+        entity_class_name="unit", parameter_definition_name="min_downtime"
+    ):
+        if pv["type"] is not None and pv["parsed_value"]:
+            min_downtime_values[pv["entity_byname"][0]] = float(pv["parsed_value"])
+
+    # Process is in process_min_uptime if minimum_time_method is min_uptime or both, AND min_uptime > 0
+    process_min_uptime = []
+    process_min_downtime = []
+    for process_name, mtm in minimum_time_method_map.items():
+        if mtm in ("min_uptime", "both") and min_uptime_values.get(process_name, 0) > 0:
+            process_min_uptime.append(process_name)
+        if mtm in ("min_downtime", "both") and min_downtime_values.get(process_name, 0) > 0:
+            process_min_downtime.append(process_name)
+
+    with open(wf / "input/process_min_uptime.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["process_min_uptime"])
+        for p in sorted(process_min_uptime):
+            writer.writerow([p])
+
+    with open(wf / "input/process_min_downtime.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["process_min_downtime"])
+        for p in sorted(process_min_downtime):
+            writer.writerow([p])
 
 
 # ---------------------------------------------------------------------------

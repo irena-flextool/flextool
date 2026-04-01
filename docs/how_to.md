@@ -632,6 +632,30 @@ Next we will add ramp limits. With the ramping limits, the user can force the ch
 
 ![Add min_load](./coal_min_load.png)
 
+## How to add minimum uptime and downtime
+
+Some power plants cannot be started and stopped freely due to thermal stress, safety requirements, or operational constraints. Minimum uptime forces a unit to stay online for a specified duration after starting up. Minimum downtime forces a unit to stay offline for a specified duration after shutting down.
+
+To add minimum uptime and/or downtime constraints to a `unit`:
+
+1. Set the `minimum_time_method` parameter on the unit:
+    - *min_uptime* - only enforce minimum uptime
+    - *min_downtime* - only enforce minimum downtime
+    - *both* - enforce both constraints
+    - *none* - no minimum time constraints (default)
+
+2. Set the duration parameters (in hours):
+    - `min_uptime` - e.g. 8 for an 8-hour minimum online time
+    - `min_downtime` - e.g. 4 for a 4-hour minimum offline time
+
+Setting `minimum_time_method` to anything other than *none* will automatically activate online variables for the unit (at least linear startup), even if `startup_method` is not explicitly defined. This means you do not need to separately set `startup_method` to *linear* or *binary*, although you can if you also want startup costs or binary commitment.
+
+The minimum time constraints work with variable timestep durations. The constraint checks that the cumulative duration of consecutive online (or offline) timesteps meets the minimum requirement, rather than simply counting timesteps.
+
+When using rolling window solves, ensure that the solve horizon overlap is at least as long as the longest `min_uptime` or `min_downtime` value. A warning will be issued if this condition is not met.
+
+If the unit also has ramp limits (`ramp_speed_up`, `ramp_speed_down`), the model will additionally tighten the maximum output in the startup and pre-shutdown timesteps based on how fast the unit can ramp within one timestep. Without ramp limits, the unit can reach full output immediately after starting.
+
 ## How to add CO2 emissions, costs and limits
 
 **(examples.sqlite scenario: coal_co2 )**
