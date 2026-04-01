@@ -3745,12 +3745,14 @@ for {s in solve_current, (d, t) in dt_realize_dispatch}
 		                    max(( if (r, ud, g, r_m) in reserve__upDown__group__method_timeseries then reserveBalance_timeseries_eq[r, ud, g, r_m, d, t].dual else 0 ),
 							    ( if (r, ud, g, r_m) in reserve__upDown__group__method_dynamic    then reserveBalance_dynamic_eq[r, ud, g, r_m, d, t].dual else 0 ),
 							    ( if (r, ud, g, r_m) in reserve__upDown__group__method_n_1
+								     and card({p_n_1 in process_large_failure : sum{(p_n_1, sink) in process_sink : (g, sink) in group_node} 1}) > 0
 								  then max{p_n_1 in process_large_failure : sum{(p_n_1, sink) in process_sink : (g, sink) in group_node} 1} reserveBalance_up_n_1_eq[r, g, r_m, p_n_1, d, t].dual else 0 )
 							   )
 						  else
 		                    max(( if (r, ud, g, r_m) in reserve__upDown__group__method_timeseries then reserveBalance_timeseries_eq[r, ud, g, r_m, d, t].dual else 0 ),
 							    ( if (r, ud, g, r_m) in reserve__upDown__group__method_dynamic    then reserveBalance_dynamic_eq[r, ud, g, r_m, d, t].dual else 0 ),
 							    ( if (r, ud, g, r_m) in reserve__upDown__group__method_n_1
+								     and card({p_n_1 in process_large_failure : sum{(p_n_1, source) in process_source : (g, source) in group_node} 1}) > 0
 								  then max{p_n_1 in process_large_failure : sum{(p_n_1, source) in process_source : (g, source) in group_node} 1} reserveBalance_down_n_1_eq[r, g, r_m, p_n_1, d, t].dual else 0 )
 							   )
 						) / p_discount_factor_operations_yearly[d] * complete_period_share_of_year[d]
