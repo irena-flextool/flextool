@@ -1377,6 +1377,42 @@ def write_input(input_db_url: str, scenario_name: str | None, logger: logging.Lo
         ct_method_overrides = _write_dc_power_flow_data(db, wf, logger)
         _write_process_method(db, wf, logger, ct_method_overrides=ct_method_overrides)
 
+        # Validate capacity margin groups: storage nodes are excluded from capacity margin
+        capacity_margin_groups: dict[str, list[str]] = {}
+        for pv in db.find_parameter_values(entity_class_name="group", parameter_definition_name="has_capacity_margin"):
+            if pv["parsed_value"] == "yes":
+                capacity_margin_groups[pv["entity_byname"][0]] = []
+
+        if capacity_margin_groups:
+            # Get nodes in each group
+            for ent in db.find_entities(entity_class_name="group__node"):
+                group_name = ent["entity_byname"][0]
+                node_name = ent["entity_byname"][1]
+                if group_name in capacity_margin_groups:
+                    capacity_margin_groups[group_name].append(node_name)
+
+            # Get storage nodes
+            storage_nodes: set[str] = set()
+            for pv in db.find_parameter_values(entity_class_name="node", parameter_definition_name="has_storage"):
+                if pv["parsed_value"] == "yes":
+                    storage_nodes.add(pv["entity_byname"][0])
+
+            # Check each capacity margin group
+            for group_name, nodes in capacity_margin_groups.items():
+                storage_in_group = [n for n in nodes if n in storage_nodes]
+                if storage_in_group and len(storage_in_group) == len(nodes):
+                    raise FlexToolConfigError(
+                        f"Capacity margin group '{group_name}' contains only storage nodes "
+                        f"({', '.join(storage_in_group)}). The capacity margin constraint "
+                        f"excludes storage nodes, so this group has no valid nodes."
+                    )
+                elif storage_in_group:
+                    logger.warning(
+                        "Capacity margin group '%s' contains storage nodes (%s) which will "
+                        "be excluded from the capacity margin constraint.",
+                        group_name, ', '.join(storage_in_group),
+                    )
+
 
 def write_entity(
     db,

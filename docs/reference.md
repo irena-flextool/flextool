@@ -149,8 +149,8 @@ Input data is set with the following parameters:
 - `cumulative_max_capacity` - [MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
 - `cumulative_min_capacity` - [MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
 - `fixed_cost` - [CUR/kWh] Annual fixed cost for storage. Constant or period.
-- `penalty_up` - [CUR/MWh] Penalty cost for decreasing consumption in the node with a slack variable. Constant or time. Default value is 10 000, but this can be changed from the database. Constant or period.
-- `penalty_down` - [CUR/MWh] Penalty cost for increasing consumption in the node with a slack variable. Constant or time. Default value is 10 000, but this can be changed from the database. Constant or period.
+- `penalty_up` - [CUR/MWh] Penalty cost for energy not served (decreasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, Period or Time.
+- `penalty_down` - [CUR/MWh] Penalty cost for excess energy (increasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, Period or Time.
 - `virtual_unitsize` - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.
 - `self_discharge_loss` - [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.
 - `availablity` - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.
@@ -341,13 +341,13 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 
 - `has_inertia` - A flag whether the group of nodes has an inertia constraint active.
 - `inertia_limit` - [MWs] Minimum for synchronous inertia in the group of nodes. Constant or period.
-- `penalty_inertia` - [CUR/MWs] Penalty for violating the inertia constraint. Constant or period.
+- `penalty_inertia` - [CUR/MWs] Penalty for violating the inertia constraint. The cost scales with the duration of the violation. Constant or period.
 - `has_non_synchronous` - A flag whether the group of nodes has the non-synchronous share constraint active.
 - `non_synchronous_limit` - [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.
 - `penalty_non_synchronous` - [CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period.
 - `has_capacity_margin` - A flag whether the group of nodes has a capacity margin constraint in the investment mode.
 - `capacity_margin` - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode. Constant or period.
-- `penalty_capacity_margin` - [CUR/MWh] Penalty for violating the capacity margin constraint. Constant or period.
+- `penalty_capacity_margin` - [CUR/kW] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so a penalty of e.g. 1000 CUR/kW is not comparable to an investment cost of 1000 CUR/kW which would be annualized to a much lower annual cost. Constant or period.
 - `share_loss_of_load` - Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted
 
 ### CO2 costs and limits

@@ -152,7 +152,16 @@ def migrate_database(database_path):
                     description="[hours] Minimum time the unit must stay online after starting up. Requires minimum_time_method set to 'min_uptime' or 'both'. Constant.")
                 db.update_item("parameter_definition", entity_class_name="unit", name="min_downtime",
                     description="[hours] Minimum time the unit must stay offline after shutting down. Requires minimum_time_method set to 'min_downtime' or 'both'. Constant.")
-                db.commit_session("Added minimum time method support")
+                # Fix penalty parameter descriptions (#308, #300)
+                db.update_item("parameter_definition", entity_class_name="node", name="penalty_up",
+                    description="[CUR/MWh] Penalty cost for decreasing consumption in the node (energy not served). Constant, Period or Time.")
+                db.update_item("parameter_definition", entity_class_name="node", name="penalty_down",
+                    description="[CUR/MWh] Penalty cost for increasing consumption in the node (excess energy). Constant, Period or Time.")
+                db.update_item("parameter_definition", entity_class_name="group", name="penalty_capacity_margin",
+                    description="[CUR/kW] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so the value is not directly comparable to annualized investment costs. Constant or period.")
+                db.update_item("parameter_definition", entity_class_name="group", name="penalty_inertia",
+                    description="[CUR/MWs] Penalty for violating the inertia constraint. Cost scales with the duration of the violation. Constant or period.")
+                db.commit_session("Added minimum time method support and fixed penalty descriptions")
             else:
                 print("Version invalid")
             next_version += 1
