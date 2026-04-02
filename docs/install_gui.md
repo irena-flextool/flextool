@@ -78,7 +78,7 @@ python update_flextool.py --skip-git
 Start the FlexTool GUI:
 
 ```bash
-flextool-gui
+python -m flextool.gui
 ```
 
 If you also installed Spine Toolbox, you can launch it with:
