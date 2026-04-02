@@ -14,8 +14,13 @@ dependencies = [
     "python-calamine",
     "xlsxwriter",
     "pyyaml",
-    "sv-ttk"
+    "sv-ttk",
+    "highspy",
+    "matplotlib",
 ]
+
+[project.optional-dependencies]
+toolbox = ["spinetoolbox"]
 
 [project.scripts]
 flextool-gui = "flextool.gui.__main__:main"

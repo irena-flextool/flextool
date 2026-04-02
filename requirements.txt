@@ -1,8 +1,17 @@
-# FlexTool uses Spine Toolbox as a GUI and does some calculations with Pandas
+# FlexTool dependencies
+# This file mirrors pyproject.toml dependencies + spinetoolbox for the
+# traditional installation path. For new installations, prefer:
+#   pip install -e .              (FlexTool GUI only)
+#   pip install -e ".[toolbox]"   (FlexTool GUI + Spine Toolbox)
 
 pandas
 openpyxl
 odfpy
-spinetoolbox
+spinedb-api
 python-calamine
 xlsxwriter
+pyyaml
+sv-ttk
+highspy
+matplotlib
+spinetoolbox
