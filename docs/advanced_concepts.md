@@ -111,3 +111,25 @@ For **invested** assets, fixed costs are calculated over the full economic lifet
 | `lifetime` | Entity | - | Economic lifetime [years] |
 | `fixed_cost` | Entity | - | Annual fixed O&M cost [CUR/kW/year] |
 | `salvage_value` | Entity | - | Residual value at end of life [CUR/kW] |
+
+### How multi-year periods are handled internally
+
+A period can represent multiple years via the `years_represented` parameter on the solve entity. For example, a period `p2025` with `years_represented = 5` means that the modelled timeline (e.g., one representative week) stands in for 5 full years (2025-2029).
+
+Internally, FlexTool expands this into per-year entries. A period with `years_represented = 5` becomes 5 rows in the solve data, each representing 1 year at a different distance from the solve start. The inflation factor then sums the per-year inflation adjustments:
+
+```
+inflation_factor = Σ_y  p_years_represented[d,y] × 1/(1 + inflation_rate)^years_from_solve[y]
+```
+
+With `inflation_rate = 0`, each term contributes `p_years_represented[d,y] × 1 = 1`, and the sum equals `years_represented` (i.e., 5). With `inflation_rate = 2%`, each year is deflated slightly more, giving a sum of approximately 4.81.
+
+This mechanism also supports fractional values. With `years_represented = 0.5` (half-year resolution for investment decisions), the inflation factor is `0.5 × 1/(1+π)^y`, correctly counting only half a year of costs.
+
+In the objective function, operational costs follow this pattern:
+
+```
+cost_per_timestep × step_duration × inflation_factor / period_share_of_year
+```
+
+where `period_share_of_year = hours_in_period / 8760` converts the modelled period to an annual equivalent, and the inflation factor then scales across all represented years. Investment costs follow a similar pattern using a separate inflation factor that accounts for investment timing.

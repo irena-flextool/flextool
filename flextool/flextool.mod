@@ -1253,11 +1253,11 @@ param p_years_until_dispatch{(d, y) in period__year} := sum{y2 in year : y2 < y}
 param p_years_until_invest{(d, y) in period__year} := sum{y2 in year : y2 < y} (p_years_represented[d, y2]);
 param p_inflation_factor_investment_yearly{d in period} :=
 		if sum{y in year} p_years_represented[d, y]
-		then sum{(d, y) in period__year} ( 1/(1 + p_inflation) ^ (p_years_until_invest[d, y]) )
+		then sum{(d, y) in period__year} p_years_represented[d, y] * ( 1/(1 + p_inflation) ^ (p_years_until_invest[d, y]) )
 		else 1;
 param p_inflation_factor_operations_yearly{d in period_in_use} :=
 		if sum{y in year} p_years_represented[d, y]
-		then sum{(d, y) in period__year} ( 1/(1 + p_inflation) ^ (p_years_until_dispatch[d, y]) )
+		then sum{(d, y) in period__year} p_years_represented[d, y] * ( 1/(1 + p_inflation) ^ (p_years_until_dispatch[d, y]) )
 		else 1;
 
 # Check for division by zero

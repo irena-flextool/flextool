@@ -424,7 +424,7 @@ def _add_matpower_data(
     # Model entity
     add_entity("model", model_name)
     parameter_values.append(("model", model_name, "version", FLEXTOOL_DB_VERSION, alternative))
-    parameter_values.append(("model", model_name, "discount_rate", 0.0, alternative))
+    parameter_values.append(("model", model_name, "inflation_rate", 0.0, alternative))
     # model.solves
     solves_array = Array([solve_name])
     parameter_values.append(("model", model_name, "solves", solves_array, alternative))
