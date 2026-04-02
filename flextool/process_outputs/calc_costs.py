@@ -101,7 +101,7 @@ def compute_costs(par, s, v, r) -> None:
     # --- Investment costs ---
     r.cost_entity_invest_d = v.invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted)
     r.cost_entity_divest_d = -v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_annual_divest_discounted)
-    r.cost_entity_fixed_pre_existing = (par.entity_pre_existing * par.entity_fixed_cost).mul(par.discount_factor_operations_yearly, axis=0)
+    r.cost_entity_fixed_pre_existing = (par.entity_pre_existing * par.entity_fixed_cost).mul(par.inflation_factor_operations_yearly, axis=0)
     r.cost_entity_fixed_invested = (v.invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]))
     r.cost_entity_fixed_divested = -(v.divest.mul(par.entity_unitsize[v.divest.columns] * par.entity_lifetime_fixed_cost_divest[v.divest.columns]))
 
@@ -126,10 +126,10 @@ def compute_costs(par, s, v, r) -> None:
     r.costPenalty_reserve_upDown_d = _agg_period_or_empty(r.costPenalty_reserve_upDown_dt, s.d_realized_period)
 
     r.costOper_d = r.costOper_dt.groupby('period').sum() \
-                                .mul(par.discount_factor_operations_yearly, axis=0) \
+                                .mul(par.inflation_factor_operations_yearly, axis=0) \
                                 .div(par.complete_period_share_of_year, axis=0)
     r.costPenalty_d = r.costPenalty_dt.groupby('period').sum() \
-                                .mul(par.discount_factor_operations_yearly, axis=0) \
+                                .mul(par.inflation_factor_operations_yearly, axis=0) \
                                 .div(par.complete_period_share_of_year, axis=0)
     r.costPenalty_d = r.costPenalty_d.add(r.costPenalty_capacity_margin_d, fill_value=0)
     r.costOper_and_penalty_d = r.costOper_d.add(r.costPenalty_d, fill_value=0)

@@ -4,7 +4,7 @@ import pandas as pd
 def generic(par, s, v, r, debug):
     if debug:
         results = []
-        df = pd.concat([par.discount_factor_operations_yearly, par.discount_factor_investment_yearly], axis=1)
+        df = pd.concat([par.inflation_factor_operations_yearly, par.inflation_factor_investment_yearly], axis=1)
         df.columns = ["operations discount factor","investments discount factor"]
         df.columns.name = "param"
         results.append((df, 'discountFactors_d_p'))
@@ -21,8 +21,8 @@ def cost_summaries(par, s, v, r, debug):
     results = []
 
     # Common calculations
-    discount_ops = par.discount_factor_operations_yearly
-    discount_invs = par.discount_factor_investment_yearly
+    discount_ops = par.inflation_factor_operations_yearly
+    discount_invs = par.inflation_factor_investment_yearly
     period_share = par.complete_period_share_of_year
     to_millions = 1000000
 

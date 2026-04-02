@@ -23,7 +23,7 @@ _PAR_DROP = [
     'node_inflow', 'commodity_price', 'group_co2_price',
     'reserve_upDown_group_reservation', 'profile',
     'entity_annual_discounted', 'entity_annual_divest_discounted',
-    'discount_factor_investment_yearly',
+    'inflation_factor_investment_yearly',
     'group_penalty_capacity_margin', 'group_capacity_margin',
 ]
 
@@ -36,7 +36,7 @@ _PAR_DEDUP = [
     'node_annual_flow',
     'group_penalty_inertia', 'group_penalty_non_synchronous',
     'group_inertia_limit',
-    'discount_factor_operations_yearly',
+    'inflation_factor_operations_yearly',
     'node_capacity_for_scaling', 'group_capacity_for_scaling',
     'complete_period_share_of_year',
 ]

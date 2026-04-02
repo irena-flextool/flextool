@@ -162,6 +162,36 @@ def migrate_database(database_path):
                 db.update_item("parameter_definition", entity_class_name="group", name="penalty_inertia",
                     description="[CUR/MWs] Penalty for violating the inertia constraint. Cost scales with the duration of the violation. Constant or period.")
                 db.commit_session("Added minimum time method support and fixed penalty descriptions")
+            elif next_version == 28:
+                parameter_definitions = db.mapped_table("parameter_definition")
+                # Rename entity-level interest_rate -> discount_rate on unit, connection, node
+                param = db.item(parameter_definitions, entity_class_name="unit", name="interest_rate")
+                if param:
+                    db.update_parameter_definition(id=param["id"], name="discount_rate",
+                        description="[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.")
+                param = db.item(parameter_definitions, entity_class_name="connection", name="interest_rate")
+                if param:
+                    db.update_parameter_definition(id=param["id"], name="discount_rate",
+                        description="[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.")
+                param = db.item(parameter_definitions, entity_class_name="node", name="interest_rate")
+                if param:
+                    db.update_parameter_definition(id=param["id"], name="discount_rate",
+                        description="[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.")
+                # Rename model-level discount_rate -> inflation_rate
+                param = db.item(parameter_definitions, entity_class_name="model", name="discount_rate")
+                if param:
+                    db.update_parameter_definition(id=param["id"], name="inflation_rate",
+                        description="[e.g. 0.02 for 2%] Model-wide inflation rate applied to all future costs. When inputs are in real (constant-price) terms, set to 0. When inputs are in nominal terms, set to expected inflation. Default: 0 (real inputs).")
+                # Rename model-level offset parameters
+                param = db.item(parameter_definitions, entity_class_name="model", name="discount_offset_investment")
+                if param:
+                    db.update_parameter_definition(id=param["id"], name="inflation_offset_investment",
+                        description="[years] Offset for when investment costs occur within a year. Default 0 (beginning of year).")
+                param = db.item(parameter_definitions, entity_class_name="model", name="discount_offset_operations")
+                if param:
+                    db.update_parameter_definition(id=param["id"], name="inflation_offset_operations",
+                        description="[years] Offset for when operational costs occur within a year. Default 0.5 (middle of year).")
+                db.commit_session("Renamed economic parameters: interest_rate->discount_rate, discount_rate->inflation_rate")
             else:
                 print("Version invalid")
             next_version += 1

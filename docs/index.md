@@ -13,6 +13,7 @@ IRENA FlexTool is an energy systems optimisation model developed for power and e
 - The tutorial is recommended for the new users of FlexTool: [Tutorial](tutorial.md)
 - How-to section has examples on how to add specific features to a model: [How to](how_to.md)
 - More advanced users can find the model parameter descriptions useful: [Model parameters](reference.md)
+- Advanced concepts covers penalties and economic modelling in detail: [Advanced Concepts](advanced_concepts.md)
 - Finally, result parameters are documented here: [Model results](results.md)
 
 # Monthly user support telcos

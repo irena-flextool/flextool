@@ -101,8 +101,8 @@ def write_summary_csv(par, s, v, r, csv_dir):
     fn_summary = os.path.join(csv_dir, 'summary_solve.csv')
 
     # Get common parameters - these are Series indexed by period
-    p_discount_factor_operations_yearly = par.discount_factor_operations_yearly
-    p_discount_factor_investment_yearly = par.discount_factor_investment_yearly
+    p_inflation_factor_operations_yearly = par.inflation_factor_operations_yearly
+    p_inflation_factor_investment_yearly = par.inflation_factor_investment_yearly
     complete_period_share_of_year = par.complete_period_share_of_year
 
     # Get period sets
@@ -172,13 +172,13 @@ def write_summary_csv(par, s, v, r, csv_dir):
         # Operational discount factor
         f.write('"Operational discount factor"')
         for d in period_in_use:
-            f.write(f',{p_discount_factor_operations_yearly[d]:.12g}')
+            f.write(f',{p_inflation_factor_operations_yearly[d]:.12g}')
         f.write('\n')
 
         # Investment discount factor
         f.write('"Investment discount factor"')
         for d in s.d_realize_invest:
-            f.write(f',{p_discount_factor_investment_yearly[d]:.12g}')
+            f.write(f',{p_inflation_factor_investment_yearly[d]:.12g}')
         f.write('\n\n')
 
         # Emissions section

@@ -35,7 +35,7 @@ def compute_slacks(par, s, v, r) -> None:
     r.q_capacity_margin_d_not_annualized = v.q_capacity_margin \
         .mul(par.group_capacity_for_scaling[s.groupCapacityMargin])
     r.costPenalty_capacity_margin_d = r.q_capacity_margin_d_not_annualized \
-        .mul(par.discount_factor_operations_yearly, axis=0).sum(axis=1)
+        .mul(par.inflation_factor_operations_yearly, axis=0).sum(axis=1)
 
     r.q_reserves_dt = v.q_reserve.mul(par.reserve_upDown_group_reservation[v.q_reserve.columns], axis=1)
     r.q_reserves_d_not_annualized = r.q_reserves_dt.mul(par.step_duration, axis=0).groupby(level='period').sum()

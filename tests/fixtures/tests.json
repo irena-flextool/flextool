@@ -2325,7 +2325,7 @@
     ],
     [
       "connection",
-      "interest_rate",
+      "discount_rate",
       [
         "bnVsbA==",
         null
@@ -2845,7 +2845,7 @@
     ],
     [
       "model",
-      "discount_offset_investment",
+      "inflation_offset_investment",
       [
         "MQ==",
         "float"
@@ -2855,7 +2855,7 @@
     ],
     [
       "model",
-      "discount_offset_operations",
+      "inflation_offset_operations",
       [
         "MC41",
         "float"
@@ -2865,7 +2865,7 @@
     ],
     [
       "model",
-      "discount_rate",
+      "inflation_rate",
       [
         "bnVsbA==",
         null
@@ -3105,7 +3105,7 @@
     ],
     [
       "node",
-      "interest_rate",
+      "discount_rate",
       [
         "bnVsbA==",
         null
@@ -3885,7 +3885,7 @@
     ],
     [
       "unit",
-      "interest_rate",
+      "discount_rate",
       [
         "bnVsbA==",
         null
@@ -4395,13 +4395,13 @@
     ],
     [
       "connection",
-      "interest_rate",
+      "discount_rate",
       "float",
       0
     ],
     [
       "connection",
-      "interest_rate",
+      "discount_rate",
       "map",
       1
     ],
@@ -4803,19 +4803,19 @@
     ],
     [
       "model",
-      "discount_offset_investment",
+      "inflation_offset_investment",
       "float",
       0
     ],
     [
       "model",
-      "discount_offset_operations",
+      "inflation_offset_operations",
       "float",
       0
     ],
     [
       "model",
-      "discount_rate",
+      "inflation_rate",
       "float",
       0
     ],
@@ -5013,13 +5013,13 @@
     ],
     [
       "node",
-      "interest_rate",
+      "discount_rate",
       "float",
       0
     ],
     [
       "node",
-      "interest_rate",
+      "discount_rate",
       "map",
       1
     ],
@@ -5637,13 +5637,13 @@
     ],
     [
       "unit",
-      "interest_rate",
+      "discount_rate",
       "float",
       0
     ],
     [
       "unit",
-      "interest_rate",
+      "discount_rate",
       "map",
       1
     ],
@@ -6010,7 +6010,7 @@
     [
       "connection",
       "battery_inverter",
-      "interest_rate",
+      "discount_rate",
       [
         "MC4wNQ==",
         "float"
@@ -6510,7 +6510,7 @@
     [
       "model",
       "flexTool",
-      "discount_rate",
+      "inflation_rate",
       [
         "MC4wNA==",
         "float"
@@ -6710,7 +6710,7 @@
     [
       "node",
       "battery",
-      "interest_rate",
+      "discount_rate",
       [
         "MC4wNQ==",
         "float"
@@ -9081,7 +9081,7 @@
     [
       "unit",
       "coal_plant",
-      "interest_rate",
+      "discount_rate",
       [
         "MC4wNQ==",
         "float"
@@ -9091,7 +9091,7 @@
     [
       "unit",
       "coal_plant",
-      "interest_rate",
+      "discount_rate",
       [
         "MC4wNQ==",
         "float"
@@ -9501,7 +9501,7 @@
     [
       "unit",
       "wind_plant",
-      "interest_rate",
+      "discount_rate",
       [
         "MC4wNA==",
         "float"

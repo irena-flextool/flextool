@@ -44,8 +44,9 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
 - `model`: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)
 
   - *solves*: sequence of solves in the model represented with an array of solve names.
-  - *discount_offset_investment*: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.
-  - *discount_offset_operations*: [years] Offset from the period (often year) start to the payment of operational costs.
+  - *inflation_rate*: [e.g. 0.02 for 2%] Model-wide inflation rate applied to all future costs. When inputs are in real (constant-price) terms, set to 0 (default). When inputs are in nominal terms, set to expected inflation.
+  - *inflation_offset_investment*: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.
+  - *inflation_offset_operations*: [years] Offset from the period (often year) start to the payment of operational costs.
   - *available_periods*: (Optional) Array of periods available for the model. Use this for periods that are in the data, but are not in period_timeset.
   
 - `solve`: each solve is built from an array of periods (e.g. one period for 2025 and another for 2030). Periods use timesets to connect with a timeline.
@@ -141,7 +142,7 @@ Input data is set with the following parameters:
 - `invest_cost` - [CUR/kWh] Investment cost for new storage capacity. Constant or period.
 - `salvage_value` - [CUR/kWh] Salvage value of the storage. Constant or period.
 - `lifetime` - [years] Life time of the storage unit represented by the node. Constant or period.
-- `interest_rate` - [unitless, e.g. 0.05 means 5%] Interest rate for investments. Constant or period.
+- `discount_rate` - [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk for this technology. Should be nominal when model `inflation_rate` > 0, real when `inflation_rate` = 0. Constant or period.
 - `invest_max_total` - [MWh] Maximum storage investment over all solves. Constant.
 - `invest_max_period` - [MWh] Maximum storage investment for each period. Period.
 - `invest_min_total` - [MWh] Minimum storage investment over all solves. Constant.
@@ -219,7 +220,7 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 - `invest_cost` - [CUR/kW] Investment cost for new capacity. Constant or period.
 - `salvage_value` - [CUR/kW] Salvage value of the unit capacity. Constant or period.
 - `lifetime` - [years] Lifetime of the unit. Constant or period.
-- `interest_rate` - [unitless, e.g. 0.05 means 5%] Interest rate for investments. Constant or period.
+- `discount_rate` - [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk for this technology. Should be nominal when model `inflation_rate` > 0, real when `inflation_rate` = 0. Constant or period.
 - `invest_max_total` - [MW] Maximum capacity investment over all solves. Constant.
 - `invest_max_period` - [MW] Maximum capacity investment for each period. Period.
 - `invest_min_total` - [MW] Minimum capacity investment over all solves. Constant.
@@ -239,19 +240,19 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 ### Discount calculations
 
-Each asset that can be invested in should have `invest_cost`, `lifetime` and `interest_rate` parameters set and could have an optional `fixed_cost`. These are used to calculate the annuity of the investment. Annuity is used to annualize the investment cost, since FlexTool scales all costs (operational, investment and fixed) to annual level in order to make them comparable. Annuity is calculated as follows:
+Each asset that can be invested in should have `invest_cost`, `lifetime` and `discount_rate` parameters set and could have an optional `fixed_cost`. These are used to calculate the annuity of the investment. Annuity is used to annualize the investment cost, since FlexTool scales all costs (operational, investment and fixed) to annual level in order to make them comparable. Annuity is calculated as follows:
 
-`invest_cost` * `interest_rate` / { 1 - [ 1 / ( 1 + `interest_rate` ) ] ^ `lifetime` } + `fixed_cost`
+`invest_cost` * `discount_rate` / { 1 - [ 1 / ( 1 + `discount_rate` ) ] ^ `lifetime` } + `fixed_cost`
 
-The next step is to consider discounting - future is valued less than the present. There is a model-wide assumption for the `discount_rate`. By default it is 0.05 (i.e. 5%), but it can be changed through the `discount_rate` parameter set for the *flexTool* `model` entity. Discount factor for every period in the model is calculated from the `discount_rate` using the `years_represented` parameter of each `solve`, which how many years the period represents. Values for `years_represented` are used to calculate how many `years_from_solve_start` each year is. The formula is:
+The next step is to consider inflation adjustment - future costs are adjusted to a common price base. There is a model-wide assumption for the `inflation_rate`. By default it is 0 (i.e. no inflation, real inputs), but it can be changed through the `inflation_rate` parameter set for the *flexTool* `model` entity. The inflation adjustment factor for every period in the model is calculated from the `inflation_rate` using the `years_represented` parameter of each `solve`, which defines how many years the period represents. Values for `years_represented` are used to calculate how many `years_from_solve_start` each year is. The formula is:
 
-[ 1 / ( 1 + `discount_rate` ) ] ^ `years_from_solve_start`
+[ 1 / ( 1 + `inflation_rate` ) ] ^ `years_from_solve_start`
 
-Operational costs are also discounted using the same `discount_rate`. However, with operational costs it is assumed that they take place on average at the middle of the year whereas investment costs are assumed to take place at the beginning of the year (they are available for the whole year). These can be tweaked with the `discount_offset_investments` and `discount_offset_operations` parameters (given in years). Please note that given this formulation, **`invest_cost` should be the overnight built cost** (as is typical in energy system modelling, the model does not assume any construction time - the financing costs of the construction period need to be included in your cost assumptions).
+Operational costs are also adjusted for inflation using the same `inflation_rate`. However, with operational costs it is assumed that they take place on average at the middle of the year whereas investment costs are assumed to take place at the beginning of the year (they are available for the whole year). These can be tweaked with the `inflation_offset_investment` and `inflation_offset_operations` parameters (given in years). Please note that given this formulation, **`invest_cost` should be the overnight built cost** (as is typical in energy system modelling, the model does not assume any construction time - the financing costs of the construction period need to be included in your cost assumptions).
 
-The model has a model horizon based on the `years_represented` parameters. The model will not include discounted investment annuities after the model horizon (in other words, the investments are 'returned' at the end of the model horizon). Naturally also operational costs are included only until the end of the model horizon. 
- 
-Finally, the retirements work similar to investments using the same `discount_rate` and `interest_rate` parameters but with `salvage_value` as the benefit from retiring the unit.
+The model has a model horizon based on the `years_represented` parameters. The model will not include investment annuities after the model horizon (in other words, the investments are 'returned' at the end of the model horizon). Naturally also operational costs are included only until the end of the model horizon.
+
+Finally, the retirements work similar to investments using the same `inflation_rate` and `discount_rate` parameters but with `salvage_value` as the benefit from retiring the unit.
 
 ### Entities between units and nodes 
 
@@ -298,8 +299,8 @@ Connections can transfer energy between two nodes. Parameters for the connection
 - `other_operational_cost` - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period or time.
 - `fixed_cost` - [CUR/kW] Annual fixed cost. Constant or period.
 - `invest_cost` - [CUR/kW] Investment cost for new 'virtual' capacity. Constant or period.
-- `interest_rate` - [e.g. 0.05 equals 5%] Interest rate for investments. Constant or period.
-- `lifetime` - [years] Used to calculate annuity together with interest rate. Constant or period.
+- `discount_rate` - [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk for this technology. Should be nominal when model `inflation_rate` > 0, real when `inflation_rate` = 0. Constant or period.
+- `lifetime` - [years] Used to calculate annuity together with discount rate. Constant or period.
 - other investment parameters: `invest_max_total`, `invest_max_period`, `invest_min_total`, `invest_min_period`, `salvage_value`
 - `is_DC` - A flag whether the connection is DC (the flow will not be counted as synchronous if there is a *non_synchronous_limit*). Default false.
 - `virtual_unitsize` - [MW] Size of single connection - used for integer (lumped) investments.

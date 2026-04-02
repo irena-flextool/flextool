@@ -35,9 +35,11 @@ def _ensure_target_db_exists(target_db_url: str) -> None:
         )
 
     from flextool.update_flextool.initialize_database import initialize_database
+    from flextool.update_flextool.db_migration import migrate_database
 
     print(f"Target database does not exist. Initializing: {db_path}")
     initialize_database(str(json_template), db_path)
+    migrate_database(db_path)
 
 
 def main():
