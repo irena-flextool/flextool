@@ -110,6 +110,14 @@ python update_flextool.py --skip-git
 
 Make sure your virtual environment is activated. The `flextool-gui` command is only available when the virtual environment where FlexTool was installed is active.
 
+### "No module named 'tkinter'" (Linux)
+
+On most Linux distributions, `tkinter` is included with Python. However, some distributions (notably Debian and Ubuntu) package it separately. If you see this error, install it with:
+
+```bash
+sudo apt install python3-tk
+```
+
 ### Import errors or missing modules
 
 Try reinstalling:

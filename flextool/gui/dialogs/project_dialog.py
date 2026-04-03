@@ -34,8 +34,8 @@ class ProjectDialog(tk.Toplevel):
         lh: int = default_font.metrics("linespace")
 
         # ── Dialog size ─────────────────────────────────────────────
-        self.geometry(f"{cw * 50}x{lh * 20}")
-        self.resizable(False, False)
+        self.geometry(f"{cw * 70}x{lh * 30}")
+        self.minsize(cw * 50, lh * 20)
 
         self._rename_entry: tk.Entry | None = None
 
