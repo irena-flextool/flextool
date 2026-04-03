@@ -64,6 +64,11 @@ class MainWindow(tk.Tk):
     def __init__(self, initial_theme: str = "dark") -> None:
         super().__init__()
 
+        # ── DPI scaling — must come before any widget/font access ─
+        from flextool.gui.platform_utils import apply_dpi_scaling, scale_theme_fonts
+
+        dpi_factor = apply_dpi_scaling(self)
+
         # ── Apply sv_ttk theme before any widgets are created ─────
         import sv_ttk
 
@@ -71,6 +76,9 @@ class MainWindow(tk.Tk):
             sv_ttk.set_theme("light")
         else:
             sv_ttk.set_theme("dark")  # "dark" and "os" both default to dark
+
+        # Rescale sv_ttk's hardcoded pixel-size fonts for high-DPI displays
+        scale_theme_fonts(self, dpi_factor)
 
         self.title("FlexTool")
 
@@ -126,16 +134,9 @@ class MainWindow(tk.Tk):
         self._xlsx_pending_scenarios: list[ScenarioInfo] = []
         self._xlsx_conversion_queue: list[tuple[str, Path]] = []
 
-        # ── Window sizing ────────────────────────────────────────────
+        # ── Font-metric locals used throughout widget construction ──
         cw = self._char_width
         lh = self._line_height
-        min_width = cw * 110
-        min_height = lh * 35
-        screen_h = self.winfo_screenheight()
-        # Leave a small margin at top/bottom for taskbars
-        win_height = max(min_height, screen_h - lh * 4)
-        self.geometry(f"{min_width}x{win_height}+0+0")
-        self.minsize(min_width, min_height)
 
         # Allow the window content to stretch
         self.columnconfigure(0, weight=1)
@@ -507,6 +508,16 @@ class MainWindow(tk.Tk):
 
         # ── Window close handler ─────────────────────────────────────
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # ── Window sizing: compute from actual widget layout ─────────
+        self.update_idletasks()
+        nat_width = self.winfo_reqwidth()
+        nat_height = self.winfo_reqheight()
+        screen_h = self.winfo_screenheight()
+        # Use natural width; for height, fill the screen minus taskbar space
+        win_height = max(nat_height, screen_h - lh * 4)
+        self.geometry(f"{nat_width}x{win_height}+0+0")
+        self.minsize(nat_width, nat_height)
 
         # ── Startup logic ────────────────────────────────────────────
         self._startup()
