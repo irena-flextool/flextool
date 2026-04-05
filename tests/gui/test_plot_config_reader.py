@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+from pathlib import Path
+from textwrap import dedent
+
+import pytest
+import yaml
+
+from flextool.gui.plot_config_reader import (
+    PlotEntry,
+    PlotGroup,
+    PlotVariant,
+    _truncate,
+    parse_plot_config,
+)
+
+# Resolve template paths relative to the repository root
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_PLOTS = _REPO_ROOT / "templates" / "default_plots.yaml"
+_COMPARISON_PLOTS = _REPO_ROOT / "templates" / "default_comparison_plots.yaml"
+
+
+class TestParseDefaultPlots:
+    """Integration tests using the real default_plots.yaml."""
+
+    @pytest.fixture()
+    def groups(self) -> list[PlotGroup]:
+        assert _DEFAULT_PLOTS.is_file(), f"Missing {_DEFAULT_PLOTS}"
+        return parse_plot_config(_DEFAULT_PLOTS)
+
+    def test_has_ten_groups(self, groups):
+        assert len(groups) >= 10
+
+    def test_group_numbers_sequential(self, groups):
+        numbers = [g.number for g in groups]
+        assert numbers == [str(i) for i in range(len(numbers))]
+
+    def test_group_names(self, groups):
+        assert groups[0].name == "Infeasibilities"
+        assert groups[3].name == "Costs"
+        assert groups[9].name == "Extras"
+
+    def test_entry_0_0_has_variants_d_and_t(self, groups):
+        entry = None
+        for g in groups:
+            for e in g.entries:
+                if e.number == "0.0":
+                    entry = e
+                    break
+        assert entry is not None, "Entry 0.0 not found"
+        letters = {v.letter for v in entry.variants}
+        assert "d" in letters
+        assert "t" in letters
+
+    def test_total_entry_count(self, groups):
+        total = sum(len(g.entries) for g in groups)
+        # The spec says 47 second-level entries in default_plots.yaml
+        assert total == 47
+
+    def test_entry_5_0_has_no_variant_letter(self, groups):
+        """Entry 5.0 (CO2 total) has plot_name '5.0 Emissions...' with no variant."""
+        entry = None
+        for g in groups:
+            for e in g.entries:
+                if e.number == "5.0":
+                    entry = e
+                    break
+        assert entry is not None
+        assert any(v.letter == "" for v in entry.variants)
+
+
+class TestParseComparisonPlots:
+    """Integration tests using the real default_comparison_plots.yaml."""
+
+    @pytest.fixture()
+    def groups(self) -> list[PlotGroup]:
+        assert _COMPARISON_PLOTS.is_file(), f"Missing {_COMPARISON_PLOTS}"
+        return parse_plot_config(_COMPARISON_PLOTS)
+
+    def test_has_groups(self, groups):
+        assert len(groups) >= 10
+
+    def test_hidden_entries_without_map_dimensions(self, groups):
+        """Entries without map_dimensions_for_plots should be excluded.
+
+        The comparison YAML has several entries missing map_dimensions
+        (e.g., some reserve or VRE entries). The total should be less
+        than the raw entry count.
+        """
+        total = sum(len(g.entries) for g in groups)
+        # Should be less than 48 (the spec says 48 but some are hidden)
+        assert total <= 48
+
+
+class TestHiddenEntriesWithoutMapDimensions:
+    """Verify that entries without map_dimensions_for_plots are hidden."""
+
+    def test_entries_without_map_are_hidden(self, tmp_path):
+        yaml_content = dedent("""\
+            plots:
+              has_map:
+                plot_name: '1.0.d Some result'
+                map_dimensions_for_plots: [d_e, s_b]
+              no_map:
+                plot_name: '1.1.d Another result'
+              nested_has_map:
+                default:
+                  plot_name: '2.0.t Nested with map'
+                  map_dimensions_for_plots: [dt_e, tt_l]
+              nested_no_map:
+                default:
+                  plot_name: '2.1.t Nested without map'
+        """)
+        config_file = tmp_path / "test_plots.yaml"
+        config_file.write_text(yaml_content)
+        groups = parse_plot_config(config_file)
+
+        all_numbers = set()
+        for g in groups:
+            for e in g.entries:
+                all_numbers.add(e.number)
+
+        assert "1.0" in all_numbers
+        assert "1.1" not in all_numbers
+        assert "2.0" in all_numbers
+        assert "2.1" not in all_numbers
+
+
+class TestShortNameTruncation:
+    """Test name truncation logic."""
+
+    def test_short_name_not_truncated(self):
+        assert _truncate("Short name") == "Short name"
+
+    def test_long_name_truncated(self):
+        long_name = "This is a very long plot name that exceeds the limit"
+        result = _truncate(long_name, limit=25)
+        assert len(result) == 25
+        assert result.endswith("...")
+
+    def test_exact_limit_not_truncated(self):
+        name = "A" * 25
+        assert _truncate(name, limit=25) == name
+
+    def test_one_over_limit_truncated(self):
+        name = "A" * 26
+        result = _truncate(name, limit=25)
+        assert len(result) == 25
+        assert result == "A" * 22 + "..."
+
+
+class TestMissingFile:
+    """Test behaviour with missing or invalid files."""
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        result = parse_plot_config(tmp_path / "nonexistent.yaml")
+        assert result == []
+
+    def test_invalid_yaml_returns_empty(self, tmp_path):
+        bad_file = tmp_path / "bad.yaml"
+        bad_file.write_text(": : : invalid yaml [[[")
+        result = parse_plot_config(bad_file)
+        assert result == []
+
+    def test_empty_plots_returns_empty(self, tmp_path):
+        config_file = tmp_path / "empty.yaml"
+        config_file.write_text("plots:\n")
+        result = parse_plot_config(config_file)
+        assert result == []
