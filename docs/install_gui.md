@@ -47,23 +47,23 @@ Or download and unzip from [GitHub](https://github.com/irena-flextool/flextool/a
 
 ### 4. Install FlexTool
 
-Install FlexTool and all its dependencies:
-
-```bash
-pip install -e .
-```
-
-This installs FlexTool with the built-in GUI, HiGHS solver (via highspy), and all required libraries.
-
-#### Optional: Add Spine Toolbox
-
-If you also want to use Spine Toolbox as an alternative interface (useful especially if you want to build your own workflows for data processing and to link more tools):
+**Recommended** — install FlexTool with Spine Toolbox (includes Spine DB Editor for editing input databases):
 
 ```bash
 pip install -e ".[toolbox]"
 ```
 
-This installs everything above plus Spine Toolbox and its dependencies (Spine Items, Spine Engine, PySide6, etc.).
+This installs FlexTool with the built-in GUI, HiGHS solver (via highspy), and Spine Toolbox with its dependencies (Spine DB Editor, Spine Items, Spine Engine, PySide6, etc.).
+
+#### Lightweight install (without Spine Toolbox)
+
+If you prefer a leaner installation or have issues installing Spine Toolbox dependencies:
+
+```bash
+pip install -e .
+```
+
+This installs FlexTool and the GUI, but without Spine DB Editor. You can run scenarios and view results, but editing `.sqlite` input sources from the GUI requires Spine DB Editor. You can upgrade to the full install at any time by running the recommended command above.
 
 ### 5. Initialize FlexTool
 
@@ -110,9 +110,19 @@ python update_flextool.py --skip-git
 
 Make sure your virtual environment is activated. The `flextool-gui` command is only available when the virtual environment where FlexTool was installed is active.
 
-### "No module named 'tkinter'" (Linux)
+### "No module named '_tkinter'" (macOS / Linux)
 
-On most Linux distributions, `tkinter` is included with Python. However, some distributions (notably Debian and Ubuntu) package it separately. If you see this error, install it with:
+The FlexTool GUI uses `tkinter`, which is part of Python's standard library but depends on Tcl/Tk system libraries. Some platforms do not bundle these by default.
+
+**macOS (Homebrew Python):** Install the Tcl/Tk binding for your Python version:
+
+```bash
+brew install python-tk@3.12
+```
+
+Replace `3.12` with your Python version (check with `python3 --version`).
+
+**Linux (Debian / Ubuntu):** Install the system package:
 
 ```bash
 sudo apt install python3-tk

@@ -1358,7 +1358,9 @@ class MainWindow(tk.Tk):
                 messagebox.showinfo(
                     "spine-db-editor not found",
                     "The spine-db-editor command was not found on your system.\n\n"
-                    "Install it with:  pip install spine-db-editor",
+                    "To edit .sqlite input sources, install Spine Toolbox:\n\n"
+                    '  pip install -e ".[toolbox]"\n\n'
+                    "(run from the flextool directory)",
                 )
                 return
         else:
