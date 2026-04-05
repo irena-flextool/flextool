@@ -21,6 +21,7 @@ class ViewerSettings:
     last_entry: str = ""      # e.g., "0.0"
     last_variant: str = ""    # e.g., "t"
     last_mode: str = "single" # "single", "comparison", "network"
+    window_geometry: str = ""  # saved Tk geometry string
 
 
 @dataclass

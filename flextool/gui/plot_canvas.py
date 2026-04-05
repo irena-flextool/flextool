@@ -19,6 +19,7 @@ except Exception:
     pass
 
 import matplotlib.image as mpimage
+import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
@@ -154,6 +155,14 @@ class PlotCanvas(ttk.Frame):
 
         # Redraw without triggering the callback again
         self._canvas.draw_idle()
+
+    def cleanup(self) -> None:
+        """Release matplotlib resources held by this canvas."""
+        self._raw_line_data.clear()
+        try:
+            plt.close(self._figure)
+        except Exception:  # noqa: BLE001
+            pass
 
     def clear(self) -> None:
         """Clear the display."""

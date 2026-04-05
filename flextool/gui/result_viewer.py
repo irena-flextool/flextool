@@ -13,6 +13,7 @@ from flextool.gui.network_graph import build_network_figure
 from flextool.gui.plot_canvas import PlotCanvas
 from flextool.gui.plot_config_reader import PlotEntry, PlotGroup, PlotVariant, parse_plot_config
 from flextool.gui.project_utils import get_projects_dir
+from flextool.gui.settings_io import save_project_settings
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,13 @@ class ResultViewer(tk.Toplevel):
             viewer_x = main_x + main_w
             viewer_w = max(screen_w - viewer_x, cw * 80)
             self.geometry(f"{viewer_w}x{usable_h}+{viewer_x}+0")
+
+        # Restore saved geometry if available
+        if self._viewer_settings.window_geometry:
+            try:
+                self.geometry(self._viewer_settings.window_geometry)
+            except tk.TclError:
+                pass  # saved geometry may not fit current screen
 
         # ── Build layout ─────────────────────────────────────────────
         self.columnconfigure(0, weight=1)
@@ -906,6 +914,10 @@ class ResultViewer(tk.Toplevel):
 
     def _trigger_replot(self) -> None:
         """Called when scenario, entry, or variant changes."""
+        # Show loading state while the plot loads
+        self._plot_canvas.show_message("Loading...")
+        self.update_idletasks()
+
         scenarios = self._get_selected_scenarios()
         if not scenarios:
             self._plot_canvas.show_message("No scenario selected")
@@ -944,6 +956,9 @@ class ResultViewer(tk.Toplevel):
 
     def _render_network(self) -> None:
         """Render the network graph for the selected scenario."""
+        self._plot_canvas.show_message("Loading...")
+        self.update_idletasks()
+
         scenarios = self._get_selected_scenarios()
         if not scenarios:
             self._plot_canvas.show_message("Select a scenario to display the network graph")
@@ -973,6 +988,23 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _on_close(self) -> None:
-        """Handle window close — persist settings."""
+        """Handle window close — persist settings and clean up resources."""
         self._hide_tooltip()
+
+        # Save window geometry
+        self._viewer_settings.window_geometry = self.geometry()
+
+        # Save comparison scenarios if in comparison mode
+        if self._mode.get() == "comparison":
+            self._settings.comp_plots_scenarios = self._get_selected_scenarios()
+
+        # Persist all settings
+        try:
+            save_project_settings(self._project_path, self._settings)
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to save viewer settings on close", exc_info=True)
+
+        # Clean up matplotlib resources
+        self._plot_canvas.cleanup()
+
         self.destroy()
