@@ -300,7 +300,7 @@ plots:
         xlabel: MWh
   connection_rightward_dt_eee:
     debug:
-        plot_name: '2.7t Connection rightward'
+        plot_name: '2.7.t Connection rightward'
         map_dimensions_for_plots: [dt_ee, tt_lu]
         max_items_per_plot: 20
         max_subplots_per_file: 6
@@ -396,7 +396,7 @@ plots:
     xlabel: Mt CO2
   CO2_d_g:
     default:
-      plot_name: '5.1.D Emissions CO2 per nodeGroup'
+      plot_name: '5.1.d Emissions CO2 per nodeGroup'
       map_dimensions_for_plots: [d_g, s_b]
       xlabel: t CO2
     sum_periods:
@@ -404,7 +404,7 @@ plots:
       map_dimensions_for_plots: [d_g, m_b]
       xlabel: t CO2 (total)
   process_co2_d_eee:
-    plot_name: '5.2.D Process CO2 emissions'
+    plot_name: '5.2.d Process CO2 emissions'
     map_dimensions_for_plots: [d_eeee, b_xbxx]
     xlabel: t CO2
 
@@ -558,7 +558,7 @@ plots:
       legend: all
       ylabel: MWh
   dual_invest_node_d_e:
-    plot_name: '7.3.D Node marginal investment value'
+    plot_name: '7.3.d Node marginal investment value'
     map_dimensions_for_plots: [d_e, g_b]
     xlabel: Currency/MW
 
@@ -585,7 +585,7 @@ plots:
     max_subplots_per_file: 6
     ylabel: units online
   unit_online_average_d_e:
-    plot_name: '8.3.D Unit online average'
+    plot_name: '8.3.d Unit online average'
     map_dimensions_for_plots: [d_e, g_b]
     xlabel: units online
   unit_ramp_inputs_dt_ee:
