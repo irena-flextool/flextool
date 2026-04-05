@@ -276,16 +276,15 @@ def _compute_line_layout(
 #  Lines
 # ---------------------------------------------------------------------------
 
-def _render_lines_figure(
+def _build_lines_figure(
     effective_plots, plot_name, sub_levels, line_level_names, time_index,
     subplots_per_row, legend_position,
     xlabel, ylabel,
     axis_bounds, axis_tick_format, always_include_zero_in_axis,
-    output_filepath,
     layout: LineLayoutParams,
     shared_color_map: dict[str, tuple] | None = None,
-):
-    """Render one file's worth of line subplots."""
+) -> plt.Figure:
+    """Build a line-plot Figure and return it (without saving or closing)."""
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
@@ -422,7 +421,26 @@ def _render_lines_figure(
     fig_h = fig.get_size_inches()[1]
     fig.suptitle(plot_name, y=1 - 0.14 / fig_h, va='top')
 
-    # ── Save (fixed layout, no bbox_inches='tight') ──
+    return fig
+
+
+def _render_lines_figure(
+    effective_plots, plot_name, sub_levels, line_level_names, time_index,
+    subplots_per_row, legend_position,
+    xlabel, ylabel,
+    axis_bounds, axis_tick_format, always_include_zero_in_axis,
+    output_filepath,
+    layout: LineLayoutParams,
+    shared_color_map: dict[str, tuple] | None = None,
+):
+    """Render one file's worth of line subplots and save to disk."""
+    fig = _build_lines_figure(
+        effective_plots, plot_name, sub_levels, line_level_names, time_index,
+        subplots_per_row, legend_position,
+        xlabel, ylabel,
+        axis_bounds, axis_tick_format, always_include_zero_in_axis,
+        layout, shared_color_map,
+    )
     if output_filepath:
         plt.savefig(output_filepath)
     else:
@@ -501,16 +519,15 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
 #  Stacked area
 # ---------------------------------------------------------------------------
 
-def _render_stack_figure(
+def _build_stack_figure(
     effective_plots, plot_name, sub_levels, stack_level_names, time_index,
     subplots_per_row, legend_position,
     xlabel, ylabel,
     axis_bounds, axis_tick_format, always_include_zero_in_axis,
-    output_filepath,
     layout: LineLayoutParams,
     shared_color_map: dict[str, tuple] | None = None,
-):
-    """Render one file's worth of stacked-area subplots."""
+) -> plt.Figure:
+    """Build a stacked-area Figure and return it (without saving or closing)."""
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
@@ -692,7 +709,26 @@ def _render_stack_figure(
     fig_h = fig.get_size_inches()[1]
     fig.suptitle(plot_name, y=1 - 0.14 / fig_h, va='top')
 
-    # ── Save (fixed layout, no bbox_inches='tight') ──
+    return fig
+
+
+def _render_stack_figure(
+    effective_plots, plot_name, sub_levels, stack_level_names, time_index,
+    subplots_per_row, legend_position,
+    xlabel, ylabel,
+    axis_bounds, axis_tick_format, always_include_zero_in_axis,
+    output_filepath,
+    layout: LineLayoutParams,
+    shared_color_map: dict[str, tuple] | None = None,
+):
+    """Render one file's worth of stacked-area subplots and save to disk."""
+    fig = _build_stack_figure(
+        effective_plots, plot_name, sub_levels, stack_level_names, time_index,
+        subplots_per_row, legend_position,
+        xlabel, ylabel,
+        axis_bounds, axis_tick_format, always_include_zero_in_axis,
+        layout, shared_color_map,
+    )
     if output_filepath:
         plt.savefig(output_filepath)
     else:

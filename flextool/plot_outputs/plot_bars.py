@@ -199,7 +199,7 @@ def _compute_bar_layout(
     )
 
 
-def _render_bar_figure(
+def _build_bar_figure(
     effective_plots, df, key_name, plot_dir,
     stack_levels, stack_level_names,
     expand_axis_levels, expand_axis_level_names,
@@ -208,12 +208,12 @@ def _render_bar_figure(
     legend_position, subplots_per_row,
     xlabel, ylabel, bar_orientation, base_bar_length,
     value_fmt, axis_bounds, axis_tick_format,
-    always_include_zero_in_axis, output_filepath,
+    always_include_zero_in_axis,
     layout: BarLayoutParams | None = None,
     shared_color_map: dict[str, tuple] | None = None,
     skip_data_with_only_zeroes: bool = False,
-):
-    """Render one file's worth of bar subplots to a single figure/file."""
+) -> plt.Figure | None:
+    """Build a bar-chart Figure and return it (without saving or closing)."""
     # Calculate subplot grid
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
@@ -503,7 +503,7 @@ def _render_bar_figure(
         # Skip subplot if no bars have data (avoids zero-height axes)
         if not all_bars:
             if n_subs == 1:
-                return 0 if 'skipped' not in dir() else skipped
+                return None
             if n_subs > 1 and axes[idx] is not None:
                 axes[idx].set_visible(False)
             continue
@@ -883,8 +883,38 @@ def _render_bar_figure(
     fig_h = fig.get_size_inches()[1]
     fig.suptitle(key_name, y=1 - 0.14 / fig_h, va='top')
 
-    # Use provided filepath or generate default
-    # All figures use fixed layout — no bbox_inches='tight' to keep consistent size.
+    return fig
+
+
+def _render_bar_figure(
+    effective_plots, df, key_name, plot_dir,
+    stack_levels, stack_level_names,
+    expand_axis_levels, expand_axis_level_names,
+    sub_levels,
+    grouped_bar_levels, grouped_bar_level_names,
+    legend_position, subplots_per_row,
+    xlabel, ylabel, bar_orientation, base_bar_length,
+    value_fmt, axis_bounds, axis_tick_format,
+    always_include_zero_in_axis, output_filepath,
+    layout: BarLayoutParams | None = None,
+    shared_color_map: dict[str, tuple] | None = None,
+    skip_data_with_only_zeroes: bool = False,
+):
+    """Render one file's worth of bar subplots and save to disk."""
+    fig = _build_bar_figure(
+        effective_plots, df, key_name, plot_dir,
+        stack_levels, stack_level_names,
+        expand_axis_levels, expand_axis_level_names,
+        sub_levels,
+        grouped_bar_levels, grouped_bar_level_names,
+        legend_position, subplots_per_row,
+        xlabel, ylabel, bar_orientation, base_bar_length,
+        value_fmt, axis_bounds, axis_tick_format,
+        always_include_zero_in_axis,
+        layout, shared_color_map, skip_data_with_only_zeroes,
+    )
+    if fig is None:
+        return
     if output_filepath:
         plt.savefig(output_filepath)
     else:
