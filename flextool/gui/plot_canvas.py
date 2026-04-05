@@ -60,7 +60,11 @@ class PlotCanvas(ttk.Frame):
         self._toolbar.update()
 
     def display_png(self, png_path: Path) -> None:
-        """Load and display a PNG file."""
+        """Load and display a PNG file at its natural resolution.
+
+        If the image is larger than the available widget area it is scaled
+        down (keeping aspect ratio).  Otherwise it is shown at 1:1 pixels.
+        """
         try:
             img = mpimage.imread(str(png_path))
         except Exception:
@@ -68,11 +72,27 @@ class PlotCanvas(ttk.Frame):
             self.show_message(f"Failed to load image:\n{png_path.name}")
             return
 
-        fig = Figure()
+        img_h, img_w = img.shape[:2]  # pixels
+
+        # Determine available widget area in pixels
+        self.update_idletasks()
+        widget_w = self._canvas_widget.winfo_width()
+        widget_h = self._canvas_widget.winfo_height()
+        if widget_w < 10 or widget_h < 10:
+            # Widget not yet laid out — use reasonable defaults
+            widget_w = max(widget_w, 800)
+            widget_h = max(widget_h, 600)
+
+        # Scale down if image exceeds widget, preserving aspect ratio
+        scale = min(widget_w / img_w, widget_h / img_h, 1.0)
+        disp_w = img_w * scale
+        disp_h = img_h * scale
+
+        dpi = 100
+        fig = Figure(figsize=(disp_w / dpi, disp_h / dpi), dpi=dpi)
         ax = fig.add_axes([0, 0, 1, 1])
-        ax.imshow(img)
+        ax.imshow(img, interpolation="lanczos" if scale < 1.0 else "nearest")
         ax.set_axis_off()
-        fig.set_layout_engine("tight")
         self.display_figure(fig)
 
     def show_message(self, text: str) -> None:
