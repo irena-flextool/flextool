@@ -9,6 +9,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from flextool.gui.data_models import ProjectSettings
+from flextool.gui.network_graph import build_network_figure
 from flextool.gui.plot_canvas import PlotCanvas
 from flextool.gui.plot_config_reader import PlotEntry, PlotGroup, PlotVariant, parse_plot_config
 from flextool.gui.project_utils import get_projects_dir
@@ -433,6 +434,10 @@ class ResultViewer(tk.Toplevel):
         if scenarios:
             self._viewer_settings.last_scenario = scenarios[0]
 
+        if self._mode.get() == "network":
+            self._render_network()
+            return
+
         self._update_tree_availability()
         # Re-select entry if current one became disabled
         selection = self._plot_tree.selection()
@@ -764,7 +769,7 @@ class ResultViewer(tk.Toplevel):
                 self._plot_tree.delete(item)
             self._tree_entry_map.clear()
             self._hide_variant_panel()
-            self._plot_canvas.show_message("Network mode (not yet implemented)")
+            self._render_network()
 
     # ------------------------------------------------------------------
     # File navigation
@@ -932,6 +937,36 @@ class ResultViewer(tk.Toplevel):
             self._plot_canvas.show_message(
                 f"No plot files found for\n{variant.full_name}"
             )
+
+    # ------------------------------------------------------------------
+    # Network rendering
+    # ------------------------------------------------------------------
+
+    def _render_network(self) -> None:
+        """Render the network graph for the selected scenario."""
+        scenarios = self._get_selected_scenarios()
+        if not scenarios:
+            self._plot_canvas.show_message("Select a scenario to display the network graph")
+            return
+
+        scenario = scenarios[0]
+        db_path = self._scenario_db_map.get(scenario)
+        if not db_path:
+            self._plot_canvas.show_message(
+                f"No database found for scenario '{scenario}'"
+            )
+            return
+
+        db_url = f"sqlite:///{db_path}"
+        fig = build_network_figure(db_url)
+        if fig is None:
+            self._plot_canvas.show_message(
+                "No latitude/longitude data found for nodes in this database.\n"
+                "Geographic coordinates (lat, lon) must be defined as node parameters."
+            )
+            return
+
+        self._plot_canvas.display_figure(fig)
 
     # ------------------------------------------------------------------
     # Window close
