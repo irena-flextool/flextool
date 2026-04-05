@@ -195,7 +195,7 @@ class SolverRunner:
 
         # Phase 2: Run solver
         if solver == "highs":
-            self._run_highs(current_solve, highs_file, mps_file, highs_option_file)
+            self._run_highs(current_solve, highs_file, mps_file, highs_option_file, flextool_sol_file)
             timing = time.perf_counter() - timer_in_model_run
             self.logger.info(f"--- Solver (HiGHS): {timing:.4f} seconds ---")
             with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
@@ -238,6 +238,7 @@ class SolverRunner:
         highs_file: str,
         mps_file: str,
         highs_option_file: str,
+        flextool_sol_file: str,
     ) -> None:
         """Run HiGHS solver on an MPS file via highspy Python API."""
         wf = self.state.paths.work_folder
@@ -245,7 +246,12 @@ class SolverRunner:
 
         # Apply options from highs.opt file
         # Paths for solution_file and log_file are made absolute to work folder
+        # Solution file writing options are tracked but not passed to HiGHS,
+        # because the highspy API does not honor them — writeSolution() is
+        # called explicitly after a successful solve instead.
         _PATH_OPTIONS = {'solution_file', 'log_file'}
+        _SOLUTION_WRITE_OPTIONS = {'write_solution_to_file', 'solution_file', 'write_solution_style'}
+        solution_style = 2  # default: glpsol-compatible style
         if os.path.exists(highs_option_file):
             with open(highs_option_file, 'r') as f:
                 for line in f:
@@ -254,6 +260,10 @@ class SolverRunner:
                         continue
                     key, _, value = line.partition('=')
                     key, value = key.strip(), value.strip()
+                    if key == 'write_solution_style':
+                        solution_style = int(value)
+                    if key in _SOLUTION_WRITE_OPTIONS:
+                        continue
                     if key in _PATH_OPTIONS:
                         value = str(wf / value)
                     h.setOptionValue(key, self._parse_highs_option(value))
@@ -286,6 +296,9 @@ class SolverRunner:
             self.logger.error(message)
             raise FlexToolSolveError(message)
 
+        # Write solution file explicitly — the highspy API does not honor the
+        # write_solution_to_file / solution_file options from highs.opt.
+        h.writeSolution(flextool_sol_file, solution_style)
         self.logger.info("HiGHS solved the problem")
 
     @staticmethod
