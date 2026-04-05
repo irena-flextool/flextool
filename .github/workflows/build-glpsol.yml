@@ -40,8 +40,10 @@ jobs:
         shell: cmd
         run: |
           copy w64\config_VC w64\config.h
+          echo #define WITH_SPLAYTREE 1 >> w64\config.h
+          echo #define NDEBUG 1 >> w64\config.h
           cd w64
-          nmake /f makefile_VC CFLAGS="/I. /I..\src /I..\src\amd /I..\src\api /I..\src\bflib /I..\src\colamd /I..\src\draft /I..\src\env /I..\src\intopt /I..\src\minisat /I..\src\misc /I..\src\mpl /I..\src\npp /I..\src\proxy /I..\src\simplex /I..\src\zlib /DHAVE_CONFIG_H=1 /D_CRT_SECURE_NO_WARNINGS=1 /DWITH_SPLAYTREE /DNDEBUG /nologo /W3 /O2"
+          nmake /f makefile_VC
           glpsol.exe --version
 
       - name: Upload binary (Unix)
