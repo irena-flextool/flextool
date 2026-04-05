@@ -17,7 +17,7 @@ jobs:
 
       - name: Build glpsol
         run: |
-          ./configure --disable-shared --enable-static
+          CFLAGS="-O3 -DWITH_SPLAYTREE -DNDEBUG" ./configure --disable-shared --enable-static
           make -j$(sysctl -n hw.ncpu)
           file examples/glpsol
           ls -lh examples/glpsol
