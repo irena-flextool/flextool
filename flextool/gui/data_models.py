@@ -15,6 +15,15 @@ class PlotSettings:
 
 
 @dataclass
+class ViewerSettings:
+    """Settings for the result viewer window."""
+    last_scenario: str = ""
+    last_entry: str = ""      # e.g., "0.0"
+    last_variant: str = ""    # e.g., "t"
+    last_mode: str = "single" # "single", "comparison", "network"
+
+
+@dataclass
 class ProjectSettings:
     """Per-project settings stored in settings.yaml."""
     # Auto-generate flags
@@ -42,6 +51,9 @@ class ProjectSettings:
     checked_input_sources: list[str] = field(default_factory=list)    # source names
     checked_available_scenarios: list[str] = field(default_factory=list)  # "source_number|name" keys
     checked_executed_scenarios: list[str] = field(default_factory=list)   # scenario names
+
+    # Result viewer settings
+    viewer_settings: ViewerSettings = field(default_factory=ViewerSettings)
 
 
 @dataclass

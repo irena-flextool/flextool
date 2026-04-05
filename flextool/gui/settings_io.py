@@ -9,6 +9,7 @@ from flextool.gui.data_models import (
     GlobalSettings,
     PlotSettings,
     ProjectSettings,
+    ViewerSettings,
 )
 
 SETTINGS_FILENAME = "settings.yaml"
@@ -78,6 +79,15 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
             active_configs=comp_plot.get("active_configs", []),
             dispatch_plots=comp_plot.get("dispatch_plots", True),
             only_first_file=comp_plot.get("only_first_file", False),
+        )
+
+    viewer = data.get("viewer_settings")
+    if isinstance(viewer, dict):
+        settings.viewer_settings = ViewerSettings(
+            last_scenario=viewer.get("last_scenario", ""),
+            last_entry=viewer.get("last_entry", ""),
+            last_variant=viewer.get("last_variant", ""),
+            last_mode=viewer.get("last_mode", "single"),
         )
 
     return settings

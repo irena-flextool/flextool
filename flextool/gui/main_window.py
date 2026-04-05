@@ -30,6 +30,7 @@ from flextool.gui.scenario_lists import AvailableScenarioManager, ExecutedScenar
 from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus
 from flextool.gui.execution_window import ExecutionWindow
 from flextool.gui.output_actions import OutputActionManager
+from flextool.gui.result_viewer import ResultViewer
 from flextool.gui.dialogs.plot_dialog import PlotDialog
 from flextool.gui.error_handling import safe_callback
 from flextool.gui.platform_utils import (
@@ -123,6 +124,7 @@ class MainWindow(tk.Tk):
         self.exec_scenario_mgr: ExecutedScenarioManager | None = None
         self.execution_mgr: ExecutionManager | None = None
         self.execution_window: ExecutionWindow | None = None
+        self._result_viewer: ResultViewer | None = None
         self.output_action_mgr: OutputActionManager | None = None
         self._output_action_failed: set[str] = set()
         self._pending_execution_scenarios: list[ScenarioInfo] = []
@@ -371,6 +373,16 @@ class MainWindow(tk.Tk):
                 )
                 action_btn.grid(row=i, column=2, sticky="w", padx=(2, 0), pady=2)
                 self.output_action_btns[key] = action_btn
+
+        # View Results button (opens the ResultViewer window)
+        next_row = len(output_info)
+        self.view_results_btn = ttk.Button(
+            self.output_frame, text="View Results", width=20,
+            command=self._on_view_results,
+        )
+        self.view_results_btn.grid(
+            row=next_row, column=0, columnspan=3, sticky="w", padx=(0, 2), pady=(8, 2),
+        )
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
@@ -673,6 +685,9 @@ class MainWindow(tk.Tk):
         if self.execution_window is not None and self.execution_window.winfo_exists():
             self.execution_window.destroy()
         self.execution_window = None
+        if self._result_viewer is not None and self._result_viewer.winfo_exists():
+            self._result_viewer.destroy()
+        self._result_viewer = None
         self.execution_mgr = None
         self.output_action_mgr = None
 
@@ -770,6 +785,14 @@ class MainWindow(tk.Tk):
             pass
         self.execution_window = None
         self.execution_mgr = None
+
+        # Close result viewer if open
+        try:
+            if self._result_viewer is not None and self._result_viewer.winfo_exists():
+                self._result_viewer.destroy()
+        except Exception:
+            pass
+        self._result_viewer = None
 
         # Save all current settings
         if self.current_project:
@@ -881,6 +904,7 @@ class MainWindow(tk.Tk):
             self.delete_results_btn,
             self.plot_menu_btn,
             self.execution_menu_btn,
+            self.view_results_btn,
         ]
         for btn in buttons:
             try:
@@ -2277,6 +2301,62 @@ class MainWindow(tk.Tk):
         """Open the ExecutionWindow (or raise it if already open)."""
         self._ensure_execution_mgr()
         self._open_or_raise_execution_window()
+
+    def _on_view_results(self) -> None:
+        """Open the ResultViewer (or raise it if already open)."""
+        if not self.current_project:
+            messagebox.showinfo(
+                "No project",
+                "Please select or create a project first.",
+            )
+            return
+        self._open_or_raise_result_viewer()
+
+    def _open_or_raise_result_viewer(self) -> None:
+        """Open a new ResultViewer or raise an existing one."""
+        if (
+            self._result_viewer is not None
+            and self._result_viewer.winfo_exists()
+        ):
+            self._result_viewer.deiconify()
+            self._result_viewer.attributes("-topmost", True)
+            self._result_viewer.attributes("-topmost", False)
+            self._result_viewer.focus_force()
+            return
+
+        project_path = get_projects_dir() / self.current_project
+        self._result_viewer = ResultViewer(
+            master=self,
+            project_path=project_path,
+            settings=self.project_settings,
+            scenario_db_map=self._get_scenario_db_map(),
+        )
+
+    def _get_scenario_db_map(self) -> dict[str, Path]:
+        """Build a mapping of scenario names to database paths.
+
+        For each input source:
+        - .sqlite files are used directly from input_sources/
+        - .xlsx files use the converted .sqlite from intermediate/
+        """
+        db_map: dict[str, Path] = {}
+        if self.input_source_mgr is None:
+            return db_map
+
+        project_path = get_projects_dir() / self.current_project
+        for source in self.input_source_mgr._sources:
+            if source.file_type == "sqlite":
+                db_path = project_path / "input_sources" / source.name
+            else:
+                # xlsx/ods -> look for converted sqlite in intermediate/
+                stem = Path(source.name).stem
+                db_path = project_path / "intermediate" / f"{stem}.sqlite"
+
+            if db_path.is_file():
+                for scenario in source.scenarios:
+                    db_map[scenario] = db_path
+
+        return db_map
 
     # ── Execution helpers ────────────────────────────────────────
 
