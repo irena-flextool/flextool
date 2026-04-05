@@ -11,6 +11,28 @@ from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.initialize_database import initialize_database
 
 
+def _reinstall_if_needed():
+    """Re-install the flextool package when it is not an editable install.
+
+    Editable installs (``pip install -e .``) pick up source changes
+    immediately, so no reinstall is necessary.  Non-editable installs
+    need ``pip install .`` after ``git pull`` to update the installed code.
+    """
+    import sys
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "show", "flextool"],
+        capture_output=True, text=True,
+    )
+    if "Editable project location" in result.stdout:
+        return
+    print("Reinstalling flextool package to pick up code changes...")
+    completed = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "."],
+    )
+    if completed.returncode != 0:
+        print("Warning: pip install failed. You may need to run 'pip install .' manually.")
+
+
 def update_flextool(skip_git):
 
     shutil.copy("./.spinetoolbox/project.json", "./.spinetoolbox/project_temp.json")
@@ -24,6 +46,10 @@ def update_flextool(skip_git):
         if completed.returncode != 0:
             print("Failed to get the new version.")
             exit(-1)
+
+    # Re-install the package so that code changes from git pull take effect.
+    # Skip if the package is installed in editable mode (changes are live already).
+    _reinstall_if_needed()
 
     migrate_project("./.spinetoolbox/project_temp.json","./.spinetoolbox/project.json")
     os.remove("./.spinetoolbox/project_temp.json")

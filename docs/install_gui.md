@@ -15,25 +15,16 @@ For the Spine Toolbox installation path, see [Install with Spine Toolbox](instal
 
 Download and install Python from [python.org](https://www.python.org/downloads/). Make sure to check **"Add Python to PATH"** during installation on Windows.
 
-### 2. Create a Virtual Environment
+> **Note:** If you already have Python in your PATH (check with `python --version` in a terminal) and it is not a supported version (3.9–3.13), you need to install a supported version. On Windows, you may need to use the full path to the new Python (e.g. `C:\Python312\python.exe`) unless you update your PATH to point to it.
 
-Open a terminal and navigate to where you want to install FlexTool:
+### 2. Install Git (optional)
 
-```bash
-python -m venv flextool-venv
-```
+Git makes it easy to update FlexTool in the future. The alternative is to download zip files manually.
 
-Activate the virtual environment:
-
-Linux / macOS:
-```bash
-source flextool-venv/bin/activate
-```
-
-Windows:
-```
-flextool-venv\Scripts\activate
-```
+- Download and install from [https://git-scm.com/downloads](https://git-scm.com/downloads) or use your system's package manager.
+- **Windows tips:** During git installation, the defaults are fine for most questions. Exceptions:
+  - Text editor: switch from VIM to Nano (scroll upward) — unless you know and like VIM.
+  - Use Windows' default console window (unless you know what you are doing).
 
 ### 3. Get FlexTool
 
@@ -45,27 +36,53 @@ cd flextool
 
 Or download and unzip from [GitHub](https://github.com/irena-flextool/flextool/archive/refs/heads/master.zip), then navigate to the extracted directory.
 
-### 4. Install FlexTool
+### 4. Create a Virtual Environment
+
+**Linux (Debian / Ubuntu / Mint):** The system Python may not include `venv` with `pip` by default. Install it first:
+
+```bash
+sudo apt install python3-venv
+```
+
+Create a virtual environment inside the FlexTool directory:
+
+```bash
+python -m venv .venv
+```
+
+Activate the virtual environment:
+
+Linux / macOS:
+```bash
+source .venv/bin/activate
+```
+
+Windows:
+```
+.venv\Scripts\activate
+```
+
+### 5. Install FlexTool
 
 **Recommended** — install FlexTool with Spine Toolbox (includes Spine DB Editor for editing input databases):
 
 ```bash
-pip install -e ".[toolbox]"
+pip install ".[toolbox]"
 ```
 
 This installs FlexTool with the built-in GUI, HiGHS solver (via highspy), and Spine Toolbox with its dependencies (Spine DB Editor, Spine Items, Spine Engine, PySide6, etc.).
 
-#### Lightweight install (without Spine Toolbox)
+#### Lighter weight install (without Spine Toolbox)
 
 If you prefer a leaner installation or have issues installing Spine Toolbox dependencies:
 
 ```bash
-pip install -e .
+pip install .
 ```
 
 This installs FlexTool and the GUI, but without Spine DB Editor. You can run scenarios and view results, but editing `.sqlite` input sources from the GUI requires Spine DB Editor. You can upgrade to the full install at any time by running the recommended command above.
 
-### 5. Initialize FlexTool
+### 6. Initialize FlexTool
 
 Create the necessary database files and templates:
 
@@ -73,7 +90,7 @@ Create the necessary database files and templates:
 python update_flextool.py --skip-git
 ```
 
-### 6. Launch FlexTool
+### 7. Launch FlexTool
 
 Start the FlexTool GUI:
 
@@ -95,6 +112,8 @@ If you installed with Git:
 
 ```bash
 cd flextool
+source .venv/bin/activate   # Linux / macOS
+.venv\Scripts\activate      # Windows
 python update_flextool.py
 ```
 
@@ -132,7 +151,7 @@ sudo apt install python3-tk
 
 Try reinstalling:
 ```bash
-pip install -e . --force-reinstall
+pip install . --force-reinstall
 ```
 
 ### Solver issues

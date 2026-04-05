@@ -121,27 +121,27 @@ def migrate_database(database_path):
                 db.add_update_item("parameter_definition", entity_class_name= "group", name= "co2_price", description = "[CUR/ton] CO2 price for a group of nodes. Constant, period or time.")
                 update_parameter_types_v23(db)
             elif next_version == 24:
-                db.add_update_item("parameter_definition", entity_class_name= "connection", name= "delay", parameter_type_list = ("float","1d_map"), parameter_value_list_name = None, description = "[hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.")
-                db.add_update_item("parameter_definition", entity_class_name= "unit", name= "delay", parameter_type_list = ("float","1d_map"), parameter_value_list_name = None, description = "[hours] A time delay between the input nodes and the output nodes. Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.")
+                db.add_update_item("parameter_definition", entity_class_name= "connection", name= "delay", parameter_type_list = ("float","1d_map"), description = "[hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.")
+                db.add_update_item("parameter_definition", entity_class_name= "unit", name= "delay", parameter_type_list = ("float","1d_map"), description = "[hours] A time delay between the input nodes and the output nodes. Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.")
             elif next_version == 25:
                 update_timestructure(db)
-                db.add_update_item("parameter_definition", entity_class_name= "model", name= "periods_available", parameter_type_list = ("array",), parameter_value_list_name = None, description = "(Optional) Array of periods available for the model. Periods that are in the data, but are not in period_timeset.")
-                db.add_update_item("parameter_definition", entity_class_name= "solve", name= "contains_solves", parameter_type_list = ("str","array"), parameter_value_list_name = None, description = "Array of solves - used for nested solve sequencesArray of solves - used for nested solve sequences")
+                db.add_update_item("parameter_definition", entity_class_name= "model", name= "periods_available", parameter_type_list = ("array",), description = "(Optional) Array of periods available for the model. Periods that are in the data, but are not in period_timeset.")
+                db.add_update_item("parameter_definition", entity_class_name= "solve", name= "contains_solves", parameter_type_list = ("str","array"), description = "Array of solves - used for nested solve sequencesArray of solves - used for nested solve sequences")
             elif next_version == 26:
                 db.add_update_item("parameter_definition", entity_class_name="connection", name="reactance",
-                    parameter_type_list=("float",), parameter_value_list_name=None,
+                    parameter_type_list=("float",),
                     description="[p.u.] Per-unit reactance of the transmission line. Used for DC power flow when the connection is within a nodeGroup that has transfer_method set to dc_power_flow_with_angles. The susceptance used in the flow equation is base_MVA / reactance.")
                 db.add_update_item("parameter_definition", entity_class_name="group", name="transfer_method",
-                    parameter_type_list=("str",), parameter_value_list_name=None,
+                    parameter_type_list=("str",),
                     description="Override transfer_method for all connections within this nodeGroup. Options: use_connection_transfer_methods (default, no override), no_losses_no_variable_cost, regular, exact, variable_cost_only, dc_power_flow_with_angles. When set to dc_power_flow_with_angles, connections between member nodes use B-theta DC power flow (requires reactance parameter on connections).")
                 db.add_update_item("parameter_definition", entity_class_name="group", name="base_MVA",
-                    parameter_type_list=("float",), parameter_value_list_name=None,
+                    parameter_type_list=("float",),
                     description="[MVA] Base power for the per-unit system used in DC power flow. Default 100. susceptance = base_MVA / reactance_pu.")
                 db.add_update_item("parameter_definition", entity_class_name="group", name="candidate_precapacity_to_avoid_big_m",
-                    parameter_type_list=("float",), parameter_value_list_name=None,
+                    parameter_type_list=("float",),
                     description="[MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This avoids the need for big-M / MIP constraints by ensuring the angle constraint is always active. Default 0.1 MW. The value should be small enough to not affect results but large enough for numerical stability.")
                 db.add_update_item("parameter_definition", entity_class_name="group", name="reference_node",
-                    parameter_type_list=("str",), parameter_value_list_name=None,
+                    parameter_type_list=("str",),
                     description="Name of the reference bus node (angle fixed to zero) for DC power flow. Optional — if not specified, automatically selected as the node with the largest existing capacity in each connected component of the DC power flow network.")
                 db.commit_session("Added DC power flow parameters")
             elif next_version == 27:
@@ -335,7 +335,7 @@ def update_timestructure(db):
     block_durations = db.find_parameter_values(entity_class_name="timeblockSet", parameter_definition_name="block_duration")
     timeblock_entity_class_item = db.item(db.mapped_table("entity_class"), name="timeblockSet")
     db.update_entity_class(id = timeblock_entity_class_item["id"], name='timeset')
-    db.add_parameter_definition(entity_class_name= "timeset", name= "timeline", parameter_type_list = ("str",), parameter_value_list_name = None, description = "The name of the timeline that the timeset uses. (String)")
+    db.add_parameter_definition(entity_class_name= "timeset", name= "timeline", parameter_type_list = ("str",), description = "The name of the timeline that the timeset uses. (String)")
     for block_duration in block_durations:
         timeline_found = False
         for timeblocks__timeline in timeblocks__timelines:

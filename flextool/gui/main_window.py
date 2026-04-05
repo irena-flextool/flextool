@@ -1359,7 +1359,7 @@ class MainWindow(tk.Tk):
                     "spine-db-editor not found",
                     "The spine-db-editor command was not found on your system.\n\n"
                     "To edit .sqlite input sources, install Spine Toolbox:\n\n"
-                    '  pip install -e ".[toolbox]"\n\n'
+                    '  pip install ".[toolbox]"\n\n'
                     "(run from the flextool directory)",
                 )
                 return
