@@ -9,7 +9,8 @@ from pathlib import Path
 from tkinter import ttk
 
 from flextool.gui.data_models import ProjectSettings
-from flextool.gui.plot_config_reader import PlotEntry, PlotGroup, parse_plot_config
+from flextool.gui.plot_canvas import PlotCanvas
+from flextool.gui.plot_config_reader import PlotEntry, PlotGroup, PlotVariant, parse_plot_config
 from flextool.gui.project_utils import get_projects_dir
 
 logger = logging.getLogger(__name__)
@@ -262,17 +263,10 @@ class ResultViewer(tk.Toplevel):
         )
         self._variant_placeholder.pack(side="left")
 
-        # ── Plot placeholder ─────────────────────────────────────────
-        self._plot_frame = ttk.Frame(right, relief="sunken", borderwidth=1)
-        self._plot_frame.grid(row=2, column=0, sticky="nsew")
-        self._plot_frame.columnconfigure(0, weight=1)
-        self._plot_frame.rowconfigure(0, weight=1)
-
-        self._plot_placeholder_label = ttk.Label(
-            self._plot_frame, text="Select a plot to display",
-            anchor="center",
-        )
-        self._plot_placeholder_label.grid(row=0, column=0, sticky="nsew")
+        # ── Plot canvas ──────────────────────────────────────────────
+        self._plot_canvas = PlotCanvas(right)
+        self._plot_canvas.grid(row=2, column=0, sticky="nsew")
+        self._plot_canvas.show_message("Select a plot to display")
 
     # ------------------------------------------------------------------
     # Config path resolution
@@ -444,6 +438,8 @@ class ResultViewer(tk.Toplevel):
         selection = self._plot_tree.selection()
         if selection and self._is_entry_disabled(selection[0]):
             self._restore_or_select_first_entry()
+        else:
+            self._trigger_replot()
 
     # ------------------------------------------------------------------
     # Tree selection
@@ -475,6 +471,9 @@ class ResultViewer(tk.Toplevel):
 
         # Update variant panel
         self._populate_variant_panel(entry)
+
+        # Display the plot
+        self._trigger_replot()
 
     # ------------------------------------------------------------------
     # Tree keyboard navigation (skip disabled entries)
@@ -690,9 +689,7 @@ class ResultViewer(tk.Toplevel):
         self._highlight_active_variant()
         # Reset file navigation
         self._file_index = 0
-        self._file_count = 1
-        self._update_file_nav()
-        # Future: trigger re-plot here
+        self._trigger_replot()
 
     def _on_variant_left(self, event: tk.Event) -> str:
         """Navigate to previous variant button."""
@@ -767,7 +764,7 @@ class ResultViewer(tk.Toplevel):
                 self._plot_tree.delete(item)
             self._tree_entry_map.clear()
             self._hide_variant_panel()
-            self._plot_placeholder_label.configure(text="Network mode (not yet implemented)")
+            self._plot_canvas.show_message("Network mode (not yet implemented)")
 
     # ------------------------------------------------------------------
     # File navigation
@@ -787,14 +784,14 @@ class ResultViewer(tk.Toplevel):
         if self._file_index > 0:
             self._file_index -= 1
             self._update_file_nav()
-            # Future: trigger re-plot
+            self._trigger_replot()
 
     def _on_next_file(self) -> None:
         """Navigate to next file."""
         if self._file_index < self._file_count - 1:
             self._file_index += 1
             self._update_file_nav()
-            # Future: trigger re-plot
+            self._trigger_replot()
 
     # ------------------------------------------------------------------
     # Refresh
@@ -832,6 +829,109 @@ class ResultViewer(tk.Toplevel):
         """Move focus back to the scenario listbox."""
         self._scenario_listbox.focus_set()
         return "break"
+
+    # ------------------------------------------------------------------
+    # Plot display
+    # ------------------------------------------------------------------
+
+    def _get_active_variant(self, entry: PlotEntry) -> PlotVariant | None:
+        """Return the PlotVariant matching the active variant letter."""
+        for v in entry.variants:
+            if v.letter == self._active_variant:
+                return v
+        # Fall back to first variant
+        return entry.variants[0] if entry.variants else None
+
+    def _build_plot_name(self, entry: PlotEntry, variant: PlotVariant) -> str:
+        """Reconstruct the plot_name used as the file basename.
+
+        The plot pipeline saves files using the ``plot_name`` field from the
+        YAML config, which follows the pattern::
+
+            "{group}.{entry_sub}.{variant_letter} {human_name}"
+
+        e.g. ``"0.0.t Loss of load (upward slack)"``.
+        When the variant letter is empty the dot is omitted:
+        ``"5.0 Emissions CO2 total"``.
+        """
+        if variant.letter:
+            return f"{entry.number}.{variant.letter} {variant.full_name}"
+        return f"{entry.number} {variant.full_name}"
+
+    def _find_png_files(self, scenario: str, entry: PlotEntry, variant: PlotVariant) -> list[Path]:
+        """Find PNG files for *variant* of *entry* in the given *scenario*.
+
+        Checks for both single-file and split-file naming conventions.
+        Returns sorted list of matching paths (may be empty).
+        """
+        mode = self._mode.get()
+        if mode == "comparison":
+            plot_dir = self._project_path / "output_plot_comparisons"
+        else:
+            plot_dir = self._project_path / "output_plots" / scenario
+
+        if not plot_dir.is_dir():
+            return []
+
+        plot_name = self._build_plot_name(entry, variant)
+        single = plot_dir / f"{plot_name}.png"
+        if single.is_file():
+            return [single]
+
+        # Check for split files: {plot_name}_01.png, _02.png, ...
+        split_files: list[Path] = []
+        idx = 1
+        while True:
+            candidate = plot_dir / f"{plot_name}_{idx:02d}.png"
+            if candidate.is_file():
+                split_files.append(candidate)
+                idx += 1
+            else:
+                break
+
+        # Also check for file-member variants: {plot_name}_{member}.png
+        # Scan directory for files starting with the plot_name prefix
+        if not split_files:
+            prefix = plot_name + "_"
+            for p in sorted(plot_dir.iterdir()):
+                if p.name.startswith(prefix) and p.suffix == ".png":
+                    split_files.append(p)
+
+        return split_files
+
+    def _trigger_replot(self) -> None:
+        """Called when scenario, entry, or variant changes."""
+        scenarios = self._get_selected_scenarios()
+        if not scenarios:
+            self._plot_canvas.show_message("No scenario selected")
+            return
+
+        selection = self._plot_tree.selection()
+        if not selection or not selection[0].startswith("entry_"):
+            self._plot_canvas.show_message("No plot selected")
+            return
+
+        entry = self._tree_entry_map.get(selection[0])
+        if not entry:
+            return
+
+        variant = self._get_active_variant(entry)
+        if not variant:
+            self._plot_canvas.show_message("No variant selected")
+            return
+
+        # Find PNG files
+        png_files = self._find_png_files(scenarios[0], entry, variant)
+        self._file_count = max(len(png_files), 1)
+        self._file_index = min(self._file_index, max(0, self._file_count - 1))
+        self._update_file_nav()
+
+        if png_files:
+            self._plot_canvas.display_png(png_files[self._file_index])
+        else:
+            self._plot_canvas.show_message(
+                f"No plot files found for\n{variant.full_name}"
+            )
 
     # ------------------------------------------------------------------
     # Window close
