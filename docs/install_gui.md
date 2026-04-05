@@ -104,6 +104,8 @@ If you also installed Spine Toolbox, you can launch it with:
 spinetoolbox
 ```
 
+Then open FlexTool project from the menu: File... Open project... Choose FlexTool folder.
+
 ## Updating FlexTool
 
 FlexTool update process will get the latest FlexTool version and then run a migration script that updates the databases to the latest version. 
