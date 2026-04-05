@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 toolbox = ["spinetoolbox"]
+viewer = ["tsdownsample>=0.1.3", "networkx>=3.0"]
 
 [project.scripts]
 flextool-gui = "flextool.gui.__main__:main"
