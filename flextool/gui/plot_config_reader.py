@@ -22,8 +22,6 @@ GROUP_NAMES: dict[str, str] = {
     "9": "Extras",
 }
 
-_SHORT_NAME_LIMIT = 25
-
 
 @dataclass
 class PlotVariant:
@@ -52,13 +50,6 @@ class PlotGroup:
     number: str  # e.g., "0"
     name: str  # e.g., "Infeasibilities"
     entries: list[PlotEntry] = field(default_factory=list)
-
-
-def _truncate(name: str, limit: int = _SHORT_NAME_LIMIT) -> str:
-    """Truncate *name* to *limit* characters, appending '...' if needed."""
-    if len(name) <= limit:
-        return name
-    return name[: limit - 3] + "..."
 
 
 def _parse_plot_name(plot_name: str) -> tuple[str, str, str, str]:
@@ -157,7 +148,7 @@ def parse_plot_config(config_path: Path) -> list[PlotGroup]:
         if number not in entry_map:
             entry_map[number] = PlotEntry(
                 number=number,
-                short_name=_truncate(human_name),
+                short_name=human_name,
                 full_name=human_name,
                 variants=[],
             )

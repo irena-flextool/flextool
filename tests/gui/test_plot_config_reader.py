@@ -10,7 +10,6 @@ from flextool.gui.plot_config_reader import (
     PlotEntry,
     PlotGroup,
     PlotVariant,
-    _truncate,
     parse_plot_config,
 )
 
@@ -126,27 +125,16 @@ class TestHiddenEntriesWithoutMapDimensions:
         assert "2.1" not in all_numbers
 
 
-class TestShortNameTruncation:
-    """Test name truncation logic."""
+class TestShortNameEqualsFullName:
+    """Test that short_name is not truncated (equals full_name)."""
 
-    def test_short_name_not_truncated(self):
-        assert _truncate("Short name") == "Short name"
-
-    def test_long_name_truncated(self):
-        long_name = "This is a very long plot name that exceeds the limit"
-        result = _truncate(long_name, limit=25)
-        assert len(result) == 25
-        assert result.endswith("...")
-
-    def test_exact_limit_not_truncated(self):
-        name = "A" * 25
-        assert _truncate(name, limit=25) == name
-
-    def test_one_over_limit_truncated(self):
-        name = "A" * 26
-        result = _truncate(name, limit=25)
-        assert len(result) == 25
-        assert result == "A" * 22 + "..."
+    def test_short_name_equals_full_name(self, tmp_path):
+        yaml_content = "plots:\n  result_key:\n    plot_name: '1.0.d A very long plot name that would have been truncated before'\n    map_dimensions_for_plots: [d_e]\n"
+        config_file = tmp_path / "test.yaml"
+        config_file.write_text(yaml_content)
+        groups = parse_plot_config(config_file)
+        entry = groups[0].entries[0]
+        assert entry.short_name == entry.full_name
 
 
 class TestMissingFile:

@@ -17,9 +17,6 @@ from flextool.gui.settings_io import save_project_settings
 
 logger = logging.getLogger(__name__)
 
-# Maximum characters for tree entry labels before truncation
-_TREE_LABEL_LIMIT = 25
-
 
 class ResultViewer(tk.Toplevel):
     """Non-modal window for browsing and displaying result plots.
@@ -50,6 +47,8 @@ class ResultViewer(tk.Toplevel):
         self._tree_entry_map: dict[str, PlotEntry] = {}
         # Currently active variant letter
         self._active_variant: str = ""
+        # All unique variant letters across all config entries (created once)
+        self._all_variant_letters: list[str] = []
         # List of variant buttons currently displayed
         self._variant_buttons: list[ttk.Button] = []
         # Tooltip toplevel
@@ -192,89 +191,90 @@ class ResultViewer(tk.Toplevel):
         self._plot_tree.bind("<Motion>", self._on_tree_motion)
         self._plot_tree.bind("<Leave>", self._hide_tooltip)
 
-        # Override Up/Down to skip disabled entries
-        self._plot_tree.bind("<Up>", self._on_tree_key_up)
-        self._plot_tree.bind("<Down>", self._on_tree_key_down)
-
     def _build_right_column(self) -> None:
-        """Build the right column: nav bar, variant panel, plot placeholder."""
+        """Build the right column: compact control bar + plot area."""
         right = ttk.Frame(self._paned, padding=5)
         self._paned.add(right, weight=1)
 
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(2, weight=1)  # plot area gets all extra space
+        right.rowconfigure(1, weight=1)  # plot area gets all extra space
 
-        # ── Navigation bar ───────────────────────────────────────────
-        nav_frame = ttk.LabelFrame(right, text="Navigation", padding=5)
-        nav_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
-        nav_frame.columnconfigure(1, weight=1)
+        # ── Combined control frame ───────────────────────────────────
+        self._control_frame = ttk.Frame(right, padding=(5, 2))
+        self._control_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        self._control_frame.columnconfigure(4, weight=1)  # start slider fills remaining
 
-        # Row 0: File navigation
+        # Col 0: Variant buttons frame
+        self._variant_frame = ttk.LabelFrame(self._control_frame, text="Variant", padding=(2, 1))
+        self._variant_frame.grid(row=0, column=0, rowspan=2, sticky="ns", padx=(0, 5))
+        # Placeholder label shown when no variants are available
+        self._variant_placeholder = ttk.Label(
+            self._variant_frame, text="...", foreground="grey",
+        )
+        self._variant_placeholder.pack(side="left")
+
+        # Col 1: File navigation (Prev on top, Next on bottom)
+        file_nav_frame = ttk.Frame(self._control_frame)
+        file_nav_frame.grid(row=0, column=1, rowspan=2, sticky="ns", padx=(0, 5))
+
         self._prev_file_btn = ttk.Button(
-            nav_frame, text="\u25c0 Prev", width=8,
+            file_nav_frame, text="\u25c0 Prev", width=6,
             command=self._on_prev_file,
         )
-        self._prev_file_btn.grid(row=0, column=0, padx=(0, 5))
-
-        self._file_label = ttk.Label(nav_frame, text="File 1/1", anchor="center")
-        self._file_label.grid(row=0, column=1, sticky="ew")
+        self._prev_file_btn.pack(side="top", pady=(0, 2))
 
         self._next_file_btn = ttk.Button(
-            nav_frame, text="Next \u25b6", width=8,
+            file_nav_frame, text="Next \u25b6", width=6,
             command=self._on_next_file,
         )
-        self._next_file_btn.grid(row=0, column=2, padx=(5, 0))
+        self._next_file_btn.pack(side="top")
 
         self._update_file_nav()
 
-        # Row 1: Start slider + Duration spinbox
-        ttk.Label(nav_frame, text="Start:").grid(row=1, column=0, sticky="w", pady=(5, 0))
-
-        self._start_var = tk.IntVar(value=self._settings.single_plot_settings.start_time)
-        self._start_scale = ttk.Scale(
-            nav_frame, from_=0, to=8760, orient="horizontal",
-            variable=self._start_var,
-        )
-        self._start_scale.grid(row=1, column=1, sticky="ew", padx=5, pady=(5, 0))
-
-        dur_frame = ttk.Frame(nav_frame)
-        dur_frame.grid(row=1, column=2, sticky="e", pady=(5, 0))
-        ttk.Label(dur_frame, text="Duration:").pack(side="left", padx=(0, 3))
-        self._duration_var = tk.IntVar(value=self._settings.single_plot_settings.duration or 168)
-        self._duration_spin = ttk.Spinbox(
-            dur_frame, from_=1, to=8760, textvariable=self._duration_var, width=6,
-        )
-        self._duration_spin.pack(side="left")
-
-        # Row 2: Mode radio buttons + Refresh
-        mode_frame = ttk.Frame(nav_frame)
-        mode_frame.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        # Col 2: Mode radio buttons (stacked vertically)
+        mode_frame = ttk.Frame(self._control_frame)
+        mode_frame.grid(row=0, column=2, rowspan=2, sticky="ns", padx=(0, 10))
 
         for text, value in [("Single", "single"), ("Comparison", "comparison"), ("Network", "network")]:
             rb = ttk.Radiobutton(
                 mode_frame, text=text, variable=self._mode, value=value,
                 command=self._on_mode_changed,
             )
-            rb.pack(side="left", padx=(0, 10))
+            rb.pack(side="top", anchor="w")
 
+        # Col 3: Duration label + spinbox
+        dur_frame = ttk.Frame(self._control_frame)
+        dur_frame.grid(row=0, column=3, rowspan=2, sticky="ns", padx=(0, 10))
+        ttk.Label(dur_frame, text="Duration").pack(side="top")
+        self._duration_var = tk.IntVar(value=self._settings.single_plot_settings.duration or 168)
+        self._duration_spin = ttk.Spinbox(
+            dur_frame, from_=1, to=8760, textvariable=self._duration_var, width=6,
+        )
+        self._duration_spin.pack(side="top")
+
+        # Col 4: Start label + slider (fills remaining width)
+        start_frame = ttk.Frame(self._control_frame)
+        start_frame.grid(row=0, column=4, rowspan=2, sticky="nsew")
+        start_frame.columnconfigure(0, weight=1)
+
+        ttk.Label(start_frame, text="Start").grid(row=0, column=0, sticky="w")
+        self._start_var = tk.IntVar(value=self._settings.single_plot_settings.start_time)
+        self._start_scale = ttk.Scale(
+            start_frame, from_=0, to=8760, orient="horizontal",
+            variable=self._start_var,
+        )
+        self._start_scale.grid(row=1, column=0, sticky="ew")
+
+        # Col 5: Refresh button
         self._refresh_btn = ttk.Button(
-            nav_frame, text="Refresh", width=8,
+            self._control_frame, text="Refresh", width=7,
             command=self._on_refresh,
         )
-        self._refresh_btn.grid(row=2, column=2, sticky="e", pady=(5, 0))
-
-        # ── Variant panel ────────────────────────────────────────────
-        self._variant_frame = ttk.LabelFrame(right, text="Variant", padding=(5, 2))
-        self._variant_frame.grid(row=1, column=0, sticky="ew", pady=(0, 5))
-        # Placeholder label shown when no variants are available
-        self._variant_placeholder = ttk.Label(
-            self._variant_frame, text="Select a plot entry", foreground="grey",
-        )
-        self._variant_placeholder.pack(side="left")
+        self._refresh_btn.grid(row=0, column=5, rowspan=2, sticky="ns", padx=(10, 0))
 
         # ── Plot canvas ──────────────────────────────────────────────
         self._plot_canvas = PlotCanvas(right)
-        self._plot_canvas.grid(row=2, column=0, sticky="nsew")
+        self._plot_canvas.grid(row=1, column=0, sticky="nsew")
         self._plot_canvas.show_message("Select a plot to display")
 
     # ------------------------------------------------------------------
@@ -365,11 +365,15 @@ class ResultViewer(tk.Toplevel):
 
             for entry in group.entries:
                 entry_iid = f"entry_{entry.number}"
-                label = f"{entry.number} {entry.short_name}"
+                label = f"{entry.number} {entry.full_name}"
                 self._plot_tree.insert(
                     group_iid, "end", iid=entry_iid, text=label,
                 )
                 self._tree_entry_map[entry_iid] = entry
+
+        # Collect all unique variant letters across all entries and create buttons once
+        self._collect_all_variant_letters()
+        self._create_variant_buttons()
 
         # Grey out entries without matching parquet data
         self._update_tree_availability()
@@ -466,8 +470,13 @@ class ResultViewer(tk.Toplevel):
 
         iid = selection[0]
 
-        # If a group header is selected, do nothing (don't update variant panel)
+        # Skip group headers — let the tree handle expand/collapse
         if iid.startswith("group_"):
+            return
+
+        # If disabled, find nearest non-disabled entry
+        if self._is_entry_disabled(iid):
+            self._restore_or_select_first_entry()
             return
 
         entry = self._tree_entry_map.get(iid)
@@ -489,126 +498,22 @@ class ResultViewer(tk.Toplevel):
         self._trigger_replot()
 
     # ------------------------------------------------------------------
-    # Tree keyboard navigation (skip disabled entries)
-    # ------------------------------------------------------------------
-
-    def _on_tree_key_up(self, event: tk.Event) -> str:
-        """Move to previous non-disabled entry, skipping disabled ones."""
-        selection = self._plot_tree.selection()
-        if not selection:
-            return "break"
-
-        current = selection[0]
-        prev_item = self._plot_tree.prev(current)
-
-        # Walk up, skipping disabled entries
-        while prev_item:
-            if prev_item.startswith("entry_") and not self._is_entry_disabled(prev_item):
-                self._plot_tree.selection_set(prev_item)
-                self._plot_tree.see(prev_item)
-                self._plot_tree.event_generate("<<TreeviewSelect>>")
-                return "break"
-            # If it's a group, try the last child of the previous group
-            if prev_item.startswith("group_"):
-                children = self._plot_tree.get_children(prev_item)
-                for child in reversed(children):
-                    if not self._is_entry_disabled(child):
-                        self._plot_tree.selection_set(child)
-                        self._plot_tree.see(child)
-                        self._plot_tree.event_generate("<<TreeviewSelect>>")
-                        return "break"
-            prev_item = self._plot_tree.prev(prev_item)
-
-        # If current is inside a group, try entries above in the same group
-        parent = self._plot_tree.parent(current)
-        if parent:
-            siblings = list(self._plot_tree.get_children(parent))
-            idx = siblings.index(current) if current in siblings else -1
-            for i in range(idx - 1, -1, -1):
-                if not self._is_entry_disabled(siblings[i]):
-                    self._plot_tree.selection_set(siblings[i])
-                    self._plot_tree.see(siblings[i])
-                    self._plot_tree.event_generate("<<TreeviewSelect>>")
-                    return "break"
-
-            # Try previous groups
-            group_prev = self._plot_tree.prev(parent)
-            while group_prev:
-                if group_prev.startswith("group_"):
-                    children = self._plot_tree.get_children(group_prev)
-                    for child in reversed(children):
-                        if not self._is_entry_disabled(child):
-                            self._plot_tree.selection_set(child)
-                            self._plot_tree.see(child)
-                            self._plot_tree.event_generate("<<TreeviewSelect>>")
-                            return "break"
-                group_prev = self._plot_tree.prev(group_prev)
-
-        return "break"
-
-    def _on_tree_key_down(self, event: tk.Event) -> str:
-        """Move to next non-disabled entry, skipping disabled ones."""
-        selection = self._plot_tree.selection()
-        if not selection:
-            # Select first available
-            self._restore_or_select_first_entry()
-            return "break"
-
-        current = selection[0]
-
-        # If current is inside a group, try entries below in the same group
-        parent = self._plot_tree.parent(current)
-        if parent:
-            siblings = list(self._plot_tree.get_children(parent))
-            idx = siblings.index(current) if current in siblings else -1
-            for i in range(idx + 1, len(siblings)):
-                if not self._is_entry_disabled(siblings[i]):
-                    self._plot_tree.selection_set(siblings[i])
-                    self._plot_tree.see(siblings[i])
-                    self._plot_tree.event_generate("<<TreeviewSelect>>")
-                    return "break"
-
-        # Try next groups
-        if parent:
-            next_group = self._plot_tree.next(parent)
-        else:
-            next_group = self._plot_tree.next(current)
-
-        while next_group:
-            if next_group.startswith("group_"):
-                children = self._plot_tree.get_children(next_group)
-                for child in children:
-                    if not self._is_entry_disabled(child):
-                        self._plot_tree.selection_set(child)
-                        self._plot_tree.see(child)
-                        self._plot_tree.event_generate("<<TreeviewSelect>>")
-                        return "break"
-            elif next_group.startswith("entry_") and not self._is_entry_disabled(next_group):
-                self._plot_tree.selection_set(next_group)
-                self._plot_tree.see(next_group)
-                self._plot_tree.event_generate("<<TreeviewSelect>>")
-                return "break"
-            next_group = self._plot_tree.next(next_group)
-
-        return "break"
-
-    # ------------------------------------------------------------------
     # Tree tooltip
     # ------------------------------------------------------------------
 
     def _on_tree_motion(self, event: tk.Event) -> None:
-        """Show tooltip with full name when hovering over a truncated entry."""
+        """Show tooltip with full name when hovering over an entry."""
         item = self._plot_tree.identify_row(event.y)
         if not item or not item.startswith("entry_"):
             self._hide_tooltip()
             return
 
         entry = self._tree_entry_map.get(item)
-        if entry is None or entry.full_name == entry.short_name:
+        if entry is None:
             self._hide_tooltip()
             return
 
-        # Show tooltip
+        # Always show tooltip for entry rows — helps readability
         full_text = f"{entry.number} {entry.full_name}"
         if self._tooltip is not None:
             try:
@@ -644,59 +549,115 @@ class ResultViewer(tk.Toplevel):
     # Variant panel
     # ------------------------------------------------------------------
 
-    def _populate_variant_panel(self, entry: PlotEntry) -> None:
-        """Repopulate the variant panel with buttons for the given entry."""
-        # Clear existing buttons
+    def _collect_all_variant_letters(self) -> None:
+        """Collect all unique variant letters across all entries in the config."""
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for group in self._plot_groups:
+            for entry in group.entries:
+                for v in entry.variants:
+                    if v.letter not in seen:
+                        seen.add(v.letter)
+                        ordered.append(v.letter)
+        self._all_variant_letters = ordered
+
+    def _create_variant_buttons(self) -> None:
+        """Create variant buttons once for all letters in the config."""
+        # Destroy old buttons
         for btn in self._variant_buttons:
             btn.destroy()
         self._variant_buttons.clear()
         self._variant_placeholder.pack_forget()
 
-        if not entry.variants:
-            self._variant_placeholder.configure(text="No variants available")
+        if not self._all_variant_letters:
+            self._variant_placeholder.configure(text="No variants")
             self._variant_placeholder.pack(side="left")
-            self._active_variant = ""
             return
 
-        # Determine which variant to select
-        target_variant = self._viewer_settings.last_variant
-        available_letters = [v.letter for v in entry.variants]
-        if target_variant not in available_letters:
-            target_variant = available_letters[0]
-
-        self._active_variant = target_variant
-        self._viewer_settings.last_variant = target_variant
-
-        for variant in entry.variants:
-            letter = variant.letter or "?"
+        for letter in self._all_variant_letters:
+            display = letter or "?"
             btn = ttk.Button(
                 self._variant_frame,
-                text=letter,
+                text=display,
                 width=3,
-                command=lambda v=variant.letter: self._on_variant_clicked(v),
+                command=lambda v=letter: self._on_variant_clicked(v),
             )
+            btn._letter = letter  # type: ignore[attr-defined]  # store letter as attribute
             btn.pack(side="left", padx=2, pady=1)
             self._variant_buttons.append(btn)
 
-        self._highlight_active_variant()
-
-        # Bind Left/Right for variant navigation
-        for btn in self._variant_buttons:
+            # Bind Left/Right for variant navigation, Up/Down for tree navigation
             btn.bind("<Left>", self._on_variant_left)
             btn.bind("<Right>", self._on_variant_right)
+            btn.bind("<Up>", self._on_variant_key_up)
+            btn.bind("<Down>", self._on_variant_key_down)
             btn.bind("<Tab>", self._focus_scenario_listbox)
+
+    def _find_nearest_available(self, available: set[str]) -> str:
+        """Find nearest available variant letter to the current active one.
+
+        Searches left first, then right in the _all_variant_letters list.
+        """
+        if not available:
+            return ""
+        if self._active_variant in available:
+            return self._active_variant
+
+        try:
+            idx = self._all_variant_letters.index(self._active_variant)
+        except ValueError:
+            idx = 0
+
+        # Search left then right
+        for offset in range(1, len(self._all_variant_letters)):
+            left_idx = idx - offset
+            if left_idx >= 0 and self._all_variant_letters[left_idx] in available:
+                return self._all_variant_letters[left_idx]
+            right_idx = idx + offset
+            if right_idx < len(self._all_variant_letters) and self._all_variant_letters[right_idx] in available:
+                return self._all_variant_letters[right_idx]
+
+        # Fallback
+        return next(iter(available))
+
+    def _populate_variant_panel(self, entry: PlotEntry) -> None:
+        """Update variant button states for the given entry (don't recreate)."""
+        available = {v.letter for v in entry.variants}
+
+        for btn in self._variant_buttons:
+            letter = btn._letter  # type: ignore[attr-defined]
+            if letter in available:
+                btn.configure(state="normal")
+            else:
+                btn.configure(state="disabled")
+
+        # If active variant is unavailable, find nearest available
+        if self._active_variant not in available:
+            self._active_variant = self._find_nearest_available(available)
+            self._viewer_settings.last_variant = self._active_variant
+
+        self._highlight_active_variant()
 
     def _highlight_active_variant(self) -> None:
         """Visually highlight the active variant button."""
         for btn in self._variant_buttons:
-            letter = btn.cget("text")
-            if letter == self._active_variant or (not self._active_variant and letter == "?"):
+            letter = btn._letter  # type: ignore[attr-defined]
+            if letter == self._active_variant:
                 btn.configure(style="Accent.TButton")
             else:
                 btn.configure(style="TButton")
 
     def _on_variant_clicked(self, letter: str) -> None:
         """Handle variant button click."""
+        # Only act if the button is for an available variant
+        selection = self._plot_tree.selection()
+        if selection and selection[0].startswith("entry_"):
+            entry = self._tree_entry_map.get(selection[0])
+            if entry:
+                available = {v.letter for v in entry.variants}
+                if letter not in available:
+                    return
+
         self._active_variant = letter
         self._viewer_settings.last_variant = letter
         self._highlight_active_variant()
@@ -705,28 +666,74 @@ class ResultViewer(tk.Toplevel):
         self._trigger_replot()
 
     def _on_variant_left(self, event: tk.Event) -> str:
-        """Navigate to previous variant button."""
+        """Navigate to previous enabled variant button."""
         if not self._variant_buttons:
             return "break"
         current_idx = self._get_focused_variant_index()
-        if current_idx > 0:
-            new_idx = current_idx - 1
-            self._variant_buttons[new_idx].focus_set()
-            letter = self._variant_buttons[new_idx].cget("text")
-            self._on_variant_clicked(letter)
+        # Find previous enabled button
+        for new_idx in range(current_idx - 1, -1, -1):
+            btn = self._variant_buttons[new_idx]
+            if str(btn.cget("state")) != "disabled":
+                btn.focus_set()
+                self._on_variant_clicked(btn._letter)  # type: ignore[attr-defined]
+                break
         return "break"
 
     def _on_variant_right(self, event: tk.Event) -> str:
-        """Navigate to next variant button."""
+        """Navigate to next enabled variant button."""
         if not self._variant_buttons:
             return "break"
         current_idx = self._get_focused_variant_index()
-        if current_idx < len(self._variant_buttons) - 1:
-            new_idx = current_idx + 1
-            self._variant_buttons[new_idx].focus_set()
-            letter = self._variant_buttons[new_idx].cget("text")
-            self._on_variant_clicked(letter)
+        # Find next enabled button
+        for new_idx in range(current_idx + 1, len(self._variant_buttons)):
+            btn = self._variant_buttons[new_idx]
+            if str(btn.cget("state")) != "disabled":
+                btn.focus_set()
+                self._on_variant_clicked(btn._letter)  # type: ignore[attr-defined]
+                break
         return "break"
+
+    def _on_variant_key_up(self, event: tk.Event) -> str:
+        """Move to previous visible entry in the tree (same as tree Up)."""
+        self._move_tree_selection(-1)
+        return "break"
+
+    def _on_variant_key_down(self, event: tk.Event) -> str:
+        """Move to next visible entry in the tree (same as tree Down)."""
+        self._move_tree_selection(1)
+        return "break"
+
+    def _move_tree_selection(self, direction: int) -> None:
+        """Move tree selection by *direction* (-1 = up, +1 = down), skipping disabled entries."""
+        selection = self._plot_tree.selection()
+        if not selection:
+            self._restore_or_select_first_entry()
+            return
+
+        current = selection[0]
+
+        # Build flat list of visible entry iids
+        visible: list[str] = []
+        for group_iid in self._plot_tree.get_children():
+            if self._plot_tree.item(group_iid, "open"):
+                for entry_iid in self._plot_tree.get_children(group_iid):
+                    visible.append(entry_iid)
+
+        if current not in visible:
+            self._restore_or_select_first_entry()
+            return
+
+        idx = visible.index(current)
+        step = 1 if direction > 0 else -1
+        new_idx = idx + step
+
+        while 0 <= new_idx < len(visible):
+            if not self._is_entry_disabled(visible[new_idx]):
+                self._plot_tree.selection_set(visible[new_idx])
+                self._plot_tree.see(visible[new_idx])
+                self._plot_tree.event_generate("<<TreeviewSelect>>")
+                return
+            new_idx += step
 
     def _get_focused_variant_index(self) -> int:
         """Return index of the currently focused variant button, or 0."""
@@ -736,7 +743,7 @@ class ResultViewer(tk.Toplevel):
                 return i
         # Fall back to active variant
         for i, btn in enumerate(self._variant_buttons):
-            if btn.cget("text") == self._active_variant:
+            if btn._letter == self._active_variant:  # type: ignore[attr-defined]
                 return i
         return 0
 
@@ -745,13 +752,10 @@ class ResultViewer(tk.Toplevel):
         self._variant_frame.grid()
 
     def _hide_variant_panel(self) -> None:
-        """Hide the variant panel and clear its content."""
+        """Hide the variant panel and disable all buttons."""
         for btn in self._variant_buttons:
-            btn.destroy()
-        self._variant_buttons.clear()
+            btn.configure(state="disabled")
         self._active_variant = ""
-        self._variant_placeholder.configure(text="")
-        self._variant_placeholder.pack(side="left")
 
     # ------------------------------------------------------------------
     # Mode switching
@@ -914,10 +918,6 @@ class ResultViewer(tk.Toplevel):
 
     def _trigger_replot(self) -> None:
         """Called when scenario, entry, or variant changes."""
-        # Show loading state while the plot loads
-        self._plot_canvas.show_message("Loading...")
-        self.update_idletasks()
-
         scenarios = self._get_selected_scenarios()
         if not scenarios:
             self._plot_canvas.show_message("No scenario selected")
@@ -956,9 +956,6 @@ class ResultViewer(tk.Toplevel):
 
     def _render_network(self) -> None:
         """Render the network graph for the selected scenario."""
-        self._plot_canvas.show_message("Loading...")
-        self.update_idletasks()
-
         scenarios = self._get_selected_scenarios()
         if not scenarios:
             self._plot_canvas.show_message("Select a scenario to display the network graph")

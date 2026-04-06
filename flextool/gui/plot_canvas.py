@@ -42,6 +42,7 @@ class PlotCanvas(ttk.Frame):
         self._figure = Figure()
         self._canvas = FigureCanvasTkAgg(self._figure, master=self)
         self._canvas_widget = self._canvas.get_tk_widget()
+        self._canvas_widget.configure(background="#f0f0f0")
         self._canvas_widget.grid(row=0, column=0, sticky="nsew")
 
         # NavigationToolbar2Tk calls pack() in its __init__, so it needs
@@ -53,10 +54,16 @@ class PlotCanvas(ttk.Frame):
 
     def display_figure(self, fig: Figure) -> None:
         """Display a matplotlib Figure on the canvas."""
+        # Clear old figure first so remnants don't remain when switching
+        # to a smaller plot.
+        old_fig = self._figure
+        if old_fig is not fig:
+            old_fig.clear()
+
         self._figure = fig
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
-        self._canvas.draw_idle()
+        self._canvas.draw()  # force immediate redraw (not draw_idle)
         self._toolbar.update()
 
     def display_png(self, png_path: Path) -> None:
