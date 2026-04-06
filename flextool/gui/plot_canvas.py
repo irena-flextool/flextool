@@ -54,11 +54,22 @@ class PlotCanvas(ttk.Frame):
 
     def display_figure(self, fig: Figure) -> None:
         """Display a matplotlib Figure on the canvas."""
-        # Clear old figure first so remnants don't remain when switching
-        # to a smaller plot.
+        # Close old figure to free resources
         old_fig = self._figure
         if old_fig is not fig:
             old_fig.clear()
+            plt.close(old_fig)
+
+        # Clear the entire Tk canvas to remove leftover pixels from a
+        # previous, larger figure before drawing the new (possibly smaller) one.
+        tk_canvas = self._canvas_widget
+        bg = tk_canvas.cget("background") or "#f0f0f0"
+        tk_canvas.delete("all")
+        # Fill the full widget area with the background color
+        w = tk_canvas.winfo_width()
+        h = tk_canvas.winfo_height()
+        if w > 1 and h > 1:
+            tk_canvas.create_rectangle(0, 0, w, h, fill=bg, outline="")
 
         self._figure = fig
         self._canvas.figure = fig

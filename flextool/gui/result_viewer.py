@@ -532,10 +532,13 @@ class ResultViewer(tk.Toplevel):
         self._tooltip.wm_overrideredirect(True)
         self._tooltip.wm_geometry(f"+{event.x_root + 15}+{event.y_root + 10}")
 
-        self._tooltip_label = ttk.Label(
+        # Use a plain tk.Label (not ttk) so we can set explicit colors
+        # that work in both light and dark themes.
+        self._tooltip_label = tk.Label(
             self._tooltip, text=full_text,
-            background="#ffffe0", relief="solid", borderwidth=1,
-            padding=(4, 2),
+            background="#333333", foreground="#ffffff",
+            relief="solid", borderwidth=1,
+            padx=4, pady=2,
         )
         self._tooltip_label.pack()
 
