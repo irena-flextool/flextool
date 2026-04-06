@@ -25,6 +25,9 @@ from matplotlib.figure import Figure
 
 logger = logging.getLogger(__name__)
 
+# Background color used to fill unused canvas area (matches sv_ttk light theme)
+_BG = "#f0f0f0"
+
 
 class PlotCanvas(ttk.Frame):
     """Embeds a matplotlib FigureCanvasTkAgg with navigation toolbar."""
@@ -38,11 +41,11 @@ class PlotCanvas(ttk.Frame):
         self._raw_line_data: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
         self._n_out: int = 3000
 
-        # Create a blank figure
-        self._figure = Figure()
+        # Create a blank figure that fills the canvas with a solid bg
+        self._figure = Figure(facecolor=_BG)
         self._canvas = FigureCanvasTkAgg(self._figure, master=self)
         self._canvas_widget = self._canvas.get_tk_widget()
-        self._canvas_widget.configure(background="#f0f0f0")
+        self._canvas_widget.configure(background=_BG)
         self._canvas_widget.grid(row=0, column=0, sticky="nsew")
 
         # NavigationToolbar2Tk calls pack() in its __init__, so it needs
@@ -53,35 +56,40 @@ class PlotCanvas(ttk.Frame):
         self._toolbar.update()
 
     def display_figure(self, fig: Figure) -> None:
-        """Display a matplotlib Figure on the canvas."""
+        """Display a matplotlib Figure on the canvas.
+
+        The figure is sized to fill the entire canvas widget (with the
+        figure's facecolor covering any unused area) so that no remnants
+        of a previous figure remain.  The switch is done in a single
+        ``draw()`` call — no intermediate clearing is visible.
+        """
         # Close old figure to free resources
         old_fig = self._figure
         if old_fig is not fig:
-            old_fig.clear()
             plt.close(old_fig)
 
-        # Clear the entire Tk canvas to remove leftover pixels from a
-        # previous, larger figure before drawing the new (possibly smaller) one.
-        tk_canvas = self._canvas_widget
-        bg = tk_canvas.cget("background") or "#f0f0f0"
-        tk_canvas.delete("all")
-        # Fill the full widget area with the background color
-        w = tk_canvas.winfo_width()
-        h = tk_canvas.winfo_height()
-        if w > 1 and h > 1:
-            tk_canvas.create_rectangle(0, 0, w, h, fill=bg, outline="")
+        # Make the figure fill the whole canvas widget so there are no
+        # leftover pixels.  The actual plot content sits inside axes that
+        # may be smaller — the surrounding area is filled by facecolor.
+        fig.set_facecolor(_BG)
+        self.update_idletasks()
+        w_px = self._canvas_widget.winfo_width()
+        h_px = self._canvas_widget.winfo_height()
+        dpi = fig.get_dpi() or 100
+        if w_px > 1 and h_px > 1:
+            fig.set_size_inches(w_px / dpi, h_px / dpi)
 
         self._figure = fig
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
-        self._canvas.draw()  # force immediate redraw (not draw_idle)
-        self._toolbar.update()
+        self._canvas.draw()
 
     def display_png(self, png_path: Path) -> None:
         """Load and display a PNG file at its natural resolution.
 
         If the image is larger than the available widget area it is scaled
         down (keeping aspect ratio).  Otherwise it is shown at 1:1 pixels.
+        The figure is sized to fill the widget, with the image centered.
         """
         try:
             img = mpimage.imread(str(png_path))
@@ -97,7 +105,6 @@ class PlotCanvas(ttk.Frame):
         widget_w = self._canvas_widget.winfo_width()
         widget_h = self._canvas_widget.winfo_height()
         if widget_w < 10 or widget_h < 10:
-            # Widget not yet laid out — use reasonable defaults
             widget_w = max(widget_w, 800)
             widget_h = max(widget_h, 600)
 
@@ -106,9 +113,15 @@ class PlotCanvas(ttk.Frame):
         disp_w = img_w * scale
         disp_h = img_h * scale
 
+        # Place the image centered inside a figure that fills the widget
         dpi = 100
-        fig = Figure(figsize=(disp_w / dpi, disp_h / dpi), dpi=dpi)
-        ax = fig.add_axes([0, 0, 1, 1])
+        fig = Figure(figsize=(widget_w / dpi, widget_h / dpi), dpi=dpi)
+        # Calculate axes position to center the image
+        ax_x = (widget_w - disp_w) / (2 * widget_w)
+        ax_y = (widget_h - disp_h) / (2 * widget_h)
+        ax_w = disp_w / widget_w
+        ax_h = disp_h / widget_h
+        ax = fig.add_axes([ax_x, ax_y, ax_w, ax_h])
         ax.imshow(img, interpolation="lanczos" if scale < 1.0 else "nearest")
         ax.set_axis_off()
         self.display_figure(fig)
