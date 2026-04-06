@@ -45,8 +45,9 @@ class ResultViewer(tk.Toplevel):
         self._plot_groups: list[PlotGroup] = []
         # Map tree item iid -> PlotEntry for quick lookup
         self._tree_entry_map: dict[str, PlotEntry] = {}
-        # Currently active variant letter
-        self._active_variant: str = ""
+        # Dual variant state: desired (user's explicit choice) and shown (actually displayed)
+        self._desired_variant: str = self._viewer_settings.last_variant or ""
+        self._shown_variant: str = ""
         # All unique variant letters across all config entries (created once)
         self._all_variant_letters: list[str] = []
         # List of variant buttons currently displayed
@@ -600,17 +601,17 @@ class ResultViewer(tk.Toplevel):
             btn.bind("<Tab>", self._focus_scenario_listbox)
 
     def _find_nearest_available(self, available: set[str]) -> str:
-        """Find nearest available variant letter to the current active one.
+        """Find nearest available variant letter to the desired one.
 
         Searches left first, then right in the _all_variant_letters list.
         """
         if not available:
             return ""
-        if self._active_variant in available:
-            return self._active_variant
+        if self._desired_variant in available:
+            return self._desired_variant
 
         try:
-            idx = self._all_variant_letters.index(self._active_variant)
+            idx = self._all_variant_letters.index(self._desired_variant)
         except ValueError:
             idx = 0
 
@@ -627,7 +628,12 @@ class ResultViewer(tk.Toplevel):
         return next(iter(available))
 
     def _populate_variant_panel(self, entry: PlotEntry) -> None:
-        """Update variant button states for the given entry (don't recreate)."""
+        """Update variant button states for the given entry (don't recreate).
+
+        Updates the *shown* variant to match desired when available,
+        otherwise picks the nearest available.  The *desired* variant
+        is never changed here — it persists across tree navigation.
+        """
         available = {v.letter for v in entry.variants}
 
         for btn in self._variant_buttons:
@@ -637,19 +643,33 @@ class ResultViewer(tk.Toplevel):
             else:
                 btn.configure(state="disabled")
 
-        # If active variant is unavailable, find nearest available
-        if self._active_variant not in available:
-            self._active_variant = self._find_nearest_available(available)
-            self._viewer_settings.last_variant = self._active_variant
+        # Shown variant: desired if available, else nearest available
+        if self._desired_variant in available:
+            self._shown_variant = self._desired_variant
+        else:
+            self._shown_variant = self._find_nearest_available(available)
 
-        self._highlight_active_variant()
+        self._highlight_variants()
 
-    def _highlight_active_variant(self) -> None:
-        """Visually highlight the active variant button."""
+    def _highlight_variants(self) -> None:
+        """Visually highlight the shown and desired variant buttons.
+
+        - Shown variant: ``Accent.TButton`` (solid highlight).
+        - Desired variant (when different from shown): ``Desired.TButton``
+          (groove relief to indicate the user's persistent choice).
+        - Both on same button: ``Accent.TButton`` (solid takes priority).
+        - Neither: ``TButton`` (default).
+        """
+        # Ensure the Desired style exists (idempotent)
+        style = ttk.Style()
+        style.configure("Desired.TButton", relief="groove")
+
         for btn in self._variant_buttons:
             letter = btn._letter  # type: ignore[attr-defined]
-            if letter == self._active_variant:
+            if letter == self._shown_variant:
                 btn.configure(style="Accent.TButton")
+            elif letter == self._desired_variant:
+                btn.configure(style="Desired.TButton")
             else:
                 btn.configure(style="TButton")
 
@@ -664,15 +684,19 @@ class ResultViewer(tk.Toplevel):
                 if letter not in available:
                     return
 
-        self._active_variant = letter
+        self._desired_variant = letter
+        self._shown_variant = letter  # clicking always sets both
         self._viewer_settings.last_variant = letter
-        self._highlight_active_variant()
+        self._highlight_variants()
         # Reset file navigation
         self._file_index = 0
         self._trigger_replot()
 
     def _on_variant_left(self, event: tk.Event) -> str:
-        """Navigate to previous enabled variant button."""
+        """Navigate to previous enabled variant button.
+
+        Changes desired variant to the previous available one; shown follows.
+        """
         if not self._variant_buttons:
             return "break"
         current_idx = self._get_focused_variant_index()
@@ -686,7 +710,10 @@ class ResultViewer(tk.Toplevel):
         return "break"
 
     def _on_variant_right(self, event: tk.Event) -> str:
-        """Navigate to next enabled variant button."""
+        """Navigate to next enabled variant button.
+
+        Changes desired variant to the next available one; shown follows.
+        """
         if not self._variant_buttons:
             return "break"
         current_idx = self._get_focused_variant_index()
@@ -700,14 +727,41 @@ class ResultViewer(tk.Toplevel):
         return "break"
 
     def _on_variant_key_up(self, event: tk.Event) -> str:
-        """Move to previous visible entry in the tree (same as tree Up)."""
-        self._move_tree_selection(-1)
+        """Handle Up / Shift+Up in the variant panel.
+
+        - Up: jump to prev visible entry that has the desired variant.
+        - Shift+Up: move to prev visible entry regardless; keep desired,
+          shown = nearest available.
+        """
+        shift_held = bool(event.state & 0x1)
+        if shift_held:
+            self._move_tree_selection(-1)
+        else:
+            self._move_tree_to_next_with_desired(-1)
         return "break"
 
     def _on_variant_key_down(self, event: tk.Event) -> str:
-        """Move to next visible entry in the tree (same as tree Down)."""
-        self._move_tree_selection(1)
+        """Handle Down / Shift+Down in the variant panel.
+
+        - Down: jump to next visible entry that has the desired variant.
+        - Shift+Down: move to next visible entry regardless; keep desired,
+          shown = nearest available.
+        """
+        shift_held = bool(event.state & 0x1)
+        if shift_held:
+            self._move_tree_selection(1)
+        else:
+            self._move_tree_to_next_with_desired(1)
         return "break"
+
+    def _get_visible_entries(self) -> list[str]:
+        """Return flat list of entry iids in open branches."""
+        visible: list[str] = []
+        for group_iid in self._plot_tree.get_children():
+            if self._plot_tree.item(group_iid, "open"):
+                for entry_iid in self._plot_tree.get_children(group_iid):
+                    visible.append(entry_iid)
+        return visible
 
     def _move_tree_selection(self, direction: int) -> None:
         """Move tree selection by *direction* (-1 = up, +1 = down), skipping disabled entries."""
@@ -717,13 +771,7 @@ class ResultViewer(tk.Toplevel):
             return
 
         current = selection[0]
-
-        # Build flat list of visible entry iids
-        visible: list[str] = []
-        for group_iid in self._plot_tree.get_children():
-            if self._plot_tree.item(group_iid, "open"):
-                for entry_iid in self._plot_tree.get_children(group_iid):
-                    visible.append(entry_iid)
+        visible = self._get_visible_entries()
 
         if current not in visible:
             self._restore_or_select_first_entry()
@@ -741,15 +789,41 @@ class ResultViewer(tk.Toplevel):
                 return
             new_idx += step
 
+    def _move_tree_to_next_with_desired(self, direction: int) -> None:
+        """Move tree selection to next/prev entry that has the desired variant.
+
+        Only stops at non-disabled entries whose variant set includes
+        ``_desired_variant``.
+        """
+        visible = self._get_visible_entries()
+        selection = self._plot_tree.selection()
+        if not selection or selection[0] not in visible:
+            return
+
+        idx = visible.index(selection[0])
+        step = 1 if direction > 0 else -1
+        new_idx = idx + step
+
+        while 0 <= new_idx < len(visible):
+            iid = visible[new_idx]
+            if not self._is_entry_disabled(iid):
+                entry = self._tree_entry_map.get(iid)
+                if entry and self._desired_variant in {v.letter for v in entry.variants}:
+                    self._plot_tree.selection_set(iid)
+                    self._plot_tree.see(iid)
+                    self._plot_tree.event_generate("<<TreeviewSelect>>")
+                    return
+            new_idx += step
+
     def _get_focused_variant_index(self) -> int:
         """Return index of the currently focused variant button, or 0."""
         focused = self.focus_get()
         for i, btn in enumerate(self._variant_buttons):
             if btn is focused:
                 return i
-        # Fall back to active variant
+        # Fall back to desired variant
         for i, btn in enumerate(self._variant_buttons):
-            if btn._letter == self._active_variant:  # type: ignore[attr-defined]
+            if btn._letter == self._desired_variant:  # type: ignore[attr-defined]
                 return i
         return 0
 
@@ -761,7 +835,7 @@ class ResultViewer(tk.Toplevel):
         """Hide the variant panel and disable all buttons."""
         for btn in self._variant_buttons:
             btn.configure(state="disabled")
-        self._active_variant = ""
+        self._shown_variant = ""
 
     # ------------------------------------------------------------------
     # Mode switching
@@ -842,7 +916,7 @@ class ResultViewer(tk.Toplevel):
         if self._variant_buttons:
             # Focus the active variant button
             for btn in self._variant_buttons:
-                if btn.cget("text") == self._active_variant:
+                if btn.cget("text") == self._desired_variant:
                     btn.focus_set()
                     return "break"
             self._variant_buttons[0].focus_set()
@@ -858,9 +932,9 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _get_active_variant(self, entry: PlotEntry) -> PlotVariant | None:
-        """Return the PlotVariant matching the active variant letter."""
+        """Return the PlotVariant matching the shown variant letter."""
         for v in entry.variants:
-            if v.letter == self._active_variant:
+            if v.letter == self._shown_variant:
                 return v
         # Fall back to first variant
         return entry.variants[0] if entry.variants else None
