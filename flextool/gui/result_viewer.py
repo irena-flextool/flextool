@@ -221,13 +221,16 @@ class ResultViewer(tk.Toplevel):
             file_nav_frame, text="\u25c0 Prev", width=6,
             command=self._on_prev_file,
         )
-        self._prev_file_btn.pack(side="top", pady=(0, 2))
+        self._prev_file_btn.pack(side="top", pady=(0, 1))
+
+        self._file_label = ttk.Label(file_nav_frame, text="File 1/1", anchor="center")
+        self._file_label.pack(side="top", pady=1)
 
         self._next_file_btn = ttk.Button(
             file_nav_frame, text="Next \u25b6", width=6,
             command=self._on_next_file,
         )
-        self._next_file_btn.pack(side="top")
+        self._next_file_btn.pack(side="top", pady=(1, 0))
 
         self._update_file_nav()
 
