@@ -1171,9 +1171,12 @@ class ResultViewer(tk.Toplevel):
         plot_rows = (start, start + duration)
         t3 = time.perf_counter()
 
-        # 7. Call prepare_plot_data
+        # 7. Call prepare_plot_data (only build the figure at current file_index)
         try:
-            figures = prepare_plot_data(df, config, plot_name, plot_rows, break_times)
+            figures, total_count = prepare_plot_data(
+                df, config, plot_name, plot_rows, break_times,
+                only_file_index=self._file_index,
+            )
         except Exception as exc:
             logger.error("prepare_plot_data failed for '%s': %s", variant.result_key, exc)
             self._plot_canvas.show_message(f"Plot error: {exc}")
@@ -1181,26 +1184,22 @@ class ResultViewer(tk.Toplevel):
         t4 = time.perf_counter()
 
         # 8. Update file navigation
-        self._file_count = max(len(figures), 1)
+        self._file_count = max(total_count, 1)
         self._file_index = min(self._file_index, max(0, self._file_count - 1))
         self._update_file_nav()
 
         # 9. Display the figure at current file_index
         if figures:
-            filename, fig = figures[self._file_index]
+            filename, fig = figures[0]
             self._plot_canvas.display_figure(fig)
             t5 = time.perf_counter()
-            # Close figures we're not displaying to free memory
-            for i, (_, f) in enumerate(figures):
-                if i != self._file_index:
-                    plt.close(f)
             logger.info(
                 "Plot %s: parquet=%.0fms config=%.0fms prep=%.0fms "
                 "build=%.0fms display=%.0fms TOTAL=%.0fms [%d rows, %d cols, %d figs]",
                 variant.result_key,
                 (t1 - t0) * 1000, (t2 - t1) * 1000, (t3 - t2) * 1000,
                 (t4 - t3) * 1000, (t5 - t4) * 1000, (t5 - t0) * 1000,
-                len(df), len(df.columns), len(figures),
+                len(df), len(df.columns), total_count,
             )
         else:
             self._plot_canvas.show_message(f"No plottable data for {variant.full_name}")
@@ -1280,18 +1279,18 @@ class ResultViewer(tk.Toplevel):
         duration = self._duration_var.get()
         plot_rows = (start, start + duration)
 
-        figures = prepare_plot_data(df, config, plot_name, plot_rows, break_times)
+        figures, total_count = prepare_plot_data(
+            df, config, plot_name, plot_rows, break_times,
+            only_file_index=self._file_index,
+        )
 
-        self._file_count = max(len(figures), 1)
+        self._file_count = max(total_count, 1)
         self._file_index = min(self._file_index, max(0, self._file_count - 1))
         self._update_file_nav()
 
         if figures:
-            filename, fig = figures[self._file_index]
+            filename, fig = figures[0]
             self._plot_canvas.display_figure(fig)
-            for i, (_, f) in enumerate(figures):
-                if i != self._file_index:
-                    plt.close(f)
         else:
             self._plot_canvas.show_message(f"No plottable data for {variant.full_name}")
 

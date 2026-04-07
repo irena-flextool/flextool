@@ -407,14 +407,18 @@ def prepare_plot_data(
     plot_name: str = '',
     plot_rows: tuple[int, int] = (0, 167),
     break_times: set[str] | None = None,
-) -> list[tuple[str, plt.Figure]]:
+    only_file_index: int | None = None,
+) -> tuple[list[tuple[str, plt.Figure]], int]:
     """Process one result DataFrame through dimension rules and build Figures.
 
-    Returns a list of (filename_stem, Figure) pairs -- one per file split.
+    Returns (figures, total_file_count) where figures is a list of
+    (filename_stem, Figure) pairs -- one per file split.
+    When only_file_index is None, figures has all file splits.
+    When only_file_index is set, figures has at most 1 element.
     Figures are NOT saved or closed; the caller is responsible for that.
     """
     if df.empty:
-        return []
+        return [], 0
 
     cfg = plot_config
     result_name = plot_name or cfg.plot_name or 'plot'
@@ -422,7 +426,7 @@ def prepare_plot_data(
 
     dim_result = _apply_dimension_rules(df, cfg, plot_rows)
     if dim_result is None:
-        return []
+        return [], 0
     df_processed, rules, chart_type, summed_dimensions, averaged_dimensions = dim_result
 
     # Level indices for each plot role (in the column MultiIndex)
@@ -464,6 +468,7 @@ def prepare_plot_data(
     )
 
     figures: list[tuple[str, plt.Figure]] = []
+    total_file_count = 0
 
     for file_member in all_file_members:
         fm_result = _process_file_member(
@@ -498,7 +503,7 @@ def prepare_plot_data(
         max_items = cfg.max_items_per_plot if cfg.max_items_per_plot is not None else default_max_items
 
         if chart_type == 'bar':
-            figs = build_bar_figures(
+            figs, count = build_bar_figures(
                 df_fm, effective_plot_name, '',
                 fm_stack_levels, fm_expand_axis_levels,
                 fm_subplot_levels, fm_grouped_bar_levels,
@@ -514,12 +519,14 @@ def prepare_plot_data(
                 max_items_per_plot=max_items,
                 max_subplots_per_file=cfg.max_subplots_per_file,
                 skip_data_with_only_zeroes=cfg.skip_data_with_only_zeroes,
+                only_file_index=only_file_index,
             )
+            total_file_count += count
             figures.extend(figs)
 
         elif fm_subplot_levels or (cfg.subplots_by_magnitudes and not fm_stack_levels):
             if fm_stack_levels:
-                figs = build_stack_figures(
+                figs, count = build_stack_figures(
                     df_fm, effective_plot_name, '',
                     fm_stack_levels, fm_subplot_levels,
                     rows=plot_rows, subplots_per_row=cfg.subplots_per_row,
@@ -531,9 +538,10 @@ def prepare_plot_data(
                     always_include_zero_in_axis=cfg.always_include_zero_in_axis,
                     max_items_per_plot=max_items,
                     max_subplots_per_file=cfg.max_subplots_per_file,
+                    only_file_index=only_file_index,
                 )
             else:
-                figs = build_line_figures(
+                figs, count = build_line_figures(
                     df_fm, effective_plot_name, '',
                     fm_subplot_levels, fm_line_levels,
                     rows=plot_rows, subplots_per_row=cfg.subplots_per_row,
@@ -546,7 +554,9 @@ def prepare_plot_data(
                     max_items_per_plot=max_items,
                     max_subplots_per_file=cfg.max_subplots_per_file,
                     subplots_by_magnitudes=cfg.subplots_by_magnitudes,
+                    only_file_index=only_file_index,
                 )
+            total_file_count += count
             figures.extend(figs)
 
         else:
@@ -574,7 +584,10 @@ def prepare_plot_data(
                 all_subs, all_items, fm_subplot_levels,
                 max_items, cfg.max_subplots_per_file,
             )
+            total_file_count += len(file_chunks)
             for file_idx, item_chunk in enumerate(file_chunks, start=1):
+                if only_file_index is not None and (file_idx - 1) != only_file_index:
+                    continue
                 df_chunk = df_fm.copy()
 
                 if needs_item_split:
@@ -593,7 +606,7 @@ def prepare_plot_data(
                     continue
 
                 if fm_stack_levels:
-                    chunk_figs = build_stack_figures(
+                    chunk_figs, _count = build_stack_figures(
                         df_chunk, effective_plot_name, '',
                         fm_stack_levels, fm_subplot_levels,
                         rows=plot_rows, legend_position=cfg.legend,
@@ -604,7 +617,7 @@ def prepare_plot_data(
                         always_include_zero_in_axis=cfg.always_include_zero_in_axis,
                     )
                 else:
-                    chunk_figs = build_line_figures(
+                    chunk_figs, _count = build_line_figures(
                         df_chunk, effective_plot_name, '',
                         fm_subplot_levels, fm_line_levels,
                         rows=plot_rows, legend_position=cfg.legend,
@@ -616,7 +629,7 @@ def prepare_plot_data(
                     )
                 figures.extend(chunk_figs)
 
-    return figures
+    return figures, total_file_count
 
 
 def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
@@ -684,7 +697,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
             plot_name = cfg.plot_name or key
 
             # Use prepare_plot_data for the core logic
-            figures = prepare_plot_data(
+            figures, _total_count = prepare_plot_data(
                 df_orig, cfg,
                 plot_name=plot_name,
                 plot_rows=plot_rows,

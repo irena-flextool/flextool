@@ -468,10 +468,13 @@ def build_line_figures(
     max_subplots_per_file: int = 6,
     only_first_file: bool = False,
     subplots_by_magnitudes: bool = False,
-) -> list[tuple[str, 'plt.Figure']]:
+    only_file_index: int | None = None,
+) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build line-plot Figures and return them without saving or closing.
 
-    Returns a list of (batch_title, Figure) pairs -- one per file batch.
+    Returns (figures, total_file_count) where figures is a list of
+    (batch_title, Figure) pairs -- one per file batch.
+    When only_file_index is set, only that batch is built.
     """
     # Convert level indices to level names
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -491,7 +494,7 @@ def build_line_figures(
         subplots_by_magnitudes=subplots_by_magnitudes,
     )
     if not effective_plots:
-        return []
+        return [], 0
 
     # Build shared color map before splitting into file batches
     shared_color_map = None
@@ -517,10 +520,13 @@ def build_line_figures(
     file_batches = _make_file_batches(
         effective_plots, max_subplots_per_file, None, plot_dir, plot_name
     )
+    total_file_count = len(file_batches)
     batches_to_build = file_batches[:1] if only_first_file else file_batches
     n_total = len(file_batches)
     result: list[tuple[str, plt.Figure]] = []
     for batch_idx, (batch, _batch_filepath) in enumerate(batches_to_build, start=1):
+        if only_file_index is not None and (batch_idx - 1) != only_file_index:
+            continue
         batch_title = f"{plot_name} ({batch_idx}/{n_total})" if n_total > 1 else plot_name
         fig = _build_lines_figure(
             batch, batch_title, sub_levels, line_level_names, time_index,
@@ -530,7 +536,7 @@ def build_line_figures(
             layout, shared_color_map,
         )
         result.append((batch_title, fig))
-    return result
+    return result, total_file_count
 
 
 def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
@@ -840,10 +846,13 @@ def build_stack_figures(
     max_items_per_plot: int = 10,
     max_subplots_per_file: int = 6,
     only_first_file: bool = False,
-) -> list[tuple[str, 'plt.Figure']]:
+    only_file_index: int | None = None,
+) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build stacked-area Figures and return them without saving or closing.
 
-    Returns a list of (batch_title, Figure) pairs -- one per file batch.
+    Returns (figures, total_file_count) where figures is a list of
+    (batch_title, Figure) pairs -- one per file batch.
+    When only_file_index is set, only that batch is built.
     """
     # Convert level indices to level names
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -862,7 +871,7 @@ def build_stack_figures(
         df_plot, sub_levels, stack_level_names, max_items_per_plot
     )
     if not effective_plots:
-        return []
+        return [], 0
 
     # Build shared color map before splitting into file batches
     shared_color_map = None
@@ -888,10 +897,13 @@ def build_stack_figures(
     file_batches = _make_file_batches(
         effective_plots, max_subplots_per_file, None, plot_dir, plot_name
     )
+    total_file_count = len(file_batches)
     batches_to_build = file_batches[:1] if only_first_file else file_batches
     n_total = len(file_batches)
     result: list[tuple[str, plt.Figure]] = []
     for batch_idx, (batch, _batch_filepath) in enumerate(batches_to_build, start=1):
+        if only_file_index is not None and (batch_idx - 1) != only_file_index:
+            continue
         batch_title = f"{plot_name} ({batch_idx}/{n_total})" if n_total > 1 else plot_name
         fig = _build_stack_figure(
             batch, batch_title, sub_levels, stack_level_names, time_index,
@@ -901,7 +913,7 @@ def build_stack_figures(
             layout, shared_color_map,
         )
         result.append((batch_title, fig))
-    return result
+    return result, total_file_count
 
 
 def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,

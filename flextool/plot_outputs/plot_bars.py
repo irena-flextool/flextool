@@ -944,11 +944,14 @@ def build_bar_figures(
     max_subplots_per_file: int = 6,
     only_first_file: bool = False,
     skip_data_with_only_zeroes: bool = False,
-) -> list[tuple[str, 'plt.Figure']]:
+    only_file_index: int | None = None,
+) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build bar-chart Figures and return them without saving or closing.
 
-    Returns a list of (batch_title, Figure) pairs -- one per file batch.
+    Returns (figures, total_file_count) where figures is a list of
+    (batch_title, Figure) pairs -- one per file batch.
     Figures where all data is empty are omitted (not returned as None).
+    When only_file_index is set, only that batch is built.
     """
     if sub_levels is None:
         sub_levels = []
@@ -1034,7 +1037,7 @@ def build_bar_figures(
             effective_plots.append((title, df_sub))
 
     if not effective_plots:
-        return []
+        return [], 0
 
     # Build shared color map
     shared_color_map = None
@@ -1085,10 +1088,13 @@ def build_bar_figures(
             batch = effective_plots[i:i + _max]
             _file_batches.append((batch, None))
 
+    total_file_count = len(_file_batches)
     batches_to_build = _file_batches[:1] if only_first_file else _file_batches
     n_total_batches = len(_file_batches)
     result: list[tuple[str, plt.Figure]] = []
     for batch_idx, (batch, _) in enumerate(batches_to_build, start=1):
+        if only_file_index is not None and (batch_idx - 1) != only_file_index:
+            continue
         batch_title = f"{key_name} ({batch_idx}/{n_total_batches})" if n_total_batches > 1 else key_name
         fig = _build_bar_figure(
             batch, df, batch_title, plot_dir,
@@ -1104,7 +1110,7 @@ def build_bar_figures(
         )
         if fig is not None:
             result.append((batch_title, fig))
-    return result
+    return result, total_file_count
 
 
 def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_axis_levels,
