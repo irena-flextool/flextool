@@ -78,6 +78,9 @@ class ResultViewer(tk.Toplevel):
         self._yaml_cache: dict[Path, dict] = {}
         self._break_times_cache: dict[str, set[str] | None] = {}
 
+        # Guard against recursive replots from time range updates
+        self._updating_time_range = False
+
         # Dispatch mode state
         self._dispatch_mappings: DispatchMappings | None = None
         self._dispatch_results: TimeSeriesResults | None = None
@@ -279,8 +282,6 @@ class ResultViewer(tk.Toplevel):
             variable=self._start_var,
         )
         self._start_scale.grid(row=0, column=1, sticky="ew")
-        # Disabled until plot pipeline integration (PNG mode has no time range)
-        self._start_scale.configure(state="disabled")
 
         ttk.Label(time_frame, text="Duration").grid(row=1, column=0, sticky="w", padx=(0, 5))
         self._duration_var = tk.IntVar(value=self._settings.single_plot_settings.duration or 168)
@@ -288,8 +289,10 @@ class ResultViewer(tk.Toplevel):
             time_frame, from_=1, to=8760, textvariable=self._duration_var, width=6,
         )
         self._duration_spin.grid(row=1, column=1, sticky="w")
-        # Disabled until plot pipeline integration
-        self._duration_spin.configure(state="disabled")
+
+        # Bind changes to trigger replot
+        self._start_var.trace_add("write", self._on_time_range_changed)
+        self._duration_var.trace_add("write", self._on_time_range_changed)
 
         # Col 4: Refresh button
         self._refresh_btn = ttk.Button(
@@ -954,6 +957,32 @@ class ResultViewer(tk.Toplevel):
             self._trigger_replot()
 
     # ------------------------------------------------------------------
+    # Time range controls
+    # ------------------------------------------------------------------
+
+    def _update_time_range(self, data_length: int) -> None:
+        """Update the Start slider range based on data length."""
+        self._updating_time_range = True
+        try:
+            duration = self._duration_var.get()
+            max_start = max(0, data_length - duration)
+            self._start_scale.configure(to=max_start)
+            # Clamp current start value
+            if self._start_var.get() > max_start:
+                self._start_var.set(max_start)
+            # Update duration max
+            self._duration_spin.configure(to=data_length)
+        finally:
+            self._updating_time_range = False
+
+    def _on_time_range_changed(self, *_args) -> None:
+        """Handle Start or Duration change — trigger replot."""
+        if self._updating_time_range:
+            return
+        self._file_index = 0
+        self._trigger_replot()
+
+    # ------------------------------------------------------------------
     # Refresh
     # ------------------------------------------------------------------
 
@@ -1168,26 +1197,29 @@ class ResultViewer(tk.Toplevel):
             self._plot_canvas.show_message(f"No config for {variant.result_key}")
             return
 
-        # 3. Load break times
+        # 3. Update time range controls from data length
+        self._update_time_range(len(df))
+
+        # 4. Load break times
         break_times = self._load_break_times(scenario)
 
-        # 4. Build plot name (for figure title)
+        # 5. Build plot name (for figure title)
         plot_name = config.plot_name or variant.full_name
 
-        # 5. Get plot_rows from start/duration controls
+        # 6. Get plot_rows from start/duration controls
         start = self._start_var.get()
         duration = self._duration_var.get()
         plot_rows = (start, start + duration)
 
-        # 6. Call prepare_plot_data
+        # 7. Call prepare_plot_data
         figures = prepare_plot_data(df, config, plot_name, plot_rows, break_times)
 
-        # 7. Update file navigation
+        # 8. Update file navigation
         self._file_count = max(len(figures), 1)
         self._file_index = min(self._file_index, max(0, self._file_count - 1))
         self._update_file_nav()
 
-        # 8. Display the figure at current file_index
+        # 9. Display the figure at current file_index
         if figures:
             filename, fig = figures[self._file_index]
             self._plot_canvas.display_figure(fig)
@@ -1256,6 +1288,8 @@ class ResultViewer(tk.Toplevel):
         if df.empty:
             self._plot_canvas.show_message(f"Empty data for {variant.result_key}")
             return
+
+        self._update_time_range(len(df))
 
         # Load config from comparison config
         config = self._load_plot_config(variant.result_key, variant.sub_config)
@@ -1422,6 +1456,8 @@ class ResultViewer(tk.Toplevel):
         if df_dispatch is None or df_dispatch.empty:
             self._plot_canvas.show_message(f"No dispatch data for {node_group}")
             return
+
+        self._update_time_range(len(df_dispatch))
 
         # Get timeline from start/duration controls
         start = self._start_var.get()
