@@ -78,6 +78,10 @@ def main() -> None:
         '--only-first-file-per-plot', action='store_true', default=False,
         help='Only produce the first file for each plot (quick overview mode)'
     )
+    parser.add_argument(
+        '--comparison-parquet-dir', default=None,
+        help='Directory to write combined comparison parquet files for viewer integration'
+    )
 
     args = parser.parse_args()
     db_url = args.db_url
@@ -205,6 +209,7 @@ def main() -> None:
         excel_dir=args.excel_dir,
         shared_legend=shared_legend,
         only_first_file=args.only_first_file_per_plot,
+        comparison_parquet_dir=args.comparison_parquet_dir,
     )
 
 

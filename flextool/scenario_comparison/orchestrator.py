@@ -37,6 +37,7 @@ def run(
     excel_dir: str | None = None,
     shared_legend: bool = True,
     only_first_file: bool = False,
+    comparison_parquet_dir: str | None = None,
 ) -> None:
     """Run the full scenario-comparison pipeline.
 
@@ -108,6 +109,23 @@ def run(
         else:
             break_dirs.append(os.path.join(folder, name))
     break_times = load_timeline_breaks(*break_dirs)
+
+    # Write combined comparison parquets if output directory specified
+    if comparison_parquet_dir:
+        os.makedirs(comparison_parquet_dir, exist_ok=True)
+        for name, df in combined_dfs.items():
+            if not df.empty:
+                df.to_parquet(os.path.join(comparison_parquet_dir, f"{name}.parquet"))
+        # Also write a metadata file with the scenario list
+        import json
+        meta = {"scenarios": scenarios}
+        with open(os.path.join(comparison_parquet_dir, "_metadata.json"), "w") as f:
+            json.dump(meta, f)
+        if break_times:
+            # Save break times so the viewer can load them
+            bt_df = pd.DataFrame({"break_time": list(break_times)})
+            bt_df.to_parquet(os.path.join(comparison_parquet_dir, "timeline_breaks.parquet"))
+        print(f"Wrote comparison parquets to: {comparison_parquet_dir}")
 
     # Generate original comparison plots (from default_comparison_plots.yaml)
     plot_dict_of_dataframes(

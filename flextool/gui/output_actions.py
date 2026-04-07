@@ -235,6 +235,9 @@ class OutputActionManager:
             "--plot-dir", str(plot_dir),
         ]
 
+        comparison_parquet_dir = self.project_path / "output_parquet_comparison"
+        cmd.extend(["--comparison-parquet-dir", str(comparison_parquet_dir)])
+
         if comp.config_file:
             cmd.extend(["--output-config-path", comp.config_file])
 

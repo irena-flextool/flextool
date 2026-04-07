@@ -410,21 +410,32 @@ class ResultViewer(tk.Toplevel):
 
     def _update_tree_availability(self) -> None:
         """Grey out entries that have no matching parquet files for selected scenario(s)."""
-        scenarios = self._get_selected_scenarios()
-        if not scenarios:
-            # No scenario selected -- mark all as disabled
-            for iid in self._tree_entry_map:
-                self._plot_tree.item(iid, tags=("disabled",))
-            return
+        mode = self._mode.get()
 
-        # Collect available parquet file stems for selected scenarios
-        available_keys: set[str] = set()
-        for scenario in scenarios:
-            parquet_dir = self._project_path / "output_parquet" / scenario
-            if parquet_dir.is_dir():
-                for f in parquet_dir.iterdir():
+        if mode == "comparison":
+            # Check comparison parquet directory
+            comp_dir = self._project_path / "output_parquet_comparison"
+            available_keys: set[str] = set()
+            if comp_dir.is_dir():
+                for f in comp_dir.iterdir():
                     if f.suffix == ".parquet" and f.is_file():
                         available_keys.add(f.stem)
+        else:
+            scenarios = self._get_selected_scenarios()
+            if not scenarios:
+                # No scenario selected -- mark all as disabled
+                for iid in self._tree_entry_map:
+                    self._plot_tree.item(iid, tags=("disabled",))
+                return
+
+            # Collect available parquet file stems for selected scenarios
+            available_keys = set()
+            for scenario in scenarios:
+                parquet_dir = self._project_path / "output_parquet" / scenario
+                if parquet_dir.is_dir():
+                    for f in parquet_dir.iterdir():
+                        if f.suffix == ".parquet" and f.is_file():
+                            available_keys.add(f.stem)
 
         for iid, entry in self._tree_entry_map.items():
             # An entry is available if ANY of its variants' result_keys
@@ -488,7 +499,12 @@ class ResultViewer(tk.Toplevel):
                 if scenarios:
                     self._display_dispatch(scenarios[0], node_group)
             return
+        if mode == "comparison":
+            # Scenario selection is informational in comparison mode
+            self._trigger_replot()
+            return
 
+        # Single mode
         self._update_tree_availability()
         # Re-select entry if current one became disabled
         selection = self._plot_tree.selection()
@@ -892,7 +908,8 @@ class ResultViewer(tk.Toplevel):
             self._populate_plot_tree()
             self._show_variant_panel()
         elif mode == "comparison":
-            self._scenario_listbox.configure(selectmode="extended")
+            self._scenario_listbox.configure(selectmode="browse")
+            self._populate_comparison_scenarios()
             self._populate_plot_tree()
             self._show_variant_panel()
         elif mode == "dispatch":
@@ -1214,16 +1231,100 @@ class ResultViewer(tk.Toplevel):
 
         if mode == "single":
             self._display_from_parquet(scenarios[0], entry, variant)
+        elif mode == "comparison":
+            self._display_comparison(entry, variant)
+
+    # ------------------------------------------------------------------
+    # Comparison mode
+    # ------------------------------------------------------------------
+
+    def _display_comparison(self, entry: PlotEntry, variant: PlotVariant) -> None:
+        """Render comparison plot from pre-combined parquets."""
+        import matplotlib.pyplot as plt
+
+        comp_dir = self._project_path / "output_parquet_comparison"
+        parquet_path = comp_dir / f"{variant.result_key}.parquet"
+
+        if not parquet_path.exists():
+            self._plot_canvas.show_message(
+                f"No comparison data found for {variant.result_key}\n"
+                f"Run 'Scenario comparison' first."
+            )
+            return
+
+        df = pd.read_parquet(parquet_path)
+        if df.empty:
+            self._plot_canvas.show_message(f"Empty data for {variant.result_key}")
+            return
+
+        # Load config from comparison config
+        config = self._load_plot_config(variant.result_key, variant.sub_config)
+        if config is None:
+            self._plot_canvas.show_message(f"No config for {variant.result_key}")
+            return
+
+        # Load break times from comparison dir
+        break_times = self._load_comparison_break_times()
+
+        plot_name = config.plot_name or variant.full_name
+        start = self._start_var.get()
+        duration = self._duration_var.get()
+        plot_rows = (start, start + duration)
+
+        figures = prepare_plot_data(df, config, plot_name, plot_rows, break_times)
+
+        self._file_count = max(len(figures), 1)
+        self._file_index = min(self._file_index, max(0, self._file_count - 1))
+        self._update_file_nav()
+
+        if figures:
+            filename, fig = figures[self._file_index]
+            self._plot_canvas.display_figure(fig)
+            for i, (_, f) in enumerate(figures):
+                if i != self._file_index:
+                    plt.close(f)
         else:
-            # Comparison mode: fall back to PNG for now
-            png_files = self._find_png_files(scenarios[0], entry, variant)
-            self._file_count = max(len(png_files), 1)
-            self._file_index = min(self._file_index, max(0, self._file_count - 1))
-            self._update_file_nav()
-            if png_files:
-                self._plot_canvas.display_png(png_files[self._file_index])
+            self._plot_canvas.show_message(f"No plottable data for {variant.full_name}")
+
+    def _load_comparison_break_times(self) -> set[str] | None:
+        """Load break times from comparison parquet directory."""
+        if "_comparison" in self._break_times_cache:
+            return self._break_times_cache["_comparison"]
+
+        path = self._project_path / "output_parquet_comparison" / "timeline_breaks.parquet"
+        if not path.exists():
+            self._break_times_cache["_comparison"] = None
+            return None
+
+        try:
+            df = pd.read_parquet(path)
+            if df.empty:
+                result: set[str] | None = None
             else:
-                self._plot_canvas.show_message(f"No plot files found for\n{variant.full_name}")
+                result = set(df.iloc[:, 0].astype(str))
+            self._break_times_cache["_comparison"] = result
+            return result
+        except Exception:  # noqa: BLE001
+            self._break_times_cache["_comparison"] = None
+            return None
+
+    def _populate_comparison_scenarios(self) -> None:
+        """Show scenarios from the last comparison run (informational)."""
+        import json
+        meta_path = self._project_path / "output_parquet_comparison" / "_metadata.json"
+        if not meta_path.exists():
+            return
+        try:
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+            scenarios = meta.get("scenarios", [])
+            self._scenario_listbox.delete(0, "end")
+            for name in scenarios:
+                self._scenario_listbox.insert("end", name)
+            if scenarios:
+                self._scenario_listbox.selection_set(0)
+        except (json.JSONDecodeError, OSError):
+            pass
 
     # ------------------------------------------------------------------
     # Dispatch mode
