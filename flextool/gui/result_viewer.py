@@ -263,11 +263,16 @@ class ResultViewer(tk.Toplevel):
 
         # Canvas click and keyboard bindings
         self._variant_canvas.bind("<Button-1>", self._on_variant_canvas_click)
+        self._variant_canvas.bind("<FocusIn>", lambda e: self._redraw_variant_grid())
         self._variant_canvas.bind("<Left>", self._on_variant_left)
         self._variant_canvas.bind("<Right>", self._on_variant_right)
         self._variant_canvas.bind("<Up>", self._on_variant_key_up)
         self._variant_canvas.bind("<Down>", self._on_variant_key_down)
         self._variant_canvas.bind("<Tab>", self._focus_scenario_listbox)
+
+        # Tree Right arrow → move focus to variant canvas
+        self._plot_tree.bind("<Right>", self._on_tree_key_right)
+        self._plot_tree.bind("<Left>", self._on_tree_key_left)
 
     def _build_right_column(self) -> None:
         """Build the right column: compact control bar + plot area."""
@@ -629,6 +634,46 @@ class ResultViewer(tk.Toplevel):
             return False
         return bool(self._plot_tree.item(iid, "open"))
 
+    def _on_tree_key_right(self, event: tk.Event) -> str:
+        """Handle Right arrow in tree.
+
+        On a closed group: open it (default behavior).
+        On an entry or open group: move focus to variant canvas.
+        """
+        selection = self._plot_tree.selection()
+        if selection:
+            iid = selection[0]
+            if iid.startswith("group_") and not self._plot_tree.item(iid, "open"):
+                # Let default handler open the branch
+                self._plot_tree.item(iid, open=True)
+                self._plot_tree.event_generate("<<TreeviewOpen>>")
+                return "break"
+        # Move focus to variant canvas
+        self._variant_canvas.focus_set()
+        return "break"
+
+    def _on_tree_key_left(self, event: tk.Event) -> str:
+        """Handle Left arrow in tree.
+
+        On an open group: close it.
+        On an entry: select the parent group if it's open, or do nothing.
+        """
+        selection = self._plot_tree.selection()
+        if selection:
+            iid = selection[0]
+            if iid.startswith("group_") and self._plot_tree.item(iid, "open"):
+                self._plot_tree.item(iid, open=False)
+                self._plot_tree.event_generate("<<TreeviewClose>>")
+                return "break"
+            if iid.startswith("entry_"):
+                # Move to parent group
+                parent = self._plot_tree.parent(iid)
+                if parent:
+                    self._plot_tree.selection_set(parent)
+                    self._plot_tree.see(parent)
+                return "break"
+        return "break"
+
     def _on_tree_key_up(self, event: tk.Event) -> str:
         """Move selection up, skipping open group headers."""
         visible = self._get_all_visible_items()
@@ -801,18 +846,20 @@ class ResultViewer(tk.Toplevel):
                     # Dashed border (visible even on solid fill)
                     border_color = "#ff8800" if is_shown else "#2074d5"
                     self._variant_canvas.create_rectangle(
-                        x + 1, y + 1, x + box_w - 1, y + row_h - 1,
-                        outline=border_color, dash=(3, 2), width=2,
+                        x + 2, y + 2, x + box_w - 2, y + row_h - 2,
+                        outline=border_color, width=2, dash=(4, 4),
                     )
 
-                # Draw letter text
+                # Draw letter text (empty letter shows as "?")
+                display = letter if letter else "?"
                 self._variant_canvas.create_text(
                     x + box_w // 2, y + row_h // 2,
-                    text=letter, fill=text_color, font=("TkDefaultFont",),
+                    text=display, fill=text_color, font=("TkDefaultFont",),
                 )
 
     def _on_variant_canvas_click(self, event: tk.Event) -> None:
         """Handle click on a variant box in the canvas."""
+        self._variant_canvas.focus_set()
         if not self._all_variant_letters:
             return
 
@@ -915,7 +962,7 @@ class ResultViewer(tk.Toplevel):
     def _on_variant_left(self, event: tk.Event) -> str:
         """Navigate to previous available variant letter.
 
-        Changes desired variant to the previous available one; shown follows.
+        At the leftmost variant, transfer focus back to the tree.
         """
         if not self._all_variant_letters:
             return "break"
@@ -926,7 +973,9 @@ class ResultViewer(tk.Toplevel):
             letter = self._all_variant_letters[new_idx]
             if letter in available:
                 self._on_variant_clicked(letter)
-                break
+                return "break"
+        # At leftmost — move focus back to tree
+        self._plot_tree.focus_set()
         return "break"
 
     def _on_variant_right(self, event: tk.Event) -> str:
