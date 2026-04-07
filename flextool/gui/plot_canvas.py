@@ -31,7 +31,14 @@ _BG = "#f0f0f0"
 
 
 class PlotCanvas(ttk.Frame):
-    """Embeds a matplotlib FigureCanvasTkAgg with navigation toolbar."""
+    """Embeds a matplotlib FigureCanvasTkAgg with navigation toolbar.
+
+    Matplotlib's own ``<Configure>`` handler is permanently disconnected.
+    Instead, this class manages figure sizing itself via a ``<Configure>``
+    binding on the *PlotCanvas frame*, which only fires on real window
+    resizes — not on internal button/style changes.  This eliminates
+    jitter from the resize → draw → resize feedback loop.
+    """
 
     def __init__(self, master: tk.Widget, **kwargs: object) -> None:
         super().__init__(master, **kwargs)
@@ -42,10 +49,8 @@ class PlotCanvas(ttk.Frame):
         self._raw_line_data: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
         self._n_out: int = 3000
         self._cache = PlotCache()
-        self._frozen: bool = False
-        self._orig_configure = None
-        # Track last widget size so we know when to re-render cached PNGs
         self._last_widget_size: tuple[int, int] = (0, 0)
+        self._resize_pending: str | None = None
 
         # Create a blank figure that fills the canvas with a solid bg
         self._figure = Figure(facecolor=_BG)
@@ -54,9 +59,28 @@ class PlotCanvas(ttk.Frame):
         self._canvas_widget.configure(background=_BG)
         self._canvas_widget.grid(row=0, column=0, sticky="nsew")
 
-        # Prevent the canvas widget from propagating size requests
-        # upward — the grid manager controls size, not matplotlib.
-        self.grid_propagate(False)
+        # ── Permanently disconnect matplotlib's resize handling ──
+        # This prevents the <Configure> → resize() → draw_idle() →
+        # <Configure> feedback loop that causes jitter.
+        self._canvas_widget.unbind("<Configure>")
+        self._canvas_widget.unbind("<Map>")
+
+        # Instead, handle resizes ourselves on the PlotCanvas frame.
+        # This only fires on real geometry changes (window resize,
+        # paned-window sash), not on internal button style changes.
+        self.bind("<Configure>", self._on_frame_configure)
+
+        # Monkey-patch the canvas widget's configure to silently ignore
+        # width/height changes from matplotlib internals (draw/blit).
+        self._orig_tk_configure = self._canvas_widget.configure
+
+        def _no_resize_configure(**kw):
+            kw.pop("width", None)
+            kw.pop("height", None)
+            if kw:
+                self._orig_tk_configure(**kw)
+
+        self._canvas_widget.configure = _no_resize_configure  # type: ignore[assignment]
 
         # NavigationToolbar2Tk calls pack() in its __init__, so it needs
         # a dedicated container frame managed by grid in the outer layout.
@@ -65,61 +89,67 @@ class PlotCanvas(ttk.Frame):
         self._toolbar = NavigationToolbar2Tk(self._canvas, toolbar_frame)
         self._toolbar.update()
 
-    def freeze(self) -> None:
-        """Suppress all resize/configure events on the canvas.
+    # ------------------------------------------------------------------
+    # Resize handling (replaces matplotlib's <Configure> handler)
+    # ------------------------------------------------------------------
 
-        Call before making UI changes (variant panel, tree selection)
-        that might cause the canvas cell to resize.  Call :meth:`thaw`
-        when done — typically after :meth:`display_figure`.
+    def _on_frame_configure(self, event: tk.Event) -> None:
+        """Handle real geometry changes with debouncing.
+
+        Schedules a single redraw after 50ms of no further resize events,
+        so dragging a window edge doesn't trigger dozens of redraws.
         """
-        if self._frozen:
+        if self._resize_pending is not None:
+            self.after_cancel(self._resize_pending)
+        self._resize_pending = self.after(50, self._do_resize)
+
+    def _do_resize(self) -> None:
+        """Adapt the current figure to the new widget size and redraw."""
+        self._resize_pending = None
+        w = self._canvas_widget.winfo_width()
+        h = self._canvas_widget.winfo_height()
+        if w < 2 or h < 2:
             return
-        self._frozen = True
-        self._canvas_widget.unbind("<Configure>")
-        self._canvas_widget.unbind("<Map>")
-        self._orig_configure = self._canvas_widget.configure
 
-        def _frozen_configure(**kw):
-            kw.pop("width", None)
-            kw.pop("height", None)
-            if kw:
-                self._orig_configure(**kw)
+        dpi = self._figure.get_dpi() or 100
+        self._figure.set_size_inches(w / dpi, h / dpi, forward=False)
 
-        self._canvas_widget.configure = _frozen_configure  # type: ignore[assignment]
+        # Recreate the internal PhotoImage at the new pixel size
+        # (matplotlib's resize handler normally does this)
+        try:
+            self._canvas._tkcanvas.delete(self._canvas._tkcanvas_image_region)
+            self._canvas._tkphoto.configure(width=w, height=h)
+            self._canvas._tkcanvas_image_region = (
+                self._canvas._tkcanvas.create_image(
+                    w // 2, h // 2, image=self._canvas._tkphoto
+                )
+            )
+        except (AttributeError, tk.TclError):
+            pass
 
-    def _cancel_pending_draws(self) -> None:
-        """Cancel any ``after_idle(draw)`` scheduled by ``draw_idle()``."""
-        idle_id = getattr(self._canvas, "_idle_draw_id", None)
-        if idle_id is not None:
-            self._canvas_widget.after_cancel(idle_id)
-            self._canvas._idle_draw_id = None
+        self._cancel_pending_draws()
+        self._canvas.draw()
+        self._cancel_pending_draws()
 
-    def thaw(self) -> None:
-        """Re-enable resize/configure events after :meth:`freeze`."""
-        if not self._frozen:
-            return
-        self._frozen = False
-        self._canvas_widget.configure = self._orig_configure  # type: ignore[assignment]
-        self._canvas_widget.bind("<Configure>", self._canvas.resize)
-        self._canvas_widget.bind(
-            "<Map>", self._canvas._update_device_pixel_ratio,
-        )
+        # Invalidate PNG cache if the size changed significantly
+        old_w, old_h = self._last_widget_size
+        if abs(w - old_w) > 4 or abs(h - old_h) > 4:
+            self._cache.clear()
+            self._last_widget_size = (w, h)
+
+    # ------------------------------------------------------------------
+    # Figure display
+    # ------------------------------------------------------------------
 
     def display_figure(self, fig: Figure) -> None:
         """Display a matplotlib Figure on the canvas.
 
-        The figure is sized to match the canvas widget (with facecolor
-        filling unused area).  Caller should call :meth:`freeze` before
-        any UI changes and :meth:`thaw` after this method returns.
-        If not already frozen, this method freezes/thaws automatically.
+        The figure is sized to match the canvas widget.  Only one
+        ``draw()`` call is made — no jitter, no redundant renders.
         """
         if fig is self._figure:
             self._canvas.draw()
             return
-
-        auto_frozen = not self._frozen
-        if auto_frozen:
-            self.freeze()
 
         # Match figure size to the current canvas widget size.
         fig.set_facecolor(_BG)
@@ -133,16 +163,17 @@ class PlotCanvas(ttk.Frame):
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
 
-        # Cancel any pending idle draws that may have been scheduled
-        # by set_canvas / set_size_inches / other internal callbacks.
-        # Without this, draw_idle fires AFTER our draw(), causing a
-        # redundant full re-render.
+        # Cancel any pending idle draws from set_canvas() internals
         self._cancel_pending_draws()
         self._canvas.draw()
         self._cancel_pending_draws()
 
-        if auto_frozen:
-            self.thaw()
+    def _cancel_pending_draws(self) -> None:
+        """Cancel any ``after_idle(draw)`` scheduled by ``draw_idle()``."""
+        idle_id = getattr(self._canvas, "_idle_draw_id", None)
+        if idle_id is not None:
+            self._canvas_widget.after_cancel(idle_id)
+            self._canvas._idle_draw_id = None
 
     def display_png(self, png_path: Path) -> None:
         """Load and display a PNG file at its natural resolution.
@@ -152,18 +183,6 @@ class PlotCanvas(ttk.Frame):
         down (keeping aspect ratio); otherwise shown at 1:1 pixels.
         """
         cache_key = ("png", str(png_path))
-
-        # Check widget size — if it changed significantly, cached
-        # figures are stale and need to be rebuilt at the new size.
-        # Ignore small changes (< 5px) to avoid cache thrashing from
-        # minor layout shifts when buttons change state/style.
-        w_px = self._canvas_widget.winfo_width()
-        h_px = self._canvas_widget.winfo_height()
-        current_size = (max(w_px, 100), max(h_px, 100))
-        old_w, old_h = self._last_widget_size
-        if abs(current_size[0] - old_w) > 4 or abs(current_size[1] - old_h) > 4:
-            self._cache.clear()
-            self._last_widget_size = current_size
 
         cached = self._cache.get(cache_key)
         if cached is not None:
@@ -178,7 +197,12 @@ class PlotCanvas(ttk.Frame):
             return
 
         img_h, img_w = img.shape[:2]
-        widget_w, widget_h = current_size
+
+        w_px = self._canvas_widget.winfo_width()
+        h_px = self._canvas_widget.winfo_height()
+        widget_w = max(w_px, 100)
+        widget_h = max(h_px, 100)
+        self._last_widget_size = (widget_w, widget_h)
 
         # Scale down if image exceeds widget, preserving aspect ratio
         scale = min(widget_w / img_w, widget_h / img_h, 1.0)
@@ -219,12 +243,7 @@ class PlotCanvas(ttk.Frame):
     def display_timeseries_figure(
         self, fig: Figure, n_out: int = 3000
     ) -> None:
-        """Display a time-series Figure with downsampling support.
-
-        Stores the full-resolution data for each Line2D in every axes,
-        replaces line data with a downsampled version, and installs a
-        callback so that zoom/pan operations re-downsample on the fly.
-        """
+        """Display a time-series Figure with downsampling support."""
         self._raw_line_data = {}
         self._n_out = n_out
 

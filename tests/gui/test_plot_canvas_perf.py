@@ -293,39 +293,15 @@ class TestPlotCanvasPerf:
             tree_times.append(elapsed)
             tree_draws.append(count)
 
-        # --- Tree change WITH freeze/thaw ---
-        frozen_times = []
-        frozen_draws = []
-        for i in range(10):
-            fig = fig_a if i % 2 == 0 else fig_b
-            active_idx = i % len(buttons)
-
-            def frozen_action(f=fig, idx=active_idx):
-                canvas.freeze()
-                try:
-                    for j, btn in enumerate(buttons):
-                        if j == idx:
-                            btn.configure(style="Accent.TButton")
-                        else:
-                            btn.configure(style="TButton")
-                        btn.configure(state="normal" if j < 3 else "disabled")
-                    canvas.display_figure(f)
-                finally:
-                    canvas.thaw()
-
-            elapsed, count = _count_draws(canvas, frozen_action, root)
-            frozen_times.append(elapsed)
-            frozen_draws.append(count)
-
         s_avg = sum(scenario_times) / len(scenario_times)
         t_avg = sum(tree_times) / len(tree_times)
-        f_avg = sum(frozen_times) / len(frozen_times)
 
         print(f"\n  Scenario change (no UI):     avg={s_avg*1000:.1f}ms "
               f"draws={scenario_draws}")
         print(f"  Tree change (button styles): avg={t_avg*1000:.1f}ms "
               f"draws={tree_draws}")
-        print(f"  Tree change (with freeze):   avg={f_avg*1000:.1f}ms "
-              f"draws={frozen_draws}")
         print(f"  Overhead from button styles: {(t_avg-s_avg)*1000:.1f}ms")
-        print(f"  Overhead with freeze:        {(f_avg-s_avg)*1000:.1f}ms")
+
+        # Both paths should have exactly 1 draw per switch
+        assert all(d == 1 for d in scenario_draws), f"Scenario draws: {scenario_draws}"
+        assert all(d == 1 for d in tree_draws), f"Tree draws: {tree_draws}"

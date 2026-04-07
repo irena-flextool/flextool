@@ -495,15 +495,9 @@ class ResultViewer(tk.Toplevel):
         self._file_index = 0
         self._file_count = 1
 
-        # Freeze canvas so UI changes (file nav buttons, variant panel)
-        # don't cause layout shifts that invalidate the figure cache.
-        self._plot_canvas.freeze()
-        try:
-            self._update_file_nav()
-            self._populate_variant_panel(entry)
-            self._trigger_replot()
-        finally:
-            self._plot_canvas.thaw()
+        self._update_file_nav()
+        self._populate_variant_panel(entry)
+        self._trigger_replot()
 
     # ------------------------------------------------------------------
     # Tree tooltip
@@ -691,14 +685,9 @@ class ResultViewer(tk.Toplevel):
         self._desired_variant = letter
         self._shown_variant = letter  # clicking always sets both
         self._viewer_settings.last_variant = letter
-        # Freeze canvas to prevent jitter from style changes
-        self._plot_canvas.freeze()
-        try:
-            self._highlight_variants()
-            self._file_index = 0
-            self._trigger_replot()
-        finally:
-            self._plot_canvas.thaw()
+        self._highlight_variants()
+        self._file_index = 0
+        self._trigger_replot()
 
     def _on_variant_left(self, event: tk.Event) -> str:
         """Navigate to previous enabled variant button.
@@ -741,15 +730,11 @@ class ResultViewer(tk.Toplevel):
         - Shift+Up: move to prev visible entry regardless; keep desired,
           shown = nearest available.
         """
-        self._plot_canvas.freeze()
-        try:
-            shift_held = bool(event.state & 0x1)
-            if shift_held:
-                self._move_tree_selection(-1)
-            else:
-                self._move_tree_to_next_with_desired(-1)
-        finally:
-            self._plot_canvas.thaw()
+        shift_held = bool(event.state & 0x1)
+        if shift_held:
+            self._move_tree_selection(-1)
+        else:
+            self._move_tree_to_next_with_desired(-1)
         return "break"
 
     def _on_variant_key_down(self, event: tk.Event) -> str:
@@ -759,15 +744,11 @@ class ResultViewer(tk.Toplevel):
         - Shift+Down: move to next visible entry regardless; keep desired,
           shown = nearest available.
         """
-        self._plot_canvas.freeze()
-        try:
-            shift_held = bool(event.state & 0x1)
-            if shift_held:
-                self._move_tree_selection(1)
-            else:
-                self._move_tree_to_next_with_desired(1)
-        finally:
-            self._plot_canvas.thaw()
+        shift_held = bool(event.state & 0x1)
+        if shift_held:
+            self._move_tree_selection(1)
+        else:
+            self._move_tree_to_next_with_desired(1)
         return "break"
 
     def _get_visible_entries(self) -> list[str]:
