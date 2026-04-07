@@ -22,6 +22,7 @@ class ViewerSettings:
     last_variant: str = ""    # e.g., "t"
     last_mode: str = "single" # "single", "comparison", "network"
     window_geometry: str = ""  # saved Tk geometry string
+    cache_gb: float = 0.5     # plot cache memory limit in GB
 
 
 @dataclass

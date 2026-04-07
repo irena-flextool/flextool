@@ -278,6 +278,7 @@ class ResultViewer(tk.Toplevel):
 
         # ── Plot canvas ──────────────────────────────────────────────
         self._plot_canvas = PlotCanvas(right)
+        self._plot_canvas._cache.max_gb = self._viewer_settings.cache_gb
         self._plot_canvas.grid(row=1, column=0, sticky="nsew")
         self._plot_canvas.show_message("Select a plot to display")
 

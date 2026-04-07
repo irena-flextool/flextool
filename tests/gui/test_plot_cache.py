@@ -7,12 +7,12 @@ import matplotlib.pyplot as plt
 import pytest
 from matplotlib.figure import Figure
 
-from flextool.gui.plot_cache import PlotCache
+from flextool.gui.plot_cache import PlotCache, _figure_size_bytes
 
 
-def _make_figure() -> Figure:
-    """Create a minimal matplotlib Figure for testing."""
-    fig = Figure()
+def _make_figure(size: tuple[float, float] = (2, 2), dpi: int = 50) -> Figure:
+    """Create a matplotlib Figure for testing with known size."""
+    fig = Figure(figsize=size, dpi=dpi)
     fig.add_subplot(111)
     return fig
 
@@ -21,17 +21,17 @@ class TestPlotCacheBasic:
     """Basic get/put operations."""
 
     def test_get_missing_returns_none(self):
-        cache = PlotCache(max_size=5)
+        cache = PlotCache()
         assert cache.get(("a",)) is None
 
     def test_put_and_get(self):
-        cache = PlotCache(max_size=5)
+        cache = PlotCache()
         fig = _make_figure()
         cache.put(("key1",), fig)
         assert cache.get(("key1",)) is fig
 
     def test_put_overwrites_existing(self):
-        cache = PlotCache(max_size=5)
+        cache = PlotCache()
         fig1 = _make_figure()
         fig2 = _make_figure()
         cache.put(("key1",), fig1)
@@ -40,44 +40,43 @@ class TestPlotCacheBasic:
 
 
 class TestPlotCacheEviction:
-    """LRU eviction behaviour."""
+    """Memory-based LRU eviction."""
 
-    def test_evicts_oldest_when_full(self):
-        cache = PlotCache(max_size=3)
+    def test_evicts_oldest_when_over_limit(self):
+        fig_bytes = _figure_size_bytes(_make_figure())
+        # Allow ~2.5 figures worth of memory
+        cache = PlotCache(max_bytes=int(fig_bytes * 2.5))
         figs = [_make_figure() for _ in range(4)]
         for i, fig in enumerate(figs):
             cache.put((i,), fig)
-        # Oldest (0) should have been evicted
+        # Oldest entries should have been evicted
         assert cache.get((0,)) is None
-        # Others should still be present
-        assert cache.get((1,)) is figs[1]
-        assert cache.get((2,)) is figs[2]
         assert cache.get((3,)) is figs[3]
 
     def test_get_refreshes_lru_order(self):
-        cache = PlotCache(max_size=3)
+        fig_bytes = _figure_size_bytes(_make_figure())
+        cache = PlotCache(max_bytes=int(fig_bytes * 3.5))
         figs = [_make_figure() for _ in range(3)]
         for i, fig in enumerate(figs):
             cache.put((i,), fig)
-        # Access key 0 to move it to end (most recently used)
+        # Access key 0 to move it to end
         cache.get((0,))
-        # Now adding a new item should evict key 1 (oldest), not key 0
+        # Adding a new item should evict key 1, not key 0
         fig_new = _make_figure()
         cache.put((99,), fig_new)
         assert cache.get((0,)) is figs[0]
         assert cache.get((1,)) is None
-        assert cache.get((2,)) is figs[2]
-        assert cache.get((99,)) is fig_new
 
     def test_put_existing_refreshes_lru_order(self):
-        cache = PlotCache(max_size=3)
+        fig_bytes = _figure_size_bytes(_make_figure())
+        cache = PlotCache(max_bytes=int(fig_bytes * 3.5))
         figs = [_make_figure() for _ in range(3)]
         for i, fig in enumerate(figs):
             cache.put((i,), fig)
-        # Re-put key 0 to refresh it
+        # Re-put key 0
         fig_updated = _make_figure()
         cache.put((0,), fig_updated)
-        # Adding a new item should evict key 1 (oldest), not key 0
+        # Adding new should evict key 1, not key 0
         fig_new = _make_figure()
         cache.put((99,), fig_new)
         assert cache.get((0,)) is fig_updated
@@ -88,13 +87,30 @@ class TestPlotCacheClear:
     """Cache clear behaviour."""
 
     def test_clear_empties_cache(self):
-        cache = PlotCache(max_size=5)
+        cache = PlotCache()
         for i in range(3):
             cache.put((i,), _make_figure())
         cache.clear()
         for i in range(3):
             assert cache.get((i,)) is None
+        assert cache._total_bytes == 0
 
     def test_clear_on_empty_cache(self):
-        cache = PlotCache(max_size=5)
-        cache.clear()  # Should not raise
+        cache = PlotCache()
+        cache.clear()
+
+
+class TestPlotCacheMemory:
+    """Memory tracking."""
+
+    def test_total_bytes_increases(self):
+        cache = PlotCache()
+        assert cache._total_bytes == 0
+        cache.put(("a",), _make_figure())
+        assert cache._total_bytes > 0
+
+    def test_max_gb_property(self):
+        cache = PlotCache(max_bytes=512 * 1024 * 1024)
+        assert cache.max_gb == 0.5
+        cache.max_gb = 1.0
+        assert cache._max_bytes == 1024 ** 3

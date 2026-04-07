@@ -41,7 +41,7 @@ class PlotCanvas(ttk.Frame):
 
         self._raw_line_data: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
         self._n_out: int = 3000
-        self._cache = PlotCache(max_size=30)
+        self._cache = PlotCache()
         # Track last widget size so we know when to re-render cached PNGs
         self._last_widget_size: tuple[int, int] = (0, 0)
 
