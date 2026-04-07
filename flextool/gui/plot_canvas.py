@@ -174,14 +174,21 @@ class PlotCanvas(ttk.Frame):
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
 
-        # Clear the tk canvas so leftovers from a previous (larger) figure
-        # don't remain visible behind a smaller new figure.
+        # Resize the internal PhotoImage to match the new figure so no
+        # leftover pixels from a previous (larger) figure remain visible.
         try:
             tk_canvas = self._canvas._tkcanvas
-            w = tk_canvas.winfo_width()
-            h = tk_canvas.winfo_height()
-            tk_canvas.delete("bg_rect")
-            tk_canvas.create_rectangle(0, 0, w, h, fill=_BG, outline="", tags="bg_rect")
+            tk_canvas.configure(background=_BG)
+            dpi = fig.get_dpi() or 100
+            new_w = int(fig.get_size_inches()[0] * dpi)
+            new_h = int(fig.get_size_inches()[1] * dpi)
+            tk_canvas.delete(self._canvas._tkcanvas_image_region)
+            self._canvas._tkphoto.configure(width=new_w, height=new_h)
+            cw = tk_canvas.winfo_width()
+            ch = tk_canvas.winfo_height()
+            self._canvas._tkcanvas_image_region = tk_canvas.create_image(
+                cw // 2, ch // 2, image=self._canvas._tkphoto,
+            )
         except (AttributeError, tk.TclError):
             pass
 

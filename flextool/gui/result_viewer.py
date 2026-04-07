@@ -237,6 +237,8 @@ class ResultViewer(tk.Toplevel):
         self._plot_tree.bind("<<TreeviewSelect>>", self._on_tree_selected)
         self._plot_tree.bind("<Motion>", self._on_tree_motion)
         self._plot_tree.bind("<Leave>", self._hide_tooltip)
+        self._plot_tree.bind("<Up>", self._on_tree_key_up)
+        self._plot_tree.bind("<Down>", self._on_tree_key_down)
 
     def _build_right_column(self) -> None:
         """Build the right column: compact control bar + plot area."""
@@ -582,6 +584,64 @@ class ResultViewer(tk.Toplevel):
         self._update_file_nav()
         self._populate_variant_panel(entry)
         self._trigger_replot()
+
+    # ------------------------------------------------------------------
+    # Tree keyboard navigation
+    # ------------------------------------------------------------------
+
+    def _get_all_visible_items(self) -> list[str]:
+        """Return flat list of all visible tree items (groups + entries)."""
+        visible: list[str] = []
+        for group_iid in self._plot_tree.get_children():
+            visible.append(group_iid)
+            if self._plot_tree.item(group_iid, "open"):
+                for entry_iid in self._plot_tree.get_children(group_iid):
+                    visible.append(entry_iid)
+        return visible
+
+    def _should_skip_group(self, iid: str) -> bool:
+        """Return True if this group header should be skipped during navigation.
+
+        Open groups are skipped (their children are visible).
+        Closed groups stop the cursor so the user can open them.
+        """
+        if not iid.startswith("group_"):
+            return False
+        return bool(self._plot_tree.item(iid, "open"))
+
+    def _on_tree_key_up(self, event: tk.Event) -> str:
+        """Move selection up, skipping open group headers."""
+        visible = self._get_all_visible_items()
+        selection = self._plot_tree.selection()
+        if not selection or selection[0] not in visible:
+            return "break"
+        idx = visible.index(selection[0])
+        new_idx = idx - 1
+        while 0 <= new_idx:
+            if not self._should_skip_group(visible[new_idx]):
+                self._plot_tree.selection_set(visible[new_idx])
+                self._plot_tree.see(visible[new_idx])
+                self._plot_tree.event_generate("<<TreeviewSelect>>")
+                return "break"
+            new_idx -= 1
+        return "break"
+
+    def _on_tree_key_down(self, event: tk.Event) -> str:
+        """Move selection down, skipping open group headers."""
+        visible = self._get_all_visible_items()
+        selection = self._plot_tree.selection()
+        if not selection or selection[0] not in visible:
+            return "break"
+        idx = visible.index(selection[0])
+        new_idx = idx + 1
+        while new_idx < len(visible):
+            if not self._should_skip_group(visible[new_idx]):
+                self._plot_tree.selection_set(visible[new_idx])
+                self._plot_tree.see(visible[new_idx])
+                self._plot_tree.event_generate("<<TreeviewSelect>>")
+                return "break"
+            new_idx += 1
+        return "break"
 
     # ------------------------------------------------------------------
     # Tree tooltip

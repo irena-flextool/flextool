@@ -383,7 +383,7 @@ def _build_lines_figure(
             handles, labels_leg = ax.get_legend_handles_labels()
             if handles:
                 legend_x = 1 + LEGEND_GAP / layout.base_width
-                ax.legend(handles, labels_leg, bbox_to_anchor=(legend_x, 1), loc='upper left', fontsize=8, borderaxespad=0)
+                ax.legend(handles, labels_leg, bbox_to_anchor=(legend_x, 1), loc='upper left', fontsize='small', borderaxespad=0)
 
         ax.grid(True, alpha=0.3)
 
@@ -416,7 +416,7 @@ def _build_lines_figure(
         labels_all = list(shared_color_map.keys())
         legend_x = 1 + LEGEND_GAP / layout.base_width
         ax_legend.legend(handles, labels_all, bbox_to_anchor=(legend_x, 1),
-                         loc='upper left', fontsize=8, borderaxespad=0)
+                         loc='upper left', fontsize='small', borderaxespad=0)
 
     # ── Figure title ──
     fig_h = fig.get_size_inches()[1]
@@ -756,7 +756,7 @@ def _build_stack_figure(
                 handles = [h for h, _ in ordered]
                 labels = [l for _, l in ordered]
                 legend_x = 1 + LEGEND_GAP / layout.base_width
-                ax.legend(handles, labels, bbox_to_anchor=(legend_x, 1), loc='upper left', fontsize=8, borderaxespad=0)
+                ax.legend(handles, labels, bbox_to_anchor=(legend_x, 1), loc='upper left', fontsize='small', borderaxespad=0)
 
         ax.grid(True, alpha=0.3)
 
@@ -792,7 +792,7 @@ def _build_stack_figure(
         labels_all = list(reversed(keys))
         legend_x = 1 + LEGEND_GAP / layout.base_width
         ax_legend.legend(handles, labels_all, bbox_to_anchor=(legend_x, 1),
-                         loc='upper left', fontsize=8, borderaxespad=0)
+                         loc='upper left', fontsize='small', borderaxespad=0)
 
     # ── Figure title ──
     fig_h = fig.get_size_inches()[1]
