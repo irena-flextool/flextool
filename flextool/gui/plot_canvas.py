@@ -174,6 +174,17 @@ class PlotCanvas(ttk.Frame):
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
 
+        # Clear the tk canvas so leftovers from a previous (larger) figure
+        # don't remain visible behind a smaller new figure.
+        try:
+            tk_canvas = self._canvas._tkcanvas
+            w = tk_canvas.winfo_width()
+            h = tk_canvas.winfo_height()
+            tk_canvas.delete("bg_rect")
+            tk_canvas.create_rectangle(0, 0, w, h, fill=_BG, outline="", tags="bg_rect")
+        except (AttributeError, tk.TclError):
+            pass
+
         # Reset the toolbar's nav stack for the new figure so that
         # zoom/pan/home/back/forward work correctly.
         self._toolbar.update()

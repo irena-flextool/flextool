@@ -97,6 +97,8 @@ class ResultViewer(tk.Toplevel):
         self._dispatch_mappings: DispatchMappings | None = None
         self._dispatch_results: TimeSeriesResults | None = None
         self._dispatch_scenario: str = ""  # scenario for which dispatch data is loaded
+        self._dispatch_ylims: dict[str, tuple[float, float]] = {}  # accumulated per-nodeGroup
+        self._dispatch_columns: dict[str, list[str]] = {}  # accumulated column order
 
         # ── Font metrics for DPI-aware sizing ────────────────────────
         default_font = tkfont.nametofont("TkDefaultFont")
@@ -142,8 +144,16 @@ class ResultViewer(tk.Toplevel):
         self._build_left_column()
         self._build_right_column()
 
-        # ── Configure tree disabled tag ──────────────────────────────
+        # ── Configure tree tags and selection highlight ──────────────
         self._plot_tree.tag_configure("disabled", foreground="grey")
+
+        # Make the selected item stand out in both light and dark themes
+        style = ttk.Style()
+        style.map(
+            "Treeview",
+            background=[("selected", "#2074d5")],
+            foreground=[("selected", "#ffffff")],
+        )
 
         # ── Resolve config paths ─────────────────────────────────────
         self._single_config_path = self._resolve_config_path(
@@ -1018,6 +1028,8 @@ class ResultViewer(tk.Toplevel):
         self._dispatch_scenario = ""
         self._dispatch_mappings = None
         self._dispatch_results = None
+        self._dispatch_ylims.clear()
+        self._dispatch_columns.clear()
         if hasattr(self, '_dispatch_metadata_cache'):
             del self._dispatch_metadata_cache
         self._plot_canvas._cache.clear()
@@ -1596,6 +1608,8 @@ class ResultViewer(tk.Toplevel):
 
     def _display_dispatch(self, scenario: str, node_group: str) -> None:
         """Render and display a dispatch plot for a nodeGroup."""
+        from flextool.scenario_comparison.dispatch_plots import _compute_ylim
+
         if not self._load_dispatch_data(scenario):
             self._plot_canvas.show_message(f"Could not load dispatch data for {scenario}")
             return
@@ -1614,24 +1628,42 @@ class ResultViewer(tk.Toplevel):
 
         self._update_time_range(len(df_dispatch))
 
-        # Get cross-scenario ylim and column order from comparison metadata
-        ylim = None
-        dispatch_meta = self._load_dispatch_metadata()
-        if dispatch_meta:
-            ng_meta = dispatch_meta.get("nodeGroups", {}).get(node_group)
-            if ng_meta:
-                ylim = tuple(ng_meta["ylim"]) if "ylim" in ng_meta else None
-                # Ensure consistent column order across scenarios
-                if "columns" in ng_meta:
-                    for col in ng_meta["columns"]:
-                        if col not in df_dispatch.columns:
-                            df_dispatch[col] = 0.0
-                    df_dispatch = df_dispatch[[c for c in ng_meta["columns"] if c in df_dispatch.columns]]
-
         # Get timeline from start/duration controls
         start = self._start_var.get()
         duration = self._duration_var.get()
         timeline = (start, start + duration)
+
+        # Accumulate ylims and column order across scenarios for this nodeGroup
+        ymin, ymax = _compute_ylim(df_dispatch, timeline, inflow)
+        if node_group in self._dispatch_ylims:
+            old_min, old_max = self._dispatch_ylims[node_group]
+            self._dispatch_ylims[node_group] = (min(old_min, ymin), max(old_max, ymax))
+            # Add new columns preserving existing order
+            for col in df_dispatch.columns:
+                if col not in self._dispatch_columns[node_group]:
+                    self._dispatch_columns[node_group].append(col)
+        else:
+            self._dispatch_ylims[node_group] = (ymin, ymax)
+            self._dispatch_columns[node_group] = list(df_dispatch.columns)
+
+        # Apply accumulated ylim with margin
+        acc_min, acc_max = self._dispatch_ylims[node_group]
+        margin = (acc_max - acc_min) * 0.05
+        ylim = (acc_min - margin, acc_max + margin)
+
+        # Ensure consistent column order across scenarios
+        for col in self._dispatch_columns[node_group]:
+            if col not in df_dispatch.columns:
+                df_dispatch[col] = 0.0
+        df_dispatch = df_dispatch[[c for c in self._dispatch_columns[node_group] if c in df_dispatch.columns]]
+
+        # Also apply pre-computed metadata from comparison pipeline if available
+        dispatch_meta = self._load_dispatch_metadata()
+        if dispatch_meta:
+            ng_meta = dispatch_meta.get("nodeGroups", {}).get(node_group)
+            if ng_meta and "ylim" in ng_meta:
+                pre_min, pre_max = ng_meta["ylim"]
+                ylim = (min(ylim[0], pre_min), max(ylim[1], pre_max))
 
         # Load break times
         break_times = self._load_break_times(scenario)
