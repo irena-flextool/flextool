@@ -1065,14 +1065,16 @@ class ResultViewer(tk.Toplevel):
             return None
 
         # Determine which raw config dict to use
-        if sub_config == "default" and _is_single_config(entry):
+        if _is_single_config(entry):
+            # Direct config: the entry dict IS the plot settings
+            if sub_config != "default":
+                return None
             raw = entry
-        elif sub_config != "default" and not _is_single_config(entry):
+        else:
+            # Named-config dict: look up the sub_config key
             raw = entry.get(sub_config)
             if not isinstance(raw, dict):
                 return None
-        else:
-            return None
 
         # Filter unknown keys and handle backward-compat alias (same as orchestrator)
         unknown_keys = [k for k in raw if k not in PLOT_FIELD_NAMES]
