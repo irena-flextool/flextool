@@ -74,19 +74,20 @@ def _compute_ylim(
     return (neg_min, pos_max)
 
 
-def plot_dispatch_area(
+def _build_dispatch_figure(
     df_dispatch: pd.DataFrame,
     inflow_series: pd.Series | None,
-    output_path: str | Path,
     title: str,
     ylabel: str = "MWh/h",
     colors: dict | None = None,
     timeline: tuple[int, int] = (0, 168),
-    show_plot: bool = False,
     ylim: tuple[float, float] | None = None,
     break_times: set[str] | None = None,
-) -> None:
-    """Create a stacked area dispatch plot with demand line."""
+) -> plt.Figure | None:
+    """Build a dispatch stacked-area Figure and return it (without saving or closing).
+
+    Returns None if there's nothing to plot.
+    """
     from flextool.plot_outputs.format_helpers import insert_timeline_breaks
 
     if colors is None:
@@ -112,7 +113,7 @@ def plot_dispatch_area(
     has_curtailed = 'Curtailed' in df_dispatch.columns and (df_plot['Curtailed'].abs() > 1e-6).any()
     has_demand = inflow_series is not None and not inflow_series.empty
     if not has_area and not has_curtailed and not has_demand:
-        return
+        return None
 
     fig, ax = plt.subplots(figsize=(10, 4))
 
@@ -155,6 +156,30 @@ def plot_dispatch_area(
     handles, labels = ax.get_legend_handles_labels()
     ax.legend(handles[::-1], labels[::-1], bbox_to_anchor=(1.05, 1), loc='upper left')
 
+    return fig
+
+
+def plot_dispatch_area(
+    df_dispatch: pd.DataFrame,
+    inflow_series: pd.Series | None,
+    output_path: str | Path,
+    title: str,
+    ylabel: str = "MWh/h",
+    colors: dict | None = None,
+    timeline: tuple[int, int] = (0, 168),
+    show_plot: bool = False,
+    ylim: tuple[float, float] | None = None,
+    break_times: set[str] | None = None,
+) -> None:
+    """Create a stacked area dispatch plot with demand line."""
+    fig = _build_dispatch_figure(
+        df_dispatch, inflow_series, title,
+        ylabel=ylabel, colors=colors, timeline=timeline,
+        ylim=ylim, break_times=break_times,
+    )
+    if fig is None:
+        return
+
     # Save (bbox_inches='tight' in savefig handles layout)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -162,7 +187,7 @@ def plot_dispatch_area(
 
     if show_plot:
         plt.show()
-    plt.close()
+    plt.close(fig)
 
 
 def create_dispatch_plots(

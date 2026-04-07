@@ -448,6 +448,91 @@ def _render_lines_figure(
     plt.close(fig)
 
 
+def build_line_figures(
+    df_plot: pd.DataFrame,
+    plot_name: str,
+    plot_dir: str,
+    sub_levels: list[int],
+    line_levels: list[int],
+    rows: tuple[int, int] = (0, 167),
+    subplots_per_row: int = 2,
+    legend_position: str = 'right',
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    base_width_per_col: float = 6,
+    subplot_height: float = 4,
+    axis_bounds=None,
+    axis_tick_format='1,.0f',
+    always_include_zero_in_axis: bool = True,
+    max_items_per_plot: int = 10,
+    max_subplots_per_file: int = 6,
+    only_first_file: bool = False,
+    subplots_by_magnitudes: bool = False,
+) -> list[tuple[str, 'plt.Figure']]:
+    """Build line-plot Figures and return them without saving or closing.
+
+    Returns a list of (batch_title, Figure) pairs -- one per file batch.
+    """
+    # Convert level indices to level names
+    if isinstance(df_plot.columns, pd.MultiIndex):
+        line_level_names = [df_plot.columns.names[i] for i in line_levels]
+    else:
+        line_level_names = line_levels
+
+    # Get x-axis index
+    if isinstance(df_plot.index, pd.MultiIndex):
+        time_index = df_plot.index.get_level_values(-1).astype(str)
+    else:
+        time_index = df_plot.index.astype(str)
+
+    # Build effective_plots with item splitting (and optional magnitude splitting)
+    effective_plots = _build_effective_plots(
+        df_plot, sub_levels, line_level_names, max_items_per_plot,
+        subplots_by_magnitudes=subplots_by_magnitudes,
+    )
+    if not effective_plots:
+        return []
+
+    # Build shared color map before splitting into file batches
+    shared_color_map = None
+    if legend_position == 'shared' and line_level_names:
+        all_labels: list[str] = []
+        for _, df_sub in effective_plots:
+            for item in _get_column_items(df_sub, line_level_names):
+                label = str(item)
+                if label not in all_labels:
+                    all_labels.append(label)
+        all_labels.sort()
+        shared_color_map = build_shared_color_map(all_labels)
+
+    # Compute layout once across ALL effective_plots
+    layout = _compute_line_layout(
+        effective_plots, line_level_names,
+        legend_position, subplots_per_row,
+        base_width_per_col, subplot_height,
+        axis_tick_format,
+    )
+
+    # Split into file batches
+    file_batches = _make_file_batches(
+        effective_plots, max_subplots_per_file, None, plot_dir, plot_name
+    )
+    batches_to_build = file_batches[:1] if only_first_file else file_batches
+    n_total = len(file_batches)
+    result: list[tuple[str, plt.Figure]] = []
+    for batch_idx, (batch, _batch_filepath) in enumerate(batches_to_build, start=1):
+        batch_title = f"{plot_name} ({batch_idx}/{n_total})" if n_total > 1 else plot_name
+        fig = _build_lines_figure(
+            batch, batch_title, sub_levels, line_level_names, time_index,
+            subplots_per_row, legend_position,
+            xlabel, ylabel,
+            axis_bounds, axis_tick_format, always_include_zero_in_axis,
+            layout, shared_color_map,
+        )
+        result.append((batch_title, fig))
+    return result
+
+
 def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     rows=(0,167), subplots_per_row=2, legend_position='right',
     xlabel=None, ylabel=None, base_width_per_col=6, subplot_height=4,
@@ -734,6 +819,89 @@ def _render_stack_figure(
     else:
         plt.savefig(f'{output_filepath}')
     plt.close(fig)
+
+
+def build_stack_figures(
+    df_plot: pd.DataFrame,
+    plot_name: str,
+    plot_dir: str,
+    stack_levels: list[int],
+    sub_levels: list[int],
+    rows: tuple[int, int] = (0, 167),
+    subplots_per_row: int = 2,
+    legend_position: str = 'right',
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    base_width_per_col: float = 6,
+    subplot_height: float = 4,
+    axis_bounds=None,
+    axis_tick_format='1,.0f',
+    always_include_zero_in_axis: bool = True,
+    max_items_per_plot: int = 10,
+    max_subplots_per_file: int = 6,
+    only_first_file: bool = False,
+) -> list[tuple[str, 'plt.Figure']]:
+    """Build stacked-area Figures and return them without saving or closing.
+
+    Returns a list of (batch_title, Figure) pairs -- one per file batch.
+    """
+    # Convert level indices to level names
+    if isinstance(df_plot.columns, pd.MultiIndex):
+        stack_level_names = [df_plot.columns.names[i] for i in stack_levels]
+    else:
+        stack_level_names = stack_levels
+
+    # Get x-axis index
+    if isinstance(df_plot.index, pd.MultiIndex):
+        time_index = df_plot.index.get_level_values(-1).astype(str)
+    else:
+        time_index = df_plot.index.astype(str)
+
+    # Build effective_plots with item splitting
+    effective_plots = _build_effective_plots(
+        df_plot, sub_levels, stack_level_names, max_items_per_plot
+    )
+    if not effective_plots:
+        return []
+
+    # Build shared color map before splitting into file batches
+    shared_color_map = None
+    if legend_position == 'shared' and stack_level_names:
+        all_labels: list[str] = []
+        for _, df_sub in effective_plots:
+            for item in _get_column_items(df_sub, stack_level_names):
+                label = str(item)
+                if label not in all_labels:
+                    all_labels.append(label)
+        all_labels.sort()
+        shared_color_map = build_shared_color_map(all_labels)
+
+    # Compute layout once across ALL effective_plots
+    layout = _compute_line_layout(
+        effective_plots, stack_level_names,
+        legend_position, subplots_per_row,
+        base_width_per_col, subplot_height,
+        axis_tick_format,
+    )
+
+    # Split into file batches
+    file_batches = _make_file_batches(
+        effective_plots, max_subplots_per_file, None, plot_dir, plot_name
+    )
+    batches_to_build = file_batches[:1] if only_first_file else file_batches
+    n_total = len(file_batches)
+    result: list[tuple[str, plt.Figure]] = []
+    for batch_idx, (batch, _batch_filepath) in enumerate(batches_to_build, start=1):
+        batch_title = f"{plot_name} ({batch_idx}/{n_total})" if n_total > 1 else plot_name
+        fig = _build_stack_figure(
+            batch, batch_title, sub_levels, stack_level_names, time_index,
+            subplots_per_row, legend_position,
+            xlabel, ylabel,
+            axis_bounds, axis_tick_format, always_include_zero_in_axis,
+            layout, shared_color_map,
+        )
+        result.append((batch_title, fig))
+    return result
 
 
 def plot_dt_stack_sub(df_plot, plot_name, plot_dir, stack_levels, sub_levels,

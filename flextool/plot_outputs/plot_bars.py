@@ -922,6 +922,191 @@ def _render_bar_figure(
     plt.close(fig)
 
 
+def build_bar_figures(
+    df: pd.DataFrame,
+    key_name: str,
+    plot_dir: str,
+    stack_levels: list[int],
+    expand_axis_levels: list[int],
+    sub_levels: list[int] | None = None,
+    grouped_bar_levels: list[int] | None = None,
+    legend_position: str = 'right',
+    subplots_per_row: int = 2,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    bar_orientation: str = 'horizontal',
+    base_bar_length: float = 4,
+    value_label=False,
+    axis_bounds=None,
+    axis_tick_format='1,.0f',
+    always_include_zero_in_axis: bool = True,
+    max_items_per_plot: int = 10,
+    max_subplots_per_file: int = 6,
+    only_first_file: bool = False,
+    skip_data_with_only_zeroes: bool = False,
+) -> list[tuple[str, 'plt.Figure']]:
+    """Build bar-chart Figures and return them without saving or closing.
+
+    Returns a list of (batch_title, Figure) pairs -- one per file batch.
+    Figures where all data is empty are omitted (not returned as None).
+    """
+    if sub_levels is None:
+        sub_levels = []
+
+    # Validate mutual exclusivity
+    if stack_levels and grouped_bar_levels:
+        raise ValueError(
+            "Cannot use both 'stack_levels' and 'grouped_bar_levels' simultaneously."
+        )
+
+    # Resolve value_label
+    if value_label is True or value_label == 'true':
+        value_fmt = 'dynamic'
+    elif value_label:
+        value_fmt = str(value_label)
+    else:
+        value_fmt = None
+
+    if stack_levels is None:
+        stack_levels = []
+    if grouped_bar_levels is None:
+        grouped_bar_levels = []
+
+    # Convert level indices to names
+    if isinstance(df.columns, pd.MultiIndex):
+        stack_level_names = [df.columns.names[i] for i in stack_levels] if stack_levels else []
+        expand_axis_level_names = [df.columns.names[i] for i in expand_axis_levels] if expand_axis_levels else []
+        grouped_bar_level_names = [df.columns.names[i] for i in grouped_bar_levels] if grouped_bar_levels else []
+    else:
+        stack_level_names = stack_levels
+        expand_axis_level_names = [df.columns.name] if expand_axis_levels else []
+        grouped_bar_level_names = [df.columns.name] if grouped_bar_levels else []
+
+    subs = _get_unique_levels(df.columns, sub_levels)
+
+    # Compute expand-group count
+    if expand_axis_levels and isinstance(df.columns, pd.MultiIndex):
+        if len(expand_axis_level_names) == 1:
+            expand_level_name = expand_axis_level_names[0]
+            n_expand_groups = len(df.columns.get_level_values(expand_level_name).unique())
+        else:
+            expand_level_name = expand_axis_level_names[0]
+            expand_frame = df.columns.to_frame()[expand_axis_level_names].drop_duplicates()
+            n_expand_groups = len(expand_frame)
+    else:
+        expand_level_name = None
+        n_expand_groups = 1
+
+    # Build effective_plots
+    effective_plots: list[tuple[str | None, pd.DataFrame]] = []
+    for sub in subs:
+        df_sub = _extract_subplot_data(df, sub, sub_levels)
+        df_sub = df_sub.dropna(how='all')
+        if df_sub.empty:
+            continue
+        df_sub = df_sub.fillna(0)
+        title = (
+            ' | '.join(str(v) for v in sub) if isinstance(sub, tuple)
+            else str(sub) if sub is not None else None
+        )
+        n_rows = len(df_sub)
+        effective_max = max_items_per_plot // max(n_expand_groups, 1) if max_items_per_plot else 0
+        effective_max = max(effective_max, 1) if effective_max else 0
+        if effective_max and n_rows > effective_max:
+            max_row_items = effective_max
+            if n_rows > max_row_items:
+                for i in range(0, n_rows, max_row_items):
+                    chunk = df_sub.iloc[i:i + max_row_items]
+                    chunk_label = f"{title}_{i // max_row_items + 1}" if title else None
+                    effective_plots.append((chunk_label, chunk))
+            elif expand_level_name is not None:
+                max_groups = max(1, max_items_per_plot // n_rows)
+                all_groups = df_sub.columns.get_level_values(expand_level_name).unique().tolist()
+                for gi, grp_start in enumerate(range(0, len(all_groups), max_groups)):
+                    grp_chunk = all_groups[grp_start:grp_start + max_groups]
+                    mask = df_sub.columns.get_level_values(expand_level_name).isin(grp_chunk)
+                    chunk = df_sub.loc[:, mask]
+                    chunk_label = f"{title}_{gi + 1}" if title else None
+                    effective_plots.append((chunk_label, chunk))
+            else:
+                effective_plots.append((title, df_sub))
+        else:
+            effective_plots.append((title, df_sub))
+
+    if not effective_plots:
+        return []
+
+    # Build shared color map
+    shared_color_map = None
+    if legend_position == 'shared' and (stack_levels or grouped_bar_levels):
+        all_labels: list[str] = []
+        for _, df_sub in effective_plots:
+            if grouped_bar_levels:
+                if len(grouped_bar_level_names) == 1:
+                    items = df_sub.columns.get_level_values(
+                        grouped_bar_level_names[0]).unique().tolist()
+                else:
+                    item_df = df_sub.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
+                    items = [tuple(row) for row in item_df.values]
+            else:
+                if len(stack_level_names) == 1:
+                    if isinstance(df_sub.columns, pd.MultiIndex):
+                        items = df_sub.columns.get_level_values(
+                            stack_level_names[0]).unique().tolist()
+                    else:
+                        items = df_sub.columns.unique().tolist()
+                else:
+                    stack_df = df_sub.columns.to_frame()[stack_level_names].drop_duplicates()
+                    items = [tuple(row) for row in stack_df.values]
+            for item in items:
+                label = _format_legend_labels([item])[0]
+                if label not in all_labels:
+                    all_labels.append(label)
+        all_labels.sort()
+        shared_color_map = build_shared_color_map(all_labels)
+
+    # Compute layout
+    layout = _compute_bar_layout(
+        effective_plots, df,
+        expand_axis_levels, expand_axis_level_names,
+        stack_levels, stack_level_names,
+        grouped_bar_levels, grouped_bar_level_names,
+        legend_position, subplots_per_row,
+        base_bar_length,
+    )
+
+    # Split into file batches
+    _max = max_subplots_per_file if max_subplots_per_file else len(effective_plots)
+    if len(effective_plots) <= _max:
+        _file_batches = [(effective_plots, None)]
+    else:
+        _file_batches = []
+        for i in range(0, len(effective_plots), _max):
+            batch = effective_plots[i:i + _max]
+            _file_batches.append((batch, None))
+
+    batches_to_build = _file_batches[:1] if only_first_file else _file_batches
+    n_total_batches = len(_file_batches)
+    result: list[tuple[str, plt.Figure]] = []
+    for batch_idx, (batch, _) in enumerate(batches_to_build, start=1):
+        batch_title = f"{key_name} ({batch_idx}/{n_total_batches})" if n_total_batches > 1 else key_name
+        fig = _build_bar_figure(
+            batch, df, batch_title, plot_dir,
+            stack_levels, stack_level_names,
+            expand_axis_levels, expand_axis_level_names,
+            sub_levels,
+            grouped_bar_levels, grouped_bar_level_names,
+            legend_position, subplots_per_row,
+            xlabel, ylabel, bar_orientation, base_bar_length,
+            value_fmt, axis_bounds, axis_tick_format,
+            always_include_zero_in_axis,
+            layout, shared_color_map, skip_data_with_only_zeroes,
+        )
+        if fig is not None:
+            result.append((batch_title, fig))
+    return result
+
+
 def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_axis_levels,
         sub_levels=[], grouped_bar_levels=None,
         legend_position='right', subplots_per_row=2,
