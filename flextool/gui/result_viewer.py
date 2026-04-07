@@ -8,12 +8,17 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import ttk
 
+import pandas as pd
+import yaml
+
 from flextool.gui.data_models import ProjectSettings
 from flextool.gui.network_graph import build_network_figure
 from flextool.gui.plot_canvas import PlotCanvas
 from flextool.gui.plot_config_reader import PlotEntry, PlotGroup, PlotVariant, parse_plot_config
 from flextool.gui.project_utils import get_projects_dir
 from flextool.gui.settings_io import save_project_settings
+from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config
+from flextool.plot_outputs.orchestrator import prepare_plot_data
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +66,10 @@ class ResultViewer(tk.Toplevel):
         # File navigation state
         self._file_index = 0
         self._file_count = 1
+
+        # Caches for parquet pipeline
+        self._yaml_cache: dict[Path, dict] = {}
+        self._break_times_cache: dict[str, set[str] | None] = {}
 
         # ── Font metrics for DPI-aware sizing ────────────────────────
         default_font = tkfont.nametofont("TkDefaultFont")
@@ -894,6 +903,8 @@ class ResultViewer(tk.Toplevel):
 
     def _on_refresh(self) -> None:
         """Re-scan scenarios and re-populate everything."""
+        self._yaml_cache.clear()
+        self._break_times_cache.clear()
         self._populate_scenarios()
         self._on_mode_changed()
 
@@ -994,6 +1005,140 @@ class ResultViewer(tk.Toplevel):
 
         return split_files
 
+    def _load_plot_config(self, result_key: str, sub_config: str) -> PlotConfig | None:
+        """Load PlotConfig for a result_key from the active YAML config file."""
+        config_path = self._get_config_path_for_mode()
+
+        # Use cached YAML if available
+        if config_path not in self._yaml_cache:
+            if not config_path.is_file():
+                return None
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+            except (yaml.YAMLError, OSError) as exc:
+                logger.error("Failed to read plot config %s: %s", config_path, exc)
+                return None
+            if not isinstance(data, dict):
+                return None
+            self._yaml_cache[config_path] = data
+
+        data = self._yaml_cache[config_path]
+        plots = data.get("plots")
+        if not isinstance(plots, dict):
+            return None
+
+        entry = plots.get(result_key)
+        if not isinstance(entry, dict):
+            return None
+
+        # Determine which raw config dict to use
+        if sub_config == "default" and _is_single_config(entry):
+            raw = entry
+        elif sub_config != "default" and not _is_single_config(entry):
+            raw = entry.get(sub_config)
+            if not isinstance(raw, dict):
+                return None
+        else:
+            return None
+
+        # Filter unknown keys and handle backward-compat alias (same as orchestrator)
+        unknown_keys = [k for k in raw if k not in PLOT_FIELD_NAMES]
+        if unknown_keys:
+            logger.debug(
+                "Plot config '%s': ignoring unknown setting(s): %s",
+                result_key, ", ".join(repr(k) for k in unknown_keys),
+            )
+        filtered = {k: v for k, v in raw.items() if k in PLOT_FIELD_NAMES}
+        if "axis_scale_min_max" in filtered and "axis_bounds" not in filtered:
+            filtered["axis_bounds"] = filtered.pop("axis_scale_min_max")
+        elif "axis_scale_min_max" in filtered:
+            del filtered["axis_scale_min_max"]
+
+        try:
+            return PlotConfig(**filtered)
+        except TypeError as exc:
+            logger.error("Failed to create PlotConfig for '%s': %s", result_key, exc)
+            return None
+
+    def _load_parquet(self, scenario: str, result_key: str) -> pd.DataFrame | None:
+        """Load a parquet file for the given scenario and result_key."""
+        path = self._project_path / "output_parquet" / scenario / f"{result_key}.parquet"
+        if not path.exists():
+            return None
+        return pd.read_parquet(path)
+
+    def _load_break_times(self, scenario: str) -> set[str] | None:
+        """Load timeline break times from parquet, cached per scenario."""
+        if scenario in self._break_times_cache:
+            return self._break_times_cache[scenario]
+
+        path = self._project_path / "output_parquet" / scenario / "timeline_breaks.parquet"
+        if not path.exists():
+            self._break_times_cache[scenario] = None
+            return None
+
+        try:
+            df = pd.read_parquet(path)
+            # Extract break time values as strings
+            if df.empty:
+                result: set[str] | None = None
+            else:
+                # The parquet has a column with break time values
+                result = set(df.iloc[:, 0].astype(str))
+            self._break_times_cache[scenario] = result
+            return result
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to read timeline breaks for %s", scenario, exc_info=True)
+            self._break_times_cache[scenario] = None
+            return None
+
+    def _display_from_parquet(self, scenario: str, entry: PlotEntry, variant: PlotVariant) -> None:
+        """Load parquet, build PlotConfig, render Figure, display it."""
+        import matplotlib.pyplot as plt
+
+        # 1. Load parquet
+        df = self._load_parquet(scenario, variant.result_key)
+        if df is None:
+            self._plot_canvas.show_message(f"No data: {variant.result_key}.parquet")
+            return
+
+        # 2. Load plot config
+        config = self._load_plot_config(variant.result_key, variant.sub_config)
+        if config is None:
+            self._plot_canvas.show_message(f"No config for {variant.result_key}")
+            return
+
+        # 3. Load break times
+        break_times = self._load_break_times(scenario)
+
+        # 4. Build plot name (for figure title)
+        plot_name = config.plot_name or variant.full_name
+
+        # 5. Get plot_rows from start/duration controls
+        start = self._start_var.get()
+        duration = self._duration_var.get()
+        plot_rows = (start, start + duration)
+
+        # 6. Call prepare_plot_data
+        figures = prepare_plot_data(df, config, plot_name, plot_rows, break_times)
+
+        # 7. Update file navigation
+        self._file_count = max(len(figures), 1)
+        self._file_index = min(self._file_index, max(0, self._file_count - 1))
+        self._update_file_nav()
+
+        # 8. Display the figure at current file_index
+        if figures:
+            filename, fig = figures[self._file_index]
+            self._plot_canvas.display_figure(fig)
+            # Close figures we're not displaying to free memory
+            for i, (_, f) in enumerate(figures):
+                if i != self._file_index:
+                    plt.close(f)
+        else:
+            self._plot_canvas.show_message(f"No plottable data for {variant.full_name}")
+
     def _trigger_replot(self) -> None:
         """Called when scenario, entry, or variant changes."""
         scenarios = self._get_selected_scenarios()
@@ -1015,18 +1160,19 @@ class ResultViewer(tk.Toplevel):
             self._plot_canvas.show_message("No variant selected")
             return
 
-        # Find PNG files
-        png_files = self._find_png_files(scenarios[0], entry, variant)
-        self._file_count = max(len(png_files), 1)
-        self._file_index = min(self._file_index, max(0, self._file_count - 1))
-        self._update_file_nav()
-
-        if png_files:
-            self._plot_canvas.display_png(png_files[self._file_index])
+        mode = self._mode.get()
+        if mode == "single":
+            self._display_from_parquet(scenarios[0], entry, variant)
         else:
-            self._plot_canvas.show_message(
-                f"No plot files found for\n{variant.full_name}"
-            )
+            # Comparison mode: fall back to PNG for now
+            png_files = self._find_png_files(scenarios[0], entry, variant)
+            self._file_count = max(len(png_files), 1)
+            self._file_index = min(self._file_index, max(0, self._file_count - 1))
+            self._update_file_nav()
+            if png_files:
+                self._plot_canvas.display_png(png_files[self._file_index])
+            else:
+                self._plot_canvas.show_message(f"No plot files found for\n{variant.full_name}")
 
     # ------------------------------------------------------------------
     # Network rendering
