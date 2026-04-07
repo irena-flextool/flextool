@@ -18,14 +18,35 @@ from flextool.scenario_comparison.config_builder import get_scenarios_from_confi
 
 def _auto_assign_node_colors(columns) -> dict[str, str]:
     """Auto-assign tab20 colors for node dispatch columns."""
+    return _auto_assign_node_colors_with_existing(columns, {})
+
+
+def _auto_assign_node_colors_with_existing(
+    columns, existing: dict[str, str | None],
+) -> dict[str, str]:
+    """Auto-assign tab20 colors for columns not already in *existing*."""
     cmap = plt.cm.tab20(np.linspace(0, 1, 20))
-    colors: dict[str, str] = {}
-    for i, col in enumerate(columns):
+    colors = dict(existing)
+    # Also include special colors as defaults
+    for col, color in DEFAULT_SPECIAL_COLORS.items():
+        if col not in colors:
+            colors[col] = color
+    color_idx = 0
+    for col in columns:
         col_str = str(col)
-        if col_str in DEFAULT_SPECIAL_COLORS:
-            colors[col_str] = DEFAULT_SPECIAL_COLORS[col_str]
-        else:
-            colors[col_str] = matplotlib.colors.rgb2hex(cmap[i % 20])
+        if col_str in colors and colors[col_str] is not None:
+            continue
+        # Check base name (_in/_out suffix)
+        base = col_str
+        if col_str.endswith('_in'):
+            base = col_str[:-3]
+        elif col_str.endswith('_out'):
+            base = col_str[:-4]
+        if base in colors and colors[base] is not None:
+            colors[col_str] = colors[base]
+            continue
+        colors[col_str] = matplotlib.colors.rgb2hex(cmap[color_idx % 20])
+        color_idx += 1
     return colors
 
 
@@ -92,7 +113,10 @@ def _build_dispatch_figure(
     from flextool.plot_outputs.format_helpers import insert_timeline_breaks
 
     if colors is None:
-        colors = DEFAULT_SPECIAL_COLORS
+        colors = {}
+
+    # Auto-assign colors for columns not already in the colors dict
+    colors = _auto_assign_node_colors_with_existing(df_dispatch.columns, colors)
 
     # Get plot colors for columns (excluding 'Curtailed' which is plotted as line)
     plot_cols = [col for col in df_dispatch.columns if col != 'Curtailed']

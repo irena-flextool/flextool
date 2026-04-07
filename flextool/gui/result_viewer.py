@@ -1464,7 +1464,7 @@ class ResultViewer(tk.Toplevel):
         if not parquet_dir.is_dir():
             return
 
-        # Load dispatch groups (the authoritative list of plottable groups)
+        # Load dispatch groups (groups flagged for dispatch output)
         dispatch_groups_path = parquet_dir / "outputNodeGroup_does_specified_flows.parquet"
         if not dispatch_groups_path.exists():
             return
@@ -1473,7 +1473,17 @@ class ResultViewer(tk.Toplevel):
         if df.empty:
             return
 
-        node_groups = sorted(df['group'].unique().tolist())
+        flagged_groups = set(df['group'].unique())
+
+        # Filter to groups that actually have node members (group_node.parquet)
+        group_node_path = parquet_dir / "group_node.parquet"
+        if group_node_path.exists():
+            gn_df = pd.read_parquet(group_node_path)
+            if not gn_df.empty and 'group' in gn_df.columns:
+                groups_with_nodes = set(gn_df['group'].unique())
+                flagged_groups &= groups_with_nodes
+
+        node_groups = sorted(flagged_groups)
 
         # Insert as flat list items (no group hierarchy)
         for ng in node_groups:
