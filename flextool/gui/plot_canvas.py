@@ -51,6 +51,7 @@ class PlotCanvas(ttk.Frame):
         self._cache = PlotCache()
         self._last_widget_size: tuple[int, int] = (0, 0)
         self._resize_pending: str | None = None
+        self._natural_size_inches: tuple[float, float] = (6.0, 4.0)
 
         # Create a blank figure that fills the canvas with a solid bg
         self._figure = Figure(facecolor=_BG)
@@ -112,7 +113,10 @@ class PlotCanvas(ttk.Frame):
             return
 
         dpi = self._figure.get_dpi() or 100
-        self._figure.set_size_inches(w / dpi, h / dpi, forward=False)
+        nat_w, nat_h = self._natural_size_inches
+        # Scale down if figure exceeds canvas, preserving aspect ratio
+        scale = min(w / (nat_w * dpi), h / (nat_h * dpi), 1.0)
+        self._figure.set_size_inches(nat_w * scale, nat_h * scale, forward=False)
 
         # Recreate the internal PhotoImage at the new pixel size
         # (matplotlib's resize handler normally does this)
@@ -144,20 +148,27 @@ class PlotCanvas(ttk.Frame):
     def display_figure(self, fig: Figure) -> None:
         """Display a matplotlib Figure on the canvas.
 
-        The figure is sized to match the canvas widget.  Only one
-        ``draw()`` call is made — no jitter, no redundant renders.
+        Respects the figure's original size.  If the figure is larger
+        than the canvas, it is scaled down (preserving aspect ratio).
+        Only one ``draw()`` call is made — no jitter, no redundant renders.
         """
         if fig is self._figure:
             self._canvas.draw()
             return
 
-        # Match figure size to the current canvas widget size.
         fig.set_facecolor(_BG)
+        # Remember the figure's designed size for resize handling
+        self._natural_size_inches = tuple(fig.get_size_inches())
+
+        dpi = fig.get_dpi() or 100
+        nat_w, nat_h = self._natural_size_inches
         w_px = self._canvas_widget.winfo_width()
         h_px = self._canvas_widget.winfo_height()
-        dpi = fig.get_dpi() or 100
         if w_px > 1 and h_px > 1:
-            fig.set_size_inches(w_px / dpi, h_px / dpi, forward=False)
+            # Scale down if figure exceeds canvas, preserving aspect ratio
+            scale = min(w_px / (nat_w * dpi), h_px / (nat_h * dpi), 1.0)
+            if scale < 1.0:
+                fig.set_size_inches(nat_w * scale, nat_h * scale, forward=False)
 
         self._figure = fig
         self._canvas.figure = fig
