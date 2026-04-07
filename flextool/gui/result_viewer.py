@@ -1018,6 +1018,8 @@ class ResultViewer(tk.Toplevel):
         self._dispatch_scenario = ""
         self._dispatch_mappings = None
         self._dispatch_results = None
+        if hasattr(self, '_dispatch_metadata_cache'):
+            del self._dispatch_metadata_cache
         self._plot_canvas._cache.clear()
         self._parquet_cache_key = ("", "")
         self._parquet_cache_df = None
@@ -1575,6 +1577,23 @@ class ResultViewer(tk.Toplevel):
         self._dispatch_scenario = scenario
         return True
 
+    def _load_dispatch_metadata(self) -> dict | None:
+        """Load cross-scenario dispatch metadata (ylims, columns) if available."""
+        if hasattr(self, '_dispatch_metadata_cache'):
+            return self._dispatch_metadata_cache
+        import json
+        meta_path = self._project_path / "output_parquet_comparison" / "_dispatch_metadata.json"
+        if not meta_path.exists():
+            self._dispatch_metadata_cache = None
+            return None
+        try:
+            with open(meta_path, "r") as f:
+                self._dispatch_metadata_cache = json.load(f)
+            return self._dispatch_metadata_cache
+        except (json.JSONDecodeError, OSError):
+            self._dispatch_metadata_cache = None
+            return None
+
     def _display_dispatch(self, scenario: str, node_group: str) -> None:
         """Render and display a dispatch plot for a nodeGroup."""
         if not self._load_dispatch_data(scenario):
@@ -1595,6 +1614,20 @@ class ResultViewer(tk.Toplevel):
 
         self._update_time_range(len(df_dispatch))
 
+        # Get cross-scenario ylim and column order from comparison metadata
+        ylim = None
+        dispatch_meta = self._load_dispatch_metadata()
+        if dispatch_meta:
+            ng_meta = dispatch_meta.get("nodeGroups", {}).get(node_group)
+            if ng_meta:
+                ylim = tuple(ng_meta["ylim"]) if "ylim" in ng_meta else None
+                # Ensure consistent column order across scenarios
+                if "columns" in ng_meta:
+                    for col in ng_meta["columns"]:
+                        if col not in df_dispatch.columns:
+                            df_dispatch[col] = 0.0
+                    df_dispatch = df_dispatch[[c for c in ng_meta["columns"] if c in df_dispatch.columns]]
+
         # Get timeline from start/duration controls
         start = self._start_var.get()
         duration = self._duration_var.get()
@@ -1608,6 +1641,7 @@ class ResultViewer(tk.Toplevel):
             df_dispatch, inflow,
             title=f"{node_group} \u2014 {scenario}",
             timeline=timeline,
+            ylim=ylim,
             break_times=break_times,
         )
 

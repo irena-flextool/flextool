@@ -127,6 +127,26 @@ def run(
             bt_df.to_parquet(os.path.join(comparison_parquet_dir, "timeline_breaks.parquet"))
         print(f"Wrote comparison parquets to: {comparison_parquet_dir}")
 
+    # Compute and save dispatch metadata (cross-scenario ylims) for the viewer
+    if combined_mapping_dfs and comparison_parquet_dir:
+        try:
+            from flextool.scenario_comparison.dispatch_plots import compute_dispatch_metadata
+            # Use same timeline as dispatch plots
+            if plot_rows and len(plot_rows) >= 2:
+                meta_timeline = (int(plot_rows[0]), int(plot_rows[1]) + 1)
+            else:
+                meta_timeline = (0, 168)
+            dispatch_meta = compute_dispatch_metadata(
+                results, mappings, scenarios, meta_timeline,
+            )
+            import json as _json
+            meta_path = os.path.join(comparison_parquet_dir, "_dispatch_metadata.json")
+            with open(meta_path, "w") as f:
+                _json.dump(dispatch_meta, f, indent=2)
+            print(f"Wrote dispatch metadata to: {meta_path}")
+        except Exception as exc:
+            _logging.warning("Dispatch metadata computation failed (non-fatal): %s", exc)
+
     # Compute plot plans for the viewer
     plan_output_dir = comparison_parquet_dir if comparison_parquet_dir else plot_dir
     try:

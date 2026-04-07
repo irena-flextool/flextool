@@ -216,6 +216,65 @@ def plot_dispatch_area(
     plt.close(fig)
 
 
+def compute_dispatch_metadata(
+    results: TimeSeriesResults,
+    mappings: DispatchMappings,
+    scenarios: list[str],
+    timeline: tuple[int, int] = (0, 168),
+) -> dict:
+    """Compute cross-scenario ylims and column order per nodeGroup.
+
+    Returns a dict suitable for JSON serialization::
+
+        {
+            "nodeGroups": {
+                "GroupName": {
+                    "ylim": [ymin, ymax],
+                    "columns": ["col1", "col2", ...]
+                },
+                ...
+            }
+        }
+    """
+    dispatch_groups_df = mappings.dispatch_groups
+    node_groups: list[str] = []
+    if dispatch_groups_df is not None and not dispatch_groups_df.empty:
+        node_groups = list(dispatch_groups_df['group'].unique())
+
+    ng_ylims: dict[str, tuple[float, float]] = {}
+    ng_columns: dict[str, list[str]] = {}
+
+    for scenario in scenarios:
+        for ng in node_groups:
+            df_dispatch, inflow = prepare_dispatch_data(
+                results, mappings, scenario, ng,
+            )
+            if df_dispatch is not None and not df_dispatch.empty:
+                ymin, ymax = _compute_ylim(df_dispatch, timeline, inflow)
+                if ng in ng_ylims:
+                    ng_ylims[ng] = (min(ng_ylims[ng][0], ymin), max(ng_ylims[ng][1], ymax))
+                    for col in df_dispatch.columns:
+                        if col not in ng_columns[ng]:
+                            ng_columns[ng].append(col)
+                else:
+                    ng_ylims[ng] = (ymin, ymax)
+                    ng_columns[ng] = list(df_dispatch.columns)
+
+    # Add margin
+    for key, (ymin, ymax) in ng_ylims.items():
+        margin = (ymax - ymin) * 0.05
+        ng_ylims[key] = (ymin - margin, ymax + margin)
+
+    meta: dict = {"nodeGroups": {}}
+    for ng in node_groups:
+        if ng in ng_ylims:
+            meta["nodeGroups"][ng] = {
+                "ylim": list(ng_ylims[ng]),
+                "columns": ng_columns.get(ng, []),
+            }
+    return meta
+
+
 def create_dispatch_plots(
     results: TimeSeriesResults,
     mappings: DispatchMappings,
