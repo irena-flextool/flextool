@@ -1096,11 +1096,19 @@ class ResultViewer(tk.Toplevel):
             return None
 
     def _load_parquet(self, scenario: str, result_key: str) -> pd.DataFrame | None:
-        """Load a parquet file for the given scenario and result_key."""
+        """Load a parquet file for the given scenario and result_key.
+
+        Per-scenario parquets have 'scenario' as the top column MultiIndex
+        level (added at write time).  Strip it so the DataFrame matches the
+        dimension rules in the plot config.
+        """
         path = self._project_path / "output_parquet" / scenario / f"{result_key}.parquet"
         if not path.exists():
             return None
-        return pd.read_parquet(path)
+        df = pd.read_parquet(path)
+        if isinstance(df.columns, pd.MultiIndex) and 'scenario' in df.columns.names:
+            df = df.droplevel('scenario', axis=1)
+        return df
 
     def _load_break_times(self, scenario: str) -> set[str] | None:
         """Load timeline break times from parquet, cached per scenario."""
@@ -1158,7 +1166,12 @@ class ResultViewer(tk.Toplevel):
         plot_rows = (start, start + duration)
 
         # 7. Call prepare_plot_data
-        figures = prepare_plot_data(df, config, plot_name, plot_rows, break_times)
+        try:
+            figures = prepare_plot_data(df, config, plot_name, plot_rows, break_times)
+        except Exception as exc:
+            logger.error("prepare_plot_data failed for '%s': %s", variant.result_key, exc)
+            self._plot_canvas.show_message(f"Plot error: {exc}")
+            return
 
         # 8. Update file navigation
         self._file_count = max(len(figures), 1)
