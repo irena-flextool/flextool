@@ -68,16 +68,15 @@ class PlotCanvas(ttk.Frame):
         if old_fig is not fig:
             plt.close(old_fig)
 
-        # Make the figure fill the whole canvas widget so there are no
-        # leftover pixels.  The actual plot content sits inside axes that
-        # may be smaller — the surrounding area is filled by facecolor.
+        # Adapt the figure to the current canvas size without telling
+        # matplotlib to resize the widget (forward=False prevents the
+        # widget ↔ figure size feedback loop that causes pixel jitter).
         fig.set_facecolor(_BG)
-        self.update_idletasks()
         w_px = self._canvas_widget.winfo_width()
         h_px = self._canvas_widget.winfo_height()
         dpi = fig.get_dpi() or 100
         if w_px > 1 and h_px > 1:
-            fig.set_size_inches(w_px / dpi, h_px / dpi)
+            fig.set_size_inches(w_px / dpi, h_px / dpi, forward=False)
 
         self._figure = fig
         self._canvas.figure = fig
