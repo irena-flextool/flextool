@@ -163,7 +163,11 @@ class PlotCanvas(ttk.Frame):
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
 
-        # Cancel any pending idle draws from set_canvas() internals
+        # Reset the toolbar's nav stack for the new figure so that
+        # zoom/pan/home/back/forward work correctly.
+        self._toolbar.update()
+
+        # Cancel any pending idle draws from set_canvas()/toolbar.update()
         self._cancel_pending_draws()
         self._canvas.draw()
         self._cancel_pending_draws()

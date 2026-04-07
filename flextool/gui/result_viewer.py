@@ -203,7 +203,7 @@ class ResultViewer(tk.Toplevel):
         # ── Combined control frame ───────────────────────────────────
         self._control_frame = ttk.Frame(right, padding=(5, 2))
         self._control_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
-        self._control_frame.columnconfigure(4, weight=1)  # start slider fills remaining
+        self._control_frame.columnconfigure(3, weight=1)  # time frame fills remaining
 
         # Col 0: Variant buttons frame
         self._variant_frame = ttk.LabelFrame(self._control_frame, text="Variant", padding=(2, 1))
@@ -246,35 +246,36 @@ class ResultViewer(tk.Toplevel):
             )
             rb.pack(side="top", anchor="w")
 
-        # Col 3: Duration label + spinbox
-        dur_frame = ttk.Frame(self._control_frame)
-        dur_frame.grid(row=0, column=3, rowspan=2, sticky="ns", padx=(0, 10))
-        ttk.Label(dur_frame, text="Duration").pack(side="top")
-        self._duration_var = tk.IntVar(value=self._settings.single_plot_settings.duration or 168)
-        self._duration_spin = ttk.Spinbox(
-            dur_frame, from_=1, to=8760, textvariable=self._duration_var, width=6,
-        )
-        self._duration_spin.pack(side="top")
+        # Col 3: Start slider + Duration spinbox (stacked, slider fills width)
+        time_frame = ttk.Frame(self._control_frame)
+        time_frame.grid(row=0, column=3, rowspan=2, sticky="nsew", padx=(0, 10))
+        time_frame.columnconfigure(1, weight=1)
 
-        # Col 4: Start label + slider (fills remaining width)
-        start_frame = ttk.Frame(self._control_frame)
-        start_frame.grid(row=0, column=4, rowspan=2, sticky="nsew")
-        start_frame.columnconfigure(0, weight=1)
-
-        ttk.Label(start_frame, text="Start").grid(row=0, column=0, sticky="w")
+        ttk.Label(time_frame, text="Start").grid(row=0, column=0, sticky="w", padx=(0, 5))
         self._start_var = tk.IntVar(value=self._settings.single_plot_settings.start_time)
         self._start_scale = ttk.Scale(
-            start_frame, from_=0, to=8760, orient="horizontal",
+            time_frame, from_=0, to=8760, orient="horizontal",
             variable=self._start_var,
         )
-        self._start_scale.grid(row=1, column=0, sticky="ew")
+        self._start_scale.grid(row=0, column=1, sticky="ew")
+        # Disabled until plot pipeline integration (PNG mode has no time range)
+        self._start_scale.configure(state="disabled")
 
-        # Col 5: Refresh button
+        ttk.Label(time_frame, text="Duration").grid(row=1, column=0, sticky="w", padx=(0, 5))
+        self._duration_var = tk.IntVar(value=self._settings.single_plot_settings.duration or 168)
+        self._duration_spin = ttk.Spinbox(
+            time_frame, from_=1, to=8760, textvariable=self._duration_var, width=6,
+        )
+        self._duration_spin.grid(row=1, column=1, sticky="w")
+        # Disabled until plot pipeline integration
+        self._duration_spin.configure(state="disabled")
+
+        # Col 4: Refresh button
         self._refresh_btn = ttk.Button(
             self._control_frame, text="Refresh", width=7,
             command=self._on_refresh,
         )
-        self._refresh_btn.grid(row=0, column=5, rowspan=2, sticky="ns", padx=(10, 0))
+        self._refresh_btn.grid(row=0, column=4, rowspan=2, sticky="ns", padx=(10, 0))
 
         # ── Plot canvas ──────────────────────────────────────────────
         self._plot_canvas = PlotCanvas(right)
