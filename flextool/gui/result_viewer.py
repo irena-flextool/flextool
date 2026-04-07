@@ -66,8 +66,6 @@ class ResultViewer(tk.Toplevel):
         self._shown_variant: str = ""
         # All unique variant letters across all config entries (created once)
         self._all_variant_letters: list[str] = []
-        # List of variant buttons currently displayed
-        self._variant_buttons: list[ttk.Button] = []
         # Tooltip toplevel
         self._tooltip: tk.Toplevel | None = None
 
@@ -155,6 +153,10 @@ class ResultViewer(tk.Toplevel):
             foreground=[("selected", "#ffffff")],
         )
 
+        # Theme-aware colors for variant grid
+        self._fg_color = style.lookup("TLabel", "foreground") or "black"
+        self._bg_color = style.lookup("TLabel", "background") or "white"
+
         # ── Resolve config paths ─────────────────────────────────────
         self._single_config_path = self._resolve_config_path(
             self._settings.single_plot_settings.config_file,
@@ -171,8 +173,7 @@ class ResultViewer(tk.Toplevel):
 
         # ── Tab focus cycling ────────────────────────────────────────
         self._scenario_listbox.bind("<Tab>", self._focus_plot_tree)
-        self._plot_tree.bind("<Tab>", self._focus_variant_panel)
-        # Variant panel Tab is handled dynamically when buttons are created
+        self._plot_tree.bind("<Tab>", self._focus_variant_canvas)
 
         # ── Global key bindings ──────────────────────────────────────
         self.bind("<Prior>", lambda e: self._on_prev_file())
@@ -215,10 +216,12 @@ class ResultViewer(tk.Toplevel):
 
         self._scenario_listbox.bind("<<ListboxSelect>>", self._on_scenario_selected)
 
-        # ── Plot tree ────────────────────────────────────────────────
+        # ── Plot tree + variant canvas ───────────────────────────────
         tree_frame = ttk.LabelFrame(left, text="Plots", padding=5)
         tree_frame.grid(row=1, column=0, sticky="nsew")
         tree_frame.columnconfigure(0, weight=1)
+        # column 1 = variant canvas (fixed width, set later)
+        # column 2 = scrollbar (fixed width)
         tree_frame.rowconfigure(0, weight=1)
 
         self._plot_tree = ttk.Treeview(
@@ -228,17 +231,43 @@ class ResultViewer(tk.Toplevel):
         )
         self._plot_tree.grid(row=0, column=0, sticky="nsew")
 
-        tree_scroll = ttk.Scrollbar(
-            tree_frame, orient="vertical", command=self._plot_tree.yview
+        # Variant canvas — sits to the right of the tree, shares the scrollbar
+        self._variant_canvas = tk.Canvas(
+            tree_frame, width=0, highlightthickness=0,
         )
-        tree_scroll.grid(row=0, column=1, sticky="ns")
-        self._plot_tree.configure(yscrollcommand=tree_scroll.set)
+        self._variant_canvas.grid(row=0, column=1, sticky="ns")
+        self._variant_canvas.configure(takefocus=True)
+
+        # Shared vertical scrollbar
+        tree_scroll = ttk.Scrollbar(tree_frame, orient="vertical")
+        tree_scroll.grid(row=0, column=2, sticky="ns")
+
+        def _tree_yscroll(*args):
+            tree_scroll.set(*args)
+            self._schedule_variant_redraw()
+
+        tree_scroll.configure(command=self._plot_tree.yview)
+        self._plot_tree.configure(yscrollcommand=_tree_yscroll)
+
+        # Pending redraw id (to coalesce rapid scroll events)
+        self._variant_redraw_id: str | None = None
 
         self._plot_tree.bind("<<TreeviewSelect>>", self._on_tree_selected)
         self._plot_tree.bind("<Motion>", self._on_tree_motion)
         self._plot_tree.bind("<Leave>", self._hide_tooltip)
         self._plot_tree.bind("<Up>", self._on_tree_key_up)
         self._plot_tree.bind("<Down>", self._on_tree_key_down)
+        self._plot_tree.bind("<<TreeviewOpen>>", lambda e: self._schedule_variant_redraw())
+        self._plot_tree.bind("<<TreeviewClose>>", lambda e: self._schedule_variant_redraw())
+        self._plot_tree.bind("<Configure>", lambda e: self._schedule_variant_redraw())
+
+        # Canvas click and keyboard bindings
+        self._variant_canvas.bind("<Button-1>", self._on_variant_canvas_click)
+        self._variant_canvas.bind("<Left>", self._on_variant_left)
+        self._variant_canvas.bind("<Right>", self._on_variant_right)
+        self._variant_canvas.bind("<Up>", self._on_variant_key_up)
+        self._variant_canvas.bind("<Down>", self._on_variant_key_down)
+        self._variant_canvas.bind("<Tab>", self._focus_scenario_listbox)
 
     def _build_right_column(self) -> None:
         """Build the right column: compact control bar + plot area."""
@@ -251,20 +280,11 @@ class ResultViewer(tk.Toplevel):
         # ── Combined control frame ───────────────────────────────────
         self._control_frame = ttk.Frame(right, padding=(5, 2))
         self._control_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
-        self._control_frame.columnconfigure(3, weight=1)  # time frame fills remaining
+        self._control_frame.columnconfigure(2, weight=1)  # time frame fills remaining
 
-        # Col 0: Variant buttons frame
-        self._variant_frame = ttk.LabelFrame(self._control_frame, text="Variant", padding=(2, 1))
-        self._variant_frame.grid(row=0, column=0, rowspan=2, sticky="ns", padx=(0, 5))
-        # Placeholder label shown when no variants are available
-        self._variant_placeholder = ttk.Label(
-            self._variant_frame, text="...", foreground="grey",
-        )
-        self._variant_placeholder.pack(side="left")
-
-        # Col 1: File navigation (Prev on top, Next on bottom)
+        # Col 0: File navigation (Prev on top, Next on bottom)
         file_nav_frame = ttk.Frame(self._control_frame)
-        file_nav_frame.grid(row=0, column=1, rowspan=2, sticky="ns", padx=(0, 5))
+        file_nav_frame.grid(row=0, column=0, rowspan=2, sticky="ns", padx=(0, 5))
 
         self._prev_file_btn = ttk.Button(
             file_nav_frame, text="\u25c0 Prev", width=6,
@@ -283,9 +303,9 @@ class ResultViewer(tk.Toplevel):
 
         self._update_file_nav()
 
-        # Col 2: Mode radio buttons (stacked vertically)
+        # Col 1: Mode radio buttons (stacked vertically)
         mode_frame = ttk.Frame(self._control_frame)
-        mode_frame.grid(row=0, column=2, rowspan=2, sticky="ns", padx=(0, 10))
+        mode_frame.grid(row=0, column=1, rowspan=2, sticky="ns", padx=(0, 10))
 
         for text, value in [("Single", "single"), ("Comparison", "comparison"), ("Dispatch", "dispatch"), ("Network", "network")]:
             rb = ttk.Radiobutton(
@@ -294,9 +314,9 @@ class ResultViewer(tk.Toplevel):
             )
             rb.pack(side="top", anchor="w")
 
-        # Col 3: Start slider + Duration spinbox (stacked, slider fills width)
+        # Col 2: Start slider + Duration spinbox (stacked, slider fills width)
         time_frame = ttk.Frame(self._control_frame)
-        time_frame.grid(row=0, column=3, rowspan=2, sticky="nsew", padx=(0, 10))
+        time_frame.grid(row=0, column=2, rowspan=2, sticky="nsew", padx=(0, 10))
         time_frame.columnconfigure(1, weight=1)
 
         ttk.Label(time_frame, text="Start").grid(row=0, column=0, sticky="w", padx=(0, 5))
@@ -318,12 +338,12 @@ class ResultViewer(tk.Toplevel):
         self._start_var.trace_add("write", self._on_time_range_changed)
         self._duration_var.trace_add("write", self._on_time_range_changed)
 
-        # Col 4: Refresh button
+        # Col 3: Refresh button
         self._refresh_btn = ttk.Button(
             self._control_frame, text="Refresh", width=7,
             command=self._on_refresh,
         )
-        self._refresh_btn.grid(row=0, column=4, rowspan=2, sticky="ns", padx=(10, 0))
+        self._refresh_btn.grid(row=0, column=3, rowspan=2, sticky="ns", padx=(10, 0))
 
         # ── Plot canvas ──────────────────────────────────────────────
         self._plot_canvas = PlotCanvas(right)
@@ -425,9 +445,9 @@ class ResultViewer(tk.Toplevel):
                 )
                 self._tree_entry_map[entry_iid] = entry
 
-        # Collect all unique variant letters across all entries and create buttons once
+        # Collect all unique variant letters and size the canvas
         self._collect_all_variant_letters()
-        self._create_variant_buttons()
+        self._update_variant_canvas_width()
 
         # Grey out entries without matching parquet data
         self._update_tree_availability()
@@ -712,37 +732,122 @@ class ResultViewer(tk.Toplevel):
                         ordered.append(v.letter)
         self._all_variant_letters = ordered
 
-    def _create_variant_buttons(self) -> None:
-        """Create variant buttons once for all letters in the config."""
-        # Destroy old buttons
-        for btn in self._variant_buttons:
-            btn.destroy()
-        self._variant_buttons.clear()
-        self._variant_placeholder.pack_forget()
+    def _update_variant_canvas_width(self) -> None:
+        """Set the variant canvas width based on the number of variant letters."""
+        if not self._all_variant_letters:
+            self._variant_canvas.configure(width=0)
+            return
+        box_w = self._char_width * 3
+        n_letters = len(self._all_variant_letters)
+        self._variant_canvas.configure(width=n_letters * box_w + 2)
+
+    def _schedule_variant_redraw(self) -> None:
+        """Schedule a variant grid redraw, coalescing rapid events."""
+        if self._variant_redraw_id is not None:
+            self.after_cancel(self._variant_redraw_id)
+        self._variant_redraw_id = self.after(10, self._do_variant_redraw)
+
+    def _do_variant_redraw(self) -> None:
+        """Execute the deferred variant grid redraw."""
+        self._variant_redraw_id = None
+        self._redraw_variant_grid()
+
+    def _redraw_variant_grid(self) -> None:
+        """Redraw all variant boxes on the canvas to align with visible tree rows."""
+        self._variant_canvas.delete("all")
 
         if not self._all_variant_letters:
-            self._variant_placeholder.configure(text="No variants")
-            self._variant_placeholder.pack(side="left")
             return
 
-        for letter in self._all_variant_letters:
-            display = letter or "?"
-            btn = ttk.Button(
-                self._variant_frame,
-                text=display,
-                width=3,
-                command=lambda v=letter: self._on_variant_clicked(v),
-            )
-            btn._letter = letter  # type: ignore[attr-defined]  # store letter as attribute
-            btn.pack(side="left", padx=2, pady=1)
-            self._variant_buttons.append(btn)
+        box_w = self._char_width * 3
+        n_letters = len(self._all_variant_letters)
 
-            # Bind Left/Right for variant navigation, Up/Down for tree navigation
-            btn.bind("<Left>", self._on_variant_left)
-            btn.bind("<Right>", self._on_variant_right)
-            btn.bind("<Up>", self._on_variant_key_up)
-            btn.bind("<Down>", self._on_variant_key_down)
-            btn.bind("<Tab>", self._focus_scenario_listbox)
+        # Get the selected entry for highlighting
+        selection = self._plot_tree.selection()
+        selected_iid = selection[0] if selection else ""
+
+        for iid, entry in self._tree_entry_map.items():
+            try:
+                bbox = self._plot_tree.bbox(iid)
+            except (tk.TclError, ValueError):
+                continue
+            if not bbox:
+                continue  # item not visible
+
+            _, y, _, row_h = bbox
+            available = {v.letter for v in entry.variants}
+            is_selected = (iid == selected_iid)
+
+            for col_idx, letter in enumerate(self._all_variant_letters):
+                x = col_idx * box_w
+
+                # Determine box state
+                has_variant = letter in available
+                is_desired = is_selected and letter == self._desired_variant
+                is_shown = is_selected and letter == self._shown_variant
+
+                # Draw box
+                if is_shown:
+                    # Solid fill
+                    self._variant_canvas.create_rectangle(
+                        x + 1, y + 1, x + box_w - 1, y + row_h - 1,
+                        fill="#2074d5", outline="",
+                    )
+                    text_color = "#ffffff"
+                else:
+                    text_color = "grey" if not has_variant else self._fg_color
+
+                if is_desired and is_selected:
+                    # Dashed border (visible even on solid fill)
+                    border_color = "#ff8800" if is_shown else "#2074d5"
+                    self._variant_canvas.create_rectangle(
+                        x + 1, y + 1, x + box_w - 1, y + row_h - 1,
+                        outline=border_color, dash=(3, 2), width=2,
+                    )
+
+                # Draw letter text
+                self._variant_canvas.create_text(
+                    x + box_w // 2, y + row_h // 2,
+                    text=letter, fill=text_color, font=("TkDefaultFont",),
+                )
+
+    def _on_variant_canvas_click(self, event: tk.Event) -> None:
+        """Handle click on a variant box in the canvas."""
+        if not self._all_variant_letters:
+            return
+
+        box_w = self._char_width * 3
+
+        # Find which letter column was clicked
+        letter_idx = int(event.x / box_w)
+        if letter_idx < 0 or letter_idx >= len(self._all_variant_letters):
+            return
+        letter = self._all_variant_letters[letter_idx]
+
+        # Find which entry row was clicked (match y to tree bbox)
+        for iid, entry in self._tree_entry_map.items():
+            try:
+                bbox = self._plot_tree.bbox(iid)
+            except (tk.TclError, ValueError):
+                continue
+            if not bbox:
+                continue
+            _, y, _, row_h = bbox
+            if y <= event.y < y + row_h:
+                # Found the entry — check if variant is available
+                available = {v.letter for v in entry.variants}
+                if letter not in available:
+                    return
+                # Select this entry in tree and set variant
+                self._plot_tree.selection_set(iid)
+                self._plot_tree.see(iid)
+                self._desired_variant = letter
+                self._shown_variant = letter
+                self._viewer_settings.last_variant = letter
+                self._file_index = 0
+                self._clear_figure_cache()
+                self._on_tree_selected()
+                return
 
     def _find_nearest_available(self, available: set[str]) -> str:
         """Find nearest available variant letter to the desired one.
@@ -772,7 +877,7 @@ class ResultViewer(tk.Toplevel):
         return next(iter(available))
 
     def _populate_variant_panel(self, entry: PlotEntry) -> None:
-        """Update variant button states for the given entry (don't recreate).
+        """Update variant state for the given entry and redraw the grid.
 
         Updates the *shown* variant to match desired when available,
         otherwise picks the nearest available.  The *desired* variant
@@ -780,46 +885,17 @@ class ResultViewer(tk.Toplevel):
         """
         available = {v.letter for v in entry.variants}
 
-        for btn in self._variant_buttons:
-            letter = btn._letter  # type: ignore[attr-defined]
-            if letter in available:
-                btn.configure(state="normal")
-            else:
-                btn.configure(state="disabled")
-
         # Shown variant: desired if available, else nearest available
         if self._desired_variant in available:
             self._shown_variant = self._desired_variant
         else:
             self._shown_variant = self._find_nearest_available(available)
 
-        self._highlight_variants()
-
-    def _highlight_variants(self) -> None:
-        """Visually highlight the shown and desired variant buttons.
-
-        - Shown variant: ``Accent.TButton`` (solid highlight).
-        - Desired variant (when different from shown): ``Desired.TButton``
-          (groove relief to indicate the user's persistent choice).
-        - Both on same button: ``Accent.TButton`` (solid takes priority).
-        - Neither: ``TButton`` (default).
-        """
-        # Ensure the Desired style exists (idempotent)
-        style = ttk.Style()
-        style.configure("Desired.TButton", relief="groove")
-
-        for btn in self._variant_buttons:
-            letter = btn._letter  # type: ignore[attr-defined]
-            if letter == self._shown_variant:
-                btn.configure(style="Accent.TButton")
-            elif letter == self._desired_variant:
-                btn.configure(style="Desired.TButton")
-            else:
-                btn.configure(style="TButton")
+        self._redraw_variant_grid()
 
     def _on_variant_clicked(self, letter: str) -> None:
-        """Handle variant button click."""
-        # Only act if the button is for an available variant
+        """Handle variant selection (from canvas click or keyboard)."""
+        # Only act if the variant is available for the selected entry
         selection = self._plot_tree.selection()
         if selection and selection[0].startswith("entry_"):
             entry = self._tree_entry_map.get(selection[0])
@@ -831,44 +907,53 @@ class ResultViewer(tk.Toplevel):
         self._desired_variant = letter
         self._shown_variant = letter  # clicking always sets both
         self._viewer_settings.last_variant = letter
-        self._highlight_variants()
+        self._redraw_variant_grid()
         self._file_index = 0
         self._clear_figure_cache()
         self._trigger_replot()
 
     def _on_variant_left(self, event: tk.Event) -> str:
-        """Navigate to previous enabled variant button.
+        """Navigate to previous available variant letter.
 
         Changes desired variant to the previous available one; shown follows.
         """
-        if not self._variant_buttons:
+        if not self._all_variant_letters:
             return "break"
-        current_idx = self._get_focused_variant_index()
-        # Find previous enabled button
+        available = self._get_selected_entry_available_variants()
+        current_idx = self._get_current_variant_index()
+        # Find previous available letter
         for new_idx in range(current_idx - 1, -1, -1):
-            btn = self._variant_buttons[new_idx]
-            if str(btn.cget("state")) != "disabled":
-                btn.focus_set()
-                self._on_variant_clicked(btn._letter)  # type: ignore[attr-defined]
+            letter = self._all_variant_letters[new_idx]
+            if letter in available:
+                self._on_variant_clicked(letter)
                 break
         return "break"
 
     def _on_variant_right(self, event: tk.Event) -> str:
-        """Navigate to next enabled variant button.
+        """Navigate to next available variant letter.
 
         Changes desired variant to the next available one; shown follows.
         """
-        if not self._variant_buttons:
+        if not self._all_variant_letters:
             return "break"
-        current_idx = self._get_focused_variant_index()
-        # Find next enabled button
-        for new_idx in range(current_idx + 1, len(self._variant_buttons)):
-            btn = self._variant_buttons[new_idx]
-            if str(btn.cget("state")) != "disabled":
-                btn.focus_set()
-                self._on_variant_clicked(btn._letter)  # type: ignore[attr-defined]
+        available = self._get_selected_entry_available_variants()
+        current_idx = self._get_current_variant_index()
+        # Find next available letter
+        for new_idx in range(current_idx + 1, len(self._all_variant_letters)):
+            letter = self._all_variant_letters[new_idx]
+            if letter in available:
+                self._on_variant_clicked(letter)
                 break
         return "break"
+
+    def _get_selected_entry_available_variants(self) -> set[str]:
+        """Return available variant letters for the currently selected entry."""
+        selection = self._plot_tree.selection()
+        if selection and selection[0].startswith("entry_"):
+            entry = self._tree_entry_map.get(selection[0])
+            if entry:
+                return {v.letter for v in entry.variants}
+        return set()
 
     def _on_variant_key_up(self, event: tk.Event) -> str:
         """Handle Up / Shift+Up in the variant panel.
@@ -959,26 +1044,21 @@ class ResultViewer(tk.Toplevel):
                     return
             new_idx += step
 
-    def _get_focused_variant_index(self) -> int:
-        """Return index of the currently focused variant button, or 0."""
-        focused = self.focus_get()
-        for i, btn in enumerate(self._variant_buttons):
-            if btn is focused:
-                return i
-        # Fall back to desired variant
-        for i, btn in enumerate(self._variant_buttons):
-            if btn._letter == self._desired_variant:  # type: ignore[attr-defined]
-                return i
+    def _get_current_variant_index(self) -> int:
+        """Return index of the desired variant in _all_variant_letters, or 0."""
+        if self._desired_variant in self._all_variant_letters:
+            return self._all_variant_letters.index(self._desired_variant)
         return 0
 
     def _show_variant_panel(self) -> None:
-        """Show the variant panel."""
-        self._variant_frame.grid()
+        """Show the variant canvas."""
+        self._update_variant_canvas_width()
+        self._redraw_variant_grid()
 
     def _hide_variant_panel(self) -> None:
-        """Hide the variant panel and disable all buttons."""
-        for btn in self._variant_buttons:
-            btn.configure(state="disabled")
+        """Hide the variant canvas."""
+        self._variant_canvas.configure(width=0)
+        self._variant_canvas.delete("all")
         self._shown_variant = ""
 
     # ------------------------------------------------------------------
@@ -1110,15 +1190,10 @@ class ResultViewer(tk.Toplevel):
             self._restore_or_select_first_entry()
         return "break"
 
-    def _focus_variant_panel(self, _event: tk.Event | None = None) -> str:
-        """Move focus to the first variant button."""
-        if self._variant_buttons:
-            # Focus the active variant button
-            for btn in self._variant_buttons:
-                if btn.cget("text") == self._desired_variant:
-                    btn.focus_set()
-                    return "break"
-            self._variant_buttons[0].focus_set()
+    def _focus_variant_canvas(self, _event: tk.Event | None = None) -> str:
+        """Move focus to the variant canvas."""
+        if self._all_variant_letters:
+            self._variant_canvas.focus_set()
         return "break"
 
     def _focus_scenario_listbox(self, _event: tk.Event | None = None) -> str:
