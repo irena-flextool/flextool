@@ -993,6 +993,7 @@ class ResultViewer(tk.Toplevel):
         self._dispatch_scenario = ""
         self._dispatch_mappings = None
         self._dispatch_results = None
+        self._plot_canvas._cache.clear()
         self._populate_scenarios()
         self._on_mode_changed()
 
@@ -1035,63 +1036,6 @@ class ResultViewer(tk.Toplevel):
                 return v
         # Fall back to first variant
         return entry.variants[0] if entry.variants else None
-
-    def _build_plot_name(self, entry: PlotEntry, variant: PlotVariant) -> str:
-        """Reconstruct the plot_name used as the file basename.
-
-        The plot pipeline saves files using the ``plot_name`` field from the
-        YAML config, which follows the pattern::
-
-            "{group}.{entry_sub}.{variant_letter} {human_name}"
-
-        e.g. ``"0.0.t Loss of load (upward slack)"``.
-        When the variant letter is empty the dot is omitted:
-        ``"5.0 Emissions CO2 total"``.
-        """
-        if variant.letter:
-            return f"{entry.number}.{variant.letter} {variant.full_name}"
-        return f"{entry.number} {variant.full_name}"
-
-    def _find_png_files(self, scenario: str, entry: PlotEntry, variant: PlotVariant) -> list[Path]:
-        """Find PNG files for *variant* of *entry* in the given *scenario*.
-
-        Checks for both single-file and split-file naming conventions.
-        Returns sorted list of matching paths (may be empty).
-        """
-        mode = self._mode.get()
-        if mode == "comparison":
-            plot_dir = self._project_path / "output_plot_comparisons"
-        else:
-            plot_dir = self._project_path / "output_plots" / scenario
-
-        if not plot_dir.is_dir():
-            return []
-
-        plot_name = self._build_plot_name(entry, variant)
-        single = plot_dir / f"{plot_name}.png"
-        if single.is_file():
-            return [single]
-
-        # Check for split files: {plot_name}_01.png, _02.png, ...
-        split_files: list[Path] = []
-        idx = 1
-        while True:
-            candidate = plot_dir / f"{plot_name}_{idx:02d}.png"
-            if candidate.is_file():
-                split_files.append(candidate)
-                idx += 1
-            else:
-                break
-
-        # Also check for file-member variants: {plot_name}_{member}.png
-        # Scan directory for files starting with the plot_name prefix
-        if not split_files:
-            prefix = plot_name + "_"
-            for p in sorted(plot_dir.iterdir()):
-                if p.name.startswith(prefix) and p.suffix == ".png":
-                    split_files.append(p)
-
-        return split_files
 
     def _load_plot_config(self, result_key: str, sub_config: str) -> PlotConfig | None:
         """Load PlotConfig for a result_key from the active YAML config file."""
