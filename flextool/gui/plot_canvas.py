@@ -153,12 +153,15 @@ class PlotCanvas(ttk.Frame):
         """
         cache_key = ("png", str(png_path))
 
-        # Check widget size — if it changed, cached figures are stale
+        # Check widget size — if it changed significantly, cached
+        # figures are stale and need to be rebuilt at the new size.
+        # Ignore small changes (< 5px) to avoid cache thrashing from
+        # minor layout shifts when buttons change state/style.
         w_px = self._canvas_widget.winfo_width()
         h_px = self._canvas_widget.winfo_height()
         current_size = (max(w_px, 100), max(h_px, 100))
-        if current_size != self._last_widget_size:
-            # Widget resized — invalidate PNG cache entries
+        old_w, old_h = self._last_widget_size
+        if abs(current_size[0] - old_w) > 4 or abs(current_size[1] - old_h) > 4:
             self._cache.clear()
             self._last_widget_size = current_size
 

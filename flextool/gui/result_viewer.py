@@ -201,14 +201,9 @@ class ResultViewer(tk.Toplevel):
         right.rowconfigure(1, weight=1)  # plot area gets all extra space
 
         # ── Combined control frame ───────────────────────────────────
-        # grid_propagate(False) prevents button style/state changes in the
-        # variant panel from altering the frame height, which would resize
-        # the canvas and trigger expensive redraws.
         self._control_frame = ttk.Frame(right, padding=(5, 2))
         self._control_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
         self._control_frame.columnconfigure(4, weight=1)  # start slider fills remaining
-        # Defer propagation lock until after initial layout
-        self.after_idle(lambda: self._control_frame.grid_propagate(False))
 
         # Col 0: Variant buttons frame
         self._variant_frame = ttk.LabelFrame(self._control_frame, text="Variant", padding=(2, 1))
@@ -499,11 +494,12 @@ class ResultViewer(tk.Toplevel):
         # Reset file index
         self._file_index = 0
         self._file_count = 1
-        self._update_file_nav()
 
-        # Freeze canvas to prevent jitter from variant panel changes
+        # Freeze canvas so UI changes (file nav buttons, variant panel)
+        # don't cause layout shifts that invalidate the figure cache.
         self._plot_canvas.freeze()
         try:
+            self._update_file_nav()
             self._populate_variant_panel(entry)
             self._trigger_replot()
         finally:
