@@ -67,11 +67,11 @@ class PlotCanvas(ttk.Frame):
         """Display a matplotlib Figure on the canvas.
 
         The figure is sized to match the canvas widget (with facecolor
-        filling unused area).  Only a single ``draw()`` call is made —
-        no intermediate clearing is visible.
+        filling unused area).  The <Configure> callback on the Tk canvas
+        is suppressed during the draw to prevent a resize feedback loop
+        (which manifests as visible jitter / multi-stage resize).
         """
         if fig is self._figure:
-            # Same figure, just redraw
             self._canvas.draw()
             return
 
@@ -86,7 +86,17 @@ class PlotCanvas(ttk.Frame):
         self._figure = fig
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
-        self._canvas.draw()
+
+        # Temporarily unbind <Configure> on the Tk canvas so that
+        # draw() doesn't trigger resize → draw_idle → resize → …
+        # feedback loop (visible as multi-stage jitter).
+        configure_binding = self._canvas_widget.bind("<Configure>")
+        self._canvas_widget.unbind("<Configure>")
+        try:
+            self._canvas.draw()
+        finally:
+            # Rebind — the original handler is matplotlib's resize method
+            self._canvas_widget.bind("<Configure>", self._canvas.resize)
 
     def display_png(self, png_path: Path) -> None:
         """Load and display a PNG file at its natural resolution.
