@@ -3,6 +3,7 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
 from flextool.plot_outputs.format_helpers import _get_value_formatter
 from flextool.plot_outputs.legend_helpers import (
@@ -309,7 +310,7 @@ def _build_lines_figure(
     total_height = TITLE_PAD + content_height + bottom_pad
 
     # ── Axes placement ──
-    fig = plt.figure(figsize=(total_width, total_height))
+    fig = Figure(figsize=(total_width, total_height))
     axes = [None] * n_subs
 
     y_cursor = total_height - TITLE_PAD
@@ -643,7 +644,7 @@ def _build_stack_figure(
     total_height = TITLE_PAD + content_height + bottom_pad
 
     # ── Axes placement ──
-    fig = plt.figure(figsize=(total_width, total_height))
+    fig = Figure(figsize=(total_width, total_height))
     axes = [None] * n_subs
 
     y_cursor = total_height - TITLE_PAD

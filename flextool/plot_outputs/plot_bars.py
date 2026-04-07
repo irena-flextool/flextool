@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
 from flextool.plot_outputs.format_helpers import _get_value_formatter
 from flextool.plot_outputs.legend_helpers import (
@@ -352,7 +353,7 @@ def _build_bar_figure(
             if layout.legend_width > 0 and not (legend_position == 'all' and n_cols > 1):
                 total_width += layout.legend_width + LEGEND_GAP
 
-            fig = plt.figure(figsize=(total_width, total_height))
+            fig = Figure(figsize=(total_width, total_height))
 
             axes = [None] * n_subs
             # Start below TITLE_PAD, end above BOTTOM_PAD
@@ -407,7 +408,7 @@ def _build_bar_figure(
                 legend_excess = max(0, layout.legend_height - axes_h)
                 total_height += legend_excess
 
-            fig = plt.figure(figsize=(total_width, total_height))
+            fig = Figure(figsize=(total_width, total_height))
 
             axes = [None] * n_subs
             for r, stack in enumerate(row_stacks):
@@ -559,7 +560,7 @@ def _build_bar_figure(
                 if layout and layout.legend_height > 0:
                     legend_excess = max(0.0, layout.legend_height - bars_only_h)
                     fig_h += legend_excess
-                fig = plt.figure(figsize=(fig_w, fig_h))
+                fig = Figure(figsize=(fig_w, fig_h))
                 ax = fig.add_axes([
                     (layout.total_label_width + left_edge_pad) / fig_w,
                     (bottom_pad + legend_excess) / fig_h,
@@ -575,7 +576,7 @@ def _build_bar_figure(
                 if layout and layout.legend_height > 0:
                     legend_excess = max(0.0, layout.legend_height - layout.base_bar_length)
                     fig_h += legend_excess
-                fig = plt.figure(figsize=(fig_w, fig_h))
+                fig = Figure(figsize=(fig_w, fig_h))
                 ax = fig.add_axes([
                     layout.value_axis_width / fig_w,
                     (bottom_pad + layout.total_label_width + legend_excess) / fig_h,

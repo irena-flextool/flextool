@@ -1002,10 +1002,8 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _clear_figure_cache(self) -> None:
-        """Close and discard all prefetched figures."""
+        """Discard all prefetched figures."""
         with self._figure_cache_lock:
-            for fig in self._figure_cache.values():
-                plt.close(fig)
             self._figure_cache.clear()
 
     # ------------------------------------------------------------------
@@ -1256,10 +1254,7 @@ class ResultViewer(tk.Toplevel):
     ) -> None:
         """Main-thread callback: display figure if still current."""
         if generation != self._render_gen:
-            # User moved on — discard stale figure
-            if fig is not None:
-                plt.close(fig)
-            return
+            return  # stale result — figure will be garbage-collected
 
         self._file_count = max(total_count, 1)
         self._file_index = min(self._file_index, max(0, self._file_count - 1))

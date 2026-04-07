@@ -4,6 +4,7 @@ import pandas as pd
 from pathlib import Path
 import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import numpy as np
 
 from flextool.scenario_comparison.constants import DEFAULT_SPECIAL_COLORS
@@ -115,7 +116,8 @@ def _build_dispatch_figure(
     if not has_area and not has_curtailed and not has_demand:
         return None
 
-    fig, ax = plt.subplots(figsize=(10, 4))
+    fig = Figure(figsize=(10, 4))
+    ax = fig.add_subplot(111)
 
     # Plot area chart (NaN rows create visual gaps at timeline breaks)
     if has_area:
