@@ -68,9 +68,7 @@ class PlotCanvas(ttk.Frame):
         if old_fig is not fig:
             plt.close(old_fig)
 
-        # Adapt the figure to the current canvas size without telling
-        # matplotlib to resize the widget (forward=False prevents the
-        # widget ↔ figure size feedback loop that causes pixel jitter).
+        # Match figure size to the current canvas widget size.
         fig.set_facecolor(_BG)
         w_px = self._canvas_widget.winfo_width()
         h_px = self._canvas_widget.winfo_height()
@@ -78,10 +76,19 @@ class PlotCanvas(ttk.Frame):
         if w_px > 1 and h_px > 1:
             fig.set_size_inches(w_px / dpi, h_px / dpi, forward=False)
 
+        # Prevent grid_propagate so matplotlib's internal
+        # canvas.configure(width=, height=) during draw() does not
+        # cause the parent grid to recalculate layout (visible as jitter).
+        self.grid_propagate(False)
+
         self._figure = fig
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
         self._canvas.draw()
+
+        # Re-enable propagation so the frame can still be resized by
+        # the user (e.g. via the PanedWindow sash).
+        self.grid_propagate(True)
 
     def display_png(self, png_path: Path) -> None:
         """Load and display a PNG file at its natural resolution.
