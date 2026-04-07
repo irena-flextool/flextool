@@ -87,16 +87,30 @@ class PlotCanvas(ttk.Frame):
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
 
-        # Temporarily unbind <Configure> on the Tk canvas so that
-        # draw() doesn't trigger resize → draw_idle → resize → …
-        # feedback loop (visible as multi-stage jitter).
-        configure_binding = self._canvas_widget.bind("<Configure>")
+        # Suppress all Tk event handlers that trigger resize feedback:
+        # <Configure> → resize() → draw_idle() and
+        # <Map> → _update_device_pixel_ratio() → configure() → <Configure>
+        # Also monkey-patch the widget's configure to ignore width/height
+        # changes that draw()/blit() may trigger internally.
         self._canvas_widget.unbind("<Configure>")
+        self._canvas_widget.unbind("<Map>")
+        orig_configure = self._canvas_widget.configure
+
+        def _frozen_configure(**kw):
+            kw.pop("width", None)
+            kw.pop("height", None)
+            if kw:
+                orig_configure(**kw)
+
+        self._canvas_widget.configure = _frozen_configure  # type: ignore[assignment]
         try:
             self._canvas.draw()
         finally:
-            # Rebind — the original handler is matplotlib's resize method
+            self._canvas_widget.configure = orig_configure  # type: ignore[assignment]
             self._canvas_widget.bind("<Configure>", self._canvas.resize)
+            self._canvas_widget.bind(
+                "<Map>", self._canvas._update_device_pixel_ratio,
+            )
 
     def display_png(self, png_path: Path) -> None:
         """Load and display a PNG file at its natural resolution.
