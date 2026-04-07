@@ -201,9 +201,14 @@ class ResultViewer(tk.Toplevel):
         right.rowconfigure(1, weight=1)  # plot area gets all extra space
 
         # ── Combined control frame ───────────────────────────────────
+        # grid_propagate(False) prevents button style/state changes in the
+        # variant panel from altering the frame height, which would resize
+        # the canvas and trigger expensive redraws.
         self._control_frame = ttk.Frame(right, padding=(5, 2))
         self._control_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
         self._control_frame.columnconfigure(4, weight=1)  # start slider fills remaining
+        # Defer propagation lock until after initial layout
+        self.after_idle(lambda: self._control_frame.grid_propagate(False))
 
         # Col 0: Variant buttons frame
         self._variant_frame = ttk.LabelFrame(self._control_frame, text="Variant", padding=(2, 1))
