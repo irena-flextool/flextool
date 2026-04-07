@@ -140,8 +140,23 @@ def _build_dispatch_figure(
     if not has_area and not has_curtailed and not has_demand:
         return None
 
-    fig = Figure(figsize=(10, 4))
-    ax = fig.add_subplot(111)
+    # Estimate legend width to size figure appropriately
+    all_labels = list(plot_cols)
+    if has_curtailed:
+        all_labels.append('Curtailed')
+    if has_demand:
+        all_labels.append('Demand')
+    max_label_len = max((len(str(l)) for l in all_labels), default=0)
+    legend_width_in = max(1.5, max_label_len * 0.08 + 0.6)
+
+    plot_width = 10
+    fig_width = plot_width + legend_width_in + 0.3
+    fig = Figure(figsize=(fig_width, 4))
+
+    # Position axes to leave room for legend on the right
+    left_margin = 0.08
+    right_margin = (legend_width_in + 0.2) / fig_width
+    ax = fig.add_axes([left_margin, 0.15, 1.0 - left_margin - right_margin, 0.75])
 
     # Plot area chart (NaN rows create visual gaps at timeline breaks)
     if has_area:

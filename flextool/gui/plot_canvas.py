@@ -118,14 +118,15 @@ class PlotCanvas(ttk.Frame):
         scale = min(w / (nat_w * dpi), h / (nat_h * dpi), 1.0)
         self._figure.set_size_inches(nat_w * scale, nat_h * scale, forward=False)
 
-        # Recreate the internal PhotoImage at the new pixel size
-        # (matplotlib's resize handler normally does this)
+        # Recreate the internal PhotoImage to match the (possibly scaled) figure
         try:
+            fig_w = int(self._figure.get_size_inches()[0] * dpi)
+            fig_h = int(self._figure.get_size_inches()[1] * dpi)
             self._canvas._tkcanvas.delete(self._canvas._tkcanvas_image_region)
-            self._canvas._tkphoto.configure(width=w, height=h)
+            self._canvas._tkphoto.configure(width=fig_w, height=fig_h)
             self._canvas._tkcanvas_image_region = (
                 self._canvas._tkcanvas.create_image(
-                    w // 2, h // 2, image=self._canvas._tkphoto
+                    0, 0, anchor="nw", image=self._canvas._tkphoto,
                 )
             )
         except (AttributeError, tk.TclError):
@@ -187,7 +188,7 @@ class PlotCanvas(ttk.Frame):
             cw = tk_canvas.winfo_width()
             ch = tk_canvas.winfo_height()
             self._canvas._tkcanvas_image_region = tk_canvas.create_image(
-                cw // 2, ch // 2, image=self._canvas._tkphoto,
+                0, 0, anchor="nw", image=self._canvas._tkphoto,
             )
         except (AttributeError, tk.TclError):
             pass
@@ -242,14 +243,10 @@ class PlotCanvas(ttk.Frame):
         disp_w = img_w * scale
         disp_h = img_h * scale
 
-        # Place the image centered inside a figure that fills the widget
+        # Place the image at top-left inside a figure sized to the image
         dpi = 100
-        fig = Figure(figsize=(widget_w / dpi, widget_h / dpi), dpi=dpi)
-        ax_x = (widget_w - disp_w) / (2 * widget_w)
-        ax_y = (widget_h - disp_h) / (2 * widget_h)
-        ax_w = disp_w / widget_w
-        ax_h = disp_h / widget_h
-        ax = fig.add_axes([ax_x, ax_y, ax_w, ax_h])
+        fig = Figure(figsize=(disp_w / dpi, disp_h / dpi), dpi=dpi)
+        ax = fig.add_axes([0, 0, 1, 1])
         ax.imshow(img, interpolation="lanczos" if scale < 1.0 else "nearest")
         ax.set_axis_off()
 
