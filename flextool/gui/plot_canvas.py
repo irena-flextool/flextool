@@ -10,6 +10,7 @@ from tkinter import ttk
 import numpy as np
 
 from flextool.gui.downsampling import downsample_for_display
+from flextool.gui.plot_cache import PlotCache
 
 try:
     import matplotlib
@@ -25,7 +26,7 @@ from matplotlib.figure import Figure
 
 logger = logging.getLogger(__name__)
 
-# Background color used to fill unused canvas area (matches sv_ttk light theme)
+# Background color used to fill unused canvas area
 _BG = "#f0f0f0"
 
 
@@ -40,6 +41,9 @@ class PlotCanvas(ttk.Frame):
 
         self._raw_line_data: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
         self._n_out: int = 3000
+        self._cache = PlotCache(max_size=30)
+        # Track last widget size so we know when to re-render cached PNGs
+        self._last_widget_size: tuple[int, int] = (0, 0)
 
         # Create a blank figure that fills the canvas with a solid bg
         self._figure = Figure(facecolor=_BG)
@@ -47,6 +51,10 @@ class PlotCanvas(ttk.Frame):
         self._canvas_widget = self._canvas.get_tk_widget()
         self._canvas_widget.configure(background=_BG)
         self._canvas_widget.grid(row=0, column=0, sticky="nsew")
+
+        # Prevent the canvas widget from propagating size requests
+        # upward — the grid manager controls size, not matplotlib.
+        self.grid_propagate(False)
 
         # NavigationToolbar2Tk calls pack() in its __init__, so it needs
         # a dedicated container frame managed by grid in the outer layout.
@@ -58,15 +66,14 @@ class PlotCanvas(ttk.Frame):
     def display_figure(self, fig: Figure) -> None:
         """Display a matplotlib Figure on the canvas.
 
-        The figure is sized to fill the entire canvas widget (with the
-        figure's facecolor covering any unused area) so that no remnants
-        of a previous figure remain.  The switch is done in a single
-        ``draw()`` call — no intermediate clearing is visible.
+        The figure is sized to match the canvas widget (with facecolor
+        filling unused area).  Only a single ``draw()`` call is made —
+        no intermediate clearing is visible.
         """
-        # Close old figure to free resources
-        old_fig = self._figure
-        if old_fig is not fig:
-            plt.close(old_fig)
+        if fig is self._figure:
+            # Same figure, just redraw
+            self._canvas.draw()
+            return
 
         # Match figure size to the current canvas widget size.
         fig.set_facecolor(_BG)
@@ -76,27 +83,34 @@ class PlotCanvas(ttk.Frame):
         if w_px > 1 and h_px > 1:
             fig.set_size_inches(w_px / dpi, h_px / dpi, forward=False)
 
-        # Prevent grid_propagate so matplotlib's internal
-        # canvas.configure(width=, height=) during draw() does not
-        # cause the parent grid to recalculate layout (visible as jitter).
-        self.grid_propagate(False)
-
         self._figure = fig
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
         self._canvas.draw()
 
-        # Re-enable propagation so the frame can still be resized by
-        # the user (e.g. via the PanedWindow sash).
-        self.grid_propagate(True)
-
     def display_png(self, png_path: Path) -> None:
         """Load and display a PNG file at its natural resolution.
 
-        If the image is larger than the available widget area it is scaled
-        down (keeping aspect ratio).  Otherwise it is shown at 1:1 pixels.
-        The figure is sized to fill the widget, with the image centered.
+        Uses the cache — switching back to a previously viewed PNG is
+        instant.  If the image is larger than the canvas it is scaled
+        down (keeping aspect ratio); otherwise shown at 1:1 pixels.
         """
+        cache_key = ("png", str(png_path))
+
+        # Check widget size — if it changed, cached figures are stale
+        w_px = self._canvas_widget.winfo_width()
+        h_px = self._canvas_widget.winfo_height()
+        current_size = (max(w_px, 100), max(h_px, 100))
+        if current_size != self._last_widget_size:
+            # Widget resized — invalidate PNG cache entries
+            self._cache.clear()
+            self._last_widget_size = current_size
+
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            self.display_figure(cached)
+            return
+
         try:
             img = mpimage.imread(str(png_path))
         except Exception:
@@ -104,15 +118,8 @@ class PlotCanvas(ttk.Frame):
             self.show_message(f"Failed to load image:\n{png_path.name}")
             return
 
-        img_h, img_w = img.shape[:2]  # pixels
-
-        # Determine available widget area in pixels
-        self.update_idletasks()
-        widget_w = self._canvas_widget.winfo_width()
-        widget_h = self._canvas_widget.winfo_height()
-        if widget_w < 10 or widget_h < 10:
-            widget_w = max(widget_w, 800)
-            widget_h = max(widget_h, 600)
+        img_h, img_w = img.shape[:2]
+        widget_w, widget_h = current_size
 
         # Scale down if image exceeds widget, preserving aspect ratio
         scale = min(widget_w / img_w, widget_h / img_h, 1.0)
@@ -122,7 +129,6 @@ class PlotCanvas(ttk.Frame):
         # Place the image centered inside a figure that fills the widget
         dpi = 100
         fig = Figure(figsize=(widget_w / dpi, widget_h / dpi), dpi=dpi)
-        # Calculate axes position to center the image
         ax_x = (widget_w - disp_w) / (2 * widget_w)
         ax_y = (widget_h - disp_h) / (2 * widget_h)
         ax_w = disp_w / widget_w
@@ -130,6 +136,8 @@ class PlotCanvas(ttk.Frame):
         ax = fig.add_axes([ax_x, ax_y, ax_w, ax_h])
         ax.imshow(img, interpolation="lanczos" if scale < 1.0 else "nearest")
         ax.set_axis_off()
+
+        self._cache.put(cache_key, fig)
         self.display_figure(fig)
 
     def show_message(self, text: str) -> None:
@@ -137,14 +145,10 @@ class PlotCanvas(ttk.Frame):
         fig = Figure()
         ax = fig.add_subplot(111)
         ax.text(
-            0.5,
-            0.5,
-            text,
+            0.5, 0.5, text,
             transform=ax.transAxes,
-            ha="center",
-            va="center",
-            fontsize=14,
-            color="grey",
+            ha="center", va="center",
+            fontsize=14, color="grey",
         )
         ax.set_axis_off()
         self.display_figure(fig)
@@ -171,7 +175,6 @@ class PlotCanvas(ttk.Frame):
                 y_full = np.asarray(line.get_ydata(), dtype=np.float64)
                 self._raw_line_data[(ax_idx, line_idx)] = (x_full, y_full)
 
-                # Initial downsample over the full range
                 x_ds, y_ds = downsample_for_display(x_full, y_full, n_out)
                 line.set_xdata(x_ds)
                 line.set_ydata(y_ds)
@@ -182,7 +185,7 @@ class PlotCanvas(ttk.Frame):
 
     def _on_xlim_changed(self, ax) -> None:  # type: ignore[override]
         """Re-downsample visible data when the user zooms or pans."""
-        if not hasattr(self, "_raw_line_data"):
+        if not self._raw_line_data:
             return
 
         try:
@@ -198,7 +201,6 @@ class PlotCanvas(ttk.Frame):
                 continue
             x_full, y_full = self._raw_line_data[key]
 
-            # Slice to the visible range (with small margin)
             mask = (x_full >= lo) & (x_full <= hi)
             x_vis = x_full[mask]
             y_vis = y_full[mask]
@@ -210,16 +212,12 @@ class PlotCanvas(ttk.Frame):
             line.set_xdata(x_ds)
             line.set_ydata(y_ds)
 
-        # Redraw without triggering the callback again
         self._canvas.draw_idle()
 
     def cleanup(self) -> None:
         """Release matplotlib resources held by this canvas."""
         self._raw_line_data.clear()
-        try:
-            plt.close(self._figure)
-        except Exception:  # noqa: BLE001
-            pass
+        self._cache.clear()
 
     def clear(self) -> None:
         """Clear the display."""
