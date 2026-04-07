@@ -486,6 +486,22 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
         start = log_time("Wrote to parquet", start)
 
+    # Compute plot plans for the viewer (always, when parquets exist)
+    if 'parquet' in write_methods or read_parquet_dir:
+        try:
+            from flextool.plot_outputs.orchestrator import compute_all_plot_plans
+            from flextool.plot_outputs.format_helpers import load_timeline_breaks
+            plan_break_times = load_timeline_breaks(parquet_dir)
+            plan_results = {k: v.to_frame() if isinstance(v, pd.Series) else v for k, v in results.items()}
+            compute_all_plot_plans(
+                plan_results, settings.get('plots', {}), parquet_dir,
+                active_settings=active_configs, plot_rows=plot_rows,
+                break_times=plan_break_times,
+            )
+            start = log_time("Computed plot plans", start)
+        except Exception as exc:
+            logging.warning("Plot plan computation failed (non-fatal): %s", exc)
+
     # Plot results
     if 'plot' in write_methods:
         os.makedirs(plot_dir, exist_ok=True)

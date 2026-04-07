@@ -725,3 +725,32 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         logger.warning(
             "'Just one file per plot' active \u2014 %d file(s) not plotted.", skipped_files
         )
+
+
+def compute_all_plot_plans(
+    results_dict: dict,
+    plot_settings: dict,
+    output_dir,
+    active_settings=None,
+    plot_rows: tuple = (0, 167),
+    break_times=None,
+) -> None:
+    """Compute and save PlotPlans for all results.
+
+    Called after scenario runs / comparison builds so that the viewer
+    can load pre-computed plans instead of re-running dimension rules.
+    """
+    from pathlib import Path
+    from flextool.plot_outputs.plan import compute_plot_plans_for_result
+
+    output_dir = Path(output_dir)
+    for key, df in results_dict.items():
+        if key not in plot_settings or df.empty:
+            continue
+        try:
+            compute_plot_plans_for_result(
+                df, key, plot_settings, output_dir / "plot_plans",
+                plot_rows, break_times, active_settings,
+            )
+        except Exception as exc:
+            logger.warning("Failed to compute plot plan for '%s': %s", key, exc)

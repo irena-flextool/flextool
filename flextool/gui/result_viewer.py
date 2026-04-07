@@ -1176,6 +1176,7 @@ class ResultViewer(tk.Toplevel):
     def _display_from_parquet(self, scenario: str, entry: PlotEntry, variant: PlotVariant) -> None:
         """Load parquet, build PlotConfig, render Figure, display it.
 
+        If a pre-computed PlotPlan exists, use it for instant rendering.
         If the figure is already cached (from prefetch), display instantly.
         Otherwise submit building to a background thread and display on
         completion.
@@ -1197,6 +1198,26 @@ class ResultViewer(tk.Toplevel):
         start = self._start_var.get()
         duration = self._duration_var.get()
         plot_rows = (start, start + duration)
+
+        # 1b. Try pre-computed PlotPlan for instant rendering
+        try:
+            from flextool.plot_outputs.plan import load_plot_plan, build_figure_from_plan
+            plan_dir = self._project_path / "output_parquet" / scenario / "plot_plans"
+            plan = load_plot_plan(plan_dir, variant.result_key, variant.sub_config)
+            if plan is not None:
+                self._file_count = plan.total_file_count
+                self._file_index = min(self._file_index, max(0, self._file_count - 1))
+                self._update_file_nav()
+                fig = build_figure_from_plan(plan, self._file_index)
+                if fig is not None:
+                    self._plot_canvas.display_figure(fig)
+                    logger.info(
+                        "Plot %s: from plan [file %d/%d]",
+                        variant.result_key, self._file_index, plan.total_file_count,
+                    )
+                    return
+        except Exception:
+            pass  # fall through to normal pipeline
 
         # 2. Check prefetch cache for instant display
         cache_key = self._make_figure_cache_key(
@@ -1367,6 +1388,27 @@ class ResultViewer(tk.Toplevel):
                 f"Run 'Scenario comparison' first."
             )
             return
+
+        # Try pre-computed PlotPlan first
+        try:
+            from flextool.plot_outputs.plan import load_plot_plan, build_figure_from_plan
+            plan_dir = comp_dir / "plot_plans"
+            plan = load_plot_plan(plan_dir, variant.result_key, variant.sub_config)
+            if plan is not None:
+                self._update_time_range(len(plan.processed_df))
+                self._file_count = plan.total_file_count
+                self._file_index = min(self._file_index, max(0, self._file_count - 1))
+                self._update_file_nav()
+                fig = build_figure_from_plan(plan, self._file_index)
+                if fig is not None:
+                    self._plot_canvas.display_figure(fig)
+                    logger.info(
+                        "Comparison %s: from plan [file %d/%d]",
+                        variant.result_key, self._file_index, plan.total_file_count,
+                    )
+                    return
+        except Exception:
+            pass  # fall through to normal pipeline
 
         df = pd.read_parquet(parquet_path)
         if df.empty:

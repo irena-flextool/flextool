@@ -127,6 +127,20 @@ def run(
             bt_df.to_parquet(os.path.join(comparison_parquet_dir, "timeline_breaks.parquet"))
         print(f"Wrote comparison parquets to: {comparison_parquet_dir}")
 
+    # Compute plot plans for the viewer
+    plan_output_dir = comparison_parquet_dir if comparison_parquet_dir else plot_dir
+    try:
+        from flextool.plot_outputs.orchestrator import compute_all_plot_plans
+        compute_all_plot_plans(
+            combined_dfs, settings.get('plots', {}), plan_output_dir,
+            active_settings=active_configs, plot_rows=plot_rows,
+            break_times=break_times,
+        )
+        print("Computed plot plans for viewer")
+    except Exception as exc:
+        import logging as _logging
+        _logging.warning("Plot plan computation failed (non-fatal): %s", exc)
+
     # Generate original comparison plots (from default_comparison_plots.yaml)
     plot_dict_of_dataframes(
         combined_dfs, plot_dir, settings['plots'],
