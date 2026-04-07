@@ -77,6 +77,8 @@ class ResultViewer(tk.Toplevel):
         # Caches for parquet pipeline
         self._yaml_cache: dict[Path, dict] = {}
         self._break_times_cache: dict[str, set[str] | None] = {}
+        self._parquet_cache_key: tuple[str, str] = ("", "")
+        self._parquet_cache_df: pd.DataFrame | None = None
 
         # Guard against recursive replots from time range updates
         self._updating_time_range = False
@@ -994,6 +996,8 @@ class ResultViewer(tk.Toplevel):
         self._dispatch_mappings = None
         self._dispatch_results = None
         self._plot_canvas._cache.clear()
+        self._parquet_cache_key = ("", "")
+        self._parquet_cache_df = None
         self._populate_scenarios()
         self._on_mode_changed()
 
@@ -1100,14 +1104,19 @@ class ResultViewer(tk.Toplevel):
 
         Per-scenario parquets have 'scenario' as the top column MultiIndex
         level (added at write time).  Strip it so the DataFrame matches the
-        dimension rules in the plot config.
+        dimension rules in the plot config.  Caches the last loaded DataFrame.
         """
+        cache_key = (scenario, result_key)
+        if cache_key == self._parquet_cache_key and self._parquet_cache_df is not None:
+            return self._parquet_cache_df
         path = self._project_path / "output_parquet" / scenario / f"{result_key}.parquet"
         if not path.exists():
             return None
         df = pd.read_parquet(path)
         if isinstance(df.columns, pd.MultiIndex) and 'scenario' in df.columns.names:
             df = df.droplevel('scenario', axis=1)
+        self._parquet_cache_key = cache_key
+        self._parquet_cache_df = df
         return df
 
     def _load_break_times(self, scenario: str) -> set[str] | None:
@@ -1406,7 +1415,7 @@ class ResultViewer(tk.Toplevel):
         scenario_folders = build_scenario_folders_from_dir(
             self._project_path / "output_parquet", [scenario]
         )
-        files_by_name = collect_parquet_files(scenario_folders, parquet_subdir="")
+        files_by_name = collect_parquet_files(scenario_folders, output_subdir="")
         combined = combine_parquet_files(files_by_name, num_scenarios=1)
         self._dispatch_results = TimeSeriesResults.from_dict(combined)
 
