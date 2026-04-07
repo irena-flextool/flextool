@@ -87,6 +87,13 @@ class PlotCanvas(ttk.Frame):
 
         self._canvas_widget.configure = _frozen_configure  # type: ignore[assignment]
 
+    def _cancel_pending_draws(self) -> None:
+        """Cancel any ``after_idle(draw)`` scheduled by ``draw_idle()``."""
+        idle_id = getattr(self._canvas, "_idle_draw_id", None)
+        if idle_id is not None:
+            self._canvas_widget.after_cancel(idle_id)
+            self._canvas._idle_draw_id = None
+
     def thaw(self) -> None:
         """Re-enable resize/configure events after :meth:`freeze`."""
         if not self._frozen:
@@ -125,7 +132,14 @@ class PlotCanvas(ttk.Frame):
         self._figure = fig
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
+
+        # Cancel any pending idle draws that may have been scheduled
+        # by set_canvas / set_size_inches / other internal callbacks.
+        # Without this, draw_idle fires AFTER our draw(), causing a
+        # redundant full re-render.
+        self._cancel_pending_draws()
         self._canvas.draw()
+        self._cancel_pending_draws()
 
         if auto_frozen:
             self.thaw()
