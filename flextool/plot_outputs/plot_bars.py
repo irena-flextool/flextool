@@ -916,10 +916,8 @@ def _render_bar_figure(
     )
     if fig is None:
         return
-    if output_filepath:
-        plt.savefig(output_filepath)
-    else:
-        plt.savefig(f'{plot_dir}/{key_name}_d.png')
+    filepath = output_filepath or f'{plot_dir}/{key_name}_d.png'
+    fig.savefig(filepath)
     plt.close(fig)
 
 

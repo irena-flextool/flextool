@@ -209,7 +209,7 @@ def plot_dispatch_area(
     # Save (bbox_inches='tight' in savefig handles layout)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    fig.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
 
     if show_plot:
         plt.show()

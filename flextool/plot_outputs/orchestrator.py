@@ -715,11 +715,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                     file_idx=fig_idx if len(figures) > 1 else None,
                     needs_split=(len(figures) > 1),
                 )
-                plt.figure(fig.number)
-                plt.savefig(filepath)
+                fig.savefig(filepath)
                 plt.close(fig)
-
-            plt.close('all')  # Clean up
 
     if only_first_file and skipped_files > 0:
         logger.warning(

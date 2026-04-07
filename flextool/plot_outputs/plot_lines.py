@@ -442,10 +442,7 @@ def _render_lines_figure(
         axis_bounds, axis_tick_format, always_include_zero_in_axis,
         layout, shared_color_map,
     )
-    if output_filepath:
-        plt.savefig(output_filepath)
-    else:
-        plt.savefig(f'{output_filepath}')
+    fig.savefig(output_filepath)
     plt.close(fig)
 
 
@@ -821,10 +818,7 @@ def _render_stack_figure(
         axis_bounds, axis_tick_format, always_include_zero_in_axis,
         layout, shared_color_map,
     )
-    if output_filepath:
-        plt.savefig(output_filepath)
-    else:
-        plt.savefig(f'{output_filepath}')
+    fig.savefig(output_filepath)
     plt.close(fig)
 
 
