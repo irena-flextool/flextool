@@ -417,8 +417,8 @@ class MainWindow(tk.Tk):
         self.available_tree.heading("check", text="▽")
         self.available_tree.heading("source_num", text="#")
         self.available_tree.heading("scenario_name", text="Scenario")
-        self.available_tree.column("check", width=cw * 2, minwidth=cw * 2, stretch=False)
-        self.available_tree.column("source_num", width=cw * 2, minwidth=cw * 2, stretch=False)
+        self.available_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self.available_tree.column("source_num", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.available_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
         self.available_tree.grid(row=0, column=0, sticky="nsew")
 
@@ -448,11 +448,11 @@ class MainWindow(tk.Tk):
         self.executed_tree.heading("scenario_name", text="Scenario")
         self.executed_tree.heading("view", text="")
         self.executed_tree.heading("timestamp", text="Timestamp")
-        self.executed_tree.column("check", width=cw * 2, minwidth=cw * 2, stretch=False)
-        self.executed_tree.column("source_num", width=cw * 2, minwidth=cw * 2, stretch=False)
+        self.executed_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
+        self.executed_tree.column("source_num", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.executed_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
         self.executed_tree.column("view", width=cw * 7, minwidth=cw * 6, stretch=False, anchor="center")
-        self.executed_tree.column("timestamp", width=cw * 8, minwidth=cw * 7)
+        self.executed_tree.column("timestamp", width=cw * 16, minwidth=cw * 16, stretch=False)
         self.executed_tree.grid(row=0, column=0, sticky="nsew")
 
         # No row-level tag for View — Treeview tags color the entire row.

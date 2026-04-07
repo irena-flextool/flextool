@@ -129,7 +129,7 @@ class ExecutionWindow(tk.Toplevel):
         self._job_tree.column("status", width=cw * 3, minwidth=cw * 3, stretch=False)
         self._job_tree.column("source", width=cw * 4, minwidth=cw * 3, stretch=False)
         self._job_tree.column("scenario", width=cw * 20, minwidth=cw * 10, stretch=True)
-        self._job_tree.column("timestamp", width=cw * 16, minwidth=cw * 10)
+        self._job_tree.column("timestamp", width=cw * 16, minwidth=cw * 16, stretch=False)
 
         self._job_tree.grid(row=0, column=0, sticky="nsew")
 
