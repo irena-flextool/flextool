@@ -19,6 +19,13 @@ from flextool.gui.project_utils import get_projects_dir
 from flextool.gui.settings_io import save_project_settings
 from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config
 from flextool.plot_outputs.orchestrator import prepare_plot_data
+from flextool.scenario_comparison.data_models import DispatchMappings, TimeSeriesResults
+from flextool.scenario_comparison.db_reader import (
+    build_scenario_folders_from_dir, collect_parquet_files, combine_parquet_files,
+)
+from flextool.scenario_comparison.dispatch_data import prepare_dispatch_data
+from flextool.scenario_comparison.dispatch_mappings import load_dispatch_mappings
+from flextool.scenario_comparison.dispatch_plots import _build_dispatch_figure
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +77,11 @@ class ResultViewer(tk.Toplevel):
         # Caches for parquet pipeline
         self._yaml_cache: dict[Path, dict] = {}
         self._break_times_cache: dict[str, set[str] | None] = {}
+
+        # Dispatch mode state
+        self._dispatch_mappings: DispatchMappings | None = None
+        self._dispatch_results: TimeSeriesResults | None = None
+        self._dispatch_scenario: str = ""  # scenario for which dispatch data is loaded
 
         # ── Font metrics for DPI-aware sizing ────────────────────────
         default_font = tkfont.nametofont("TkDefaultFont")
@@ -248,7 +260,7 @@ class ResultViewer(tk.Toplevel):
         mode_frame = ttk.Frame(self._control_frame)
         mode_frame.grid(row=0, column=2, rowspan=2, sticky="ns", padx=(0, 10))
 
-        for text, value in [("Single", "single"), ("Comparison", "comparison"), ("Network", "network")]:
+        for text, value in [("Single", "single"), ("Comparison", "comparison"), ("Dispatch", "dispatch"), ("Network", "network")]:
             rb = ttk.Radiobutton(
                 mode_frame, text=text, variable=self._mode, value=value,
                 command=self._on_mode_changed,
@@ -365,7 +377,7 @@ class ResultViewer(tk.Toplevel):
         self._tree_entry_map.clear()
 
         mode = self._mode.get()
-        if mode == "network":
+        if mode == "network" or mode == "dispatch":
             return
 
         config_path = self._get_config_path_for_mode()
@@ -461,8 +473,20 @@ class ResultViewer(tk.Toplevel):
         if scenarios:
             self._viewer_settings.last_scenario = scenarios[0]
 
-        if self._mode.get() == "network":
+        mode = self._mode.get()
+        if mode == "network":
             self._render_network()
+            return
+        if mode == "dispatch":
+            # Re-populate dispatch tree (nodeGroups may differ per scenario)
+            self._dispatch_scenario = ""  # force reload
+            self._populate_dispatch_tree()
+            # Trigger replot if something is selected
+            selection = self._plot_tree.selection()
+            if selection and selection[0].startswith("dispatch_"):
+                node_group = selection[0][len("dispatch_"):]
+                if scenarios:
+                    self._display_dispatch(scenarios[0], node_group)
             return
 
         self._update_tree_availability()
@@ -487,6 +511,14 @@ class ResultViewer(tk.Toplevel):
 
         # Skip group headers — let the tree handle expand/collapse
         if iid.startswith("group_"):
+            return
+
+        # Handle dispatch mode
+        if iid.startswith("dispatch_"):
+            node_group = iid[len("dispatch_"):]
+            scenarios = self._get_selected_scenarios()
+            if scenarios:
+                self._display_dispatch(scenarios[0], node_group)
             return
 
         # If disabled, find nearest non-disabled entry
@@ -516,17 +548,19 @@ class ResultViewer(tk.Toplevel):
     def _on_tree_motion(self, event: tk.Event) -> None:
         """Show tooltip with full name when hovering over an entry."""
         item = self._plot_tree.identify_row(event.y)
-        if not item or not item.startswith("entry_"):
+        if not item or (not item.startswith("entry_") and not item.startswith("dispatch_")):
             self._hide_tooltip()
             return
 
-        entry = self._tree_entry_map.get(item)
-        if entry is None:
-            self._hide_tooltip()
-            return
-
-        # Always show tooltip for entry rows — helps readability
-        full_text = f"{entry.number} {entry.full_name}"
+        # Dispatch items use the nodeGroup name directly
+        if item.startswith("dispatch_"):
+            full_text = item[len("dispatch_"):]
+        else:
+            entry = self._tree_entry_map.get(item)
+            if entry is None:
+                self._hide_tooltip()
+                return
+            full_text = f"{entry.number} {entry.full_name}"
         if self._tooltip is not None:
             try:
                 self._tooltip_label.configure(text=full_text)
@@ -861,6 +895,11 @@ class ResultViewer(tk.Toplevel):
             self._scenario_listbox.configure(selectmode="extended")
             self._populate_plot_tree()
             self._show_variant_panel()
+        elif mode == "dispatch":
+            self._scenario_listbox.configure(selectmode="browse")
+            self._hide_variant_panel()
+            # Populate tree with nodeGroups instead of plot entries
+            self._populate_dispatch_tree()
         elif mode == "network":
             self._scenario_listbox.configure(selectmode="browse")
             # Clear plot tree
@@ -905,6 +944,9 @@ class ResultViewer(tk.Toplevel):
         """Re-scan scenarios and re-populate everything."""
         self._yaml_cache.clear()
         self._break_times_cache.clear()
+        self._dispatch_scenario = ""
+        self._dispatch_mappings = None
+        self._dispatch_results = None
         self._populate_scenarios()
         self._on_mode_changed()
 
@@ -1146,6 +1188,16 @@ class ResultViewer(tk.Toplevel):
             self._plot_canvas.show_message("No scenario selected")
             return
 
+        mode = self._mode.get()
+
+        # Dispatch mode is handled directly by _on_tree_selected
+        if mode == "dispatch":
+            selection = self._plot_tree.selection()
+            if selection and selection[0].startswith("dispatch_"):
+                node_group = selection[0][len("dispatch_"):]
+                self._display_dispatch(scenarios[0], node_group)
+            return
+
         selection = self._plot_tree.selection()
         if not selection or not selection[0].startswith("entry_"):
             self._plot_canvas.show_message("No plot selected")
@@ -1160,7 +1212,6 @@ class ResultViewer(tk.Toplevel):
             self._plot_canvas.show_message("No variant selected")
             return
 
-        mode = self._mode.get()
         if mode == "single":
             self._display_from_parquet(scenarios[0], entry, variant)
         else:
@@ -1173,6 +1224,130 @@ class ResultViewer(tk.Toplevel):
                 self._plot_canvas.display_png(png_files[self._file_index])
             else:
                 self._plot_canvas.show_message(f"No plot files found for\n{variant.full_name}")
+
+    # ------------------------------------------------------------------
+    # Dispatch mode
+    # ------------------------------------------------------------------
+
+    def _populate_dispatch_tree(self) -> None:
+        """Populate the tree with nodeGroups from dispatch data."""
+        # Clear existing tree and entry map
+        for item in self._plot_tree.get_children():
+            self._plot_tree.delete(item)
+        self._tree_entry_map.clear()
+
+        scenarios = self._get_selected_scenarios()
+        if not scenarios:
+            return
+
+        scenario = scenarios[0]
+        parquet_dir = self._project_path / "output_parquet" / scenario
+        if not parquet_dir.is_dir():
+            return
+
+        # Load dispatch groups (the authoritative list of plottable groups)
+        dispatch_groups_path = parquet_dir / "outputNodeGroup_does_specified_flows.parquet"
+        if not dispatch_groups_path.exists():
+            return
+
+        df = pd.read_parquet(dispatch_groups_path)
+        if df.empty:
+            return
+
+        node_groups = sorted(df['group'].unique().tolist())
+
+        # Insert as flat list items (no group hierarchy)
+        for ng in node_groups:
+            iid = f"dispatch_{ng}"
+            self._plot_tree.insert("", "end", iid=iid, text=ng)
+
+        # Select first item
+        if node_groups:
+            first_iid = f"dispatch_{node_groups[0]}"
+            self._plot_tree.selection_set(first_iid)
+            self._plot_tree.see(first_iid)
+
+    def _load_dispatch_data(self, scenario: str) -> bool:
+        """Load dispatch data for a scenario. Returns True if successful."""
+        if self._dispatch_scenario == scenario and self._dispatch_mappings is not None:
+            return True  # Already loaded
+
+        parquet_dir = self._project_path / "output_parquet" / scenario
+        if not parquet_dir.is_dir():
+            return False
+
+        # Load dispatch mappings
+        raw_mappings = load_dispatch_mappings(parquet_dir)
+
+        # Build DispatchMappings with scenario in index
+        # For single scenario, add scenario column and set as index
+        mapping_fields: dict[str, pd.DataFrame | None] = {}
+        for key, df in raw_mappings.items():
+            if df is not None and not df.empty:
+                df_copy = df.copy()
+                if 'scenario' not in df_copy.columns:
+                    df_copy['scenario'] = scenario
+                df_copy = df_copy.set_index('scenario')
+                mapping_fields[key] = df_copy
+            else:
+                mapping_fields[key] = df
+        self._dispatch_mappings = DispatchMappings(**mapping_fields)
+
+        # Load TimeSeriesResults
+        scenario_folders = build_scenario_folders_from_dir(
+            self._project_path / "output_parquet", [scenario]
+        )
+        files_by_name = collect_parquet_files(scenario_folders, parquet_subdir="")
+        combined = combine_parquet_files(files_by_name, num_scenarios=1)
+        self._dispatch_results = TimeSeriesResults.from_dict(combined)
+
+        self._dispatch_scenario = scenario
+        return True
+
+    def _display_dispatch(self, scenario: str, node_group: str) -> None:
+        """Render and display a dispatch plot for a nodeGroup."""
+        if not self._load_dispatch_data(scenario):
+            self._plot_canvas.show_message(f"Could not load dispatch data for {scenario}")
+            return
+
+        results = self._dispatch_results
+        mappings = self._dispatch_mappings
+
+        # Prepare dispatch data
+        df_dispatch, inflow = prepare_dispatch_data(
+            results, mappings, scenario, node_group,
+        )
+
+        if df_dispatch is None or df_dispatch.empty:
+            self._plot_canvas.show_message(f"No dispatch data for {node_group}")
+            return
+
+        # Get timeline from start/duration controls
+        start = self._start_var.get()
+        duration = self._duration_var.get()
+        timeline = (start, start + duration)
+
+        # Load break times
+        break_times = self._load_break_times(scenario)
+
+        # Build figure
+        fig = _build_dispatch_figure(
+            df_dispatch, inflow,
+            title=f"{node_group} \u2014 {scenario}",
+            timeline=timeline,
+            break_times=break_times,
+        )
+
+        if fig is None:
+            self._plot_canvas.show_message(f"No plottable data for {node_group}")
+            return
+
+        # No file navigation for dispatch (single figure per nodeGroup)
+        self._file_count = 1
+        self._file_index = 0
+        self._update_file_nav()
+
+        self._plot_canvas.display_figure(fig)
 
     # ------------------------------------------------------------------
     # Network rendering
