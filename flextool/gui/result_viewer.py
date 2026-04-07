@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 import tkinter as tk
 import tkinter.font as tkfont
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tkinter import ttk
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import yaml
 
@@ -82,6 +86,12 @@ class ResultViewer(tk.Toplevel):
 
         # Guard against recursive replots from time range updates
         self._updating_time_range = False
+
+        # Async figure building
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="plot")
+        self._render_gen = 0  # incremented on each replot; stale results discarded
+        self._figure_cache: dict[tuple, plt.Figure] = {}  # prefetched figures
+        self._figure_cache_lock = threading.Lock()
 
         # Dispatch mode state
         self._dispatch_mappings: DispatchMappings | None = None
@@ -554,9 +564,10 @@ class ResultViewer(tk.Toplevel):
         # Update viewer settings
         self._viewer_settings.last_entry = entry.number
 
-        # Reset file index
+        # Reset file index and clear prefetched figures
         self._file_index = 0
         self._file_count = 1
+        self._clear_figure_cache()
 
         self._update_file_nav()
         self._populate_variant_panel(entry)
@@ -752,6 +763,7 @@ class ResultViewer(tk.Toplevel):
         self._viewer_settings.last_variant = letter
         self._highlight_variants()
         self._file_index = 0
+        self._clear_figure_cache()
         self._trigger_replot()
 
     def _on_variant_left(self, event: tk.Event) -> str:
@@ -982,7 +994,19 @@ class ResultViewer(tk.Toplevel):
         if self._updating_time_range:
             return
         self._file_index = 0
+        self._clear_figure_cache()
         self._trigger_replot()
+
+    # ------------------------------------------------------------------
+    # Figure cache management
+    # ------------------------------------------------------------------
+
+    def _clear_figure_cache(self) -> None:
+        """Close and discard all prefetched figures."""
+        with self._figure_cache_lock:
+            for fig in self._figure_cache.values():
+                plt.close(fig)
+            self._figure_cache.clear()
 
     # ------------------------------------------------------------------
     # Refresh
@@ -992,6 +1016,7 @@ class ResultViewer(tk.Toplevel):
         """Re-scan scenarios and re-populate everything."""
         self._yaml_cache.clear()
         self._break_times_cache.clear()
+        self._clear_figure_cache()
         self._dispatch_scenario = ""
         self._dispatch_mappings = None
         self._dispatch_results = None
@@ -1144,74 +1169,157 @@ class ResultViewer(tk.Toplevel):
             self._break_times_cache[scenario] = None
             return None
 
+    def _make_figure_cache_key(
+        self, scenario: str, result_key: str, sub_config: str,
+        file_index: int, start: int, duration: int,
+    ) -> tuple:
+        return (scenario, result_key, sub_config, file_index, start, duration)
+
     def _display_from_parquet(self, scenario: str, entry: PlotEntry, variant: PlotVariant) -> None:
-        """Load parquet, build PlotConfig, render Figure, display it."""
-        import matplotlib.pyplot as plt
-        import time
+        """Load parquet, build PlotConfig, render Figure, display it.
 
-        t0 = time.perf_counter()
-
-        # 1. Load parquet
+        If the figure is already cached (from prefetch), display instantly.
+        Otherwise submit building to a background thread and display on
+        completion.
+        """
+        # 1. Load parquet (cached) and config (cached) — synchronous, fast
         df = self._load_parquet(scenario, variant.result_key)
-        t1 = time.perf_counter()
         if df is None:
             self._plot_canvas.show_message(f"No data: {variant.result_key}.parquet")
             return
 
-        # 2. Load plot config
         config = self._load_plot_config(variant.result_key, variant.sub_config)
-        t2 = time.perf_counter()
         if config is None:
             self._plot_canvas.show_message(f"No config for {variant.result_key}")
             return
 
-        # 3. Update time range controls from data length
         self._update_time_range(len(df))
-
-        # 4. Load break times
         break_times = self._load_break_times(scenario)
-
-        # 5. Build plot name (for figure title)
         plot_name = config.plot_name or variant.full_name
-
-        # 6. Get plot_rows from start/duration controls
         start = self._start_var.get()
         duration = self._duration_var.get()
         plot_rows = (start, start + duration)
-        t3 = time.perf_counter()
 
-        # 7. Call prepare_plot_data (only build the figure at current file_index)
+        # 2. Check prefetch cache for instant display
+        cache_key = self._make_figure_cache_key(
+            scenario, variant.result_key, variant.sub_config,
+            self._file_index, start, duration,
+        )
+        with self._figure_cache_lock:
+            cached_fig = self._figure_cache.pop(cache_key, None)
+
+        if cached_fig is not None:
+            self._plot_canvas.display_figure(cached_fig)
+            logger.info("Plot %s: CACHED [file %d]", variant.result_key, self._file_index)
+            self._prefetch_adjacent(scenario, variant, df, config, plot_name, break_times, start, duration)
+            return
+
+        # 3. Invalidate stale in-flight builds
+        self._render_gen += 1
+        gen = self._render_gen
+
+        # 4. Submit build to background thread
+        self._executor.submit(
+            self._build_figure_async, gen, df, config, plot_name,
+            plot_rows, break_times, self._file_index,
+            scenario, variant, start, duration,
+        )
+
+    def _build_figure_async(
+        self, generation: int, df, config, plot_name, plot_rows,
+        break_times, file_index, scenario, variant, start, duration,
+    ) -> None:
+        """Run in background thread: build figure, then schedule display on main thread."""
+        t0 = time.perf_counter()
         try:
             figures, total_count = prepare_plot_data(
                 df, config, plot_name, plot_rows, break_times,
-                only_file_index=self._file_index,
+                only_file_index=file_index,
             )
         except Exception as exc:
-            logger.error("prepare_plot_data failed for '%s': %s", variant.result_key, exc)
-            self._plot_canvas.show_message(f"Plot error: {exc}")
+            self.after(0, self._on_figure_error, generation, str(exc), variant.result_key)
             return
-        t4 = time.perf_counter()
+        t1 = time.perf_counter()
 
-        # 8. Update file navigation
+        fig = figures[0][1] if figures else None
+        logger.info(
+            "Plot %s: build=%.0fms [file %d/%d, bg thread]",
+            variant.result_key, (t1 - t0) * 1000, file_index, total_count,
+        )
+
+        self.after(0, self._on_figure_ready, generation, fig, total_count,
+                   scenario, variant, start, duration)
+
+    def _on_figure_ready(
+        self, generation: int, fig, total_count: int,
+        scenario, variant, start, duration,
+    ) -> None:
+        """Main-thread callback: display figure if still current."""
+        if generation != self._render_gen:
+            # User moved on — discard stale figure
+            if fig is not None:
+                plt.close(fig)
+            return
+
         self._file_count = max(total_count, 1)
         self._file_index = min(self._file_index, max(0, self._file_count - 1))
         self._update_file_nav()
 
-        # 9. Display the figure at current file_index
-        if figures:
-            filename, fig = figures[0]
+        if fig is not None:
+            t0 = time.perf_counter()
             self._plot_canvas.display_figure(fig)
-            t5 = time.perf_counter()
-            logger.info(
-                "Plot %s: parquet=%.0fms config=%.0fms prep=%.0fms "
-                "build=%.0fms display=%.0fms TOTAL=%.0fms [%d rows, %d cols, %d figs]",
-                variant.result_key,
-                (t1 - t0) * 1000, (t2 - t1) * 1000, (t3 - t2) * 1000,
-                (t4 - t3) * 1000, (t5 - t4) * 1000, (t5 - t0) * 1000,
-                len(df), len(df.columns), total_count,
-            )
+            logger.info("Plot %s: display=%.0fms", variant.result_key, (time.perf_counter() - t0) * 1000)
+            # Prefetch adjacent pages
+            df = self._load_parquet(scenario, variant.result_key)
+            config = self._load_plot_config(variant.result_key, variant.sub_config)
+            if df is not None and config is not None:
+                break_times = self._load_break_times(scenario)
+                plot_name = config.plot_name or variant.full_name
+                self._prefetch_adjacent(scenario, variant, df, config, plot_name, break_times, start, duration)
         else:
             self._plot_canvas.show_message(f"No plottable data for {variant.full_name}")
+
+    def _on_figure_error(self, generation: int, error_msg: str, result_key: str) -> None:
+        """Main-thread callback: show error if still current."""
+        if generation != self._render_gen:
+            return
+        logger.error("prepare_plot_data failed for '%s': %s", result_key, error_msg)
+        self._plot_canvas.show_message(f"Plot error: {error_msg}")
+
+    def _prefetch_adjacent(
+        self, scenario, variant, df, config, plot_name, break_times, start, duration,
+    ) -> None:
+        """Submit background builds for adjacent file pages."""
+        plot_rows = (start, start + duration)
+        for adj_offset in (1, -1):
+            adj_index = self._file_index + adj_offset
+            if adj_index < 0 or adj_index >= self._file_count:
+                continue
+            cache_key = self._make_figure_cache_key(
+                scenario, variant.result_key, variant.sub_config,
+                adj_index, start, duration,
+            )
+            with self._figure_cache_lock:
+                if cache_key in self._figure_cache:
+                    continue
+            self._executor.submit(
+                self._prefetch_build, cache_key, df, config, plot_name,
+                plot_rows, break_times, adj_index, variant.result_key,
+            )
+
+    def _prefetch_build(self, cache_key, df, config, plot_name, plot_rows, break_times, file_index, result_key) -> None:
+        """Background thread: build and cache a figure for prefetch."""
+        try:
+            figures, _ = prepare_plot_data(
+                df, config, plot_name, plot_rows, break_times,
+                only_file_index=file_index,
+            )
+            if figures:
+                with self._figure_cache_lock:
+                    self._figure_cache[cache_key] = figures[0][1]
+                logger.info("Prefetch %s: file %d ready", result_key, file_index)
+        except Exception:
+            pass  # prefetch failure is not critical
 
     def _trigger_replot(self) -> None:
         """Called when scenario, entry, or variant changes."""
@@ -1255,8 +1363,6 @@ class ResultViewer(tk.Toplevel):
 
     def _display_comparison(self, entry: PlotEntry, variant: PlotVariant) -> None:
         """Render comparison plot from pre-combined parquets."""
-        import matplotlib.pyplot as plt
-
         comp_dir = self._project_path / "output_parquet_comparison"
         parquet_path = comp_dir / f"{variant.result_key}.parquet"
 
@@ -1506,6 +1612,9 @@ class ResultViewer(tk.Toplevel):
     def _on_close(self) -> None:
         """Handle window close — persist settings and clean up resources."""
         self._hide_tooltip()
+        self._render_gen += 1  # invalidate in-flight builds
+        self._executor.shutdown(wait=False)
+        self._clear_figure_cache()
 
         # Save window geometry
         self._viewer_settings.window_geometry = self.geometry()
