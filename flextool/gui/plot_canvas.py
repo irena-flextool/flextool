@@ -42,6 +42,8 @@ class PlotCanvas(ttk.Frame):
         self._raw_line_data: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
         self._n_out: int = 3000
         self._cache = PlotCache()
+        self._frozen: bool = False
+        self._orig_configure = None
         # Track last widget size so we know when to re-render cached PNGs
         self._last_widget_size: tuple[int, int] = (0, 0)
 
@@ -63,17 +65,54 @@ class PlotCanvas(ttk.Frame):
         self._toolbar = NavigationToolbar2Tk(self._canvas, toolbar_frame)
         self._toolbar.update()
 
+    def freeze(self) -> None:
+        """Suppress all resize/configure events on the canvas.
+
+        Call before making UI changes (variant panel, tree selection)
+        that might cause the canvas cell to resize.  Call :meth:`thaw`
+        when done — typically after :meth:`display_figure`.
+        """
+        if self._frozen:
+            return
+        self._frozen = True
+        self._canvas_widget.unbind("<Configure>")
+        self._canvas_widget.unbind("<Map>")
+        self._orig_configure = self._canvas_widget.configure
+
+        def _frozen_configure(**kw):
+            kw.pop("width", None)
+            kw.pop("height", None)
+            if kw:
+                self._orig_configure(**kw)
+
+        self._canvas_widget.configure = _frozen_configure  # type: ignore[assignment]
+
+    def thaw(self) -> None:
+        """Re-enable resize/configure events after :meth:`freeze`."""
+        if not self._frozen:
+            return
+        self._frozen = False
+        self._canvas_widget.configure = self._orig_configure  # type: ignore[assignment]
+        self._canvas_widget.bind("<Configure>", self._canvas.resize)
+        self._canvas_widget.bind(
+            "<Map>", self._canvas._update_device_pixel_ratio,
+        )
+
     def display_figure(self, fig: Figure) -> None:
         """Display a matplotlib Figure on the canvas.
 
         The figure is sized to match the canvas widget (with facecolor
-        filling unused area).  The <Configure> callback on the Tk canvas
-        is suppressed during the draw to prevent a resize feedback loop
-        (which manifests as visible jitter / multi-stage resize).
+        filling unused area).  Caller should call :meth:`freeze` before
+        any UI changes and :meth:`thaw` after this method returns.
+        If not already frozen, this method freezes/thaws automatically.
         """
         if fig is self._figure:
             self._canvas.draw()
             return
+
+        auto_frozen = not self._frozen
+        if auto_frozen:
+            self.freeze()
 
         # Match figure size to the current canvas widget size.
         fig.set_facecolor(_BG)
@@ -86,31 +125,10 @@ class PlotCanvas(ttk.Frame):
         self._figure = fig
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
+        self._canvas.draw()
 
-        # Suppress all Tk event handlers that trigger resize feedback:
-        # <Configure> → resize() → draw_idle() and
-        # <Map> → _update_device_pixel_ratio() → configure() → <Configure>
-        # Also monkey-patch the widget's configure to ignore width/height
-        # changes that draw()/blit() may trigger internally.
-        self._canvas_widget.unbind("<Configure>")
-        self._canvas_widget.unbind("<Map>")
-        orig_configure = self._canvas_widget.configure
-
-        def _frozen_configure(**kw):
-            kw.pop("width", None)
-            kw.pop("height", None)
-            if kw:
-                orig_configure(**kw)
-
-        self._canvas_widget.configure = _frozen_configure  # type: ignore[assignment]
-        try:
-            self._canvas.draw()
-        finally:
-            self._canvas_widget.configure = orig_configure  # type: ignore[assignment]
-            self._canvas_widget.bind("<Configure>", self._canvas.resize)
-            self._canvas_widget.bind(
-                "<Map>", self._canvas._update_device_pixel_ratio,
-            )
+        if auto_frozen:
+            self.thaw()
 
     def display_png(self, png_path: Path) -> None:
         """Load and display a PNG file at its natural resolution.
