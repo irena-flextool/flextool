@@ -16,7 +16,7 @@ from flextool.scenario_comparison.data_models import DispatchMappings
 from flextool.scenario_comparison.db_reader import get_scenario_results
 from flextool.scenario_comparison.dispatch_mappings import combine_dispatch_mappings
 from flextool.scenario_comparison.dispatch_plots import create_dispatch_plots
-from flextool.plot_outputs.config import _is_single_config
+from flextool.plot_outputs.config import _is_single_config, flatten_new_format
 from flextool.plot_outputs.plot_functions import plot_dict_of_dataframes
 
 
@@ -82,6 +82,9 @@ def run(
         dispatch_config = create_or_update_dispatch_config(
             plot_dir, results, scenarios, mappings
         )
+
+    # Flatten new-format entries to flat result_key mapping for downstream use
+    settings['plots'] = flatten_new_format(settings.get('plots', {}))
 
     # If shared_legend is disabled, replace 'shared' legend with 'right' in all plot configs
     if not shared_legend:

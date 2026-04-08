@@ -25,7 +25,7 @@ from flextool.plot_outputs.format_helpers import (
     generate_split_filename, split_into_chunks, _chunk_average_df,
     insert_timeline_breaks,
 )
-from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config
+from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config, flatten_new_format
 from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
 from flextool.plot_outputs.plot_bars import build_bar_figures
 from flextool.plot_outputs.plot_lines import build_line_figures, build_stack_figures
@@ -648,6 +648,9 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         delete_existing_plots: If True, delete all existing plots in plot_dir (default True)
     """
 
+    # Flatten new-format entries (entry-name grouping) to flat result_key mapping
+    plot_settings = flatten_new_format(plot_settings)
+
     # Empty plot dir if requested
     if delete_existing_plots:
         for filename in os.listdir(plot_dir):
@@ -743,6 +746,9 @@ def compute_all_plot_plans(
     import tempfile
     from pathlib import Path
     from flextool.plot_outputs.plan import compute_plot_plans_for_result
+
+    # Flatten new-format entries (entry-name grouping) to flat result_key mapping
+    plot_settings = flatten_new_format(plot_settings)
 
     output_dir = Path(output_dir)
     plan_dir = output_dir / "plot_plans"

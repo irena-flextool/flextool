@@ -56,692 +56,707 @@
 order_of_variants: [p, h, w, a]
 
 plots:
+
   # Infeasibilities
-  node_slack_up_dt_e:
-    default:
-      plot_name: '0.0.h Loss of load (upward slack)'
-      map_dimensions_for_plots: [dt_se, tt_lu]
-      legend: shared
-      skip_data_with_only_zeroes: true
-      ylabel: MWh
-    chunks:
-      plot_name: '0.0.w Loss of load weekly avg (upward slack)'
-      map_dimensions_for_plots: [dt_sp, ti_lu]
-      legend: shared
-      max_subplots_per_file: 6
-      time_average_duration: 168
-      subplots_per_row: 2
-      skip_data_with_only_zeroes: true
-      ylabel: MWh
-  node_slack_up_d_e:
-    default:
-      plot_name: '0.0.p Loss of load (upward slack)'
-      map_dimensions_for_plots: [d_se, b_ge]
-      legend: shared
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      subplots_per_row: 2
-      xlabel: MWh
-      skip_data_with_only_zeroes: true
-    sum_periods:
-      plot_name: '0.0.a Loss of load total (upward slack)'
-      map_dimensions_for_plots: [d_se, m_ge]
-      legend: shared
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      subplots_per_row: 2
-      xlabel: MWh (total)
-      skip_data_with_only_zeroes: true
-  node_slack_down_dt_e:
-    default:
-      plot_name: '0.1.h Excess load + spill (downward slack)'
-      map_dimensions_for_plots: [dt_se, tt_lu]
-      legend: shared
-      skip_data_with_only_zeroes: true
-      ylabel: MWh
-    chunks:
-      plot_name: '0.1.w Excess load + spill weekly avg (downward slack)'
-      map_dimensions_for_plots: [dt_sp, ti_lu]
-      legend: shared
-      max_subplots_per_file: 6
-      time_average_duration: 168
-      subplots_per_row: 2
-      skip_data_with_only_zeroes: true
-      ylabel: MWh
-  node_slack_down_d_e:
-    default:
-      plot_name: '0.1.p Excess load + spill (downward slack)'
-      map_dimensions_for_plots: [d_se, b_ge]
-      legend: shared
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      subplots_per_row: 2
-      xlabel: MWh
-      skip_data_with_only_zeroes: true
-    sum_periods:
-      plot_name: '0.1.a Excess load + spill total (downward slack)'
-      map_dimensions_for_plots: [d_se, m_ge]
-      legend: shared
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      subplots_per_row: 2
-      xlabel: MWh (total)
-      skip_data_with_only_zeroes: true
-  nodeGroup_slack_reserve_d_eeg:
-    default:
-      plot_name: '0.2.p Lack of reserves'
-      map_dimensions_for_plots: [d_seeg, b_essu]
-      max_subplots_per_file: 6
-      subplots_per_row: 2
-      skip_data_with_only_zeroes: true
-      ylabel: MWh
-    sum_periods:
-      plot_name: '0.2.a Lack of reserves total'
-      map_dimensions_for_plots: [d_seeg, m_essu]
-      max_subplots_per_file: 6
-      subplots_per_row: 2
-      skip_data_with_only_zeroes: true
-      ylabel: MWh (total)
-  nodeGroup_slack_reserve_dt_eeg:
-    plot_name: '0.2.h Lack of reserves'
-    map_dimensions_for_plots: [dt_seeg, tt_luug]
-    legend: shared
-    skip_data_with_only_zeroes: true
-    ylabel: MWh/h
-  nodeGroup_slack_inertia_d_g:
-    default:
-      plot_name: '0.3.p Lack of inertia'
-      map_dimensions_for_plots: [d_sg, b_eu]
-      max_subplots_per_file: 2
-      subplots_per_row: 2
-      skip_data_with_only_zeroes: true
-      ylabel: MWs
-    sum_periods:
-      plot_name: '0.3.a Lack of inertia total'
-      map_dimensions_for_plots: [d_sg, m_eu]
-      max_subplots_per_file: 2
-      subplots_per_row: 2
-      skip_data_with_only_zeroes: true
-      ylabel: MWs (total)
-  nodeGroup_slack_inertia_dt_g:
-    plot_name: '0.3.h Lack of inertia'
-    map_dimensions_for_plots: [dt_sg, tt_lu]
-    legend: shared
-    skip_data_with_only_zeroes: true
-    ylabel: MWs
-  nodeGroup_slack_nonsync_d_g:
-    default:
-      plot_name: '0.4.p Lack of nonsynchronous sources'
-      map_dimensions_for_plots: [d_sg, b_eu]
-      max_subplots_per_file: 2
-      subplots_per_row: 2
-      skip_data_with_only_zeroes: true
-      ylabel: MWh
-    sum_periods:
-      plot_name: '0.4.a Lack of nonsynchronous sources total'
-      map_dimensions_for_plots: [d_sg, m_eu]
-      max_subplots_per_file: 2
-      subplots_per_row: 2
-      skip_data_with_only_zeroes: true
-      ylabel: MWh (total)
-  nodeGroup_slack_nonsync_dt_g:
-    plot_name: '0.4.h Lack of nonsynchronous sources'
-    map_dimensions_for_plots: [dt_sg, tt_lu]
-    legend: shared
-    skip_data_with_only_zeroes: true
-    ylabel: MWh
-  nodeGroup_slack_capacity_margin_d_g:
-    default:
-      plot_name: '0.5.p Violation of capacity margin'
-      map_dimensions_for_plots: [d_sg, b_eu]
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      subplots_per_row: 2
-      skip_data_with_only_zeroes: true
-      xlabel: MWh
-    sum_periods:
-      plot_name: '0.5.a Violation of capacity margin total'
-      map_dimensions_for_plots: [d_sg, m_eu]
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      subplots_per_row: 2
-      skip_data_with_only_zeroes: true
-      xlabel: MW (total)
+  'Loss of load (upward slack)':
+    group: 0
+    order: 0
+    node_slack_up_dt_e:
+      default:
+        map_dimensions_for_plots: [dt_se, tt_lu]
+        legend: shared
+        skip_data_with_only_zeroes: true
+        ylabel: MWh
+      chunks:
+        map_dimensions_for_plots: [dt_sp, ti_lu]
+        legend: shared
+        max_subplots_per_file: 6
+        time_average_duration: 168
+        subplots_per_row: 2
+        skip_data_with_only_zeroes: true
+        ylabel: MWh
+    node_slack_up_d_e:
+      default:
+        map_dimensions_for_plots: [d_se, b_ge]
+        legend: shared
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        subplots_per_row: 2
+        xlabel: MWh
+        skip_data_with_only_zeroes: true
+      sum_periods:
+        map_dimensions_for_plots: [d_se, m_ge]
+        legend: shared
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        subplots_per_row: 2
+        xlabel: MWh (total)
+        skip_data_with_only_zeroes: true
+  'Excess load + spill (downward slack)':
+    group: 0
+    order: 1
+    node_slack_down_dt_e:
+      default:
+        map_dimensions_for_plots: [dt_se, tt_lu]
+        legend: shared
+        skip_data_with_only_zeroes: true
+        ylabel: MWh
+      chunks:
+        map_dimensions_for_plots: [dt_sp, ti_lu]
+        legend: shared
+        max_subplots_per_file: 6
+        time_average_duration: 168
+        subplots_per_row: 2
+        skip_data_with_only_zeroes: true
+        ylabel: MWh
+    node_slack_down_d_e:
+      default:
+        map_dimensions_for_plots: [d_se, b_ge]
+        legend: shared
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        subplots_per_row: 2
+        xlabel: MWh
+        skip_data_with_only_zeroes: true
+      sum_periods:
+        map_dimensions_for_plots: [d_se, m_ge]
+        legend: shared
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        subplots_per_row: 2
+        xlabel: MWh (total)
+        skip_data_with_only_zeroes: true
+  'Lack of reserves':
+    group: 0
+    order: 2
+    nodeGroup_slack_reserve_d_eeg:
+      default:
+        map_dimensions_for_plots: [d_seeg, b_essu]
+        max_subplots_per_file: 6
+        subplots_per_row: 2
+        skip_data_with_only_zeroes: true
+        ylabel: MWh
+      sum_periods:
+        map_dimensions_for_plots: [d_seeg, m_essu]
+        max_subplots_per_file: 6
+        subplots_per_row: 2
+        skip_data_with_only_zeroes: true
+        ylabel: MWh (total)
+    nodeGroup_slack_reserve_dt_eeg:
+      default:
+        map_dimensions_for_plots: [dt_seeg, tt_luug]
+        legend: shared
+        skip_data_with_only_zeroes: true
+        ylabel: MWh/h
+  'Lack of inertia':
+    group: 0
+    order: 3
+    nodeGroup_slack_inertia_d_g:
+      default:
+        map_dimensions_for_plots: [d_sg, b_eu]
+        max_subplots_per_file: 2
+        subplots_per_row: 2
+        skip_data_with_only_zeroes: true
+        ylabel: MWs
+      sum_periods:
+        map_dimensions_for_plots: [d_sg, m_eu]
+        max_subplots_per_file: 2
+        subplots_per_row: 2
+        skip_data_with_only_zeroes: true
+        ylabel: MWs (total)
+    nodeGroup_slack_inertia_dt_g:
+      default:
+        map_dimensions_for_plots: [dt_sg, tt_lu]
+        legend: shared
+        skip_data_with_only_zeroes: true
+        ylabel: MWs
+  'Lack of nonsynchronous sources':
+    group: 0
+    order: 4
+    nodeGroup_slack_nonsync_d_g:
+      default:
+        map_dimensions_for_plots: [d_sg, b_eu]
+        max_subplots_per_file: 2
+        subplots_per_row: 2
+        skip_data_with_only_zeroes: true
+        ylabel: MWh
+      sum_periods:
+        map_dimensions_for_plots: [d_sg, m_eu]
+        max_subplots_per_file: 2
+        subplots_per_row: 2
+        skip_data_with_only_zeroes: true
+        ylabel: MWh (total)
+    nodeGroup_slack_nonsync_dt_g:
+      default:
+        map_dimensions_for_plots: [dt_sg, tt_lu]
+        legend: shared
+        skip_data_with_only_zeroes: true
+        ylabel: MWh
+  'Violation of capacity margin':
+    group: 0
+    order: 5
+    nodeGroup_slack_capacity_margin_d_g:
+      default:
+        map_dimensions_for_plots: [d_sg, b_eu]
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        subplots_per_row: 2
+        skip_data_with_only_zeroes: true
+        xlabel: MWh
+      sum_periods:
+        map_dimensions_for_plots: [d_sg, m_eu]
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        subplots_per_row: 2
+        skip_data_with_only_zeroes: true
+        xlabel: MW (total)
 
   # Curtailments
-  unit_curtailment_outputNode_d_ee:
-    default:
-      plot_name: '1.0.p Curtail. amount'
-      map_dimensions_for_plots: [d_see, b_gmm]
-      legend: shared
-      axis_bounds: shared
-      skip_data_with_only_zeroes: true
-      xlabel: MWh
-    sum_periods:
-      plot_name: '1.0.a Curtail. amount total'
-      map_dimensions_for_plots: [d_see, m_gmm]
-      legend: shared
-      axis_bounds: shared
-      skip_data_with_only_zeroes: true
-      xlabel: MWh (total)
-  unit_curtailment_outputNode_dt_ee:
-    default:
-      plot_name: '1.0.h Curtail. amount'
-      map_dimensions_for_plots: [dt_see, tt_lmm]
-      legend: shared
-      axis_bounds: shared
-      skip_data_with_only_zeroes: true
-      ylabel: MWh
-    chunks:
-      plot_name: '1.0.w Curtail. amount weekly avg'
-      map_dimensions_for_plots: [dt_see, mi_lmm]
-      time_average_duration: 168
-      legend: shared
-      axis_bounds: shared
-      skip_data_with_only_zeroes: true
-      ylabel: MWh
-  unit_curtailment_share_outputNode_d_ee:
-    default:
-      plot_name: '1.1.p Curtail. share of VRE'
-      map_dimensions_for_plots: [d_see, a_gbu]
-      legend: shared
-      axis_bounds: shared
-      skip_data_with_only_zeroes: true
-      axis_tick_format: '.0%'
-  unit_curtailment_share_outputNode_dt_ee:
-    default:
-      plot_name: '1.1.h Curtail. share of VRE'
-      axis_tick_format: '.0%'
-    chunks:
-      plot_name: '1.1.w Curtail. share of VRE weekly avg'
-      axis_tick_format: '.0%'
-      time_average_duration: 168
+  'Curtail. amount':
+    group: 1
+    order: 0
+    unit_curtailment_outputNode_d_ee:
+      default:
+        map_dimensions_for_plots: [d_see, b_gmm]
+        legend: shared
+        axis_bounds: shared
+        skip_data_with_only_zeroes: true
+        xlabel: MWh
+      sum_periods:
+        map_dimensions_for_plots: [d_see, m_gmm]
+        legend: shared
+        axis_bounds: shared
+        skip_data_with_only_zeroes: true
+        xlabel: MWh (total)
+  'Curtail. share of VRE':
+    group: 1
+    order: 1
+    unit_curtailment_share_outputNode_d_ee:
+      default:
+        map_dimensions_for_plots: [d_see, a_gbu]
+        legend: shared
+        axis_bounds: shared
+        skip_data_with_only_zeroes: true
+        axis_tick_format: '.0%'
+    unit_curtailment_share_outputNode_dt_ee:
+      default:
+        axis_tick_format: '.0%'
+      chunks:
+        axis_tick_format: '.0%'
+        time_average_duration: 168
 
   # Flows for units and connections
-  unit_outputNode_d_ee:
-    plot_name: '2.0.p Flows unit to node'
-    max_items_per_plot: 20
-    subplots_per_row: 2
-    max_subplots_per_file: 6
-    map_dimensions_for_plots: [d_see, m_gbu]
-    legend: shared
-    skip_data_with_only_zeroes: true
-    xlabel: MWh
-  unit_outputNode_dt_ee:
-    unit_time_plots:
-      plot_name: '2.0.h Flows unit to node'
-      map_dimensions_for_plots: [dt_see, tt_luu]
-      legend: shared
-      subplots_per_row: 2
-      max_subplots_per_file: 6
-      skip_data_with_only_zeroes: true
-      ylabel: MWh
-    chunks:
-      plot_name: '2.0.w Flows unit to node weekly avg'
-      map_dimensions_for_plots: [dt_sp, ti_luu]
-      legend: shared
-      max_subplots_per_file: 6
-      time_average_duration: 168
-      subplots_per_row: 2
-      skip_data_with_only_zeroes: true
-      ylabel: MWh
-  unit_inputNode_d_ee:
-    plot_name: '2.1.p Flows node to unit'
-    map_dimensions_for_plots: [d_see, m_geu]
-    legend: shared
-    max_items_per_plot: 20
-    subplots_per_row: 2
-    max_subplots_per_file: 6
-  unit_inputNode_dt_ee:
-    unit_time_plots:
-      plot_name: '2.1.h Flows node to unit'
-      map_dimensions_for_plots: [dt_see, tt_luu]
-      legend: shared
-      subplots_per_row: 2
-      max_subplots_per_file: 6
-      ylabel: MWh
-  connection_d_eee:
-    plot_name: '2.2.p Flows connection'
-    map_dimensions_for_plots: [d_se, u_gb]
-    legend: shared
-    xlabel: MWh
-    max_items_per_plot: 40
-    subplots_per_row: 2
-    max_subplots_per_file: 2
-    axis_bounds: shared
-  connection_dt_eee:
-    connection_time_plots:
-      plot_name: '2.2.h Flows connection'
-      map_dimensions_for_plots: [dt_se, tt_lu]
-      legend: shared
-      max_items_per_plot: 10
-      subplots_per_row: 2
-      max_subplots_per_file: 6
-      ylabel: MWh
-    chunks:
-      plot_name: '2.2.w Flows connection weekly avg'
-      map_dimensions_for_plots: [dt_se, mi_lu]
-      time_average_duration: 168
-      legend: shared
-      max_items_per_plot: 10
-      subplots_per_row: 2
-      max_subplots_per_file: 6
-      ylabel: MWh
-  # connection_leftward_d_eee:
-  #   plot_name: '2.3.p Connection leftward'
-  # connection_leftward_dt_eee:
-  #   plot_name: '2.3.h Connection leftward'
-  # connection_rightward_d_eee:
-  #   plot_name: '2.4.p Connection rightward'
-  # connection_rightward_dt_eee:
-  #   plot_name: '2.4.h Connection rightward'
+  'Flows unit to node':
+    group: 2
+    order: 0
+    unit_outputNode_d_ee:
+      default:
+        max_items_per_plot: 20
+        subplots_per_row: 2
+        max_subplots_per_file: 6
+        map_dimensions_for_plots: [d_see, m_gbu]
+        legend: shared
+        skip_data_with_only_zeroes: true
+        xlabel: MWh
+    unit_outputNode_dt_ee:
+      unit_time_plots:
+        map_dimensions_for_plots: [dt_see, tt_luu]
+        legend: shared
+        subplots_per_row: 2
+        max_subplots_per_file: 6
+        skip_data_with_only_zeroes: true
+        ylabel: MWh
+      chunks:
+        map_dimensions_for_plots: [dt_sp, ti_luu]
+        legend: shared
+        max_subplots_per_file: 6
+        time_average_duration: 168
+        subplots_per_row: 2
+        skip_data_with_only_zeroes: true
+        ylabel: MWh
+  'Flows node to unit':
+    group: 2
+    order: 1
+    unit_inputNode_d_ee:
+      default:
+        map_dimensions_for_plots: [d_see, m_geu]
+        legend: shared
+        max_items_per_plot: 20
+        subplots_per_row: 2
+        max_subplots_per_file: 6
+    unit_inputNode_dt_ee:
+      unit_time_plots:
+        map_dimensions_for_plots: [dt_see, tt_luu]
+        legend: shared
+        subplots_per_row: 2
+        max_subplots_per_file: 6
+        ylabel: MWh
+  'Flows connection':
+    group: 2
+    order: 2
+    connection_d_eee:
+      default:
+        map_dimensions_for_plots: [d_se, u_gb]
+        legend: shared
+        xlabel: MWh
+        max_items_per_plot: 40
+        subplots_per_row: 2
+        max_subplots_per_file: 2
+        axis_bounds: shared
+    connection_dt_eee:
+      connection_time_plots:
+        map_dimensions_for_plots: [dt_se, tt_lu]
+        legend: shared
+        max_items_per_plot: 10
+        subplots_per_row: 2
+        max_subplots_per_file: 6
+        ylabel: MWh
+      chunks:
+        map_dimensions_for_plots: [dt_se, mi_lu]
+        time_average_duration: 168
+        legend: shared
+        max_items_per_plot: 10
+        subplots_per_row: 2
+        max_subplots_per_file: 6
+        ylabel: MWh
 
   # Costs
-  costs_d_p:
-    default:
-      plot_name: '3.0.p Costs annualized'
-      base_length: 10
-      max_items_per_plot: 30
-      max_subplots_per_file: 1
-      xlabel: 'Millions of Currency'
-      map_dimensions_for_plots: [d_sp, b_es]
-    sum_periods:
-      plot_name: '3.0.a Costs annualized sum periods'
-      base_length: 10
-      map_dimensions_for_plots: [d_sp, m_gb]
-      legend: shared
-      max_items_per_plot: 12
-      subplots_per_row: 1
-  costs_dt_p:
-    default:
-      plot_name: '3.0.h Costs stack'
-      map_dimensions_for_plots: [dt_sp, tt_us]
-      max_items_per_plot: 20
-      axis_bounds: shared
-      ylabel: 'Currency'
-    chunks:
-      plot_name: '3.0.w Costs time chunks'
-      map_dimensions_for_plots: [dt_sp, ti_lu]
-      legend: shared
-      max_items_per_plot: 20
-      max_subplots_per_file: 12
-      subplots_per_row: 3
-      time_average_duration: 24
-      # axis_bounds: shared
-      ylabel: 'Currency'
-    lines:
-      plot_name: '3.1.h Costs lines'
-      map_dimensions_for_plots: [dt_sp, tt_lm]
-      legend: shared
-      max_items_per_plot: 20
-      axis_bounds: shared
-      ylabel: 'Millions of Currency'
-      always_include_zero_in_axis: false
-  costs_discounted_d_p:
-    default:
-      plot_name: '3.2.p Costs discounted'
-      bar_orientation: vertical
-      max_items_per_plot: 40
-      base_length: 8
-      map_dimensions_for_plots: [d_sp, b_es]
-      ylabel: 'Millions of Currency'
-  costs_discounted_p_:
-    default:
-      plot_name: '3.2.a Costs discounted'
-      map_dimensions_for_plots: [d_s, s_b]
-      max_items_per_plot: 40
-      max_subplots_per_file: 1
-      subplots_per_row: 1
-      base_length: 10
-      always_include_zero_in_axis: false
-      # axis_bounds: shared
-      xlabel: 'Millions of Currency'
+  'Costs':
+    group: 3
+    order: 0
+    costs_d_p:
+      default:
+        base_length: 10
+        max_items_per_plot: 30
+        max_subplots_per_file: 1
+        xlabel: Millions of Currency
+        map_dimensions_for_plots: [d_sp, b_es]
+      sum_periods:
+        base_length: 10
+        map_dimensions_for_plots: [d_sp, m_gb]
+        legend: shared
+        max_items_per_plot: 12
+        subplots_per_row: 1
+    costs_dt_p:
+      default:
+        map_dimensions_for_plots: [dt_sp, tt_us]
+        max_items_per_plot: 20
+        axis_bounds: shared
+        ylabel: Currency
+      chunks:
+        map_dimensions_for_plots: [dt_sp, ti_lu]
+        legend: shared
+        max_items_per_plot: 20
+        max_subplots_per_file: 12
+        subplots_per_row: 3
+        time_average_duration: 24
+        ylabel: Currency
+  'Costs lines':
+    group: 3
+    order: 1
+    costs_dt_p:
+      lines:
+        map_dimensions_for_plots: [dt_sp, tt_lm]
+        legend: shared
+        max_items_per_plot: 20
+        axis_bounds: shared
+        ylabel: Millions of Currency
+        always_include_zero_in_axis: false
+  'Costs discounted':
+    group: 3
+    order: 2
+    costs_discounted_d_p:
+      default:
+        bar_orientation: vertical
+        max_items_per_plot: 40
+        base_length: 8
+        map_dimensions_for_plots: [d_sp, b_es]
+        ylabel: Millions of Currency
+    costs_discounted_p_:
+      default:
+        variant: a
+        map_dimensions_for_plots: [d_s, s_b]
+        max_items_per_plot: 40
+        max_subplots_per_file: 1
+        subplots_per_row: 1
+        base_length: 10
+        always_include_zero_in_axis: false
+        xlabel: Millions of Currency
 
   # Capacities for units, nodes and connections
-  node_capacity_ed_p:
-    plot_name: '4.0.p Capacity nodes'
-    subplots_per_row: 2
-    max_items_per_plot: 40
-    max_subplots_per_file: 2
-    base_length: 4
-    map_dimensions_for_plots: [ed_sp, eb_gu]
-    legend: shared
-    skip_data_with_only_zeroes: true
-    xlabel: MWh
-  unit_capacity_ed_p:
-    plot_name: '4.1.p Capacity units'
-    subplots_per_row: 2
-    max_items_per_plot: 60
-    max_subplots_per_file: 2
-    base_length: 4
-    map_dimensions_for_plots: [ed_sp, eb_gu]
-    legend: shared
-    skip_data_with_only_zeroes: true
-    xlabel: MW
-  connection_capacity_ed_p:
-    plot_name: '4.2.p Capacity connections'
-    map_dimensions_for_plots: [ed_sp, eb_gu]
-    legend: shared
-    subplots_per_row: 2
-    max_items_per_plot: 40
-    max_subplots_per_file: 2
-    base_length: 4
-    skip_data_with_only_zeroes: true
-    xlabel: MW
-  dual_invest_effective_node_d_e:
-    plot_name: '4.3.p Node marginal investment value'
-    map_dimensions_for_plots: [d_se, b_ge]
-    subplots_per_row: 2
-    max_items_per_plot: 40
-    max_subplots_per_file: 2
-    base_length: 4
-    skip_data_with_only_zeroes: false
-    xlabel: Currency / MWh
-  dual_invest_effective_unit_d_e:
-    plot_name: '4.4.p Unit marginal investment value'
-    map_dimensions_for_plots: [d_se, b_ge]
-    subplots_per_row: 2
-    max_items_per_plot: 40
-    max_subplots_per_file: 2
-    base_length: 4
-    skip_data_with_only_zeroes: false
-    xlabel: Currency / MW
-  dual_invest_effective_connection_d_e:
-    plot_name: '4.5.p Connection marginal investment value'
-    map_dimensions_for_plots: [d_se, b_ge]
-    subplots_per_row: 2
-    max_items_per_plot: 40
-    max_subplots_per_file: 2
-    base_length: 4
-    skip_data_with_only_zeroes: false
-    xlabel: Currency / MW
-
+  'Capacity nodes':
+    group: 4
+    order: 0
+    node_capacity_ed_p:
+      default:
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        base_length: 4
+        map_dimensions_for_plots: [ed_sp, eb_gu]
+        legend: shared
+        skip_data_with_only_zeroes: true
+        xlabel: MWh
+  'Capacity units':
+    group: 4
+    order: 1
+    unit_capacity_ed_p:
+      default:
+        subplots_per_row: 2
+        max_items_per_plot: 60
+        max_subplots_per_file: 2
+        base_length: 4
+        map_dimensions_for_plots: [ed_sp, eb_gu]
+        legend: shared
+        skip_data_with_only_zeroes: true
+        xlabel: MW
+  'Capacity connections':
+    group: 4
+    order: 2
+    connection_capacity_ed_p:
+      default:
+        map_dimensions_for_plots: [ed_sp, eb_gu]
+        legend: shared
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        base_length: 4
+        skip_data_with_only_zeroes: true
+        xlabel: MW
+  'Node marginal investment value':
+    group: 4
+    order: 3
+    dual_invest_effective_node_d_e:
+      default:
+        map_dimensions_for_plots: [d_se, b_ge]
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        base_length: 4
+        skip_data_with_only_zeroes: false
+        xlabel: Currency / MWh
+  'Unit marginal investment value':
+    group: 4
+    order: 4
+    dual_invest_effective_unit_d_e:
+      default:
+        map_dimensions_for_plots: [d_se, b_ge]
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        base_length: 4
+        skip_data_with_only_zeroes: false
+        xlabel: Currency / MW
+  'Connection marginal investment value':
+    group: 4
+    order: 5
+    dual_invest_effective_connection_d_e:
+      default:
+        map_dimensions_for_plots: [d_se, b_ge]
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        base_length: 4
+        skip_data_with_only_zeroes: false
+        xlabel: Currency / MW
 
   # Emissions
-  CO2__:
-    default:
-      plot_name: '5.0.p Emissions CO2 total cumulative'
-      map_dimensions_for_plots: [_, m_bm]
-      base_length: 8
-      xlabel: Mt CO2
-  CO2_d_g:
-    default:
-      plot_name: '5.1.p Emissions CO2 per nodeGroup'
-      map_dimensions_for_plots: [d_sg, m_gb]
-      legend: shared
-      subplots_per_row: 2
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      xlabel: t CO2
-    sum_periods:
-      plot_name: '5.1.a Emissions CO2 per nodeGroup total'
-      map_dimensions_for_plots: [d_g, m_b]
-      xlabel: t CO2 (total)
-  process_co2_d_eee:
-    default:
-      plot_name: '5.2.p Process CO2 emissions'
-      map_dimensions_for_plots: [d_seeee, f_gxbxe]
-      legend: shared
-      subplots_per_row: 2
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      xlabel: t CO2
-    sum_periods:
-      plot_name: '5.2.a Process CO2 emissions total'
-      map_dimensions_for_plots: [d_seeee, m_gxbxe]
-      legend: shared
-      subplots_per_row: 2
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      xlabel: t CO2 (total)
+  'Emissions CO2 total':
+    group: 5
+    order: 0
+    CO2__:
+      default:
+        variant: a
+        map_dimensions_for_plots: [_, m_bm]
+        base_length: 8
+        xlabel: Mt CO2
+  'Emissions CO2 per nodeGroup':
+    group: 5
+    order: 1
+    CO2_d_g:
+      default:
+        map_dimensions_for_plots: [d_sg, m_gb]
+        legend: shared
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        xlabel: t CO2
+      sum_periods:
+        map_dimensions_for_plots: [d_g, m_b]
+        xlabel: t CO2 (total)
+  'Process CO2 emissions':
+    group: 5
+    order: 2
+    process_co2_d_eee:
+      default:
+        map_dimensions_for_plots: [d_seeee, f_gxbxe]
+        legend: shared
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        xlabel: t CO2
+      sum_periods:
+        map_dimensions_for_plots: [d_seeee, m_gxbxe]
+        legend: shared
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        xlabel: t CO2 (total)
 
   # NodeGroups
-  nodeGroup_flows_d_gpe:
-    default:
-      plot_name: '6.0.p NodeGroup energy balance'
-      legend: all
-      bar_orientation: vertical
-      subplots_per_row: 2
-      max_items_per_plot: 30
-      max_subplots_per_file: 2
-      base_length: 12
-      map_dimensions_for_plots: [d_sgpe, m_buss]
-      ylabel: MWh
-  nodeGroup_flows_dt_gpe:
-    plot_name: '6.0.h NodeGroup dispatch'
-    map_dimensions_for_plots: [dt_sgpe, tt_fuss]
-    subplots_per_row: 2
-    max_subplots_per_file: 4
-    max_items_per_plot: 30
-    base_length: 8
-  nodeGroup_gd_p:
-    plot_name: '6.1.p NodeGroup indicators'
-    subplots_per_row: 2
-    max_items_per_plot: 100
-    map_dimensions_for_plots: [gd_sp, fg_bu]
-    axis_bounds: [[0,1], [0,1], [0,1], [0,1], [], [0,1]]
-    axis_tick_format: ['.0%', '.0%', '.0%', '.0%', 'dynamic', '.0%']
-    xlabel: [percent, percent, percent, percent, MWh, percent]
-  # nodeGroup_gdt_p:
-  #   plot_name: '6.1.h NodeGroup indicators'
-  nodeGroup_VRE_share_d_g:
-    default:
-      plot_name: '6.2.p NodeGroup VRE share'
-      map_dimensions_for_plots: [d_sg, b_ge]
-      legend: shared
-      subplots_per_row: 1
-      max_items_per_plot: 40
-      max_subplots_per_file: 1
-      base_length: 8
-      skip_data_with_only_zeroes: true
-      axis_tick_format: '.0%'
-  nodeGroup_VRE_share_dt_g:
-    default:
-      plot_name: '6.2.h NodeGroup VRE share'
-      map_dimensions_for_plots: [dt_sg, tt_lu]
-      legend: shared
-      axis_bounds: shared
-      axis_tick_format: '.0%'
-  nodeGroup_inertia_dt_g:
-    default:
-      plot_name: '6.3.h NodeGroup inertia'
-      map_dimensions_for_plots: [dt_sg, tt_lu]
-      legend: shared
-      ylabel: MWs
-  nodeGroup_inertia_largest_flow_dt_g:
-    debug:
-      plot_name: '6.4.h NodeGroup inertia of largest flow'
-      ylabel: MWs
-  nodeGroup_unit_node_inertia_dt_gee:
-    debug:
-      plot_name: '6.5.h NodeGroup inertia of unit flows'
-      map_dimensions_for_plots: [dt_sgee, tt_buss]
-      ylabel: MWs
-  nodeGroup_flows_d_g:
-    default:
-      plot_name: '6.6.p NodeGroup flows'
-      map_dimensions_for_plots: [d_sg, f_gb]
-      legend: shared
-      subplots_per_row: 1
-      max_items_per_plot: 40
-      max_subplots_per_file: 1
-      base_length: 8
-      ylabel: MWh
-    sum_periods:
-      plot_name: '6.6.a NodeGroup cumulative flows'
-      bar_orientation: vertical
-      subplots_per_row: 1
-      max_items_per_plot: 40
-      max_subplots_per_file: 1
-      base_length: 8
-      map_dimensions_for_plots: [d_sg, m_gb]
-      legend: shared
-      ylabel: MWh
+  'NodeGroup dispatch':
+    group: 6
+    order: 0
+    nodeGroup_flows_d_gpe:
+      default:
+        legend: all
+        bar_orientation: vertical
+        subplots_per_row: 2
+        max_items_per_plot: 30
+        max_subplots_per_file: 2
+        base_length: 12
+        map_dimensions_for_plots: [d_sgpe, m_buss]
+        ylabel: MWh
+    nodeGroup_flows_dt_gpe:
+      default:
+        map_dimensions_for_plots: [dt_sgpe, tt_fuss]
+        subplots_per_row: 2
+        max_subplots_per_file: 4
+        max_items_per_plot: 30
+        base_length: 8
+  'NodeGroup indicators':
+    group: 6
+    order: 1
+    nodeGroup_gd_p:
+      default:
+        subplots_per_row: 2
+        max_items_per_plot: 100
+        map_dimensions_for_plots: [gd_sp, fg_bu]
+        axis_bounds: [[0, 1], [0, 1], [0, 1], [0, 1], [], [0, 1]]
+        axis_tick_format: ['.0%', '.0%', '.0%', '.0%', dynamic, '.0%']
+        xlabel: [percent, percent, percent, percent, MWh, percent]
+  'NodeGroup VRE share':
+    group: 6
+    order: 2
+    nodeGroup_VRE_share_d_g:
+      default:
+        map_dimensions_for_plots: [d_sg, b_ge]
+        legend: shared
+        subplots_per_row: 1
+        max_items_per_plot: 40
+        max_subplots_per_file: 1
+        base_length: 8
+        skip_data_with_only_zeroes: true
+        axis_tick_format: '.0%'
+    nodeGroup_VRE_share_dt_g:
+      default:
+        map_dimensions_for_plots: [dt_sg, tt_lu]
+        legend: shared
+        axis_bounds: shared
+        axis_tick_format: '.0%'
+  'NodeGroup inertia':
+    group: 6
+    order: 3
+    nodeGroup_inertia_dt_g:
+      default:
+        map_dimensions_for_plots: [dt_sg, tt_lu]
+        legend: shared
+        ylabel: MWs
+  'NodeGroup inertia of largest flow':
+    group: 6
+    order: 4
+    nodeGroup_inertia_largest_flow_dt_g:
+      debug:
+        ylabel: MWs
+  'NodeGroup inertia of unit flows':
+    group: 6
+    order: 5
+    nodeGroup_unit_node_inertia_dt_gee:
+      debug:
+        map_dimensions_for_plots: [dt_sgee, tt_buss]
+        ylabel: MWs
+  'NodeGroup flows':
+    group: 6
+    order: 6
+    nodeGroup_flows_d_g:
+      default:
+        map_dimensions_for_plots: [d_sg, f_gb]
+        legend: shared
+        subplots_per_row: 1
+        max_items_per_plot: 40
+        max_subplots_per_file: 1
+        base_length: 8
+        ylabel: MWh
+      sum_periods:
+        bar_orientation: vertical
+        subplots_per_row: 1
+        max_items_per_plot: 40
+        max_subplots_per_file: 1
+        base_length: 8
+        map_dimensions_for_plots: [d_sg, m_gb]
+        legend: shared
+        ylabel: MWh
 
   # Node details
-  node_d_ep:
-    plot_name: '7.0.p Node flows'
-    map_dimensions_for_plots: [d_sep, m_bbs]
-    subplots_per_row: 1
-    max_items_per_plot: 40
-    max_subplots_per_file: 1
-    base_length: 8
-    axis_bounds: shared
-    xlabel: MWh
-  node_dt_ep:
-    default:
-      plot_name: '7.0.h Node flows'
-    chunks:
-      plot_name: '7.0.w Node flows weekly avg'
-      time_average_duration: 168
-  node_prices_dt_e:
-    plot_name: '7.1.h Node prices'
-    map_dimensions_for_plots: [sdt_se, mtt_lu]
-    legend: shared
-    ylabel: Currency / MWh
-  node_state_dt_e:
-    default:
-      plot_name: '7.2.h Node state'
-      map_dimensions_for_plots: [dt_se, tt_lu]
-      skip_data_with_only_zeroes: true
-      legend: shared
-      ylabel: MWh
-    # full_timeline_state:
-    #   plot_name: '7.2.h Node state'
-    #   map_dimensions_for_plots: [dt_se, tt_lu]
-    #   full_timeline: true
-    #   subplots_by_magnitudes: true
-    #   skip_data_with_only_zeroes: true
-    #   legend: all
-    #   ylabel: MWh
+  'Node flows':
+    group: 7
+    order: 0
+    node_d_ep:
+      default:
+        map_dimensions_for_plots: [d_sep, m_bbs]
+        subplots_per_row: 1
+        max_items_per_plot: 40
+        max_subplots_per_file: 1
+        base_length: 8
+        axis_bounds: shared
+        xlabel: MWh
+    node_dt_ep:
+      default:
+      chunks:
+        time_average_duration: 168
+  'Node prices':
+    group: 7
+    order: 1
+    node_prices_dt_e:
+      default:
+        map_dimensions_for_plots: [sdt_se, mtt_lu]
+        legend: shared
+        ylabel: Currency / MWh
+  'Node state':
+    group: 7
+    order: 2
+    node_state_dt_e:
+      default:
+        map_dimensions_for_plots: [dt_se, tt_lu]
+        skip_data_with_only_zeroes: true
+        legend: shared
+        ylabel: MWh
 
   # Unit and connection (process) details
-  # unit_inputs_cf_d_ee:
-  #   unit_details:
-  #     plot_name: '8.0.p Unit cf for inputs'
-      # map_dimensions_for_plots: [d_see, b_geu]
-      # max_items_per_plot: 40
-      # max_subplots_per_file: 2
-      # subplots_per_row: 2
-      # axis_tick_format: '.0%'
-      # axis_bounds: [0, 1]
-  unit_outputs_cf_d_ee:
-    unit_details:
-      plot_name: '8.1.p Unit cf for outputs'
-      map_dimensions_for_plots: [d_see, b_geu]
-      legend: shared
-      max_items_per_plot: 40
-      max_subplots_per_file: 2
-      subplots_per_row: 2
-      axis_tick_format: '.0%'
-      axis_bounds: [0, 1]
-  unit_curtailment_outputNode_dt_ee:
-    unit_details:
-      plot_name: '8.2.h Unit curtailment'
-      map_dimensions_for_plots: [dt_see, tt_luu]
-      legend: shared
-      max_items_per_plot: 12
-      ylabel: MWh
-    chunks:
-      plot_name: '8.2.w Unit curtailment weekly avg'
-      map_dimensions_for_plots: [dt_see, mi_luu]
-      time_average_duration: 168
-      legend: shared
-      max_items_per_plot: 12
-      ylabel: MWh
-  unit_online_dt_e:
-    unit_details:
-      plot_name: '8.3.h Unit online'
-      map_dimensions_for_plots: [dt_se, tt_lu]
-      legend: shared
-      ylabel: number of units online
-  unit_online_average_d_e:
-    unit_details:
-      plot_name: '8.3.p Unit online average'
-      map_dimensions_for_plots: [d_se, a_gb]
-      legend: shared
-      xlabel: average number of units online
-  unit_ramp_inputs_dt_ee:
-    unit_details:
-      plot_name: '8.4.h Unit ramp inputs'
-  unit_ramp_outputs_dt_ee:
-    unit_details:
-      plot_name: '8.5.h Unit ramp outputs'
-  unit_startup_d_e:
-    unit_details:
-      plot_name: '8.6.p Unit startup'
-      map_dimensions_for_plots: [d_se, a_gb]
-      legend: shared
-      subplots_per_row: 1
-      max_items_per_plot: 40
-      max_subplots_per_file: 1
-      base_length: 8
-      xlabel: number of units started up
-    sum_periods:
-      plot_name: '8.6.a Unit startup total'
-      map_dimensions_for_plots: [d_se, m_gb]
-      legend: shared
-      subplots_per_row: 1
-      max_items_per_plot: 40
-      max_subplots_per_file: 1
-      base_length: 8
-      xlabel: starts (total)
-  connection_losses_d_eee:
-    connection_details:
-      plot_name: '8.7.p Connection losses'
-      map_dimensions_for_plots: [d_se, b_ge]
-      legend: shared
-      ylabel: MWh
-  connection_losses_dt_eee:
-    connection_details:
-      plot_name: '8.7.h Connection losses'
-      map_dimensions_for_plots: [dt_se, tt_gu]
-      legend: shared
-      ylabel: MWh
-    chunks:
-      plot_name: '8.7.w Connection losses weekly avg'
-      map_dimensions_for_plots: [dt_se, mi_gu]
-      time_average_duration: 168
-      legend: shared
-      ylabel: MWh
-  connection_cf_d_e:
-    connection_details:
-      plot_name: '8.8.p Connection cf'
-      map_dimensions_for_plots: [d_se, b_ge]
-      legend: shared
+  'Unit cf for outputs':
+    group: 8
+    order: 1
+    unit_outputs_cf_d_ee:
+      unit_details:
+        map_dimensions_for_plots: [d_see, b_geu]
+        legend: shared
+        max_items_per_plot: 40
+        max_subplots_per_file: 2
+        subplots_per_row: 2
+        axis_tick_format: '.0%'
+        axis_bounds: [0, 1]
+  'Unit curtailment':
+    group: 8
+    order: 2
+    unit_curtailment_outputNode_dt_ee:
+      unit_details:
+        map_dimensions_for_plots: [dt_see, tt_luu]
+        legend: shared
+        max_items_per_plot: 12
+        ylabel: MWh
+      chunks:
+        map_dimensions_for_plots: [dt_see, mi_luu]
+        time_average_duration: 168
+        legend: shared
+        max_items_per_plot: 12
+        ylabel: MWh
+  'Unit online':
+    group: 8
+    order: 3
+    unit_online_dt_e:
+      unit_details:
+        map_dimensions_for_plots: [dt_se, tt_lu]
+        legend: shared
+        ylabel: number of units online
+    unit_online_average_d_e:
+      unit_details:
+        map_dimensions_for_plots: [d_se, a_gb]
+        legend: shared
+        xlabel: average number of units online
+  'Unit ramp inputs':
+    group: 8
+    order: 4
+    unit_ramp_inputs_dt_ee:
+      unit_details:
+  'Unit ramp outputs':
+    group: 8
+    order: 5
+    unit_ramp_outputs_dt_ee:
+      unit_details:
+  'Unit startup':
+    group: 8
+    order: 6
+    unit_startup_d_e:
+      unit_details:
+        map_dimensions_for_plots: [d_se, a_gb]
+        legend: shared
+        subplots_per_row: 1
+        max_items_per_plot: 40
+        max_subplots_per_file: 1
+        base_length: 8
+        xlabel: number of units started up
+      sum_periods:
+        map_dimensions_for_plots: [d_se, m_gb]
+        legend: shared
+        subplots_per_row: 1
+        max_items_per_plot: 40
+        max_subplots_per_file: 1
+        base_length: 8
+        xlabel: starts (total)
+  'Connection losses':
+    group: 8
+    order: 7
+    connection_losses_d_eee:
+      connection_details:
+        map_dimensions_for_plots: [d_se, b_ge]
+        legend: shared
+        ylabel: MWh
+    connection_losses_dt_eee:
+      connection_details:
+        map_dimensions_for_plots: [dt_se, tt_gu]
+        legend: shared
+        ylabel: MWh
+      chunks:
+        map_dimensions_for_plots: [dt_se, mi_gu]
+        time_average_duration: 168
+        legend: shared
+        ylabel: MWh
+  'Connection cf':
+    group: 8
+    order: 8
+    connection_cf_d_e:
+      connection_details:
+        map_dimensions_for_plots: [d_se, b_ge]
+        legend: shared
 
   # Extras
-  process_reserve_upDown_node_dt_eppe:
-    debug:
-      plot_name: '9.0.h Reserve from process to node'
-      map_dimensions_for_plots: [dt_seppe, tt_gullu]
-      subplots_per_row: 2
-      max_items_per_plot: 10
-      max_subplots_per_file: 6
-      legend: all
-      ylabel: MWh/h
-  process_reserve_average_d_eppe:
-    plot_name: '9.0.p Reserve from process to node average'
-    map_dimensions_for_plots: [d_seppe, m_uesse]
-    max_items_per_plot: 40
-    xlabel: MWh/h
-  reserve_prices_dt_ppg:
-    plot_name: '9.1.h Reserve price in NodeGroups'
-    map_dimensions_for_plots: [sdt_sppg, mtt_gllu]
-    subplots_per_row: 2
-    max_items_per_plot: 10
-    max_subplots_per_file: 6
-    legend: all
-    ylabel: CUR/MW
-  # unit_VRE_potential_outputNode_d_ee:
-  #   plot_name: '9.2.p VRE potential'
-  # unit_VRE_potential_outputNode_dt_ee:
-  #   plot_name: '9.2.h VRE potential'
-  # discountFactors_d_p:
-  #   plot_name: '9.3.p Discount factors'
-  # entity_annuity_d_p:
-  #   plot_name: '9.4.p Annuity of entities'
-
+  'Reserve from process to node':
+    group: 9
+    order: 0
+    process_reserve_upDown_node_dt_eppe:
+      debug:
+        map_dimensions_for_plots: [dt_seppe, tt_gullu]
+        subplots_per_row: 2
+        max_items_per_plot: 10
+        max_subplots_per_file: 6
+        legend: all
+        ylabel: MWh/h
+    process_reserve_average_d_eppe:
+      default:
+        map_dimensions_for_plots: [d_seppe, m_uesse]
+        max_items_per_plot: 40
+        xlabel: MWh/h
+  'Reserve price in NodeGroups':
+    group: 9
+    order: 1
+    reserve_prices_dt_ppg:
+      default:
+        map_dimensions_for_plots: [sdt_sppg, mtt_gllu]
+        subplots_per_row: 2
+        max_items_per_plot: 10
+        max_subplots_per_file: 6
+        legend: all
+        ylabel: CUR/MW
 
 plot_specific:
   annualized_costs:

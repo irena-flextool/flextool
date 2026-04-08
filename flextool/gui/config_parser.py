@@ -5,18 +5,17 @@ from pathlib import Path
 
 import yaml
 
+from flextool.plot_outputs.config import flatten_new_format
+
 logger = logging.getLogger(__name__)
 
 
 def parse_plot_configs(yaml_path: Path) -> list[str]:
     """Read a plot config YAML file and return available config names.
 
-    The YAML structure under ``plots:`` has entries where:
-
-    - If an entry's first sub-key is ``plot_name``, it belongs to the
-      ``default`` config.
-    - Otherwise, the entry key itself is a config name containing plot
-      definitions.
+    Supports both old format (result_key at top level) and new format
+    (entry-name grouping with ``group``/``order`` keys).  New-format
+    entries are flattened to result_key level before scanning.
 
     Returns a sorted list of config names
     (e.g. ``['chunks', 'default', 'reserve']``).
@@ -38,6 +37,9 @@ def parse_plot_configs(yaml_path: Path) -> list[str]:
     plots = data.get("plots")
     if not isinstance(plots, dict):
         return []
+
+    # Flatten new-format entries so we always iterate flat result_keys
+    plots = flatten_new_format(plots)
 
     config_names: set[str] = set()
     has_default = False

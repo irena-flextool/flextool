@@ -21,7 +21,7 @@ from flextool.gui.plot_canvas import PlotCanvas
 from flextool.gui.plot_config_reader import PlotEntry, PlotGroup, PlotVariant, parse_plot_config
 from flextool.gui.project_utils import get_projects_dir
 from flextool.gui.settings_io import save_project_settings
-from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config
+from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config, flatten_new_format
 from flextool.plot_outputs.orchestrator import prepare_plot_data
 from flextool.scenario_comparison.data_models import DispatchMappings, TimeSeriesResults
 from flextool.scenario_comparison.db_reader import (
@@ -1469,6 +1469,9 @@ class ResultViewer(tk.Toplevel):
         plots = data.get("plots")
         if not isinstance(plots, dict):
             return None
+
+        # Flatten new-format entries (entry-name grouping) to flat result_key mapping
+        plots = flatten_new_format(plots)
 
         entry = plots.get(result_key)
         if not isinstance(entry, dict):

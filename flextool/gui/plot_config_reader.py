@@ -7,6 +7,8 @@ from pathlib import Path
 
 import yaml
 
+from flextool.plot_outputs.config import _is_new_format_entry
+
 logger = logging.getLogger(__name__)
 
 GROUP_NAMES: dict[str, str] = {
@@ -73,27 +75,78 @@ def _parse_plot_name(plot_name: str) -> tuple[str, str, str, str]:
     return group, number, variant, human_name
 
 
+def _derive_variant_letter(result_key: str, sub_config: str,
+                           sub_value: dict | None = None) -> str:
+    """Derive variant letter from result_key suffix and sub_config name.
+
+    The variant letter determines the display order and label for each
+    plot variant (p=period, h=hourly, w=weekly, a=aggregated).
+
+    If *sub_value* contains an explicit ``variant`` key, that value is
+    used directly.
+    """
+    # Explicit override
+    if sub_value and 'variant' in sub_value:
+        return str(sub_value['variant'])
+    if sub_config == 'chunks':
+        return 'w'
+    if sub_config == 'sum_periods':
+        return 'a'
+    if sub_config == 'lines':
+        return 'h'  # lines are always time-based
+    # Default: derive from result_key data type
+    is_dt = '_dt_' in result_key or result_key.endswith('_dt') or '_gdt_' in result_key
+    if is_dt:
+        return 'h'
+    return 'p'
+
+
 def _extract_plot_items(
     plots: dict,
 ) -> list[tuple[str, str, str, str, str, str]]:
     """Walk the YAML *plots* dict and yield parsed plot items.
 
+    Supports both old format (result_key at top level with ``plot_name``)
+    and new format (entry-name grouping with ``group``/``order`` keys).
+
     Each item is ``(group, number, variant, human_name, result_key, sub_config)``.
     Entries without ``map_dimensions_for_plots`` are skipped.
     """
     items: list[tuple[str, str, str, str, str, str]] = []
-    for result_key, value in plots.items():
+    for key, value in plots.items():
         if not isinstance(value, dict):
             continue
 
-        if "plot_name" in value:
-            # Direct config (no sub-config level)
+        if _is_new_format_entry(value):
+            # New format: key is entry name, value has group/order + result_keys
+            entry_name = key
+            group_num = str(value['group'])
+            order_num = str(value['order'])
+            number = f"{group_num}.{order_num}"
+
+            for result_key, rk_value in value.items():
+                if result_key in ('group', 'order') or not isinstance(rk_value, dict):
+                    continue
+                for sub_config, sub_value in rk_value.items():
+                    if not isinstance(sub_value, dict):
+                        continue
+                    if 'map_dimensions_for_plots' not in sub_value:
+                        continue
+                    variant_letter = _derive_variant_letter(
+                        result_key, sub_config, sub_value,
+                    )
+                    items.append(
+                        (group_num, number, variant_letter, entry_name,
+                         result_key, sub_config)
+                    )
+        elif "plot_name" in value:
+            # Old format: direct config (no sub-config level)
             if "map_dimensions_for_plots" not in value:
                 continue
             group, number, variant, human_name = _parse_plot_name(value["plot_name"])
-            items.append((group, number, variant, human_name, result_key, "default"))
+            items.append((group, number, variant, human_name, key, "default"))
         else:
-            # Sub-config level
+            # Old format: sub-config level
             for sub_config, sub_value in value.items():
                 if not isinstance(sub_value, dict):
                     continue
@@ -105,7 +158,7 @@ def _extract_plot_items(
                     sub_value["plot_name"]
                 )
                 items.append(
-                    (group, number, variant, human_name, result_key, sub_config)
+                    (group, number, variant, human_name, key, sub_config)
                 )
 
     return items
@@ -113,6 +166,9 @@ def _extract_plot_items(
 
 def parse_plot_config(config_path: Path) -> list[PlotGroup]:
     """Parse a plot config YAML and return the tree structure.
+
+    Supports both old format (result_key at top level with ``plot_name``)
+    and new format (entry-name grouping with ``group``/``order`` keys).
 
     Returns a list of :class:`PlotGroup` objects sorted by group number.
     Each group contains :class:`PlotEntry` objects sorted by entry number,
