@@ -114,8 +114,10 @@ def _extract_plot_items(
                 variant_letter = _derive_variant_letter(
                     result_key, sub_config, sub_value,
                 )
+                # Use per-variant plot_name if specified, otherwise entry name
+                variant_name = sub_value.get('plot_name', entry_name)
                 items.append(
-                    (group_num, number, variant_letter, entry_name,
+                    (group_num, number, variant_letter, variant_name,
                      result_key, sub_config)
                 )
 
