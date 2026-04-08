@@ -164,6 +164,14 @@ plots:
         legend: shared
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
+      chunks:
+        plot_name: 'Lack of reserves weekly avg'
+        variant: w
+        map_dimensions_for_plots: [dt_seeg, mi_luug]
+        time_average_duration: 168
+        legend: shared
+        skip_data_with_only_zeroes: true
+        ylabel: MWh/h
   'Lack of inertia':
     group: 0
     order: 3
@@ -190,6 +198,14 @@ plots:
         legend: shared
         skip_data_with_only_zeroes: true
         ylabel: MWs
+      chunks:
+        plot_name: 'Lack of inertia weekly avg'
+        variant: w
+        map_dimensions_for_plots: [dt_sg, mi_lu]
+        time_average_duration: 168
+        legend: shared
+        skip_data_with_only_zeroes: true
+        ylabel: MWs
   'Lack of nonsynchronous sources':
     group: 0
     order: 4
@@ -213,6 +229,14 @@ plots:
       default:
         variant: h
         map_dimensions_for_plots: [dt_sg, tt_lu]
+        legend: shared
+        skip_data_with_only_zeroes: true
+        ylabel: MWh
+      chunks:
+        plot_name: 'Lack of nonsynchronous sources weekly avg'
+        variant: w
+        map_dimensions_for_plots: [dt_sg, mi_lu]
+        time_average_duration: 168
         legend: shared
         skip_data_with_only_zeroes: true
         ylabel: MWh
@@ -269,6 +293,15 @@ plots:
         axis_bounds: shared
         skip_data_with_only_zeroes: true
         axis_tick_format: '.0%'
+      sum_periods:
+        plot_name: 'Curtail. share of VRE average'
+        variant: a
+        map_dimensions_for_plots: [d_see, a_gbu]
+        legend: shared
+        axis_bounds: shared
+        skip_data_with_only_zeroes: true
+        axis_tick_format: '.0%'
+        xlabel: percent (average)
     unit_curtailment_share_outputNode_dt_ee:
       default:
         variant: h
@@ -632,12 +665,24 @@ plots:
         map_dimensions_for_plots: [dt_sg, tt_lu]
         legend: shared
         ylabel: MWs
+      chunks:
+        plot_name: 'NodeGroup inertia weekly avg'
+        variant: w
+        map_dimensions_for_plots: [dt_sg, mi_lu]
+        time_average_duration: 168
+        legend: shared
+        ylabel: MWs
   'NodeGroup inertia of largest flow':
     group: 6
     order: 4
     nodeGroup_inertia_largest_flow_dt_g:
       debug:
         variant: h
+        ylabel: MWs
+      chunks:
+        plot_name: 'NodeGroup inertia of largest flow weekly avg'
+        variant: w
+        time_average_duration: 168
         ylabel: MWs
   'NodeGroup inertia of unit flows':
     group: 6
@@ -646,6 +691,12 @@ plots:
       debug:
         variant: h
         map_dimensions_for_plots: [dt_sgee, tt_buss]
+        ylabel: MWs
+      chunks:
+        plot_name: 'NodeGroup inertia of unit flows weekly avg'
+        variant: w
+        map_dimensions_for_plots: [dt_sgee, mi_buss]
+        time_average_duration: 168
         ylabel: MWs
   'NodeGroup flows':
     group: 6
@@ -754,24 +805,45 @@ plots:
         map_dimensions_for_plots: [dt_se, tt_lu]
         legend: shared
         ylabel: number of units online
+      chunks:
+        plot_name: 'Unit online weekly avg'
+        variant: w
+        map_dimensions_for_plots: [dt_se, mi_lu]
+        time_average_duration: 168
+        legend: shared
+        ylabel: number of units online
     unit_online_average_d_e:
       unit_details:
         variant: p
         map_dimensions_for_plots: [d_se, a_gb]
         legend: shared
         xlabel: average number of units online
+      sum_periods:
+        plot_name: 'Unit online total'
+        variant: a
+        map_dimensions_for_plots: [d_se, m_gb]
+        legend: shared
+        xlabel: online-hours (total)
   'Unit ramp inputs':
     group: 8
     order: 4
     unit_ramp_inputs_dt_ee:
       unit_details:
         variant: h
+      chunks:
+        plot_name: 'Unit ramp inputs weekly avg'
+        variant: w
+        time_average_duration: 168
   'Unit ramp outputs':
     group: 8
     order: 5
     unit_ramp_outputs_dt_ee:
       unit_details:
         variant: h
+      chunks:
+        plot_name: 'Unit ramp outputs weekly avg'
+        variant: w
+        time_average_duration: 168
   'Unit startup':
     group: 8
     order: 6
@@ -839,12 +911,28 @@ plots:
         max_subplots_per_file: 6
         legend: all
         ylabel: MWh/h
+      chunks:
+        plot_name: 'Reserve from process to node weekly avg'
+        variant: w
+        map_dimensions_for_plots: [dt_seppe, mi_gullu]
+        time_average_duration: 168
+        subplots_per_row: 2
+        max_items_per_plot: 10
+        max_subplots_per_file: 6
+        legend: all
+        ylabel: MWh/h
     process_reserve_average_d_eppe:
       default:
         variant: p
         map_dimensions_for_plots: [d_seppe, m_uesse]
         max_items_per_plot: 40
         xlabel: MWh/h
+      sum_periods:
+        plot_name: 'Reserve from process to node total'
+        variant: a
+        map_dimensions_for_plots: [d_seppe, m_uesse]
+        max_items_per_plot: 40
+        xlabel: MWh/h (total)
   'Reserve price in NodeGroups':
     group: 9
     order: 1
@@ -852,6 +940,16 @@ plots:
       default:
         variant: h
         map_dimensions_for_plots: [sdt_sppg, mtt_gllu]
+        subplots_per_row: 2
+        max_items_per_plot: 10
+        max_subplots_per_file: 6
+        legend: all
+        ylabel: CUR/MW
+      chunks:
+        plot_name: 'Reserve price in NodeGroups weekly avg'
+        variant: w
+        map_dimensions_for_plots: [sdt_sppg, mui_gllu]
+        time_average_duration: 168
         subplots_per_row: 2
         max_items_per_plot: 10
         max_subplots_per_file: 6
