@@ -1106,16 +1106,14 @@ class ResultViewer(tk.Toplevel):
     def _on_variant_key_up(self, event: tk.Event) -> str:
         """Handle Up / Shift+Up in the variant panel.
 
-        - Up: jump to prev row with available data. Show focus variant
+        - Up: jump to prev row with any available data. Show focus variant
           if available, otherwise find nearest available and activate it.
-        - Shift+Up: move one row up (even blank/grey). Show dashed
-          rectangle. Only update figure if something is available.
+        - Shift+Up: jump to prev row that has available data at the
+          current focus column specifically.
         """
         shift_held = bool(event.state & 0x1)
         if shift_held:
-            self._move_tree_selection_from_canvas(-1, skip_disabled=False)
-            self._try_activate_focused()
-            self._redraw_variant_grid()
+            self._move_to_next_with_focus_col(-1)
         else:
             self._move_to_next_available_row(-1)
         return "break"
@@ -1123,16 +1121,14 @@ class ResultViewer(tk.Toplevel):
     def _on_variant_key_down(self, event: tk.Event) -> str:
         """Handle Down / Shift+Down in the variant panel.
 
-        - Down: jump to next row with available data. Show focus variant
+        - Down: jump to next row with any available data. Show focus variant
           if available, otherwise find nearest available and activate it.
-        - Shift+Down: move one row down (even blank/grey). Show dashed
-          rectangle. Only update figure if something is available.
+        - Shift+Down: jump to next row that has available data at the
+          current focus column specifically.
         """
         shift_held = bool(event.state & 0x1)
         if shift_held:
-            self._move_tree_selection_from_canvas(1, skip_disabled=False)
-            self._try_activate_focused()
-            self._redraw_variant_grid()
+            self._move_to_next_with_focus_col(1)
         else:
             self._move_to_next_available_row(1)
         return "break"
@@ -1171,6 +1167,46 @@ class ResultViewer(tk.Toplevel):
                 self._plot_tree.event_generate("<<TreeviewSelect>>")
                 return
             new_idx += step
+
+    def _move_to_next_with_focus_col(self, direction: int) -> None:
+        """Jump to next/prev row that has available data at the focus column.
+
+        The focus column stays fixed; only rows where that specific
+        variant letter has data are considered.
+        """
+        if self._focus_col < 0 or self._focus_col >= len(self._all_variant_letters):
+            return
+        focus_letter = self._all_variant_letters[self._focus_col]
+
+        visible = self._get_visible_entries()
+        selection = self._plot_tree.selection()
+        if not selection or selection[0] not in visible:
+            return
+        idx = visible.index(selection[0])
+        new_idx = idx + direction
+
+        while 0 <= new_idx < len(visible):
+            iid = visible[new_idx]
+            entry = self._tree_entry_map.get(iid)
+            if entry:
+                # Check if this entry has an available variant at focus_letter
+                for v in entry.variants:
+                    if v.letter == focus_letter and (
+                        (v.result_key, v.sub_config) in self._current_availability
+                        or (v.result_key, "*") in self._current_availability
+                    ):
+                        self._plot_tree.selection_set(iid)
+                        self._plot_tree.see(iid)
+                        self._active_variant = focus_letter
+                        self._active_entry_iid = iid
+                        self._viewer_settings.last_variant = focus_letter
+                        self._viewer_settings.last_entry = entry.number
+                        self._file_index = 0
+                        self._clear_figure_cache()
+                        self._trigger_replot()
+                        self._redraw_variant_grid()
+                        return
+            new_idx += direction
 
     def _move_tree_to_next_with_active(self, direction: int) -> None:
         """Move tree selection to next/prev entry that has the active variant.
