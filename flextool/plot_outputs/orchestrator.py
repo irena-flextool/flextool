@@ -736,18 +736,43 @@ def compute_all_plot_plans(
 
     Called after scenario runs / comparison builds so that the viewer
     can load pre-computed plans instead of re-running dimension rules.
+    Also writes an ``_availability.json`` manifest listing all
+    (result_key, sub_config) pairs that produced valid plans.
     """
+    import json
+    import tempfile
     from pathlib import Path
     from flextool.plot_outputs.plan import compute_plot_plans_for_result
 
     output_dir = Path(output_dir)
+    plan_dir = output_dir / "plot_plans"
+    available: list[list[str]] = []
+
     for key, df in results_dict.items():
         if key not in plot_settings or df.empty:
             continue
         try:
-            compute_plot_plans_for_result(
-                df, key, plot_settings, output_dir / "plot_plans",
+            pairs = compute_plot_plans_for_result(
+                df, key, plot_settings, plan_dir,
                 plot_rows, break_times, active_settings,
             )
+            available.extend([k, s] for k, s in pairs)
         except Exception as exc:
             logger.warning("Failed to compute plot plan for '%s': %s", key, exc)
+
+    # Write availability manifest atomically (write to temp, then rename)
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    avail_path = plan_dir / "_availability.json"
+    try:
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(plan_dir), prefix="_avail_", suffix=".tmp",
+        )
+        try:
+            with open(fd, "w") as f:
+                json.dump({"available": available}, f)
+            Path(tmp_path).replace(avail_path)
+        except BaseException:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
+    except Exception as exc:
+        logger.warning("Failed to write availability manifest: %s", exc)

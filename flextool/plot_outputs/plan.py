@@ -767,10 +767,14 @@ def compute_plot_plans_for_result(
     plot_rows: tuple[int, int] = (0, 167),
     break_times: set[str] | None = None,
     active_settings: list[str] | None = None,
-) -> None:
-    """Compute and save PlotPlans for all active configs of a result_key.
+) -> list[tuple[str, str]]:
+    """Compute and save PlotPlans for all configs of a result_key.
 
     Called after scenario runs to pre-compute plans.
+    Returns list of (result_key, sub_config) pairs that produced valid plans.
+    The *active_settings* parameter is accepted for backward compatibility
+    but ignored — all configs in the YAML entry are processed so that the
+    viewer can build a complete availability manifest.
     """
     from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config
     from flextool.plot_outputs.orchestrator import (
@@ -779,21 +783,19 @@ def compute_plot_plans_for_result(
     from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
     from flextool.plot_outputs.format_helpers import insert_timeline_breaks
 
-    if active_settings is None:
-        active_settings = ['default']
-
     entry = plot_settings.get(result_key)
     if not isinstance(entry, dict):
-        return
+        return []
 
-    # Collect active configs
+    succeeded: list[tuple[str, str]] = []
+
+    # Collect all configs (not just active ones)
     chosen: list[tuple[str, dict]] = []
     if _is_single_config(entry):
-        if 'default' in active_settings:
-            chosen.append(('default', entry))
+        chosen.append(('default', entry))
     else:
         for name, sub in entry.items():
-            if name in active_settings and isinstance(sub, dict):
+            if isinstance(sub, dict):
                 chosen.append((name, sub))
 
     for sub_config, raw_setting in chosen:
@@ -911,3 +913,6 @@ def compute_plot_plans_for_result(
                 save_sub = f"{sub_config}__{member_str}"
 
             save_plot_plan(plan, output_dir, result_key, save_sub)
+            succeeded.append((result_key, save_sub))
+
+    return succeeded

@@ -91,6 +91,9 @@ class ResultViewer(tk.Toplevel):
         self._figure_cache: dict[tuple, plt.Figure] = {}  # prefetched figures
         self._figure_cache_lock = threading.Lock()
 
+        # Availability manifest for three-level variant display
+        self._current_availability: set[tuple[str, str]] = set()
+
         # Dispatch mode state
         self._dispatch_mappings: DispatchMappings | None = None
         self._dispatch_results: TimeSeriesResults | None = None
@@ -460,42 +463,72 @@ class ResultViewer(tk.Toplevel):
         # Try to restore last selected entry or select first available
         self._restore_or_select_first_entry()
 
+    def _load_availability_from_dir(self, plan_dir: Path) -> set[tuple[str, str]]:
+        """Load availability manifest from plan_dir/_availability.json.
+
+        Falls back to checking parquet file existence (old behavior)
+        when the manifest does not exist.
+        """
+        import json
+
+        avail_path = plan_dir / "_availability.json"
+        if avail_path.exists():
+            try:
+                with open(avail_path) as f:
+                    data = json.load(f)
+                return {(r, s) for r, s in data.get("available", [])}
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Fallback: infer availability from parquet file existence.
+        # The plan_dir parent is the parquet output directory.
+        parquet_dir = plan_dir.parent
+        result: set[tuple[str, str]] = set()
+        if parquet_dir.is_dir():
+            for f in parquet_dir.iterdir():
+                if f.suffix == ".parquet" and f.is_file():
+                    result.add((f.stem, "default"))
+                    # Wildcard entry so that any sub_config matches
+                    result.add((f.stem, "*"))
+        return result
+
     def _update_tree_availability(self) -> None:
-        """Grey out entries that have no matching parquet files for selected scenario(s)."""
+        """Grey out entries that have no matching parquet/plan data for selected scenario(s).
+
+        Also stores the loaded availability set in ``self._current_availability``
+        so that the variant grid can distinguish *defined-but-unavailable* from
+        *available* variants.
+        """
         mode = self._mode.get()
 
         if mode == "comparison":
-            # Check comparison parquet directory
-            comp_dir = self._project_path / "output_parquet_comparison"
-            available_keys: set[str] = set()
-            if comp_dir.is_dir():
-                for f in comp_dir.iterdir():
-                    if f.suffix == ".parquet" and f.is_file():
-                        available_keys.add(f.stem)
+            plan_dir = self._project_path / "output_parquet_comparison" / "plot_plans"
+            available_pairs = self._load_availability_from_dir(plan_dir)
         else:
             scenarios = self._get_selected_scenarios()
             if not scenarios:
                 # No scenario selected -- mark all as disabled
+                self._current_availability = set()
                 for iid in self._tree_entry_map:
                     self._plot_tree.item(iid, tags=("disabled",))
                 return
 
-            # Collect available parquet file stems for selected scenarios
-            available_keys = set()
+            # Merge availability across all selected scenarios
+            available_pairs: set[tuple[str, str]] = set()
             for scenario in scenarios:
-                parquet_dir = self._project_path / "output_parquet" / scenario
-                if parquet_dir.is_dir():
-                    for f in parquet_dir.iterdir():
-                        if f.suffix == ".parquet" and f.is_file():
-                            available_keys.add(f.stem)
+                plan_dir = self._project_path / "output_parquet" / scenario / "plot_plans"
+                available_pairs |= self._load_availability_from_dir(plan_dir)
+
+        self._current_availability = available_pairs
 
         for iid, entry in self._tree_entry_map.items():
-            # An entry is available if ANY of its variants' result_keys
-            # have a matching parquet file
-            has_data = any(
-                v.result_key in available_keys for v in entry.variants
+            # An entry is available if ANY of its variants has data
+            has_any = any(
+                (v.result_key, v.sub_config) in available_pairs
+                or (v.result_key, "*") in available_pairs
+                for v in entry.variants
             )
-            if has_data:
+            if has_any:
                 self._plot_tree.item(iid, tags=())
             else:
                 self._plot_tree.item(iid, tags=("disabled",))
@@ -820,27 +853,44 @@ class ResultViewer(tk.Toplevel):
                 continue  # item not visible
 
             _, y, _, row_h = bbox
-            available = {v.letter for v in entry.variants}
+            # Build a lookup from letter -> PlotVariant for this entry
+            variant_by_letter: dict[str, object] = {v.letter: v for v in entry.variants}
             is_selected = (iid == selected_iid)
 
             for col_idx, letter in enumerate(self._all_variant_letters):
                 x = col_idx * box_w
 
-                # Determine box state
-                has_variant = letter in available
+                # Find the PlotVariant for this letter (if defined for this entry)
+                variant = variant_by_letter.get(letter)
+
+                if variant is None:
+                    # NOT DEFINED -- this entry has no config for this letter.
+                    # Draw nothing (invisible).
+                    continue
+
+                # Check if this specific variant has data (is available)
+                is_available = (
+                    (variant.result_key, variant.sub_config) in self._current_availability
+                    or (variant.result_key, "*") in self._current_availability
+                )
+
                 is_desired = is_selected and letter == self._desired_variant
                 is_shown = is_selected and letter == self._shown_variant
 
-                # Draw box
+                # Visual states
                 if is_shown:
-                    # Solid fill
+                    # Solid fill (selected and shown)
                     self._variant_canvas.create_rectangle(
                         x + 1, y + 1, x + box_w - 1, y + row_h - 1,
                         fill="#2074d5", outline="",
                     )
                     text_color = "#ffffff"
+                elif not is_available:
+                    # Defined but no data -- grey
+                    text_color = "grey"
                 else:
-                    text_color = "grey" if not has_variant else self._fg_color
+                    # Available -- normal
+                    text_color = self._fg_color
 
                 if is_desired and is_selected:
                     # Dashed border (visible even on solid fill)
@@ -881,10 +931,20 @@ class ResultViewer(tk.Toplevel):
                 continue
             _, y, _, row_h = bbox
             if y <= event.y < y + row_h:
-                # Found the entry — check if variant is available
-                available = {v.letter for v in entry.variants}
-                if letter not in available:
-                    return
+                # Found the entry — check if variant is defined and available
+                variant = None
+                for v in entry.variants:
+                    if v.letter == letter:
+                        variant = v
+                        break
+                if variant is None:
+                    return  # not defined for this entry
+                is_available = (
+                    (variant.result_key, variant.sub_config) in self._current_availability
+                    or (variant.result_key, "*") in self._current_availability
+                )
+                if not is_available:
+                    return  # defined but no data
                 # Select this entry in tree and set variant
                 self._plot_tree.selection_set(iid)
                 self._plot_tree.see(iid)
@@ -928,9 +988,18 @@ class ResultViewer(tk.Toplevel):
 
         Updates the *shown* variant to match desired when available,
         otherwise picks the nearest available.  The *desired* variant
-        is never changed here — it persists across tree navigation.
+        is never changed here -- it persists across tree navigation.
+        Only variants that are both *defined* and *available* (have data)
+        are considered for the shown variant.
         """
-        available = {v.letter for v in entry.variants}
+        available = set()
+        for v in entry.variants:
+            is_avail = (
+                (v.result_key, v.sub_config) in self._current_availability
+                or (v.result_key, "*") in self._current_availability
+            )
+            if is_avail:
+                available.add(v.letter)
 
         # Shown variant: desired if available, else nearest available
         if self._desired_variant in available:
@@ -942,14 +1011,24 @@ class ResultViewer(tk.Toplevel):
 
     def _on_variant_clicked(self, letter: str) -> None:
         """Handle variant selection (from canvas click or keyboard)."""
-        # Only act if the variant is available for the selected entry
+        # Only act if the variant is defined and available for the selected entry
         selection = self._plot_tree.selection()
         if selection and selection[0].startswith("entry_"):
             entry = self._tree_entry_map.get(selection[0])
             if entry:
-                available = {v.letter for v in entry.variants}
-                if letter not in available:
-                    return
+                variant = None
+                for v in entry.variants:
+                    if v.letter == letter:
+                        variant = v
+                        break
+                if variant is None:
+                    return  # not defined
+                is_available = (
+                    (variant.result_key, variant.sub_config) in self._current_availability
+                    or (variant.result_key, "*") in self._current_availability
+                )
+                if not is_available:
+                    return  # defined but no data
 
         self._desired_variant = letter
         self._shown_variant = letter  # clicking always sets both
@@ -996,12 +1075,19 @@ class ResultViewer(tk.Toplevel):
         return "break"
 
     def _get_selected_entry_available_variants(self) -> set[str]:
-        """Return available variant letters for the currently selected entry."""
+        """Return variant letters that are both defined and have data for the selected entry."""
         selection = self._plot_tree.selection()
         if selection and selection[0].startswith("entry_"):
             entry = self._tree_entry_map.get(selection[0])
             if entry:
-                return {v.letter for v in entry.variants}
+                result: set[str] = set()
+                for v in entry.variants:
+                    if (
+                        (v.result_key, v.sub_config) in self._current_availability
+                        or (v.result_key, "*") in self._current_availability
+                    ):
+                        result.add(v.letter)
+                return result
         return set()
 
     def _on_variant_key_up(self, event: tk.Event) -> str:
@@ -1086,7 +1172,14 @@ class ResultViewer(tk.Toplevel):
             iid = visible[new_idx]
             if not self._is_entry_disabled(iid):
                 entry = self._tree_entry_map.get(iid)
-                if entry and self._desired_variant in {v.letter for v in entry.variants}:
+                if entry and any(
+                    v.letter == self._desired_variant
+                    and (
+                        (v.result_key, v.sub_config) in self._current_availability
+                        or (v.result_key, "*") in self._current_availability
+                    )
+                    for v in entry.variants
+                ):
                     self._plot_tree.selection_set(iid)
                     self._plot_tree.see(iid)
                     self._plot_tree.event_generate("<<TreeviewSelect>>")
@@ -1213,6 +1306,7 @@ class ResultViewer(tk.Toplevel):
         """Re-scan scenarios and re-populate everything."""
         self._yaml_cache.clear()
         self._break_times_cache.clear()
+        self._current_availability = set()
         self._clear_figure_cache()
         self._dispatch_scenario = ""
         self._dispatch_mappings = None
