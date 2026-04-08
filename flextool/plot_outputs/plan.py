@@ -805,6 +805,7 @@ def compute_plot_plans_for_result(
             filtered['axis_bounds'] = filtered.pop('axis_scale_min_max')
         elif 'axis_scale_min_max' in filtered:
             del filtered['axis_scale_min_max']
+        filtered.pop('variant', None)
         try:
             cfg = PlotConfig(**filtered)
         except TypeError:

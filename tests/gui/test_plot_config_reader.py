@@ -97,18 +97,30 @@ class TestHiddenEntriesWithoutMapDimensions:
     def test_entries_without_map_are_hidden(self, tmp_path):
         yaml_content = dedent("""\
             plots:
-              has_map:
-                plot_name: '1.0.d Some result'
-                map_dimensions_for_plots: [d_e, s_b]
-              no_map:
-                plot_name: '1.1.d Another result'
-              nested_has_map:
-                default:
-                  plot_name: '2.0.t Nested with map'
-                  map_dimensions_for_plots: [dt_e, tt_l]
-              nested_no_map:
-                default:
-                  plot_name: '2.1.t Nested without map'
+              'Some result':
+                group: 1
+                order: 0
+                has_map_d_e:
+                  default:
+                    map_dimensions_for_plots: [d_e, s_b]
+              'Another result':
+                group: 1
+                order: 1
+                no_map_d_e:
+                  default:
+                    xlabel: MWh
+              'Nested with map':
+                group: 2
+                order: 0
+                nested_has_map_dt_e:
+                  default:
+                    map_dimensions_for_plots: [dt_e, tt_l]
+              'Nested without map':
+                group: 2
+                order: 1
+                nested_no_map_dt_e:
+                  default:
+                    xlabel: MWh
         """)
         config_file = tmp_path / "test_plots.yaml"
         config_file.write_text(yaml_content)
@@ -129,7 +141,15 @@ class TestShortNameEqualsFullName:
     """Test that short_name is not truncated (equals full_name)."""
 
     def test_short_name_equals_full_name(self, tmp_path):
-        yaml_content = "plots:\n  result_key:\n    plot_name: '1.0.d A very long plot name that would have been truncated before'\n    map_dimensions_for_plots: [d_e]\n"
+        yaml_content = dedent("""\
+            plots:
+              'A very long plot name that would have been truncated before':
+                group: 1
+                order: 0
+                result_key_d_e:
+                  default:
+                    map_dimensions_for_plots: [d_e, s_b]
+        """)
         config_file = tmp_path / "test.yaml"
         config_file.write_text(yaml_content)
         groups = parse_plot_config(config_file)

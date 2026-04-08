@@ -1501,6 +1501,7 @@ class ResultViewer(tk.Toplevel):
             filtered["axis_bounds"] = filtered.pop("axis_scale_min_max")
         elif "axis_scale_min_max" in filtered:
             del filtered["axis_scale_min_max"]
+        filtered.pop("variant", None)
 
         try:
             return PlotConfig(**filtered)

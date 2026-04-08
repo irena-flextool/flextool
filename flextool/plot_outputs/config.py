@@ -62,38 +62,37 @@ def _is_single_config(d: dict) -> bool:
 
 
 def _is_new_format_entry(d: dict) -> bool:
-    """Return True if *d* is a new-format entry (has 'group' and 'order' keys)."""
+    """Return True if *d* is an entry-name-based config (has 'group' and 'order' keys)."""
     return 'group' in d and 'order' in d
 
 
 def flatten_new_format(plots: dict) -> dict:
-    """Convert new entry-name-based format to flat result_key-based format.
+    """Convert entry-name-based format to flat result_key-based format.
 
-    New format entries have ``group`` and ``order`` keys; result_keys are
-    nested underneath.  The flattened output maps each result_key directly
-    to its sub-config dict (same shape the orchestrator/plan code expects).
+    Entries have ``group`` and ``order`` keys; result_keys are nested
+    underneath.  The flattened output maps each result_key directly to
+    its sub-config dict (same shape the orchestrator/plan code expects).
 
     When the same result_key appears under multiple entry names (e.g.
     ``costs_dt_p`` under both "Costs" and "Costs lines"), the sub-configs
     from each entry are merged into a single dict for that result_key.
 
-    Old-format entries (result_key at top level) pass through unchanged.
+    Already-flat entries (result_key → config dict without group/order)
+    pass through unchanged for programmatic callers.
     """
     flat: dict = {}
     for key, value in plots.items():
         if not isinstance(value, dict):
             continue
         if _is_new_format_entry(value):
-            # New format: key is entry name, value has group/order + result_keys
             for rk, rk_val in value.items():
                 if rk in ('group', 'order') or not isinstance(rk_val, dict):
                     continue
                 if rk in flat:
-                    # Merge sub-configs from multiple entries
                     flat[rk].update(rk_val)
                 else:
                     flat[rk] = dict(rk_val)
         else:
-            # Old format: key is already a result_key
+            # Already flat (result_key → config dict) — pass through
             flat[key] = value
     return flat
