@@ -815,7 +815,26 @@ def compute_plot_plans_for_result(
 
         plot_name = cfg.plot_name or result_key
 
-        # Apply dimension rules
+        # Check availability using the FULL data range — a variant is
+        # "available" if there's any non-zero data anywhere in the time
+        # series, even if the current plot_rows window is all zeros.
+        # This prevents hourly variants from being marked unavailable when
+        # spikes happen outside the displayed window.
+        full_range = (0, len(df))
+        avail_result = _apply_dimension_rules(df, cfg, full_range)
+        if avail_result is None:
+            continue
+        df_avail = avail_result[0]
+        has_data = True
+        if cfg.skip_data_with_only_zeroes:
+            numeric = df_avail.select_dtypes(include='number')
+            has_data = not numeric.empty and (numeric.abs() >= 1e-6).any().any()
+        if not has_data:
+            continue
+        # Record availability regardless of whether plan generation succeeds
+        succeeded.append((result_key, sub_config))
+
+        # Apply dimension rules with the specified plot_rows for the plan
         dim_result = _apply_dimension_rules(df, cfg, plot_rows)
         if dim_result is None:
             continue
@@ -913,6 +932,8 @@ def compute_plot_plans_for_result(
                 save_sub = f"{sub_config}__{member_str}"
 
             save_plot_plan(plan, output_dir, result_key, save_sub)
-            succeeded.append((result_key, save_sub))
+            # Record file-member-specific availability if different from base
+            if save_sub != sub_config:
+                succeeded.append((result_key, save_sub))
 
     return succeeded

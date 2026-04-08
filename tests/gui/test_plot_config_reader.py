@@ -48,16 +48,16 @@ class TestParseDefaultPlots:
                     break
         assert entry is not None, "Entry 0.0 not found"
         letters = {v.letter for v in entry.variants}
-        assert "d" in letters
-        assert "t" in letters
+        assert "p" in letters
+        assert "h" in letters
 
     def test_total_entry_count(self, groups):
         total = sum(len(g.entries) for g in groups)
         # Verify a reasonable number of entries exist (exact count varies with config changes)
         assert total >= 40
 
-    def test_entry_5_0_has_no_variant_letter(self, groups):
-        """Entry 5.0 (CO2 total) has plot_name '5.0 Emissions...' with no variant."""
+    def test_entry_5_0_has_variant_a(self, groups):
+        """Entry 5.0 (CO2 total) has variant letter 'a'."""
         entry = None
         for g in groups:
             for e in g.entries:
@@ -65,7 +65,7 @@ class TestParseDefaultPlots:
                     entry = e
                     break
         assert entry is not None
-        assert any(v.letter == "" for v in entry.variants)
+        assert any(v.letter == "a" for v in entry.variants)
 
 
 class TestParseComparisonPlots:

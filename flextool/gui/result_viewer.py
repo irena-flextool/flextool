@@ -61,13 +61,18 @@ class ResultViewer(tk.Toplevel):
         self._plot_groups: list[PlotGroup] = []
         # Map tree item iid -> PlotEntry for quick lookup
         self._tree_entry_map: dict[str, PlotEntry] = {}
-        # Dual variant state: desired (user's explicit choice) and shown (actually displayed)
-        self._desired_variant: str = self._viewer_settings.last_variant or ""
-        self._shown_variant: str = ""
         # All unique variant letters across all config entries (created once)
         self._all_variant_letters: list[str] = []
         # Tooltip toplevel
         self._tooltip: tk.Toplevel | None = None
+
+        # Focus model:
+        #   _focus_col: variant letter index the cursor is on (-1 = in tree, not canvas)
+        #   _active_entry_iid: which entry is currently displayed (solid blue)
+        #   _active_variant: which variant letter is displayed (solid blue)
+        self._focus_col: int = -1  # -1 means focus is in the tree
+        self._active_entry_iid: str = ""
+        self._active_variant: str = self._viewer_settings.last_variant or ""
 
         # Mode variable: "single", "comparison", "network"
         self._mode = tk.StringVar(value=self._viewer_settings.last_mode or "single")
@@ -266,12 +271,16 @@ class ResultViewer(tk.Toplevel):
 
         # Canvas click and keyboard bindings
         self._variant_canvas.bind("<Button-1>", self._on_variant_canvas_click)
-        self._variant_canvas.bind("<FocusIn>", lambda e: self._redraw_variant_grid())
+        self._variant_canvas.bind("<FocusIn>", self._on_canvas_focus_in)
+        self._variant_canvas.bind("<FocusOut>", lambda e: self._redraw_variant_grid())
         self._variant_canvas.bind("<Left>", self._on_variant_left)
         self._variant_canvas.bind("<Right>", self._on_variant_right)
         self._variant_canvas.bind("<Up>", self._on_variant_key_up)
         self._variant_canvas.bind("<Down>", self._on_variant_key_down)
         self._variant_canvas.bind("<Tab>", self._focus_scenario_listbox)
+
+        # Tree focus management
+        self._plot_tree.bind("<FocusIn>", self._on_tree_focus_in)
 
         # Tree Right arrow → move focus to variant canvas
         self._plot_tree.bind("<Right>", self._on_tree_key_right)
@@ -634,6 +643,9 @@ class ResultViewer(tk.Toplevel):
         # Update viewer settings
         self._viewer_settings.last_entry = entry.number
 
+        # Update active entry iid
+        self._active_entry_iid = iid
+
         # Reset file index and clear prefetched figures
         self._file_index = 0
         self._file_count = 1
@@ -708,37 +720,55 @@ class ResultViewer(tk.Toplevel):
         return "break"
 
     def _on_tree_key_up(self, event: tk.Event) -> str:
-        """Move selection up, skipping open group headers."""
+        """Move selection up in the tree.
+
+        Skips open group headers (their children are navigable instead).
+        Stops on closed group headers so user can open them.
+        """
         visible = self._get_all_visible_items()
         selection = self._plot_tree.selection()
-        if not selection or selection[0] not in visible:
+        if not selection:
             return "break"
-        idx = visible.index(selection[0])
-        new_idx = idx - 1
-        while 0 <= new_idx:
+        current = selection[0]
+        if current not in visible:
+            # Current item not visible (e.g., parent was closed) — select last visible
+            if visible:
+                self._plot_tree.selection_set(visible[-1])
+                self._plot_tree.see(visible[-1])
+            return "break"
+        idx = visible.index(current)
+        for new_idx in range(idx - 1, -1, -1):
             if not self._should_skip_group(visible[new_idx]):
                 self._plot_tree.selection_set(visible[new_idx])
                 self._plot_tree.see(visible[new_idx])
                 self._plot_tree.event_generate("<<TreeviewSelect>>")
                 return "break"
-            new_idx -= 1
         return "break"
 
     def _on_tree_key_down(self, event: tk.Event) -> str:
-        """Move selection down, skipping open group headers."""
+        """Move selection down in the tree.
+
+        Skips open group headers (their children are navigable instead).
+        Stops on closed group headers so user can open them.
+        """
         visible = self._get_all_visible_items()
         selection = self._plot_tree.selection()
-        if not selection or selection[0] not in visible:
+        if not selection:
             return "break"
-        idx = visible.index(selection[0])
-        new_idx = idx + 1
-        while new_idx < len(visible):
+        current = selection[0]
+        if current not in visible:
+            # Current item not visible — select first visible
+            if visible:
+                self._plot_tree.selection_set(visible[0])
+                self._plot_tree.see(visible[0])
+            return "break"
+        idx = visible.index(current)
+        for new_idx in range(idx + 1, len(visible)):
             if not self._should_skip_group(visible[new_idx]):
                 self._plot_tree.selection_set(visible[new_idx])
                 self._plot_tree.see(visible[new_idx])
                 self._plot_tree.event_generate("<<TreeviewSelect>>")
                 return "break"
-            new_idx += 1
         return "break"
 
     # ------------------------------------------------------------------
@@ -815,7 +845,7 @@ class ResultViewer(tk.Toplevel):
         if not self._all_variant_letters:
             self._variant_canvas.configure(width=0)
             return
-        box_w = self._char_width * 3
+        box_w = self._char_width * 2
         n_letters = len(self._all_variant_letters)
         self._variant_canvas.configure(width=n_letters * box_w + 2)
 
@@ -837,12 +867,15 @@ class ResultViewer(tk.Toplevel):
         if not self._all_variant_letters:
             return
 
-        box_w = self._char_width * 3
-        n_letters = len(self._all_variant_letters)
+        box_w = self._char_width * 2
 
-        # Get the selected entry for highlighting
-        selection = self._plot_tree.selection()
-        selected_iid = selection[0] if selection else ""
+        # Determine focus state
+        try:
+            canvas_has_focus = (self.focus_get() is self._variant_canvas)
+        except KeyError:
+            canvas_has_focus = False
+        tree_selection = self._plot_tree.selection()
+        selected_iid = tree_selection[0] if tree_selection else ""
 
         for iid, entry in self._tree_entry_map.items():
             try:
@@ -855,7 +888,6 @@ class ResultViewer(tk.Toplevel):
             _, y, _, row_h = bbox
             # Build a lookup from letter -> PlotVariant for this entry
             variant_by_letter: dict[str, object] = {v.letter: v for v in entry.variants}
-            is_selected = (iid == selected_iid)
 
             for col_idx, letter in enumerate(self._all_variant_letters):
                 x = col_idx * box_w
@@ -874,12 +906,19 @@ class ResultViewer(tk.Toplevel):
                     or (variant.result_key, "*") in self._current_availability
                 )
 
-                is_desired = is_selected and letter == self._desired_variant
-                is_shown = is_selected and letter == self._shown_variant
+                # Active plot indicator (solid blue) -- always visible for the displayed plot
+                is_active = (iid == self._active_entry_iid and letter == self._active_variant)
+
+                # Focus cursor (dashed rectangle) -- only when canvas has focus
+                is_focused = (
+                    canvas_has_focus
+                    and iid == selected_iid
+                    and col_idx == self._focus_col
+                )
 
                 # Visual states
-                if is_shown:
-                    # Solid fill (selected and shown)
+                if is_active:
+                    # Solid fill (active plot)
                     self._variant_canvas.create_rectangle(
                         x + 1, y + 1, x + box_w - 1, y + row_h - 1,
                         fill="#2074d5", outline="",
@@ -892,12 +931,11 @@ class ResultViewer(tk.Toplevel):
                     # Available -- normal
                     text_color = self._fg_color
 
-                if is_desired and is_selected:
-                    # Dashed border (visible even on solid fill)
-                    border_color = "#ff8800" if is_shown else "#2074d5"
+                if is_focused:
+                    # Dashed rectangle cursor
                     self._variant_canvas.create_rectangle(
                         x + 2, y + 2, x + box_w - 2, y + row_h - 2,
-                        outline=border_color, width=2, dash=(4, 4),
+                        outline="#ff8800", width=2, dash=(4, 4),
                     )
 
                 # Draw letter text (empty letter shows as "?")
@@ -913,13 +951,13 @@ class ResultViewer(tk.Toplevel):
         if not self._all_variant_letters:
             return
 
-        box_w = self._char_width * 3
+        box_w = self._char_width * 2
 
         # Find which letter column was clicked
-        letter_idx = int(event.x / box_w)
-        if letter_idx < 0 or letter_idx >= len(self._all_variant_letters):
+        col_idx = int(event.x / box_w)
+        if col_idx < 0 or col_idx >= len(self._all_variant_letters):
             return
-        letter = self._all_variant_letters[letter_idx]
+        self._focus_col = col_idx
 
         # Find which entry row was clicked (match y to tree bbox)
         for iid, entry in self._tree_entry_map.items():
@@ -931,43 +969,26 @@ class ResultViewer(tk.Toplevel):
                 continue
             _, y, _, row_h = bbox
             if y <= event.y < y + row_h:
-                # Found the entry — check if variant is defined and available
-                variant = None
-                for v in entry.variants:
-                    if v.letter == letter:
-                        variant = v
-                        break
-                if variant is None:
-                    return  # not defined for this entry
-                is_available = (
-                    (variant.result_key, variant.sub_config) in self._current_availability
-                    or (variant.result_key, "*") in self._current_availability
-                )
-                if not is_available:
-                    return  # defined but no data
-                # Select this entry in tree and set variant
+                # Select this entry in tree
                 self._plot_tree.selection_set(iid)
                 self._plot_tree.see(iid)
-                self._desired_variant = letter
-                self._shown_variant = letter
-                self._viewer_settings.last_variant = letter
-                self._file_index = 0
-                self._clear_figure_cache()
-                self._on_tree_selected()
+                # Try to activate the focused cell
+                self._try_activate_focused()
+                self._redraw_variant_grid()
                 return
 
     def _find_nearest_available(self, available: set[str]) -> str:
-        """Find nearest available variant letter to the desired one.
+        """Find nearest available variant letter to the active one.
 
         Searches left first, then right in the _all_variant_letters list.
         """
         if not available:
             return ""
-        if self._desired_variant in available:
-            return self._desired_variant
+        if self._active_variant in available:
+            return self._active_variant
 
         try:
-            idx = self._all_variant_letters.index(self._desired_variant)
+            idx = self._all_variant_letters.index(self._active_variant)
         except ValueError:
             idx = 0
 
@@ -986,52 +1007,49 @@ class ResultViewer(tk.Toplevel):
     def _populate_variant_panel(self, entry: PlotEntry) -> None:
         """Update variant state for the given entry and redraw the grid.
 
-        Updates the *shown* variant to match desired when available,
-        otherwise picks the nearest available.  The *desired* variant
-        is never changed here -- it persists across tree navigation.
-        Only variants that are both *defined* and *available* (have data)
-        are considered for the shown variant.
+        If the active variant is not available for this entry, picks the
+        nearest available variant.  The active variant persists across
+        tree navigation when possible.
         """
-        available = set()
+        available_with_data: set[str] = set()
         for v in entry.variants:
             is_avail = (
                 (v.result_key, v.sub_config) in self._current_availability
                 or (v.result_key, "*") in self._current_availability
             )
             if is_avail:
-                available.add(v.letter)
+                available_with_data.add(v.letter)
 
-        # Shown variant: desired if available, else nearest available
-        if self._desired_variant in available:
-            self._shown_variant = self._desired_variant
-        else:
-            self._shown_variant = self._find_nearest_available(available)
+        if self._active_variant not in available_with_data and available_with_data:
+            self._active_variant = self._find_nearest_available(available_with_data)
 
         self._redraw_variant_grid()
 
     def _on_variant_clicked(self, letter: str) -> None:
         """Handle variant selection (from canvas click or keyboard)."""
-        # Only act if the variant is defined and available for the selected entry
         selection = self._plot_tree.selection()
-        if selection and selection[0].startswith("entry_"):
-            entry = self._tree_entry_map.get(selection[0])
-            if entry:
-                variant = None
-                for v in entry.variants:
-                    if v.letter == letter:
-                        variant = v
-                        break
-                if variant is None:
-                    return  # not defined
-                is_available = (
-                    (variant.result_key, variant.sub_config) in self._current_availability
-                    or (variant.result_key, "*") in self._current_availability
-                )
-                if not is_available:
-                    return  # defined but no data
+        if not selection:
+            return
+        iid = selection[0]
+        if not iid.startswith("entry_"):
+            return
+        entry = self._tree_entry_map.get(iid)
+        if not entry:
+            return
 
-        self._desired_variant = letter
-        self._shown_variant = letter  # clicking always sets both
+        # Only act if the variant is defined and available for the selected entry
+        variant = next((v for v in entry.variants if v.letter == letter), None)
+        if variant is None:
+            return  # not defined
+        is_available = (
+            (variant.result_key, variant.sub_config) in self._current_availability
+            or (variant.result_key, "*") in self._current_availability
+        )
+        if not is_available:
+            return  # defined but no data
+
+        self._active_variant = letter
+        self._active_entry_iid = iid
         self._viewer_settings.last_variant = letter
         self._redraw_variant_grid()
         self._file_index = 0
@@ -1039,39 +1057,32 @@ class ResultViewer(tk.Toplevel):
         self._trigger_replot()
 
     def _on_variant_left(self, event: tk.Event) -> str:
-        """Navigate to previous available variant letter.
+        """Navigate focus cursor left in the variant grid.
 
-        At the leftmost variant, transfer focus back to the tree.
+        Moves to ANY cell position (including empty/undefined ones).
+        At the leftmost position, returns focus to the tree.
         """
-        if not self._all_variant_letters:
+        if self._focus_col <= 0:
+            # At leftmost -- return focus to tree
+            self._plot_tree.focus_set()
             return "break"
-        available = self._get_selected_entry_available_variants()
-        current_idx = self._get_current_variant_index()
-        # Find previous available letter
-        for new_idx in range(current_idx - 1, -1, -1):
-            letter = self._all_variant_letters[new_idx]
-            if letter in available:
-                self._on_variant_clicked(letter)
-                return "break"
-        # At leftmost — move focus back to tree
-        self._plot_tree.focus_set()
+        self._focus_col -= 1
+        self._try_activate_focused()
+        self._redraw_variant_grid()
         return "break"
 
     def _on_variant_right(self, event: tk.Event) -> str:
-        """Navigate to next available variant letter.
+        """Navigate focus cursor right in the variant grid.
 
-        Changes desired variant to the next available one; shown follows.
+        Moves to ANY cell position (including empty/undefined ones).
         """
         if not self._all_variant_letters:
             return "break"
-        available = self._get_selected_entry_available_variants()
-        current_idx = self._get_current_variant_index()
-        # Find next available letter
-        for new_idx in range(current_idx + 1, len(self._all_variant_letters)):
-            letter = self._all_variant_letters[new_idx]
-            if letter in available:
-                self._on_variant_clicked(letter)
-                break
+        if self._focus_col >= len(self._all_variant_letters) - 1:
+            return "break"  # at rightmost
+        self._focus_col += 1
+        self._try_activate_focused()
+        self._redraw_variant_grid()
         return "break"
 
     def _get_selected_entry_available_variants(self) -> set[str]:
@@ -1093,29 +1104,31 @@ class ResultViewer(tk.Toplevel):
     def _on_variant_key_up(self, event: tk.Event) -> str:
         """Handle Up / Shift+Up in the variant panel.
 
-        - Up: jump to prev visible entry that has the desired variant.
-        - Shift+Up: move to prev visible entry regardless; keep desired,
-          shown = nearest available.
+        - Up: move tree selection up, auto-activate variant at _focus_col.
+        - Shift+Up: jump to prev entry that has the active variant.
         """
         shift_held = bool(event.state & 0x1)
         if shift_held:
-            self._move_tree_selection(-1)
+            self._move_tree_to_next_with_active(-1)
         else:
-            self._move_tree_to_next_with_desired(-1)
+            self._move_tree_selection_from_canvas(-1)
+            self._try_activate_focused()
+            self._redraw_variant_grid()
         return "break"
 
     def _on_variant_key_down(self, event: tk.Event) -> str:
         """Handle Down / Shift+Down in the variant panel.
 
-        - Down: jump to next visible entry that has the desired variant.
-        - Shift+Down: move to next visible entry regardless; keep desired,
-          shown = nearest available.
+        - Down: move tree selection down, auto-activate variant at _focus_col.
+        - Shift+Down: jump to next entry that has the active variant.
         """
         shift_held = bool(event.state & 0x1)
         if shift_held:
-            self._move_tree_selection(1)
+            self._move_tree_to_next_with_active(1)
         else:
-            self._move_tree_to_next_with_desired(1)
+            self._move_tree_selection_from_canvas(1)
+            self._try_activate_focused()
+            self._redraw_variant_grid()
         return "break"
 
     def _get_visible_entries(self) -> list[str]:
@@ -1153,11 +1166,11 @@ class ResultViewer(tk.Toplevel):
                 return
             new_idx += step
 
-    def _move_tree_to_next_with_desired(self, direction: int) -> None:
-        """Move tree selection to next/prev entry that has the desired variant.
+    def _move_tree_to_next_with_active(self, direction: int) -> None:
+        """Move tree selection to next/prev entry that has the active variant.
 
         Only stops at non-disabled entries whose variant set includes
-        ``_desired_variant``.
+        ``_active_variant``.
         """
         visible = self._get_visible_entries()
         selection = self._plot_tree.selection()
@@ -1173,7 +1186,7 @@ class ResultViewer(tk.Toplevel):
             if not self._is_entry_disabled(iid):
                 entry = self._tree_entry_map.get(iid)
                 if entry and any(
-                    v.letter == self._desired_variant
+                    v.letter == self._active_variant
                     and (
                         (v.result_key, v.sub_config) in self._current_availability
                         or (v.result_key, "*") in self._current_availability
@@ -1187,9 +1200,9 @@ class ResultViewer(tk.Toplevel):
             new_idx += step
 
     def _get_current_variant_index(self) -> int:
-        """Return index of the desired variant in _all_variant_letters, or 0."""
-        if self._desired_variant in self._all_variant_letters:
-            return self._all_variant_letters.index(self._desired_variant)
+        """Return index of the active variant in _all_variant_letters, or 0."""
+        if self._active_variant in self._all_variant_letters:
+            return self._all_variant_letters.index(self._active_variant)
         return 0
 
     def _show_variant_panel(self) -> None:
@@ -1201,7 +1214,85 @@ class ResultViewer(tk.Toplevel):
         """Hide the variant canvas."""
         self._variant_canvas.configure(width=0)
         self._variant_canvas.delete("all")
-        self._shown_variant = ""
+
+    # ------------------------------------------------------------------
+    # Focus management
+    # ------------------------------------------------------------------
+
+    def _on_canvas_focus_in(self, event: tk.Event) -> None:
+        """Handle variant canvas receiving focus."""
+        self._focus_col = max(0, self._focus_col)  # ensure valid
+        # Hide tree selection highlight
+        style = ttk.Style()
+        style.map(
+            "Treeview",
+            background=[("selected", self._bg_color)],
+            foreground=[("selected", self._fg_color)],
+        )
+        self._redraw_variant_grid()
+
+    def _on_tree_focus_in(self, event: tk.Event) -> None:
+        """Handle plot tree receiving focus."""
+        self._focus_col = -1  # focus is in tree, not canvas
+        # Restore tree selection highlight
+        style = ttk.Style()
+        style.map(
+            "Treeview",
+            background=[("selected", "#2074d5")],
+            foreground=[("selected", "#ffffff")],
+        )
+        self._redraw_variant_grid()
+
+    def _try_activate_focused(self) -> None:
+        """If the focused cell has an available variant, make it the active plot."""
+        if self._focus_col < 0 or self._focus_col >= len(self._all_variant_letters):
+            return
+        letter = self._all_variant_letters[self._focus_col]
+
+        selection = self._plot_tree.selection()
+        if not selection:
+            return
+        iid = selection[0]
+        entry = self._tree_entry_map.get(iid)
+        if not entry:
+            return
+
+        # Check if this variant is defined AND available
+        variant = next((v for v in entry.variants if v.letter == letter), None)
+        if variant is None:
+            return  # undefined -- do nothing
+        is_available = (
+            (variant.result_key, variant.sub_config) in self._current_availability
+            or (variant.result_key, "*") in self._current_availability
+        )
+        if not is_available:
+            return  # no data -- do nothing
+
+        # Activate this plot
+        self._active_entry_iid = iid
+        self._active_variant = letter
+        self._viewer_settings.last_variant = letter
+        self._viewer_settings.last_entry = entry.number
+        self._file_index = 0
+        self._clear_figure_cache()
+        self._trigger_replot()
+
+    def _move_tree_selection_from_canvas(self, direction: int) -> None:
+        """Move tree selection up/down while keeping focus in canvas."""
+        visible = self._get_visible_entries()
+        selection = self._plot_tree.selection()
+        if not selection or selection[0] not in visible:
+            if visible:
+                self._plot_tree.selection_set(visible[0])
+            return
+        idx = visible.index(selection[0])
+        new_idx = idx + direction
+        while 0 <= new_idx < len(visible):
+            if not self._is_entry_disabled(visible[new_idx]):
+                self._plot_tree.selection_set(visible[new_idx])
+                self._plot_tree.see(visible[new_idx])
+                return
+            new_idx += direction
 
     # ------------------------------------------------------------------
     # Mode switching
@@ -1349,9 +1440,9 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _get_active_variant(self, entry: PlotEntry) -> PlotVariant | None:
-        """Return the PlotVariant matching the shown variant letter."""
+        """Return the PlotVariant matching the active variant letter."""
         for v in entry.variants:
-            if v.letter == self._shown_variant:
+            if v.letter == self._active_variant:
                 return v
         # Fall back to first variant
         return entry.variants[0] if entry.variants else None
