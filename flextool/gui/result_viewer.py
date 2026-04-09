@@ -432,11 +432,16 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _scan_scenarios(self) -> list[str]:
-        """List scenario subdirectories in output_parquet/."""
+        """List scenario subdirectories in output_parquet/ that are checked in Executed scenarios."""
         parquet_dir = self._project_path / "output_parquet"
         if not parquet_dir.is_dir():
             return []
-        return sorted(d.name for d in parquet_dir.iterdir() if d.is_dir())
+        available = sorted(d.name for d in parquet_dir.iterdir() if d.is_dir())
+        # Filter to only checked scenarios
+        checked = self._settings.checked_executed_scenarios
+        if checked:
+            available = [s for s in available if s in checked]
+        return available
 
     def _populate_scenarios(self) -> None:
         """Populate the scenario listbox."""
@@ -1970,6 +1975,16 @@ class ResultViewer(tk.Toplevel):
             self._plot_canvas.show_message(f"Empty data for {variant.result_key}")
             return
 
+        # Filter to only checked scenarios
+        checked = set(self._get_comparison_scenarios())
+        if checked and isinstance(df.columns, pd.MultiIndex) and 'scenario' in df.columns.names:
+            scenario_level = df.columns.get_level_values('scenario')
+            mask = scenario_level.isin(checked)
+            df = df.loc[:, mask]
+            if df.empty:
+                self._plot_canvas.show_message("No data for selected scenarios")
+                return
+
         self._update_time_range(len(df))
 
         # Load config from comparison config
@@ -2058,8 +2073,30 @@ class ResultViewer(tk.Toplevel):
             cb.pack(fill="x", anchor="w", padx=2, pady=1)
 
     def _on_comp_checkbox_changed(self) -> None:
-        """Handle comparison checkbox change -- note that regeneration is needed."""
-        self._comp_needs_regen = True
+        """Handle comparison checkbox change — filter and replot immediately."""
+        import json
+
+        # Check if we need scenarios not in the combined parquet
+        checked = set(self._get_comparison_scenarios())
+        meta_path = self._project_path / "output_parquet_comparison" / "_metadata.json"
+        if meta_path.exists():
+            try:
+                with open(meta_path) as f:
+                    combined = set(json.load(f).get("scenarios", []))
+            except (json.JSONDecodeError, OSError):
+                combined = set()
+        else:
+            combined = set()
+
+        if checked - combined:
+            # New scenarios not in combined — need regeneration
+            self._comp_needs_regen = True
+            self._regenerate_comparison(list(checked))
+        else:
+            # Subset of combined — just filter and replot
+            self._comp_needs_regen = False
+            self._clear_figure_cache()
+            self._trigger_replot()
 
     def _check_comparison_freshness(self) -> None:
         """Check if comparison parquets match the checkbox selection, regenerate if not."""
