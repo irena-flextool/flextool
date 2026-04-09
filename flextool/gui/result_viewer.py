@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import yaml
 
+from flextool.lean_parquet import read_lean_parquet
 from flextool.gui.data_models import ProjectSettings
 from flextool.gui.network_graph import build_network_figure
 from flextool.gui.plot_canvas import PlotCanvas
@@ -1552,12 +1553,7 @@ class ResultViewer(tk.Toplevel):
 
     def _on_update(self) -> None:
         """Re-scan scenarios, regenerate comparison if needed, reload everything."""
-        # Check if comparison needs regeneration
-        if self._mode.get() == "comparison" and self._comp_needs_regen:
-            checked = self._get_comparison_scenarios()
-            if checked:
-                self._regenerate_comparison(checked)
-
+        # Clear all caches first
         self._yaml_cache.clear()
         self._break_times_cache.clear()
         self._current_availability = set()
@@ -1572,10 +1568,66 @@ class ResultViewer(tk.Toplevel):
         self._plot_canvas._cache.clear()
         self._parquet_cache_key = ("", "")
         self._parquet_cache_df = None
+
         self._populate_scenarios()
         if self._mode.get() == "comparison":
             self._populate_comparison_checkboxes()
+
+        # Always check if comparison parquets need regenerating:
+        # scenarios may have been re-run or the checked list may have changed.
+        self._ensure_comparison_fresh()
+
+        self._comp_needs_regen = False
         self._on_mode_changed()
+
+    def _ensure_comparison_fresh(self) -> None:
+        """Regenerate comparison parquets if they're stale or missing.
+
+        Stale means: the checked scenario list differs from what's in
+        ``_metadata.json``, or any per-scenario parquet is newer than
+        the combined file.
+        """
+        checked = self._get_comparison_scenarios()
+        if not checked:
+            # No scenarios checked — use all scanned scenarios as default
+            checked = self._scan_scenarios()
+            if not checked:
+                return
+            # Update checkboxes to reflect this
+            for name, var in self._comp_check_vars.items():
+                var.set(name in checked)
+
+        comp_dir = self._project_path / "output_parquet_comparison"
+        meta_path = comp_dir / "_metadata.json"
+
+        needs_regen = False
+        if not meta_path.exists():
+            needs_regen = True
+        else:
+            import json
+            try:
+                with open(meta_path) as f:
+                    existing = set(json.load(f).get("scenarios", []))
+                if set(checked) != existing:
+                    needs_regen = True
+                else:
+                    # Check if any per-scenario parquet is newer than _metadata.json
+                    meta_mtime = meta_path.stat().st_mtime
+                    parquet_base = self._project_path / "output_parquet"
+                    for s in checked:
+                        s_dir = parquet_base / s
+                        if s_dir.is_dir():
+                            for f in s_dir.iterdir():
+                                if f.suffix == ".parquet" and f.stat().st_mtime > meta_mtime:
+                                    needs_regen = True
+                                    break
+                        if needs_regen:
+                            break
+            except (json.JSONDecodeError, OSError):
+                needs_regen = True
+
+        if needs_regen:
+            self._regenerate_comparison(checked)
         self._comp_needs_regen = False
 
     # ------------------------------------------------------------------
@@ -1695,7 +1747,7 @@ class ResultViewer(tk.Toplevel):
         path = self._project_path / "output_parquet" / scenario / f"{result_key}.parquet"
         if not path.exists():
             return None
-        df = pd.read_parquet(path)
+        df = read_lean_parquet(path)
         if isinstance(df.columns, pd.MultiIndex) and 'scenario' in df.columns.names:
             df = df.droplevel('scenario', axis=1)
         self._parquet_cache_key = cache_key
@@ -1713,7 +1765,7 @@ class ResultViewer(tk.Toplevel):
             return None
 
         try:
-            df = pd.read_parquet(path)
+            df = read_lean_parquet(path)
             # Extract break time values as strings
             if df.empty:
                 result: set[str] | None = None
@@ -1970,7 +2022,7 @@ class ResultViewer(tk.Toplevel):
         except Exception:
             pass  # fall through to normal pipeline
 
-        df = pd.read_parquet(parquet_path)
+        df = read_lean_parquet(parquet_path)
         if df.empty:
             self._plot_canvas.show_message(f"Empty data for {variant.result_key}")
             return
@@ -2027,7 +2079,7 @@ class ResultViewer(tk.Toplevel):
             return None
 
         try:
-            df = pd.read_parquet(path)
+            df = read_lean_parquet(path)
             if df.empty:
                 result: set[str] | None = None
             else:
@@ -2170,7 +2222,7 @@ class ResultViewer(tk.Toplevel):
         if not dispatch_groups_path.exists():
             return
 
-        df = pd.read_parquet(dispatch_groups_path)
+        df = read_lean_parquet(dispatch_groups_path)
         if df.empty:
             return
 
@@ -2179,7 +2231,7 @@ class ResultViewer(tk.Toplevel):
         # Filter to groups that actually have node members (group_node.parquet)
         group_node_path = parquet_dir / "group_node.parquet"
         if group_node_path.exists():
-            gn_df = pd.read_parquet(group_node_path)
+            gn_df = read_lean_parquet(group_node_path)
             if not gn_df.empty and 'group' in gn_df.columns:
                 groups_with_nodes = set(gn_df['group'].unique())
                 flagged_groups &= groups_with_nodes
