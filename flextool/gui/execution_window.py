@@ -35,7 +35,7 @@ class ExecutionWindow(tk.Toplevel):
         execution_mgr: ExecutionManager,
     ) -> None:
         super().__init__(parent)
-        self.title("Execution Menu")
+        self.title("Execution Jobs")
 
 
         self._mgr = execution_mgr

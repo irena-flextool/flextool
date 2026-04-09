@@ -296,15 +296,15 @@ class MainWindow(tk.Tk):
         self.auto_comp_plots_var.trace_add("write", self._on_auto_gen_toggled)
         self.auto_comp_excel_var.trace_add("write", self._on_auto_gen_toggled)
 
-        # --- Plot settings and Execution menu buttons (col 2-3, rows 7-8) ---
+        # --- Png settings and Execution jobs buttons (col 2-3, rows 7-8) ---
         self.plot_menu_btn = ttk.Button(
-            outer, text="Plot settings", width=14,
+            outer, text="Png settings", width=14,
             command=self._on_plot_menu,
         )
         self.plot_menu_btn.grid(row=7, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
 
         self.execution_menu_btn = ttk.Button(
-            outer, text="Execution menu", width=14,
+            outer, text="Execution jobs", width=14,
             command=self._on_execution_menu,
         )
         self.execution_menu_btn.grid(row=8, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
@@ -330,7 +330,7 @@ class MainWindow(tk.Tk):
             ("Re-plot scenarios", "scen_plots", None),      # No show button
             ("Scenarios to Excel", "scen_excel", "Open"),
             ("Scenarios to csvs", "scen_csvs", "Show"),
-            ("Comparison plots", "comp_plots", "Show"),
+            ("Comparison pngs", "comp_plots", "Show"),
             ("Comparison to Excel", "comp_excel", "Open"),
         ]
 
@@ -1172,7 +1172,7 @@ class MainWindow(tk.Tk):
             self.add_to_execution_btn.configure(style="TButton")
 
     def _update_execution_menu_style(self) -> None:
-        """Highlight 'Execution menu' green when there are jobs on the execution list."""
+        """Highlight 'Execution jobs' green when there are jobs on the execution list."""
         has_jobs = False
         if self.execution_mgr is not None:
             has_jobs = len(self.execution_mgr.get_jobs()) > 0
@@ -2303,7 +2303,7 @@ class MainWindow(tk.Tk):
         self._open_or_raise_execution_window()
 
     def _on_view_results(self) -> None:
-        """Open the ResultViewer (or raise it if already open)."""
+        """Open the ResultViewer, or update its scenarios if already open."""
         if not self.current_project:
             messagebox.showinfo(
                 "No project",
@@ -2313,15 +2313,22 @@ class MainWindow(tk.Tk):
         self._open_or_raise_result_viewer()
 
     def _open_or_raise_result_viewer(self) -> None:
-        """Open a new ResultViewer or raise an existing one."""
+        """Open a new ResultViewer or raise an existing one.
+
+        If the viewer is already open, refreshes its scenario data
+        from the current checked executed scenarios.
+        """
         if (
             self._result_viewer is not None
             and self._result_viewer.winfo_exists()
         ):
+            # Update the viewer's scenario data before raising
+            self._result_viewer._on_update()
             self._result_viewer.deiconify()
             self._result_viewer.attributes("-topmost", True)
             self._result_viewer.attributes("-topmost", False)
             self._result_viewer.focus_force()
+            self._update_view_results_btn()
             return
 
         project_path = get_projects_dir() / self.current_project
@@ -2331,6 +2338,20 @@ class MainWindow(tk.Tk):
             settings=self.project_settings,
             scenario_db_map=self._get_scenario_db_map(),
         )
+        self._update_view_results_btn()
+        # When the viewer closes, revert button text
+        self._result_viewer.bind("<Destroy>", lambda e: self._update_view_results_btn())
+
+    def _update_view_results_btn(self) -> None:
+        """Update the View Results button text based on viewer state."""
+        viewer_open = (
+            self._result_viewer is not None
+            and self._result_viewer.winfo_exists()
+        )
+        if viewer_open:
+            self.view_results_btn.configure(text="Update view scenarios")
+        else:
+            self.view_results_btn.configure(text="View Results")
 
     def _get_scenario_db_map(self) -> dict[str, Path]:
         """Build a mapping of scenario names to database paths.
@@ -2504,7 +2525,7 @@ class MainWindow(tk.Tk):
             "scen_plots": ("Re-plot scenarios", all_have_plots),
             "scen_excel": ("Scenarios to Excel", all_have_excel),
             "scen_csvs": ("Scenarios to csvs", all_have_csvs),
-            "comp_plots": ("Comparison plots", comp_plots_match),
+            "comp_plots": ("Comparison pngs", comp_plots_match),
             "comp_excel": ("Comparison to Excel", comp_excel_match),
         }
 
@@ -2531,7 +2552,7 @@ class MainWindow(tk.Tk):
             "scen_plots": "Re-plot scenarios",
             "scen_excel": "Scenarios to Excel",
             "scen_csvs": "Scenarios to csvs",
-            "comp_plots": "Comparison plots",
+            "comp_plots": "Comparison pngs",
             "comp_excel": "Comparison to Excel",
         }
         for key, full_name in default_names.items():
