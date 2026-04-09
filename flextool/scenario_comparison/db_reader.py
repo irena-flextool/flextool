@@ -16,6 +16,7 @@ from pathlib import Path
 import pandas as pd
 from spinedb_api import DatabaseMapping
 
+from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
 from flextool.scenario_comparison.data_models import TimeSeriesResults
 
 
@@ -135,7 +136,7 @@ def combine_parquet_files(
 
         for scenario_name, file_path in scenario_files:
             try:
-                df = pd.read_parquet(file_path)
+                df = read_lean_parquet(file_path)
                 # Deduplicate index (can occur with overlapping solve windows)
                 if df.index.duplicated().any():
                     df = df[~df.index.duplicated(keep='last')]
@@ -298,7 +299,7 @@ def combine_scenario_parquets(
             continue
         if not isinstance(df.columns, pd.MultiIndex):
             continue
-        df.to_parquet(output_dir / f"{name}.parquet")
+        write_lean_parquet(df, output_dir / f"{name}.parquet")
 
     # 5. Write metadata
     meta = {"scenarios": list(scenario_folders.keys())}
@@ -311,14 +312,14 @@ def combine_scenario_parquets(
         tb_path = parquet_base / scenario_name / "timeline_breaks.parquet"
         if tb_path.exists():
             try:
-                tb_df = pd.read_parquet(tb_path)
+                tb_df = read_lean_parquet(tb_path)
                 if "time" in tb_df.columns:
                     break_times.update(tb_df["time"].astype(str))
             except Exception:
                 pass
     if break_times:
         bt_df = pd.DataFrame({"break_time": sorted(break_times)})
-        bt_df.to_parquet(output_dir / "timeline_breaks.parquet")
+        write_lean_parquet(bt_df, output_dir / "timeline_breaks.parquet", index=False)
 
     written_count = sum(
         1 for df in combined_dfs.values()

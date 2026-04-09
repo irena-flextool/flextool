@@ -160,14 +160,14 @@ plots:
     nodeGroup_slack_reserve_dt_eeg:
       default:
         variant: h
-        map_dimensions_for_plots: [dt_seeg, tt_luug]
+        map_dimensions_for_plots: [dt_seeg, tt_luuu]
         legend: shared
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
       chunks:
         plot_name: 'Lack of reserves weekly avg'
         variant: w
-        map_dimensions_for_plots: [dt_seeg, mi_luug]
+        map_dimensions_for_plots: [dt_seeg, ti_luuu]
         time_average_duration: 168
         legend: shared
         skip_data_with_only_zeroes: true

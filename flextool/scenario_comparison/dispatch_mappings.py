@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from flextool.lean_parquet import read_lean_parquet
 from flextool.scenario_comparison.data_models import DispatchMappings
 
 
@@ -59,7 +60,7 @@ def load_dispatch_mappings(parquet_dir: Path) -> dict[str, pd.DataFrame | None]:
     for key, (filename, required) in file_mapping.items():
         filepath = parquet_dir / filename
         if filepath.exists():
-            mappings[key] = pd.read_parquet(filepath)
+            mappings[key] = read_lean_parquet(filepath)
         elif required:
             print(f"Warning: Required file {filepath} not found")
             mappings[key] = None

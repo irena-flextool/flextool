@@ -10,6 +10,8 @@ import pandas as pd
 from decimal import Decimal, InvalidOperation
 from matplotlib.ticker import Formatter, FuncFormatter
 
+from flextool.lean_parquet import read_lean_parquet
+
 
 def _sig_figs_fmt(x, pos, n: int = 5) -> str:
     """Format x with n significant figures, plain notation, no trailing zeros."""
@@ -215,7 +217,7 @@ def load_timeline_breaks(*parquet_dirs: str | os.PathLike) -> set[str]:
         path = os.path.join(str(d), 'timeline_breaks.parquet')
         if os.path.exists(path):
             try:
-                df = pd.read_parquet(path)
+                df = read_lean_parquet(path)
                 if 'time' in df.columns:
                     break_times.update(df['time'].astype(str))
             except Exception:

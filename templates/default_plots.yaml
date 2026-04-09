@@ -153,7 +153,7 @@ plots:
       chunks:
         plot_name: 'Lack of reserves weekly avg'
         variant: w
-        map_dimensions_for_plots: [dt_eeg, mi_ssu]
+        map_dimensions_for_plots: [dt_eeg, ti_ssu]
         time_average_duration: 168
         max_subplots_per_file: 6
         subplots_per_row: 2

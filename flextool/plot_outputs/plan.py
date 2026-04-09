@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -120,23 +122,9 @@ def save_plot_plan(
 
     prefix = f"{result_key}__{sub_config}"
 
-    # Prepare DataFrame for parquet: flatten single-level MultiIndex on columns
-    # and index to avoid parquet round-trip corruption (stringified tuples).
-    df_save = plan.processed_df.copy()
-    col_was_single_multi = False
-    idx_was_single_multi = False
-    if isinstance(df_save.columns, pd.MultiIndex) and df_save.columns.nlevels == 1:
-        col_was_single_multi = True
-        col_name = df_save.columns.names[0]
-        df_save.columns = df_save.columns.get_level_values(0)
-        df_save.columns.name = col_name
-    if isinstance(df_save.index, pd.MultiIndex) and df_save.index.nlevels == 1:
-        idx_was_single_multi = True
-        idx_name = df_save.index.names[0]
-        df_save.index = df_save.index.get_level_values(0)
-        df_save.index.name = idx_name
-
-    df_save.to_parquet(output_dir / f"{prefix}_plan.parquet")
+    # write_lean_parquet handles single-level MultiIndex correctly, so no
+    # flattening is needed (the old pandas-metadata approach required it).
+    write_lean_parquet(plan.processed_df, output_dir / f"{prefix}_plan.parquet")
 
     # Serialize effective_plot_specs: titles may be None, selectors are lists
     # of scalars or tuples.  JSON-encode tuples as lists.
@@ -177,9 +165,10 @@ def save_plot_plan(
         'expand_axis_level_names': plan.expand_axis_level_names,
         'grouped_bar_levels': plan.grouped_bar_levels,
         'grouped_bar_level_names': plan.grouped_bar_level_names,
-        # Parquet format hints (single-level MultiIndex flattened on save)
-        'col_was_single_multi': col_was_single_multi,
-        'idx_was_single_multi': idx_was_single_multi,
+        # Legacy: lean_parquet handles single-level MultiIndex now; kept
+        # so old plan JSON files still load via the reconstruction below.
+        'col_was_single_multi': False,
+        'idx_was_single_multi': False,
     }
 
     with open(output_dir / f"{prefix}_plan.json", 'w') as f:
@@ -203,7 +192,7 @@ def load_plot_plan(
         with open(json_path, 'r') as f:
             meta = json.load(f)
 
-        df = pd.read_parquet(parquet_path)
+        df = read_lean_parquet(parquet_path)
 
         # Reconstruct single-level MultiIndex if it was flattened on save
         if meta.get('col_was_single_multi', False):

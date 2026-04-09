@@ -8,6 +8,8 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from flextool.lean_parquet import write_lean_parquet
+
 from flextool.scenario_comparison.config_builder import (
     create_or_update_dispatch_config,
     get_scenarios_from_config,
@@ -118,7 +120,7 @@ def run(
         os.makedirs(comparison_parquet_dir, exist_ok=True)
         for name, df in combined_dfs.items():
             if not df.empty:
-                df.to_parquet(os.path.join(comparison_parquet_dir, f"{name}.parquet"))
+                write_lean_parquet(df, os.path.join(comparison_parquet_dir, f"{name}.parquet"))
         # Also write a metadata file with the scenario list
         import json
         meta = {"scenarios": scenarios}
@@ -127,7 +129,7 @@ def run(
         if break_times:
             # Save break times so the viewer can load them
             bt_df = pd.DataFrame({"break_time": list(break_times)})
-            bt_df.to_parquet(os.path.join(comparison_parquet_dir, "timeline_breaks.parquet"))
+            write_lean_parquet(bt_df, os.path.join(comparison_parquet_dir, "timeline_breaks.parquet"), index=False)
         print(f"Wrote comparison parquets to: {comparison_parquet_dir}")
 
     # Compute and save dispatch metadata (cross-scenario ylims) for the viewer

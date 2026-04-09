@@ -5,6 +5,8 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import time
 import yaml
 
+from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
+
 from datetime import datetime, timezone
 from flextool.process_outputs.read_variables import read_variables
 from flextool.process_outputs.read_parameters import read_parameters
@@ -417,7 +419,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             if filename.endswith('.parquet') and filename != 'timeline_breaks.parquet':
                 key = filename[:-8]  # Remove '.parquet' extension
                 filepath = os.path.join(parquet_dir, filename)
-                results[key] = pd.read_parquet(filepath)
+                results[key] = read_lean_parquet(filepath)
                 if len(results[key].columns.names) == 1:
                     results[key] = results[key].squeeze()
                 else:
@@ -475,14 +477,14 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 df.set_index(list(df.columns)).index
             else:
                 df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
-            df.to_parquet(f'{parquet_dir}/{name}.parquet')
+            write_lean_parquet(df, f'{parquet_dir}/{name}.parquet')
 
         # Copy timeline_breaks from output_raw to parquet dir
         raw_dir = raw_output_dir or 'output_raw'
         breaks_csv = os.path.join(raw_dir, 'timeline_breaks.csv')
         if os.path.exists(breaks_csv):
             breaks_df = pd.read_csv(breaks_csv)
-            breaks_df.to_parquet(f'{parquet_dir}/timeline_breaks.parquet', index=False)
+            write_lean_parquet(breaks_df, f'{parquet_dir}/timeline_breaks.parquet', index=False)
 
         start = log_time("Wrote to parquet", start)
 
