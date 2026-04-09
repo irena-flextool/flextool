@@ -515,33 +515,18 @@ class ResultViewer(tk.Toplevel):
         self._restore_or_select_first_entry()
 
     def _load_availability_from_dir(self, plan_dir: Path) -> set[tuple[str, str]]:
-        """Load availability manifest from plan_dir/_availability.json.
-
-        Falls back to checking parquet file existence (old behavior)
-        when the manifest does not exist.
-        """
+        """Load availability manifest from plan_dir/_availability.json."""
         import json
 
         avail_path = plan_dir / "_availability.json"
-        if avail_path.exists():
-            try:
-                with open(avail_path) as f:
-                    data = json.load(f)
-                return {(r, s) for r, s in data.get("available", [])}
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        # Fallback: infer availability from parquet file existence.
-        # The plan_dir parent is the parquet output directory.
-        parquet_dir = plan_dir.parent
-        result: set[tuple[str, str]] = set()
-        if parquet_dir.is_dir():
-            for f in parquet_dir.iterdir():
-                if f.suffix == ".parquet" and f.is_file():
-                    result.add((f.stem, "default"))
-                    # Wildcard entry so that any sub_config matches
-                    result.add((f.stem, "*"))
-        return result
+        if not avail_path.exists():
+            return set()
+        try:
+            with open(avail_path) as f:
+                data = json.load(f)
+            return {(r, s) for r, s in data.get("available", [])}
+        except (json.JSONDecodeError, OSError):
+            return set()
 
     def _update_tree_availability(self) -> None:
         """Grey out entries that have no matching parquet/plan data for selected scenario(s).
