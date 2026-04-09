@@ -482,6 +482,7 @@ plots:
         map_dimensions_for_plots: [ed_sp, eb_gu]
         legend: shared
         skip_data_with_only_zeroes: true
+        axis_bounds: shared
         xlabel: MWh
   'Capacity units':
     group: 4
@@ -496,6 +497,7 @@ plots:
         map_dimensions_for_plots: [ed_sp, eb_gu]
         legend: shared
         skip_data_with_only_zeroes: true
+        axis_bounds: shared
         xlabel: MW
   'Capacity connections':
     group: 4
@@ -510,6 +512,7 @@ plots:
         max_subplots_per_file: 2
         base_length: 4
         skip_data_with_only_zeroes: true
+        axis_bounds: shared
         xlabel: MW
   'Node marginal investment value':
     group: 4

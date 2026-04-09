@@ -625,6 +625,7 @@ plots:
         max_subplots_per_file: 2
         xlabel: MWh
         skip_data_with_only_zeroes: true
+        axis_bounds: shared
         value_label: dynamic
   'Capacity units':
     group: 4
@@ -638,6 +639,7 @@ plots:
         max_subplots_per_file: 2
         xlabel: MW
         skip_data_with_only_zeroes: true
+        axis_bounds: shared
         value_label: dynamic
   'Capacity connections':
     group: 4
@@ -651,6 +653,7 @@ plots:
         max_subplots_per_file: 2
         xlabel: MW
         skip_data_with_only_zeroes: true
+        axis_bounds: shared
         value_label: dynamic
   'Node marginal investment value':
     group: 4
