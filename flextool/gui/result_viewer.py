@@ -26,6 +26,7 @@ from flextool.plot_outputs.orchestrator import prepare_plot_data
 from flextool.scenario_comparison.data_models import DispatchMappings, TimeSeriesResults
 from flextool.scenario_comparison.db_reader import (
     build_scenario_folders_from_dir, collect_parquet_files, combine_parquet_files,
+    combine_scenario_parquets,
 )
 from flextool.scenario_comparison.dispatch_data import prepare_dispatch_data
 from flextool.scenario_comparison.dispatch_mappings import load_dispatch_mappings
@@ -98,6 +99,10 @@ class ResultViewer(tk.Toplevel):
 
         # Availability manifest for three-level variant display
         self._current_availability: set[tuple[str, str]] = set()
+
+        # Comparison checkbox state
+        self._comp_check_vars: dict[str, tk.BooleanVar] = {}
+        self._comp_needs_regen: bool = False
 
         # Dispatch mode state
         self._dispatch_mappings: DispatchMappings | None = None
@@ -223,6 +228,37 @@ class ResultViewer(tk.Toplevel):
         self._scenario_listbox.configure(yscrollcommand=scen_scroll.set)
 
         self._scenario_listbox.bind("<<ListboxSelect>>", self._on_scenario_selected)
+
+        # ── Comparison checkbox frame (hidden by default) ────────────
+        comp_outer = ttk.Frame(scen_frame)
+        comp_outer.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        comp_outer.columnconfigure(0, weight=1)
+        comp_outer.rowconfigure(0, weight=1)
+        comp_outer.grid_remove()  # hidden initially
+        self._comp_outer_frame = comp_outer
+
+        comp_canvas = tk.Canvas(comp_outer, highlightthickness=0)
+        comp_canvas.grid(row=0, column=0, sticky="nsew")
+        comp_scroll = ttk.Scrollbar(
+            comp_outer, orient="vertical", command=comp_canvas.yview,
+        )
+        comp_scroll.grid(row=0, column=1, sticky="ns")
+        comp_canvas.configure(yscrollcommand=comp_scroll.set)
+
+        self._comp_check_frame = ttk.Frame(comp_canvas)
+        self._comp_check_frame_id = comp_canvas.create_window(
+            (0, 0), window=self._comp_check_frame, anchor="nw",
+        )
+        self._comp_canvas = comp_canvas
+
+        def _on_comp_frame_configure(_event: tk.Event) -> None:
+            comp_canvas.configure(scrollregion=comp_canvas.bbox("all"))
+
+        def _on_comp_canvas_configure(event: tk.Event) -> None:
+            comp_canvas.itemconfig(self._comp_check_frame_id, width=event.width)
+
+        self._comp_check_frame.bind("<Configure>", _on_comp_frame_configure)
+        comp_canvas.bind("<Configure>", _on_comp_canvas_configure)
 
         # ── Plot tree + variant canvas ───────────────────────────────
         tree_frame = ttk.LabelFrame(left, text="Plots", padding=5)
@@ -355,12 +391,12 @@ class ResultViewer(tk.Toplevel):
         self._start_var.trace_add("write", self._on_time_range_changed)
         self._duration_var.trace_add("write", self._on_time_range_changed)
 
-        # Col 3: Refresh button
-        self._refresh_btn = ttk.Button(
-            self._control_frame, text="Refresh", width=7,
-            command=self._on_refresh,
+        # Col 3: Update button
+        self._update_btn = ttk.Button(
+            self._control_frame, text="Update", width=7,
+            command=self._on_update,
         )
-        self._refresh_btn.grid(row=0, column=3, rowspan=2, sticky="ns", padx=(10, 0))
+        self._update_btn.grid(row=0, column=3, rowspan=2, sticky="ns", padx=(10, 0))
 
         # ── Plot canvas ──────────────────────────────────────────────
         self._plot_canvas = PlotCanvas(right)
@@ -569,6 +605,8 @@ class ResultViewer(tk.Toplevel):
 
     def _get_selected_scenarios(self) -> list[str]:
         """Return the list of currently selected scenario names."""
+        if self._mode.get() == "comparison":
+            return self._get_comparison_scenarios()
         indices = self._scenario_listbox.curselection()
         return [self._scenario_listbox.get(i) for i in indices]
 
@@ -1409,28 +1447,36 @@ class ResultViewer(tk.Toplevel):
         mode = self._mode.get()
         self._viewer_settings.last_mode = mode
 
-        if mode == "single":
-            self._scenario_listbox.configure(selectmode="browse")
+        if mode == "comparison":
+            # Show comparison checkboxes, hide scenario listbox
+            self._scenario_listbox.grid_remove()
+            self._comp_outer_frame.grid()
+            self._populate_comparison_checkboxes()
+            self._check_comparison_freshness()
             self._populate_plot_tree()
             self._show_variant_panel()
-        elif mode == "comparison":
-            self._scenario_listbox.configure(selectmode="browse")
-            self._populate_comparison_scenarios()
-            self._populate_plot_tree()
-            self._show_variant_panel()
-        elif mode == "dispatch":
-            self._scenario_listbox.configure(selectmode="browse")
-            self._hide_variant_panel()
-            # Populate tree with nodeGroups instead of plot entries
-            self._populate_dispatch_tree()
-        elif mode == "network":
-            self._scenario_listbox.configure(selectmode="browse")
-            # Clear plot tree
-            for item in self._plot_tree.get_children():
-                self._plot_tree.delete(item)
-            self._tree_entry_map.clear()
-            self._hide_variant_panel()
-            self._render_network()
+        else:
+            # Show scenario listbox, hide comparison checkboxes
+            self._comp_outer_frame.grid_remove()
+            self._scenario_listbox.grid()
+
+            if mode == "single":
+                self._scenario_listbox.configure(selectmode="browse")
+                self._populate_plot_tree()
+                self._show_variant_panel()
+            elif mode == "dispatch":
+                self._scenario_listbox.configure(selectmode="browse")
+                self._hide_variant_panel()
+                # Populate tree with nodeGroups instead of plot entries
+                self._populate_dispatch_tree()
+            elif mode == "network":
+                self._scenario_listbox.configure(selectmode="browse")
+                # Clear plot tree
+                for item in self._plot_tree.get_children():
+                    self._plot_tree.delete(item)
+                self._tree_entry_map.clear()
+                self._hide_variant_panel()
+                self._render_network()
 
     # ------------------------------------------------------------------
     # File navigation
@@ -1496,11 +1542,17 @@ class ResultViewer(tk.Toplevel):
             self._figure_cache.clear()
 
     # ------------------------------------------------------------------
-    # Refresh
+    # Update
     # ------------------------------------------------------------------
 
-    def _on_refresh(self) -> None:
-        """Re-scan scenarios and re-populate everything."""
+    def _on_update(self) -> None:
+        """Re-scan scenarios, regenerate comparison if needed, reload everything."""
+        # Check if comparison needs regeneration
+        if self._mode.get() == "comparison" and self._comp_needs_regen:
+            checked = self._get_comparison_scenarios()
+            if checked:
+                self._regenerate_comparison(checked)
+
         self._yaml_cache.clear()
         self._break_times_cache.clear()
         self._current_availability = set()
@@ -1516,7 +1568,10 @@ class ResultViewer(tk.Toplevel):
         self._parquet_cache_key = ("", "")
         self._parquet_cache_df = None
         self._populate_scenarios()
+        if self._mode.get() == "comparison":
+            self._populate_comparison_checkboxes()
         self._on_mode_changed()
+        self._comp_needs_regen = False
 
     # ------------------------------------------------------------------
     # Tab focus cycling
@@ -1537,8 +1592,15 @@ class ResultViewer(tk.Toplevel):
         return "break"
 
     def _focus_scenario_listbox(self, _event: tk.Event | None = None) -> str:
-        """Move focus back to the scenario listbox."""
-        self._scenario_listbox.focus_set()
+        """Move focus back to the scenario listbox (or checkbox frame in comparison mode)."""
+        if self._mode.get() == "comparison":
+            children = self._comp_check_frame.winfo_children()
+            if children:
+                children[0].focus_set()
+            else:
+                self._comp_canvas.focus_set()
+        else:
+            self._scenario_listbox.focus_set()
         return "break"
 
     # ------------------------------------------------------------------
@@ -1961,23 +2023,90 @@ class ResultViewer(tk.Toplevel):
             self._break_times_cache["_comparison"] = None
             return None
 
-    def _populate_comparison_scenarios(self) -> None:
-        """Show scenarios from the last comparison run (informational)."""
+    def _get_comparison_scenarios(self) -> list[str]:
+        """Return list of checked scenario names for comparison."""
+        return [name for name, var in self._comp_check_vars.items() if var.get()]
+
+    def _populate_comparison_checkboxes(self) -> None:
+        """Build checkboxes for all available scenarios."""
+        # Clear existing
+        for widget in self._comp_check_frame.winfo_children():
+            widget.destroy()
+        self._comp_check_vars.clear()
+
+        # Get all scenarios
+        scenarios = self._scan_scenarios()
+
+        # Load currently combined scenarios from _metadata.json
         import json
         meta_path = self._project_path / "output_parquet_comparison" / "_metadata.json"
-        if not meta_path.exists():
+        combined_scenarios: set[str] = set()
+        if meta_path.exists():
+            try:
+                with open(meta_path) as f:
+                    combined_scenarios = set(json.load(f).get("scenarios", []))
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        for name in scenarios:
+            var = tk.BooleanVar(value=(name in combined_scenarios))
+            self._comp_check_vars[name] = var
+            cb = ttk.Checkbutton(
+                self._comp_check_frame, text=name, variable=var,
+                command=self._on_comp_checkbox_changed,
+            )
+            cb.pack(fill="x", anchor="w", padx=2, pady=1)
+
+    def _on_comp_checkbox_changed(self) -> None:
+        """Handle comparison checkbox change -- note that regeneration is needed."""
+        self._comp_needs_regen = True
+
+    def _check_comparison_freshness(self) -> None:
+        """Check if comparison parquets match the checkbox selection, regenerate if not."""
+        checked = self._get_comparison_scenarios()
+        if not checked:
             return
-        try:
-            with open(meta_path, "r") as f:
-                meta = json.load(f)
-            scenarios = meta.get("scenarios", [])
-            self._scenario_listbox.delete(0, "end")
-            for name in scenarios:
-                self._scenario_listbox.insert("end", name)
-            if scenarios:
-                self._scenario_listbox.selection_set(0)
-        except (json.JSONDecodeError, OSError):
-            pass
+
+        import json
+        meta_path = self._project_path / "output_parquet_comparison" / "_metadata.json"
+        if meta_path.exists():
+            try:
+                with open(meta_path) as f:
+                    existing = set(json.load(f).get("scenarios", []))
+                if set(checked) == existing:
+                    return  # already up to date
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Need regeneration
+        self._regenerate_comparison(checked)
+
+    def _regenerate_comparison(self, scenario_names: list[str]) -> None:
+        """Regenerate comparison parquets in a background thread."""
+        self._plot_canvas.show_message("Updating comparison data...")
+
+        def _do_combine() -> None:
+            try:
+                combine_scenario_parquets(self._project_path, scenario_names)
+                self.after(0, self._on_comparison_ready)
+            except Exception as exc:
+                self.after(0, lambda: self._plot_canvas.show_message(
+                    f"Comparison update failed:\n{exc}"
+                ))
+
+        self._executor.submit(_do_combine)
+
+    def _on_comparison_ready(self) -> None:
+        """Called on main thread when comparison parquets are ready."""
+        self._comp_needs_regen = False
+        self._break_times_cache.clear()
+        self._clear_figure_cache()
+        self._current_availability = set()
+        if hasattr(self, '_dispatch_metadata_cache'):
+            del self._dispatch_metadata_cache
+        self._populate_plot_tree()
+        # Try to display current selection
+        self._trigger_replot()
 
     # ------------------------------------------------------------------
     # Dispatch mode
@@ -2213,7 +2342,7 @@ class ResultViewer(tk.Toplevel):
 
         # Save comparison scenarios if in comparison mode
         if self._mode.get() == "comparison":
-            self._settings.comp_plots_scenarios = self._get_selected_scenarios()
+            self._settings.comp_plots_scenarios = self._get_comparison_scenarios()
 
         # Persist all settings
         try:

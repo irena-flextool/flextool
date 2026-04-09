@@ -5,10 +5,12 @@ Functions:
 - collect_parquet_files  : gather parquet paths grouped by filename
 - combine_parquet_files  : concat per-scenario parquets into combined DataFrames
 - get_scenario_results   : top-level convenience (returns TimeSeriesResults)
+- combine_scenario_parquets : combine per-scenario parquets from disk (for GUI)
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -230,3 +232,102 @@ def get_scenario_results(
     combined_dfs = combine_parquet_files(files_by_name, num_scenarios=num_scenarios)
 
     return scenario_folders, TimeSeriesResults.from_dict(combined_dfs)
+
+
+def combine_scenario_parquets(
+    project_path: Path,
+    scenario_names: list[str],
+    output_dir: Path | None = None,
+) -> Path:
+    """Combine per-scenario parquet files into comparison parquets.
+
+    Reads parquets from ``project_path/output_parquet/<scenario>/`` for each
+    scenario, concatenates them with scenario as the top column MultiIndex
+    level, and writes the combined files to *output_dir* (defaults to
+    ``project_path/output_parquet_comparison/``).
+
+    Also writes:
+    - ``_metadata.json`` with the scenario list
+    - ``timeline_breaks.parquet`` (merged from all scenarios)
+
+    Parameters
+    ----------
+    project_path : Path
+        Project root directory.
+    scenario_names : list[str]
+        Scenario names to combine.
+    output_dir : Path, optional
+        Where to write combined parquets. Defaults to
+        ``project_path / "output_parquet_comparison"``.
+
+    Returns
+    -------
+    Path
+        The output directory.
+    """
+    project_path = Path(project_path)
+    parquet_base = project_path / "output_parquet"
+
+    if output_dir is None:
+        output_dir = project_path / "output_parquet_comparison"
+    output_dir = Path(output_dir)
+
+    # 1. Build scenario folder mapping
+    scenario_folders = build_scenario_folders_from_dir(parquet_base, scenario_names)
+    if not scenario_folders:
+        raise FileNotFoundError(
+            f"No scenario directories found under {parquet_base} "
+            f"for scenarios: {scenario_names}"
+        )
+
+    # 2. Collect all parquet files grouped by filename
+    files_by_name = collect_parquet_files(scenario_folders, output_subdir="")
+
+    # 3. Combine parquet files across scenarios
+    combined_dfs = combine_parquet_files(
+        files_by_name, num_scenarios=len(scenario_names)
+    )
+
+    # 4. Write combined DataFrames to output_dir
+    #    Skip mapping DataFrames (flat columns) — they have duplicate column
+    #    names after axis=1 concat and are handled separately via dispatch
+    #    mappings.  Only write time-series DataFrames (MultiIndex columns).
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for name, df in combined_dfs.items():
+        if df.empty:
+            continue
+        if not isinstance(df.columns, pd.MultiIndex):
+            continue
+        df.to_parquet(output_dir / f"{name}.parquet")
+
+    # 5. Write metadata
+    meta = {"scenarios": list(scenario_folders.keys())}
+    with open(output_dir / "_metadata.json", "w") as f:
+        json.dump(meta, f)
+
+    # 6. Merge timeline breaks from all scenarios
+    break_times: set[str] = set()
+    for scenario_name in scenario_folders:
+        tb_path = parquet_base / scenario_name / "timeline_breaks.parquet"
+        if tb_path.exists():
+            try:
+                tb_df = pd.read_parquet(tb_path)
+                if "time" in tb_df.columns:
+                    break_times.update(tb_df["time"].astype(str))
+            except Exception:
+                pass
+    if break_times:
+        bt_df = pd.DataFrame({"break_time": sorted(break_times)})
+        bt_df.to_parquet(output_dir / "timeline_breaks.parquet")
+
+    written_count = sum(
+        1 for df in combined_dfs.values()
+        if not df.empty and isinstance(df.columns, pd.MultiIndex)
+    )
+    print(
+        f"Wrote comparison parquets for {len(scenario_folders)} scenarios "
+        f"({written_count} variables) to: {output_dir}"
+    )
+
+    # 7. Return the output directory
+    return output_dir
