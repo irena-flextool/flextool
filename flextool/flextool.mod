@@ -10,8 +10,8 @@
 #If not, see <https://www.gnu.org/licenses/>.
 
 #Authors:
-# Juha Kiviluoma, VTT Technical Research Centre of Finland (2017-2025), Nodal-Tools Ltd (2025)
-# Arttu Tupala, VTT Technical Research Centre of Finland (2023-2025)
+# Juha Kiviluoma, VTT Technical Research Centre of Finland (2017-2025), Nodal-Tools Ltd (2025-2026)
+# Arttu Tupala, VTT Technical Research Centre of Finland (2023-2026)
 
 param datetime0 := gmtime();
 
@@ -96,7 +96,6 @@ set sourceSinkTimeParamRequired within sourceSinkParam;
 set sourceSinkPeriodParam within sourceSinkParam;
 set sourceSinkPeriodParamRequired within sourceSinkParam;
 set reserveParam;
-set reserveParam_def1 within reserveParam;
 set reserveTimeParam within reserveParam;
 set groupParam;
 set groupPeriodParam;
@@ -350,7 +349,7 @@ param p_process_sink_coefficient {(p, sink) in process_sink} default 1;
 param p_profile {profile};
 param pt_profile {profile, time};
 
-param reserveParam_defaults{rp in reserveParam}:= (if rp in reserveParam_def1 then 1 else if rp == 'penalty_reserve' then 5000 else 0);
+param reserveParam_defaults{rp in reserveParam}:= (if rp == 'reliability' then 1 else if rp == 'penalty_reserve' then 5000 else 0);
 param p_reserve_upDown_group {reserve, upDown, group, rp in reserveParam} default reserveParam_defaults[rp];
 param pt_reserve_upDown_group {reserve, upDown, group, reserveTimeParam, time};
 param p_process_reserve_upDown_node {p in process, r in reserve, ud in upDown, n in node, rp in reserveParam} default reserveParam_defaults[rp];
@@ -1160,7 +1159,7 @@ param pdtReserve_upDown_group {(r, ud, g) in reserve__upDown__group, param in re
       else if (r, ud, g, param, t) in reserve__upDown__group__reserveParam__time
 		  then pt_reserve_upDown_group[r, ud, g, param, t]
 		  else p_reserve_upDown_group[r, ud, g, param];
-set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group} p_reserve_upDown_group[r, ud, g, 'reservation']};
+set process_reserve_upDown_node_active := {(p, r, ud, n) in process_reserve_upDown_node : sum{(r, ud, g) in reserve__upDown__group, (d,t) in dt} pdtReserve_upDown_group[r, ud, g, 'reservation', d, t]};
 set prundt := {(p, r, ud, n) in process_reserve_upDown_node_active, (d, t) in dt};
 set pdt_online_linear := {p in process_online_linear, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
 set pdt_online_integer := {p in process_online_integer, (d, t) in dt : pdProcess[p, 'startup_cost', d]};
@@ -1547,6 +1546,11 @@ set process_source_sink_dtttdt_ramp_limit_sink_down :=
         {(p, source, sink) in process_source_sink_ramp_limit_sink_down, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt :
  		    p_process_sink[p, sink, 'ramp_speed_down'] * 60 < step_duration[d, t] && dt_jump[d, t] == 1
         };
+
+param p_process_reserve_upDown_node_reliability {(p, r, ud, n) in process_reserve_upDown_node_active} :=
+  if p_process_reserve_upDown_node[p, r, ud, n, 'reliability'] then
+    p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
+  else 1;
 
 set process_reserve_upDown_node_increase_reserve_ratio :=
         {(p, r, ud, n) in process_reserve_upDown_node_active :
@@ -2214,7 +2218,7 @@ s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__m
 		    && (ng, n) in group_node
 		    && (r, ud, ng) in reserve__upDown__group}
 	    ( v_reserve[p, r, ud, n, d, t] * p_entity_unitsize[p]
-	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
+	      * p_process_reserve_upDown_node_reliability[p, r, ud, n]
 	    )
   + sum {(p, r, ud, n) in process_reserve_upDown_node_active                   ## 1var_per_way and source
 		  : ( sum{(p, m) in process_method : m in method_1var_per_way} 1
@@ -2223,7 +2227,7 @@ s.t. reserveBalance_timeseries_eq {(r, ud, ng, r_m) in reserve__upDown__group__m
 		    && (ng, n) in group_node
 		    && (r, ud, ng) in reserve__upDown__group}
 	    ( v_reserve[p, r, ud, n, d, t] * p_entity_unitsize[p]
-	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
+	      * p_process_reserve_upDown_node_reliability[p, r, ud, n]
 	      * pdtProcess_slope[p, d, t]
 		)
   + vq_reserve[r, ud, ng, d, t] * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
@@ -2239,7 +2243,7 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
 		    && (ng, n) in group_node
 		    && (r, ud, ng) in reserve__upDown__group}
 	    ( v_reserve[p, r, ud, n, d, t] * p_entity_unitsize[p]
-	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
+	      * p_process_reserve_upDown_node_reliability[p, r, ud, n]
 	    )
   + sum {(p, r, ud, n) in process_reserve_upDown_node_active
 		  : ( sum{(p, m) in process_method : m in method_1var_per_way} 1       ## 1var_per_way and source
@@ -2248,7 +2252,7 @@ s.t. reserveBalance_dynamic_eq{(r, ud, ng, r_m) in reserve__upDown__group__metho
 		    && (ng, n) in group_node
 		    && (r, ud, ng) in reserve__upDown__group}
 	    ( v_reserve[p, r, ud, n, d, t] * p_entity_unitsize[p]
-	      * p_process_reserve_upDown_node[p, r, ud, n, 'reliability']
+	      * p_process_reserve_upDown_node_reliability[p, r, ud, n]
 	      * pdtProcess_slope[p, d, t]
 		)
   + vq_reserve[r, ud, ng, d, t] * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
@@ -2275,7 +2279,7 @@ s.t. reserveBalance_up_n_1_eq{(r, 'up', ng, r_m) in reserve__upDown__group__meth
 		    && (r, 'up', ng) in reserve__upDown__group
 		}
 	    ( v_reserve[p, r, 'up', n, d, t] * p_entity_unitsize[p]
-	      * p_process_reserve_upDown_node[p, r, 'up', n, 'reliability']
+	      * p_process_reserve_upDown_node_reliability[p, r, 'up', n]
 	    )
   + sum {(p, r, 'up', n) in process_reserve_upDown_node_active
 		  : p <> p_n_1
@@ -2286,7 +2290,7 @@ s.t. reserveBalance_up_n_1_eq{(r, 'up', ng, r_m) in reserve__upDown__group__meth
 		    && (r, 'up', ng) in reserve__upDown__group
 		}
 	    ( v_reserve[p, r, 'up', n, d, t] * p_entity_unitsize[p]
-	      * p_process_reserve_upDown_node[p, r, 'up', n, 'reliability']
+	      * p_process_reserve_upDown_node_reliability[p, r, 'up', n]
 	      * pdtProcess_slope[p, d, t]
 		)
   + vq_reserve[r, 'up', ng, d, t] * pdtReserve_upDown_group[r, 'up', ng, 'reservation', d, t]
