@@ -693,58 +693,40 @@ def _build_bar_figure(
                 pos_idx += n_in_group
             group_boundaries.append(bar_boundaries[-1])
 
-            # Calculate padding using pre-calculated margin values
             if bar_orientation == 'horizontal':
-                if layout.bar_label_width > 0 and layout.group_label_width > 0:
-                    bar_tick_length = layout.bar_label_width * 72
-                    group_tick_length = layout.total_label_width * 72
-                    group_label_pad = layout.bar_label_width * 72 + 10
-                else:
-                    bar_tick_length = 5
-                    group_tick_length = 30
-                    group_label_pad = 10
+                group_label_pad = (layout.bar_label_width * 72 + 10
+                                   if layout.bar_label_width > 0 and layout.group_label_width > 0
+                                   else 10)
 
-                # Bar separators (between every slot)
-                bar_sep_ax = ax.secondary_yaxis(location=0)
-                bar_sep_ax.set_yticks(bar_boundaries, [''] * len(bar_boundaries))
-                bar_sep_ax.tick_params('y', length=bar_tick_length)
-
-                # Group labels (centered)
-                group_ax = ax.secondary_yaxis(location=0)
-                group_ax.set_yticks(group_centers, labels=group_labels)
-                group_ax.tick_params('y', length=0, pad=group_label_pad)
-                group_ax.tick_params(labelsize=10)
-
-                # Group separators (between groups)
-                group_sep_ax = ax.secondary_yaxis(location=0)
-                group_sep_ax.set_yticks(group_boundaries, [''] * len(group_boundaries))
-                group_sep_ax.tick_params('y', length=group_tick_length)
+                # Group labels — plain text instead of secondary axis ticks
+                for center, label in zip(group_centers, group_labels):
+                    ax.annotate(
+                        label, xy=(0, center), xycoords=("axes fraction", "data"),
+                        xytext=(-group_label_pad, 0), textcoords="offset points",
+                        ha="right", va="center", fontsize=10, annotation_clip=False,
+                    )
+                # Group separators — thin lines
+                for boundary in group_boundaries:
+                    ax.axhline(y=boundary, color="grey", linewidth=0.8, linestyle="-")
             else:  # vertical
                 if layout.bar_label_width > 0 and layout.group_label_width > 0:
                     bar_tick_length = layout.bar_label_width * 72
                     group_tick_length = layout.total_label_width * 72
                     group_label_pad = layout.bar_label_width * 72 + 10
                 else:
-                    bar_tick_length = 5
-                    group_tick_length = 30
                     group_label_pad = 10
 
-                # Bar separators
-                bar_sep_ax = ax.secondary_xaxis(location=0)
-                bar_sep_ax.set_xticks(bar_boundaries, [''] * len(bar_boundaries))
-                bar_sep_ax.tick_params('x', length=bar_tick_length)
-
-                # Group labels
-                group_ax = ax.secondary_xaxis(location=0)
-                group_ax.set_xticks(group_centers, labels=group_labels)
-                group_ax.tick_params('x', length=0, pad=group_label_pad)
-                group_ax.tick_params(labelsize=10)
-                plt.setp(group_ax.get_xticklabels(), rotation=90, ha='center')
-
-                # Group separators
-                group_sep_ax = ax.secondary_xaxis(location=0)
-                group_sep_ax.set_xticks(group_boundaries, [''] * len(group_boundaries))
-                group_sep_ax.tick_params('x', length=group_tick_length)
+                # Group labels — plain text instead of secondary axis ticks
+                for center, label in zip(group_centers, group_labels):
+                    ax.annotate(
+                        label, xy=(center, 0), xycoords=("data", "axes fraction"),
+                        xytext=(0, -group_label_pad), textcoords="offset points",
+                        ha="center", va="top", fontsize=10, rotation=90,
+                        annotation_clip=False,
+                    )
+                # Group separators — thin lines
+                for boundary in group_boundaries:
+                    ax.axvline(x=boundary, color="grey", linewidth=0.8, linestyle="-")
 
         # Subplot title (only for actual subplot dimensions, not the figure title)
         if eff_title is not None:
