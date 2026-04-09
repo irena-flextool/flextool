@@ -735,6 +735,7 @@ def compute_all_plot_plans(
     active_settings=None,
     plot_rows: tuple = (0, 167),
     break_times=None,
+    strip_scenario_level: bool = True,
 ) -> None:
     """Compute and save PlotPlans for all results.
 
@@ -765,6 +766,11 @@ def compute_all_plot_plans(
     for key, df in results_dict.items():
         if key not in plot_settings or df.empty:
             continue
+        # Strip the scenario column MultiIndex level for per-scenario plans
+        # (per-scenario parquets have it from write_outputs).
+        # Comparison plans keep the scenario level — the config expects it.
+        if strip_scenario_level and isinstance(df.columns, pd.MultiIndex) and 'scenario' in df.columns.names:
+            df = df.droplevel('scenario', axis=1)
         try:
             pairs = compute_plot_plans_for_result(
                 df, key, plot_settings, plan_dir,

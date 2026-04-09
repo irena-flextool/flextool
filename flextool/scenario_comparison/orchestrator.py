@@ -160,6 +160,7 @@ def run(
             combined_dfs, settings.get('plots', {}), plan_output_dir,
             active_settings=active_configs, plot_rows=plot_rows,
             break_times=break_times,
+            strip_scenario_level=False,
         )
         print("Computed plot plans for viewer")
     except Exception as exc:

@@ -330,5 +330,29 @@ def combine_scenario_parquets(
         f"({written_count} variables) to: {output_dir}"
     )
 
+    # 7. Compute plot plans and availability for the comparison data
+    try:
+        import yaml
+        from flextool.plot_outputs.orchestrator import compute_all_plot_plans
+        from flextool.gui.project_utils import get_projects_dir
+
+        # Find the comparison config
+        config_path = get_projects_dir().parent / "templates" / "default_comparison_plots.yaml"
+        if config_path.is_file():
+            with open(config_path, "r", encoding="utf-8") as f:
+                settings = yaml.safe_load(f)
+            plot_settings = settings.get("plots", {})
+            bt = break_times if break_times else None
+            compute_all_plot_plans(
+                combined_dfs, plot_settings, output_dir,
+                plot_rows=(0, 167), break_times=bt,
+                strip_scenario_level=False,
+            )
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Comparison plot plan computation failed (non-fatal): %s", exc
+        )
+
     # 7. Return the output directory
     return output_dir
