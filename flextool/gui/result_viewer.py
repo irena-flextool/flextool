@@ -1581,52 +1581,38 @@ class ResultViewer(tk.Toplevel):
         self._on_mode_changed()
 
     def _ensure_comparison_fresh(self) -> None:
-        """Regenerate comparison parquets if they're stale or missing.
+        """Regenerate comparison parquets if stale or missing.
 
-        Stale means: the checked scenario list differs from what's in
-        ``_metadata.json``, or any per-scenario parquet is newer than
-        the combined file.
+        Stale means: scenarios_changed flag is set (execution finished),
+        checked scenario list differs from ``_metadata.json``, or the
+        combined parquets don't exist yet.
         """
         checked = self._get_comparison_scenarios()
         if not checked:
-            # No scenarios checked — use all scanned scenarios as default
             checked = self._scan_scenarios()
             if not checked:
                 return
-            # Update checkboxes to reflect this
             for name, var in self._comp_check_vars.items():
                 var.set(name in checked)
 
-        comp_dir = self._project_path / "output_parquet_comparison"
-        meta_path = comp_dir / "_metadata.json"
+        needs_regen = self._settings.scenarios_changed
 
-        needs_regen = False
-        if not meta_path.exists():
-            needs_regen = True
-        else:
-            import json
-            try:
-                with open(meta_path) as f:
-                    existing = set(json.load(f).get("scenarios", []))
-                if set(checked) != existing:
-                    needs_regen = True
-                else:
-                    # Check if any per-scenario parquet is newer than _metadata.json
-                    meta_mtime = meta_path.stat().st_mtime
-                    parquet_base = self._project_path / "output_parquet"
-                    for s in checked:
-                        s_dir = parquet_base / s
-                        if s_dir.is_dir():
-                            for f in s_dir.iterdir():
-                                if f.suffix == ".parquet" and f.stat().st_mtime > meta_mtime:
-                                    needs_regen = True
-                                    break
-                        if needs_regen:
-                            break
-            except (json.JSONDecodeError, OSError):
+        if not needs_regen:
+            meta_path = self._project_path / "output_parquet_comparison" / "_metadata.json"
+            if not meta_path.exists():
                 needs_regen = True
+            else:
+                import json
+                try:
+                    with open(meta_path) as f:
+                        existing = set(json.load(f).get("scenarios", []))
+                    if set(checked) != existing:
+                        needs_regen = True
+                except (json.JSONDecodeError, OSError):
+                    needs_regen = True
 
         if needs_regen:
+            self._settings.scenarios_changed = False
             self._regenerate_comparison(checked)
         self._comp_needs_regen = False
 

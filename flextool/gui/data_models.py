@@ -57,6 +57,10 @@ class ProjectSettings:
     # Result viewer settings
     viewer_settings: ViewerSettings = field(default_factory=ViewerSettings)
 
+    # Transient flag (not persisted): set by execution manager when scenarios
+    # finish, cleared by the result viewer when it picks up the changes.
+    scenarios_changed: bool = field(default=False, repr=False)
+
 
 @dataclass
 class GlobalSettings:

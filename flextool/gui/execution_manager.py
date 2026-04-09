@@ -454,6 +454,7 @@ class ExecutionManager:
                 job.process = None
                 if return_code == 0:
                     job.status = JobStatus.SUCCESS
+                    self.settings.scenarios_changed = True
                 else:
                     job.status = JobStatus.FAILED
                     job.stdout_lines.append(
