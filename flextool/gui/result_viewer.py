@@ -873,15 +873,39 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _collect_all_variant_letters(self) -> None:
-        """Collect all unique variant letters across all entries in the config."""
-        seen: set[str] = set()
-        ordered: list[str] = []
+        """Collect all unique variant letters, respecting order_of_variants from config."""
+        # Gather all letters that actually appear in the config
+        all_letters: set[str] = set()
         for group in self._plot_groups:
             for entry in group.entries:
                 for v in entry.variants:
-                    if v.letter not in seen:
-                        seen.add(v.letter)
-                        ordered.append(v.letter)
+                    all_letters.add(v.letter)
+
+        # Read order_of_variants from the YAML config
+        config_path = self._get_config_path_for_mode()
+        config_order: list[str] = []
+        if config_path in self._yaml_cache:
+            config_order = self._yaml_cache[config_path].get("order_of_variants", [])
+        elif config_path.is_file():
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                if isinstance(data, dict):
+                    config_order = data.get("order_of_variants", [])
+                    self._yaml_cache[config_path] = data
+            except (yaml.YAMLError, OSError):
+                pass
+
+        # Use config order for known letters, then append any extras
+        ordered: list[str] = []
+        for letter in config_order:
+            if letter in all_letters:
+                ordered.append(letter)
+                all_letters.discard(letter)
+        # Append any remaining letters not in the config order
+        for letter in sorted(all_letters):
+            ordered.append(letter)
+
         self._all_variant_letters = ordered
 
     def _update_variant_canvas_width(self) -> None:
