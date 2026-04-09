@@ -152,8 +152,8 @@ def run(
         except Exception as exc:
             _logging.warning("Dispatch metadata computation failed (non-fatal): %s", exc)
 
-    # Compute plot plans for the viewer
-    plan_output_dir = comparison_parquet_dir if comparison_parquet_dir else plot_dir
+    # Compute plot plans for the viewer (always in comparison parquet dir)
+    plan_output_dir = comparison_parquet_dir
     try:
         from flextool.plot_outputs.orchestrator import compute_all_plot_plans
         compute_all_plot_plans(

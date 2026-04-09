@@ -753,6 +753,13 @@ def compute_all_plot_plans(
 
     output_dir = Path(output_dir)
     plan_dir = output_dir / "plot_plans"
+
+    # Clean old plans so stale files from previous runs don't linger
+    if plan_dir.is_dir():
+        import shutil
+        shutil.rmtree(plan_dir)
+    plan_dir.mkdir(parents=True, exist_ok=True)
+
     available: list[list[str]] = []
 
     for key, df in results_dict.items():
