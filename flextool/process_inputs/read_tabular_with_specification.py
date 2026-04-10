@@ -50,7 +50,7 @@ class TabularReader:
 
     def _load_specifications(self) -> Dict[str, Any]:
         """Load the specification file."""
-        with open(self.spec_file_path, 'r') as f:
+        with open(self.spec_file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
 
     def get_source_type(self) -> str:

@@ -2291,7 +2291,7 @@ class ResultViewer(tk.Toplevel):
             self._dispatch_metadata_cache = None
             return None
         try:
-            with open(meta_path, "r") as f:
+            with open(meta_path, "r", encoding="utf-8") as f:
                 self._dispatch_metadata_cache = json.load(f)
             return self._dispatch_metadata_cache
         except (json.JSONDecodeError, OSError):

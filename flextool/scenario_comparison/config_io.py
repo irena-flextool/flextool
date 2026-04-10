@@ -46,7 +46,7 @@ def parse_config_with_comments(config_path: str) -> tuple[dict, dict[str, dict[s
     if not os.path.exists(config_path):
         return {}, commented_entries
 
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
 
     current_section = None
@@ -84,7 +84,7 @@ def parse_config_with_comments(config_path: str) -> tuple[dict, dict[str, dict[s
 
     # Load the actual YAML (uncommented parts)
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config_dict = yaml.safe_load(f) or {}
     except yaml.YAMLError as e:
         print(f"Warning: Could not parse {config_path}: {e}\n"
@@ -189,5 +189,5 @@ def write_config_with_comments(config_path: str, config_dict: dict,
             lines.append(f"  #- {item}")
         lines.append("")
 
-    with open(config_path, 'w') as f:
+    with open(config_path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines))

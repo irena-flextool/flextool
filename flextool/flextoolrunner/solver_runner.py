@@ -132,7 +132,7 @@ class SolverRunner:
             raise FlexToolSolveError(message)
 
         # Check if solution is infeasible
-        with open(glp_solution_file, 'r') as inf_file:
+        with open(glp_solution_file, 'r', encoding='utf-8') as inf_file:
             inf_content = inf_file.read()
             if 'INFEASIBLE' in inf_content:
                 message = "The model is infeasible. Check the constraints."
@@ -177,7 +177,7 @@ class SolverRunner:
             raise FlexToolSolveError(f"glpsol MPS generation failed with exit code: {returncode}")
 
         # Check if the problem has columns (nodes)
-        with open(mps_file, 'r') as mps_file_handle:
+        with open(mps_file, 'r', encoding='utf-8') as mps_file_handle:
             mps_content = mps_file_handle.read()
             if 'Columns:    0' in mps_content:
                 message = (
@@ -253,7 +253,7 @@ class SolverRunner:
         _SOLUTION_WRITE_OPTIONS = {'write_solution_to_file', 'solution_file', 'write_solution_style'}
         solution_style = 2  # default: glpsol-compatible style
         if os.path.exists(highs_option_file):
-            with open(highs_option_file, 'r') as f:
+            with open(highs_option_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith('#'):

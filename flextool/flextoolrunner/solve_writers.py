@@ -390,7 +390,7 @@ def write_all_branches(
 
     time_branches = []
     for filename in timeseries_names:
-        with open(wf / 'input' / filename, 'r') as blk:
+        with open(wf / 'input' / filename, 'r', encoding='utf-8') as blk:
             filereader = csv.reader(blk, delimiter=',')
             headers = next(filereader)
             while True:

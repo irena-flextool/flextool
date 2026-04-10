@@ -66,7 +66,9 @@ class MainWindow(tk.Tk):
         super().__init__()
 
         # ── DPI scaling — must come before any widget/font access ─
-        from flextool.gui.platform_utils import apply_dpi_scaling, scale_theme_fonts
+        from flextool.gui.platform_utils import (
+            apply_dpi_scaling, normalize_default_font_size, scale_theme_fonts,
+        )
 
         dpi_factor = apply_dpi_scaling(self)
 
@@ -80,6 +82,9 @@ class MainWindow(tk.Tk):
 
         # Rescale sv_ttk's hardcoded pixel-size fonts for high-DPI displays
         scale_theme_fonts(self, dpi_factor)
+
+        # Force a consistent font size across all platforms
+        normalize_default_font_size(self, size=10)
 
         self.title("FlexTool")
 

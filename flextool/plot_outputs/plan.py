@@ -189,7 +189,7 @@ def load_plot_plan(
         return None
 
     try:
-        with open(json_path, 'r') as f:
+        with open(json_path, 'r', encoding='utf-8') as f:
             meta = json.load(f)
 
         df = read_lean_parquet(parquet_path)

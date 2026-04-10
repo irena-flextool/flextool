@@ -98,7 +98,7 @@ def get_different_columns(file1_lines: List[str], file2_lines: List[str]) -> Tup
 
 def compare_files(file1_path: str, file2_path: str) -> Tuple[
     bool, int, int, List[Tuple[str, str]], List[str], Set[int]]:
-    with open(file1_path, 'r') as f1, open(file2_path, 'r') as f2:
+    with open(file1_path, 'r', encoding='utf-8') as f1, open(file2_path, 'r', encoding='utf-8') as f2:
         file1_lines = [line.rstrip('\n\r') for line in f1.readlines()]
         file2_lines = [line.rstrip('\n\r') for line in f2.readlines()]
 

@@ -49,7 +49,7 @@ def run(
     When *scenario_folders* is provided the database is not queried and
     *db_url* may be ``None``.
     """
-    with open(output_config_path, 'r') as f:
+    with open(output_config_path, 'r', encoding='utf-8') as f:
         settings = yaml.safe_load(f)
 
     scenario_folders, results = get_scenario_results(

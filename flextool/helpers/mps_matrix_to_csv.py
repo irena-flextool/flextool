@@ -18,7 +18,7 @@ def parse_mps_to_matrices(mps_file):
         - constraint_names: list of all constraint names
     """
 
-    with open(mps_file, 'r') as f:
+    with open(mps_file, 'r', encoding='utf-8') as f:
         lines = f.readlines()
 
     # Initialize data structures

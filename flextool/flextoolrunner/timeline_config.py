@@ -345,7 +345,7 @@ class TimelineConfig:
                 for timeline_row in new_timeline:
                     timeline_duration_lookup[timeline_row[0]] = int(float(timeline_row[1]))
             for timeseries in timeseries_map:
-                with open(str(wf / 'input' / timeseries), 'r') as blk:
+                with open(str(wf / 'input' / timeseries), 'r', encoding='utf-8') as blk:
                     filereader = csv.reader(blk, delimiter=',')
                     with open(str(wf / 'solve_data' / timeseries), 'w', newline='') as solve_file:
                         filewriter = csv.writer(solve_file, delimiter=',')
@@ -411,7 +411,7 @@ class TimelineConfig:
                                 break
             # Constrain inflow to a longer step size
             node__inflow: list[list[str]] = []
-            with open(str(wf / 'input/p_node.csv'), 'r') as blk:
+            with open(str(wf / 'input/p_node.csv'), 'r', encoding='utf-8') as blk:
                 filereader = csv.reader(blk, delimiter=',')
                 _read_header = next(filereader)
                 while True:
@@ -647,7 +647,7 @@ def separate_period_and_timeseries_data(
             period_writer = csv.writer(blk_p, delimiter=',')
             with open(output_timeseries, 'w', newline='') as blk_t:
                 timeseries_writer = csv.writer(blk_t, delimiter=',')
-                with open(str(wf / f'input/{inputfile}'), 'r') as blk:
+                with open(str(wf / f'input/{inputfile}'), 'r', encoding='utf-8') as blk:
                     filereader = csv.reader(blk, delimiter=',')
                     headers = next(filereader)
                     timeseries_writer.writerow(headers)

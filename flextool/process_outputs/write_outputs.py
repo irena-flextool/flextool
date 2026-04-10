@@ -397,7 +397,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         }
     else:
         # Load output configuration from YAML
-        with open(output_config_path, 'r') as f:
+        with open(output_config_path, 'r', encoding='utf-8') as f:
             settings = yaml.safe_load(f)
 
     if subdir:
