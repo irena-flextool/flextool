@@ -317,7 +317,8 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
     if write_methods is None:
         write_methods = ['plot', 'parquet', 'excel']
     if output_config_path is None:
-        output_config_path = 'templates/default_plots.yaml'
+        _pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        output_config_path = os.path.join(os.path.dirname(_pkg_root), 'templates', 'default_plots.yaml')
     if active_configs is None:
         active_configs = ['default']
     if plot_rows is None:
