@@ -280,7 +280,7 @@ plots:
         xlabel: MW (total)
 
   # Curtailments
-  'Curtail. amount':
+  'Curtailment amount':
     group: 1
     order: 0
     unit_curtailment_outputNode_d_ee:
@@ -316,7 +316,7 @@ plots:
         legend: shared
         max_items_per_plot: 10
         ylabel: MWh
-  'Curtail. share of VRE':
+  'Curtailment share of VRE':
     group: 1
     order: 1
     unit_curtailment_share_outputNode_d_ee:
@@ -396,7 +396,7 @@ plots:
         subplots_per_row: 2
         skip_data_with_only_zeroes: true
         ylabel: MWh
-  'Flows node to unit':
+  'Flows: node to unit':
     group: 2
     order: 1
     unit_inputNode_d_ee:
@@ -434,7 +434,7 @@ plots:
         subplots_per_row: 2
         skip_data_with_only_zeroes: true
         ylabel: MWh
-  'Flows connection':
+  'Flows: connection':
     group: 2
     order: 2
     connection_d_eee:
