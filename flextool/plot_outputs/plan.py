@@ -264,7 +264,10 @@ def _select_bar_rows(df: pd.DataFrame, selector: list) -> pd.DataFrame:
         idx_labels = [tuple(s) if isinstance(s, list) else s for s in selector]
         mask = df.index.isin(idx_labels)
         return df.loc[mask]
-    return df.loc[df.index.isin(selector)]
+    # Unwrap single-element lists that originate from a single-level MultiIndex
+    # encoded via _encode_row_selector then JSON-roundtripped.
+    flat_sel = [s[0] if isinstance(s, list) and len(s) == 1 else s for s in selector]
+    return df.loc[df.index.isin(flat_sel)]
 
 
 def _select_time_columns(df: pd.DataFrame, selector: list) -> pd.DataFrame:
@@ -369,7 +372,7 @@ def build_figure_from_plan(plan: PlotPlan, file_index: int = 0) -> 'Figure | Non
             if plan.total_file_count > 1 else plan.plot_name
         )
         return _build_bar_figure(
-            effective_plots, None, batch_title, '',
+            effective_plots, plan.processed_df, batch_title, '',
             plan.stack_levels, plan.stack_level_names,
             plan.expand_axis_levels, plan.expand_axis_level_names,
             plan.sub_levels,

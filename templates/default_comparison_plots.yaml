@@ -301,6 +301,21 @@ plots:
         axis_bounds: shared
         skip_data_with_only_zeroes: true
         xlabel: MWh (total)
+    unit_curtailment_outputNode_dt_ee:
+      unit_details:
+        variant: h
+        map_dimensions_for_plots: [dt_see, tt_luu]
+        legend: shared
+        max_items_per_plot: 10
+        ylabel: MWh
+      chunks:
+        plot_name: 'Unit curtailment weekly avg'
+        variant: w
+        map_dimensions_for_plots: [dt_see, ti_luu]
+        time_average_duration: 168
+        legend: shared
+        max_items_per_plot: 10
+        ylabel: MWh
   'Curtail. share of VRE':
     group: 1
     order: 1
@@ -930,7 +945,7 @@ plots:
         skip_data_with_only_zeroes: true
         legend: shared
         ylabel: MWh
-      default:
+      chunks:
         variant: w
         map_dimensions_for_plots: [dt_se, ti_lu]
         time_average_duration: 168
@@ -952,7 +967,7 @@ plots:
         subplots_per_row: 2
         axis_tick_format: '.0%'
         axis_bounds: [0, 1]
-      unit_details:
+      sum_period:
         variant: a
         map_dimensions_for_plots: [d_see, a_gbu]
         legend: shared
@@ -961,24 +976,6 @@ plots:
         subplots_per_row: 2
         axis_tick_format: '.0%'
         axis_bounds: [0, 1]
-  'Unit curtailment':
-    group: 8
-    order: 2
-    unit_curtailment_outputNode_dt_ee:
-      unit_details:
-        variant: h
-        map_dimensions_for_plots: [dt_see, tt_luu]
-        legend: shared
-        max_items_per_plot: 10
-        ylabel: MWh
-      chunks:
-        plot_name: 'Unit curtailment weekly avg'
-        variant: w
-        map_dimensions_for_plots: [dt_see, ti_luu]
-        time_average_duration: 168
-        legend: shared
-        max_items_per_plot: 10
-        ylabel: MWh
   'Unit online':
     group: 8
     order: 3
@@ -1063,7 +1060,7 @@ plots:
         max_items_per_plot: 40
         legend: shared
         ylabel: MWh
-      connection_details:
+      sum_periods:
         variant: a
         map_dimensions_for_plots: [d_se, m_gb]
         max_items_per_plot: 40
@@ -1092,7 +1089,7 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 4
         legend: shared
-      connection_details:
+      sum_periods:
         variant: a
         map_dimensions_for_plots: [d_se, a_gb]
         max_items_per_plot: 40
