@@ -731,6 +731,30 @@
       "variable_cost_only"
     ],
     [
+      "transfer_methods_group",
+      "use_connection_transfer_methods"
+    ],
+    [
+      "transfer_methods_group",
+      "no_losses_no_variable_cost"
+    ],
+    [
+      "transfer_methods_group",
+      "regular"
+    ],
+    [
+      "transfer_methods_group",
+      "exact"
+    ],
+    [
+      "transfer_methods_group",
+      "variable_cost_only"
+    ],
+    [
+      "transfer_methods_group",
+      "dc_power_flow_with_angles"
+    ],
+    [
       "yes_no",
       "yes"
     ],
@@ -1279,8 +1303,8 @@
     [
       "group",
       "transfer_method",
-      null,
-      null,
+      "use_connection_transfer_methods",
+      "transfer_methods_group",
       "Override transfer_method for all connections within this nodeGroup. Options: use_connection_transfer_methods (default, no override), no_losses_no_variable_cost, regular, exact, variable_cost_only, dc_power_flow_with_angles. When set to dc_power_flow_with_angles, connections between member nodes use B-theta DC power flow (requires reactance parameter on connections).",
       null
     ],
@@ -1399,7 +1423,7 @@
     [
       "model",
       "version",
-      28.0,
+      29.0,
       null,
       "Contains database version information.",
       null

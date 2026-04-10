@@ -78,6 +78,83 @@ When the FlexTool database schema needs to change (new parameters, renamed entit
 
 4. **Commit both files together** — the migration code and the regenerated template should be in the same commit or pull request.
 
+### Files involved
+
+| File | Role |
+|------|------|
+| `flextool/update_flextool/__init__.py` | `FLEXTOOL_DB_VERSION` — bump by 1 for each migration |
+| `flextool/update_flextool/db_migration.py` | Migration steps (one `elif next_version == N:` block per version) |
+| `version/flextool_template_master.json` | Auto-generated — **never edit by hand** |
+
+### Migration code examples
+
+The migration block uses the SpineDB API (`db` is a `DatabaseMapping`). Key imports already available in the file: `import_data`, `from_database`, `to_database`, `SpineDBAPIError`.
+
+**Add a new parameter** (no value list):
+```python
+elif next_version == N:
+    db.add_update_item("parameter_definition",
+        entity_class_name="connection", name="reactance",
+        parameter_type_list=("float",),
+        description="[p.u.] Per-unit reactance of the transmission line.")
+    db.commit_session("Added reactance parameter")
+```
+
+**Add a new parameter_value_list and use it on a parameter** (enum/dropdown):
+```python
+elif next_version == N:
+    # 1. Add the value list entries (list name + each allowed value)
+    add_value_list_manual(db, [
+        ["my_methods", "option_a"],
+        ["my_methods", "option_b"],
+        ["my_methods", "option_c"],
+    ])
+    # 2. Create or update the parameter definition to use the list.
+    #    default_value must be in database format — use to_database().
+    default_val, default_type = to_database("option_a")
+    db.add_update_item("parameter_definition",
+        entity_class_name="group", name="my_param",
+        default_value=default_val, default_type=default_type,
+        parameter_value_list_name="my_methods",
+        description="Choose one of: option_a, option_b, option_c.")
+    db.commit_session("Added my_methods value list and my_param parameter")
+```
+
+Note: `add_value_list_manual` commits internally, so the value list is available when `add_update_item` references it.
+
+**Add an entry to an existing parameter_value_list:**
+```python
+elif next_version == N:
+    add_value_list_manual(db, [["existing_list_name", "new_value"]])
+```
+
+**Rename a parameter:**
+```python
+elif next_version == N:
+    parameter_definitions = db.mapped_table("parameter_definition")
+    param = db.item(parameter_definitions, entity_class_name="unit", name="old_name")
+    if param:
+        db.update_parameter_definition(id=param["id"], name="new_name",
+            description="Updated description.")
+    db.commit_session("Renamed old_name to new_name")
+```
+
+**Update only the description of an existing parameter:**
+```python
+elif next_version == N:
+    db.update_item("parameter_definition",
+        entity_class_name="node", name="penalty_up",
+        description="[CUR/MWh] Updated description text.")
+    db.commit_session("Updated penalty_up description")
+```
+
+### Common pitfalls
+
+- **`NothingToCommit` error** — `db.commit_session()` raises this if nothing changed. This can happen when `add_update_item` silently finds no difference (e.g., `default_value` was passed as a plain string instead of using `to_database()`). Always convert default values with `to_database()`.
+- **Value list must exist before referencing** — call `add_value_list_manual()` before `add_update_item()` that uses `parameter_value_list_name`.
+- **`add_value_list_manual` commits internally** — don't call `db.commit_session()` right after it unless you have other uncommitted changes.
+- **Entity classes** — the main entity classes are: `model`, `solve`, `node`, `unit`, `connection`, `commodity`, `group`, `constraint`, `profile`. Relationship classes include `unit__node`, `connection__node`, `reserve__upDown__group`, etc.
+
 ## Pull Requests
 
 ### Branching
