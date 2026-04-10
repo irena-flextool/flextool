@@ -676,14 +676,46 @@ def _compute_bar_plan(
         cfg.base_length,
     )
 
-    # Split into file batches
-    _max = cfg.max_subplots_per_file if cfg.max_subplots_per_file else len(effective_plots)
-    if len(effective_plots) <= _max:
-        raw_batches = [effective_plots]
-    else:
-        raw_batches = []
-        for i in range(0, len(effective_plots), _max):
-            raw_batches.append(effective_plots[i:i + _max])
+    # Split into file batches respecting max_subplots_per_file and, for
+    # horizontal bars, max_items_per_subplot_column (total bar-label count
+    # in any single grid column must not exceed the limit).
+    spr = max(cfg.subplots_per_row, 1)
+    max_per_file = cfg.max_subplots_per_file or len(effective_plots)
+    col_limit = (
+        cfg.max_items_per_subplot_column
+        if cfg.bar_orientation == 'horizontal' else 0
+    )
+
+    # Group subplots into grid rows so we never break mid-row.
+    grid_rows: list[list[tuple[str | None, pd.DataFrame]]] = []
+    for i in range(0, len(effective_plots), spr):
+        grid_rows.append(effective_plots[i:i + spr])
+
+    raw_batches: list[list[tuple[str | None, pd.DataFrame]]] = []
+    current_batch: list[tuple[str | None, pd.DataFrame]] = []
+    col_counts = [0] * spr  # cumulative bar-label count per grid column
+
+    for row in grid_rows:
+        # Check whether adding this row would breach either limit.
+        would_exceed_subplots = len(current_batch) + len(row) > max_per_file
+        would_exceed_col = False
+        if col_limit and current_batch:
+            for j, (_, df_sub) in enumerate(row):
+                if col_counts[j] + len(df_sub) > col_limit:
+                    would_exceed_col = True
+                    break
+
+        if (would_exceed_subplots or would_exceed_col) and current_batch:
+            raw_batches.append(current_batch)
+            current_batch = []
+            col_counts = [0] * spr
+
+        current_batch.extend(row)
+        for j, (_, df_sub) in enumerate(row):
+            col_counts[j] += len(df_sub)
+
+    if current_batch:
+        raw_batches.append(current_batch)
 
     total_file_count = len(raw_batches)
 

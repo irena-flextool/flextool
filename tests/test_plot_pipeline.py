@@ -353,3 +353,51 @@ class TestPlotPlan:
 
         plan = load_plot_plan(tmp_path, "nonexistent", "default")
         assert plan is None
+
+    def test_max_items_per_subplot_column(self, tmp_path):
+        """Bar plan respects max_items_per_subplot_column."""
+        from flextool.plot_outputs.plan import (
+            compute_plot_plans_for_result, load_plot_plan,
+        )
+
+        # 3 subplots (one per scenario) each with 15 bar rows.
+        # subplots_per_row=1 → single column, 3 grid rows.
+        # Column cumulative after row 1: 15, row 2: 30, row 3: 45.
+        # With limit=40, rows 1-2 fit (30 ≤ 40), row 3 spills to file 2.
+        rng = np.random.default_rng(99)
+        n_rows = 15
+        tuples = [
+            (f"scen_{s}", f"entity_{e}")
+            for s in range(3)
+            for e in range(4)
+        ]
+        columns = pd.MultiIndex.from_tuples(tuples, names=["scenario", "entity"])
+        index = pd.Index([f"p{i}" for i in range(n_rows)], name="period")
+        df = pd.DataFrame(rng.random((n_rows, len(tuples))) * 100,
+                          index=index, columns=columns)
+
+        # d_se = 1 row level (period) + 2 col levels (scenario, entity)
+        # b_us = bar axis + subplot + stack  (3 rules for 3 levels)
+        settings = {
+            "test_col_limit": {
+                "plot_name": "Column limit test",
+                "map_dimensions_for_plots": ["d_se", "b_us"],
+                "max_items_per_subplot_column": 40,
+                "subplots_per_row": 1,
+                "max_subplots_per_file": 20,
+                "max_items_per_plot": 40,
+            },
+        }
+        plan_dir = tmp_path / "plans"
+        compute_plot_plans_for_result(
+            df, "test_col_limit", settings, plan_dir,
+            plot_rows=(0, 167),
+        )
+
+        plan = load_plot_plan(plan_dir, "test_col_limit", "default")
+        assert plan is not None
+        # Should be split into 2 files: first with 2 subplots (30 ≤ 40),
+        # second with 1 subplot (the third that would push to 45 > 40).
+        assert plan.total_file_count == 2
+        assert len(plan.file_batches[0]) == 2
+        assert len(plan.file_batches[1]) == 1

@@ -20,6 +20,7 @@ DIMENSION_RULES: dict[str, str] = {
 PLOT_FIELD_NAMES = {
     'plot_name', 'map_dimensions_for_plots', 'subplots_per_row', 'legend',
     'bar_orientation', 'base_length', 'max_subplots_per_file', 'max_items_per_plot',
+    'max_items_per_subplot_column',
     'time_average_duration', 'xlabel', 'ylabel', 'value_label', 'axis_bounds',
     'axis_scale_min_max',  # backward compat alias for axis_bounds
     'axis_tick_format', 'always_include_zero_in_axis', 'skip_data_with_only_zeroes',
@@ -43,6 +44,7 @@ class PlotConfig:
     base_length: float = 4.0
     max_subplots_per_file: int = 6
     max_items_per_plot: int = 10
+    max_items_per_subplot_column: int = 40
     time_average_duration: str | None = None
     xlabel: str | None = None
     ylabel: str | None = None

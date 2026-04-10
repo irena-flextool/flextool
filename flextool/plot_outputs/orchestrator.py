@@ -518,6 +518,7 @@ def prepare_plot_data(
                 always_include_zero_in_axis=cfg.always_include_zero_in_axis,
                 max_items_per_plot=max_items,
                 max_subplots_per_file=cfg.max_subplots_per_file,
+                max_items_per_subplot_column=cfg.max_items_per_subplot_column,
                 skip_data_with_only_zeroes=cfg.skip_data_with_only_zeroes,
                 only_file_index=only_file_index,
             )

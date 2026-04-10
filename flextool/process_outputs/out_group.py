@@ -209,10 +209,15 @@ def nodeGroup_VRE_share(par, s, v, r, debug):
 
 
 def nodeGroup_total_inflow(par, s, v, r, debug):
-    """Total inflow (inflow - outflow) to groups by period and time"""
+    """Total inflow (par.node_inflow) summed over nodes in each group."""
 
     results = []
-    groups = list(s.outputNodeGroup_does_specified_flows_process)
+
+    # Use node-based group membership (same as nodeGroup_VRE_share)
+    groups = [
+        g for g in s.outputNodeGroup_does_specified_flows_node
+        if _get_group_nodes_with_inflow(s, g)
+    ]
 
     if not groups:
         return results
@@ -221,47 +226,26 @@ def nodeGroup_total_inflow(par, s, v, r, debug):
     if not timesteps:
         return results
 
-    # Calculate timestep-level results first
+    # Calculate timestep-level results
     index = pd.MultiIndex.from_tuples(timesteps, names=['period', 'time'])
     result_multi_dt = pd.DataFrame(index=index, columns=groups, dtype=float)
 
-    # Calculate for each group
     for g in groups:
-        # Flows into nodes (process -> node sink)
-        # Filter for (g, process, node) in group_process_node where node is the sink
-        sink_cols = r.flow_dt.columns[
-            r.flow_dt.columns.isin(s.process_source_sink_alwaysProcess) &
-            r.flow_dt.columns.to_series().apply(
-                lambda col: (g, col[0], col[2]) in s.group_process_node
-            )
-        ]
+        group_nodes = _get_group_nodes_with_inflow(s, g)
+        node_cols = [col for col in par.node_inflow.columns.get_level_values(0)
+                     if col in group_nodes]
+        if node_cols:
+            result_multi_dt[g] = par.node_inflow[node_cols].sum(axis=1)
+        else:
+            result_multi_dt[g] = 0.0
 
-        # Flows from nodes (node source -> process)
-        # Filter for (g, process, node) in group_process_node where node is the source
-        source_cols = r.flow_dt.columns[
-            r.flow_dt.columns.isin(s.process_source_sink_alwaysProcess) &
-            r.flow_dt.columns.to_series().apply(
-                lambda col: (g, col[0], col[1]) in s.group_process_node
-            )
-        ]
-
-        inflow = r.flow_dt[sink_cols].sum(axis=1) if len(sink_cols) > 0 else 0
-        outflow = r.flow_dt[source_cols].sum(axis=1) if len(source_cols) > 0 else 0
-
-        result_multi_dt[g] = inflow - outflow
     result_multi_dt.columns.name = 'group'
-
-    # Return timestep results
     results.append((result_multi_dt, 'nodeGroup_flows_dt_g'))
 
     # Aggregate to period level
     result_multi_d = result_multi_dt.groupby(level='period').sum()
-
-    # Divide by period shares to annualize
     result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
     result_multi_d.columns.name = 'group'
-
-    # Return period results
     results.append((result_multi_d, 'nodeGroup_flows_d_g'))
 
     return results

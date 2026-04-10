@@ -238,7 +238,7 @@ ALL_OUTPUTS = [
     unit_online_and_startup,
     node_summary,
     node_additional_results,
-    # investment_duals,
+    investment_duals,
     inertia_results,
     slack_variables,
     unit_capacity,

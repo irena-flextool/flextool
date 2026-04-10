@@ -923,6 +923,7 @@ def build_bar_figures(
     always_include_zero_in_axis: bool = True,
     max_items_per_plot: int = 10,
     max_subplots_per_file: int = 6,
+    max_items_per_subplot_column: int = 40,
     only_first_file: bool = False,
     skip_data_with_only_zeroes: bool = False,
     only_file_index: int | None = None,
@@ -1059,15 +1060,44 @@ def build_bar_figures(
         base_bar_length,
     )
 
-    # Split into file batches
+    # Split into file batches respecting max_subplots_per_file and, for
+    # horizontal bars, max_items_per_subplot_column.
+    spr = max(subplots_per_row, 1)
     _max = max_subplots_per_file if max_subplots_per_file else len(effective_plots)
-    if len(effective_plots) <= _max:
-        _file_batches = [(effective_plots, None)]
-    else:
-        _file_batches = []
-        for i in range(0, len(effective_plots), _max):
-            batch = effective_plots[i:i + _max]
-            _file_batches.append((batch, None))
+    col_limit = (
+        max_items_per_subplot_column
+        if bar_orientation == 'horizontal' else 0
+    )
+
+    # Group subplots into grid rows so we never break mid-row.
+    grid_rows: list[list] = []
+    for gi in range(0, len(effective_plots), spr):
+        grid_rows.append(effective_plots[gi:gi + spr])
+
+    _file_batches: list[tuple[list, None]] = []
+    cur: list = []
+    col_counts = [0] * spr
+
+    for row in grid_rows:
+        would_exceed_subplots = len(cur) + len(row) > _max
+        would_exceed_col = False
+        if col_limit and cur:
+            for j, (_, df_sub) in enumerate(row):
+                if col_counts[j] + len(df_sub) > col_limit:
+                    would_exceed_col = True
+                    break
+
+        if (would_exceed_subplots or would_exceed_col) and cur:
+            _file_batches.append((cur, None))
+            cur = []
+            col_counts = [0] * spr
+
+        cur.extend(row)
+        for j, (_, df_sub) in enumerate(row):
+            col_counts[j] += len(df_sub)
+
+    if cur:
+        _file_batches.append((cur, None))
 
     total_file_count = len(_file_batches)
     batches_to_build = _file_batches[:1] if only_first_file else _file_batches
