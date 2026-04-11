@@ -89,6 +89,11 @@ class ResultViewer(tk.Toplevel):
         self._parquet_cache_key: tuple[str, str] = ("", "")
         self._parquet_cache_df: pd.DataFrame | None = None
 
+        # Live plan cache: PlotPlan computed from full data, reused across
+        # slider changes.  Cleared on entry/variant/scenario change.
+        self._live_plan: 'PlotPlan | None' = None
+        self._live_plan_key: tuple[str, str, str] = ("", "", "")
+
         # Guard against recursive replots from time range updates
         self._updating_time_range = False
 
@@ -382,9 +387,11 @@ class ResultViewer(tk.Toplevel):
         self._start_scale.grid(row=0, column=1, sticky="ew")
 
         ttk.Label(time_frame, text="Duration").grid(row=1, column=0, sticky="w", padx=(0, 5))
+        self._duration_steps = (1, 2, 3, 4, 6, 12, 24, 72, 168, 240, 336, 504, 672, 1344, 2688, 5376, 8760)
         self._duration_var = tk.IntVar(value=self._settings.single_plot_settings.duration or 168)
         self._duration_spin = ttk.Spinbox(
-            time_frame, from_=1, to=8760, textvariable=self._duration_var, width=6,
+            time_frame, values=self._duration_steps,
+            textvariable=self._duration_var, width=6,
         )
         self._duration_spin.grid(row=1, column=1, sticky="w")
 
@@ -1530,12 +1537,17 @@ class ResultViewer(tk.Toplevel):
         try:
             duration = self._duration_var.get()
             max_start = max(0, data_length - duration)
-            self._start_scale.configure(to=max_start)
-            # Clamp current start value
-            if self._start_var.get() > max_start:
+            self._start_scale.configure(to=max(max_start, 1))
+            # Clamp: when no room to scroll, pin to the beginning
+            if max_start <= 0:
+                self._start_var.set(0)
+            elif self._start_var.get() > max_start:
                 self._start_var.set(max_start)
-            # Update duration max
-            self._duration_spin.configure(to=data_length)
+            # Update duration steps to only include values ≤ data_length
+            valid = tuple(v for v in self._duration_steps if v <= data_length)
+            if not valid:
+                valid = (data_length,) if data_length > 0 else (1,)
+            self._duration_spin.configure(values=valid)
         finally:
             self._updating_time_range = False
 
@@ -1544,7 +1556,7 @@ class ResultViewer(tk.Toplevel):
         if self._updating_time_range:
             return
         self._file_index = 0
-        self._clear_figure_cache()
+        self._clear_prefetched_figures()
         self._trigger_replot()
 
     # ------------------------------------------------------------------
@@ -1552,7 +1564,19 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _clear_figure_cache(self) -> None:
-        """Discard all prefetched figures."""
+        """Discard all prefetched figures AND the live plan.
+
+        Called on structural changes (entry/variant/scenario).  For slider
+        changes use :meth:`_clear_prefetched_figures` instead so the live
+        plan (which is slider-independent) is preserved.
+        """
+        with self._figure_cache_lock:
+            self._figure_cache.clear()
+        self._live_plan = None
+        self._live_plan_key = ("", "", "")
+
+    def _clear_prefetched_figures(self) -> None:
+        """Discard prefetched figures only, keep the live plan."""
         with self._figure_cache_lock:
             self._figure_cache.clear()
 
@@ -1806,16 +1830,30 @@ class ResultViewer(tk.Toplevel):
         duration = self._duration_var.get()
         plot_rows = (start, start + duration)
 
-        # 1b. Try pre-computed PlotPlan for instant rendering
+        # 1b. Try live plan (cached in memory) or disk plan for instant rendering.
+        #     The plan caches dimension rules, layout, and colors; only the
+        #     time slice and matplotlib rendering run on each slider change.
         try:
-            from flextool.plot_outputs.plan import load_plot_plan, build_figure_from_plan
-            plan_dir = self._project_path / "output_parquet" / scenario / "plot_plans"
-            plan = load_plot_plan(plan_dir, variant.result_key, variant.sub_config)
+            from flextool.plot_outputs.plan import (
+                load_plot_plan, build_figure_from_plan, compute_live_plan,
+            )
+            plan_key = (scenario, variant.result_key, variant.sub_config)
+            if self._live_plan_key == plan_key and self._live_plan is not None:
+                plan = self._live_plan
+            else:
+                # Try disk plan first, then compute on-the-fly
+                plan_dir = self._project_path / "output_parquet" / scenario / "plot_plans"
+                plan = load_plot_plan(plan_dir, variant.result_key, variant.sub_config)
+                if plan is None:
+                    plan = compute_live_plan(df, config, plot_name, break_times)
+                self._live_plan = plan
+                self._live_plan_key = plan_key
+
             if plan is not None:
                 self._file_count = plan.total_file_count
                 self._file_index = min(self._file_index, max(0, self._file_count - 1))
                 self._update_file_nav()
-                fig = build_figure_from_plan(plan, self._file_index)
+                fig = build_figure_from_plan(plan, self._file_index, plot_rows)
                 if fig is not None:
                     self._plot_canvas.display_figure(fig)
                     logger.info(
@@ -1824,7 +1862,7 @@ class ResultViewer(tk.Toplevel):
                     )
                     return
         except Exception:
-            pass  # fall through to normal pipeline
+            logger.debug("Plan path failed for %s", variant.result_key, exc_info=True)
 
         # 2. Check prefetch cache for instant display
         cache_key = self._make_figure_cache_key(
@@ -1996,27 +2034,6 @@ class ResultViewer(tk.Toplevel):
             )
             return
 
-        # Try pre-computed PlotPlan first
-        try:
-            from flextool.plot_outputs.plan import load_plot_plan, build_figure_from_plan
-            plan_dir = comp_dir / "plot_plans"
-            plan = load_plot_plan(plan_dir, variant.result_key, variant.sub_config)
-            if plan is not None:
-                self._update_time_range(len(plan.processed_df))
-                self._file_count = plan.total_file_count
-                self._file_index = min(self._file_index, max(0, self._file_count - 1))
-                self._update_file_nav()
-                fig = build_figure_from_plan(plan, self._file_index)
-                if fig is not None:
-                    self._plot_canvas.display_figure(fig)
-                    logger.info(
-                        "Comparison %s: from plan [file %d/%d]",
-                        variant.result_key, self._file_index, plan.total_file_count,
-                    )
-                    return
-        except Exception:
-            pass  # fall through to normal pipeline
-
         df = read_lean_parquet(parquet_path)
         if df.empty:
             self._plot_canvas.show_message(f"Empty data for {variant.result_key}")
@@ -2032,22 +2049,51 @@ class ResultViewer(tk.Toplevel):
                 self._plot_canvas.show_message("No data for selected scenarios")
                 return
 
-        self._update_time_range(len(df))
-
-        # Load config from comparison config
         config = self._load_plot_config(variant.result_key, variant.sub_config)
         if config is None:
             self._plot_canvas.show_message(f"No config for {variant.result_key}")
             return
 
-        # Load break times from comparison dir
         break_times = self._load_comparison_break_times()
-
         plot_name = config.plot_name or variant.full_name
+        self._update_time_range(len(df))
         start = self._start_var.get()
         duration = self._duration_var.get()
         plot_rows = (start, start + duration)
 
+        # Try live plan (cached) or disk plan for instant rendering
+        try:
+            from flextool.plot_outputs.plan import (
+                load_plot_plan, build_figure_from_plan, compute_live_plan,
+            )
+            plan_key = ("_comparison", variant.result_key, variant.sub_config)
+            if self._live_plan_key == plan_key and self._live_plan is not None:
+                plan = self._live_plan
+            else:
+                plan_dir = comp_dir / "plot_plans"
+                plan = load_plot_plan(plan_dir, variant.result_key, variant.sub_config)
+                if plan is None:
+                    plan = compute_live_plan(df, config, plot_name, break_times)
+                self._live_plan = plan
+                self._live_plan_key = plan_key
+
+            if plan is not None:
+                self._file_count = plan.total_file_count
+                self._file_index = min(self._file_index, max(0, self._file_count - 1))
+                self._update_file_nav()
+                fig = build_figure_from_plan(plan, self._file_index, plot_rows)
+                if fig is not None:
+                    self._plot_canvas.display_figure(fig)
+                    logger.info(
+                        "Comparison %s: from plan [file %d/%d]",
+                        variant.result_key, self._file_index, plan.total_file_count,
+                    )
+                    return
+        except Exception:
+            logger.debug("Plan path failed for comparison %s", variant.result_key, exc_info=True)
+
+        # Fallback: full prepare_plot_data pipeline
+        self._update_time_range(len(df))
         figures, total_count = prepare_plot_data(
             df, config, plot_name, plot_rows, break_times,
             only_file_index=self._file_index,
