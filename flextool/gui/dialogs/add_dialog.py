@@ -379,11 +379,17 @@ class AddDialog(tk.Toplevel):
                             "Version check failed for %s: %s", dest, exc, exc_info=True
                         )
 
+        # Files undergoing conversion are excluded from the "Done"
+        # notification — they will appear after conversion finishes.
+        migrating = set(self.files_to_convert) | set(self.files_to_update_xlsx)
+        ready_names = [n for n in copied_names if n not in migrating]
+
         if copied_names:
             self.result = True
-            file_list = "\n".join(f"  - {name}" for name in copied_names)
+        if ready_names:
+            file_list = "\n".join(f"  - {name}" for name in ready_names)
             done_text = (
-                f"Done — copied {len(copied_names)} file(s):\n{file_list}"
+                f"Done — copied {len(ready_names)} file(s):\n{file_list}"
             )
             if upgrade_messages:
                 done_text += "\n\n" + "\n".join(upgrade_messages)

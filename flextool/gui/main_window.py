@@ -1025,7 +1025,8 @@ class MainWindow(tk.Tk):
             self._autocheck_new_sources(old_sources)
         if dlg.old_convert_started:
             self._open_or_raise_execution_window()
-        # Handle files the user chose to migrate
+        # Handle files the user chose to migrate.  The conversion
+        # callbacks refresh the input sources again when finished.
         for name in dlg.files_to_convert:
             self._convert_xlsx_to_sqlite(name, confirm=False)
         for name in dlg.files_to_update_xlsx:
