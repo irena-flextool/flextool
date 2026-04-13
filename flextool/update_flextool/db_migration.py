@@ -214,6 +214,10 @@ def migrate_database(database_path, up_to: int | None = None):
                     parameter_value_list_name="transfer_methods_group",
                     description="Override transfer_method for all connections within this nodeGroup. Options: use_connection_transfer_methods (default, no override), no_losses_no_variable_cost, regular, exact, variable_cost_only, dc_power_flow_with_angles. When set to dc_power_flow_with_angles, connections between member nodes use B-theta DC power flow (requires reactance parameter on connections).")
                 db.commit_session("Added transfer_methods_group parameter_value_list for group transfer_method")
+            elif next_version == 30:
+                add_value_list_manual(db, [
+                    ["storage_binding_methods", "bind_using_rp_weights"],
+                ])
             else:
                 print("Version invalid")
             next_version += 1
