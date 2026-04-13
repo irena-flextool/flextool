@@ -214,7 +214,7 @@ set rp_block_first 'first timestep of each RP block (period, step)' dimen 2;
 set rp_block_last 'last timestep of each RP block (period, step)' dimen 2;
 set rp_base_period := setof{(b, r) in rp_base__rep}(b);
 set rp_rep_period := setof{(b, r) in rp_base__rep}(r);
-set nodeState_rp := {n in nodeState : (n, 'bind_using_rp_weights') in node__storage_binding_method};
+set nodeState_rp := {n in nodeState : (n, 'bind_using_blended_weights') in node__storage_binding_method};
 
 set node__profile__profile_method dimen 3 within {node,profile,profile_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
@@ -2163,9 +2163,9 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
   + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_timeset') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_timeset]) * p_entity_unitsize[n] )
-  # bind_using_rp_weights: within RP, NOT at first timestep — standard intra-period state tracking
+  # bind_using_blended_weights: within RP, NOT at first timestep — standard intra-period state tracking
   + (if n in nodeState_rp && not ((d, t) in rp_block_first) then (v_state[n, d, t] - v_state[n, d, t_previous_within_timeset]) * p_entity_unitsize[n] )
-  # bind_using_rp_weights: at first timestep of RP — state change from free starting variable
+  # bind_using_blended_weights: at first timestep of RP — state change from free starting variable
   + (if n in nodeState_rp && (d, t) in rp_block_first then (v_state[n, d, t] - v_state_rp_start[n, d, t]) * p_entity_unitsize[n] )
   + (if n in nodeState && (d, t) in period__time_first && d in period_first_of_solve && not p_nested_model['solveFirst'] then (v_state[n,d,t] * p_entity_unitsize[n] - p_roll_continue_state[n]))
   + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && (d, t) in period__time_first && d in period_first_of_solve && p_nested_model['solveFirst']

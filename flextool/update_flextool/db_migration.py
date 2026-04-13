@@ -216,7 +216,7 @@ def migrate_database(database_path, up_to: int | None = None):
                 db.commit_session("Added transfer_methods_group parameter_value_list for group transfer_method")
             elif next_version == 30:
                 add_value_list_manual(db, [
-                    ["storage_binding_methods", "bind_using_rp_weights"],
+                    ["storage_binding_methods", "bind_using_blended_weights"],
                 ])
             else:
                 print("Version invalid")

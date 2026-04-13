@@ -668,7 +668,7 @@
     ],
     [
       "storage_binding_methods",
-      "bind_using_rp_weights"
+      "bind_using_blended_weights"
     ],
     [
       "storage_nested_fix_method",

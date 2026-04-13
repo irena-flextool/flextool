@@ -183,7 +183,7 @@ def _setup_rp_scenario(db_url: str, n_rp: int, period_length: int, storage_nodes
         for node_name in storage_nodes:
             param_values.append(
                 ("node", node_name, "storage_binding_method",
-                 "bind_using_rp_weights", rp_alt)
+                 "bind_using_blended_weights", rp_alt)
             )
 
         num, log = import_data(db,
