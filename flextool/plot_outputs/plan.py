@@ -295,11 +295,18 @@ def _select_time_columns(df: pd.DataFrame, selector: list) -> pd.DataFrame:
     return df[valid] if valid else df
 
 
-def build_figure_from_plan(plan: PlotPlan, file_index: int = 0) -> 'Figure | None':
+def build_figure_from_plan(
+    plan: PlotPlan,
+    file_index: int = 0,
+    plot_rows: tuple[int, int] | None = None,
+) -> 'Figure | None':
     """Build a single Figure from a pre-computed PlotPlan.
 
     This is the fast path -- no dimension rules, no layout computation,
     just direct figure building from pre-computed data.
+
+    For time-series plans whose *processed_df* covers the full timeline,
+    pass *plot_rows* ``(start, start + duration)`` to display a sub-range.
     """
     from matplotlib.figure import Figure
     from flextool.plot_outputs.subplot_helpers import LineLayoutParams, BarLayoutParams
@@ -307,15 +314,24 @@ def build_figure_from_plan(plan: PlotPlan, file_index: int = 0) -> 'Figure | Non
     if file_index >= plan.total_file_count or file_index < 0:
         return None
 
+    # For time-series plans, slice to the requested window.
+    processed_df = plan.processed_df
+    time_vals = plan.time_index_values
+    if plot_rows is not None and plan.chart_type != 'bar':
+        start, end = plot_rows
+        processed_df = processed_df.iloc[start:end]
+        if time_vals is not None:
+            time_vals = time_vals[start:end]
+
     # Reconstruct effective_plots for the requested batch
     batch_indices = plan.file_batches[file_index]
     effective_plots: list[tuple[str | None, pd.DataFrame]] = []
     for idx in batch_indices:
         title, selector = plan.effective_plot_specs[idx]
         if plan.chart_type == 'bar':
-            df_sub = _select_bar_rows(plan.processed_df, selector)
+            df_sub = _select_bar_rows(processed_df, selector)
         else:
-            df_sub = _select_time_columns(plan.processed_df, selector)
+            df_sub = _select_time_columns(processed_df, selector)
         effective_plots.append((title, df_sub))
 
     if not effective_plots:
@@ -323,8 +339,8 @@ def build_figure_from_plan(plan: PlotPlan, file_index: int = 0) -> 'Figure | Non
 
     # Reconstruct time_index
     time_index = None
-    if plan.time_index_values is not None:
-        time_index = pd.Index(plan.time_index_values)
+    if time_vals is not None:
+        time_index = pd.Index(time_vals)
 
     # Reconstruct layout
     if plan.layout_type == 'line':
@@ -859,8 +875,10 @@ def compute_plot_plans_for_result(
         # Record availability regardless of whether plan generation succeeds
         succeeded.append((result_key, sub_config))
 
-        # Apply dimension rules with the specified plot_rows for the plan
-        dim_result = _apply_dimension_rules(df, cfg, plot_rows)
+        # Apply dimension rules.  For time-series plans, use the full data
+        # range so the plan can be rendered at any start/duration without
+        # recomputing.  For bar charts, plot_rows is irrelevant.
+        dim_result = _apply_dimension_rules(df, cfg, full_range)
         if dim_result is None:
             continue
         df_processed, rules, chart_type, summed_dims, averaged_dims = dim_result
@@ -962,3 +980,98 @@ def compute_plot_plans_for_result(
                 succeeded.append((result_key, save_sub))
 
     return succeeded
+
+
+def compute_live_plan(
+    df: pd.DataFrame,
+    cfg: 'PlotConfig',
+    plot_name: str,
+    break_times: set[str] | None = None,
+) -> PlotPlan | None:
+    """Compute a PlotPlan in memory without disk I/O.
+
+    Uses the full data range so time-series plans can be rendered at any
+    start/duration via :func:`build_figure_from_plan` with *plot_rows*.
+    """
+    from flextool.plot_outputs.config import PlotConfig  # noqa: F811
+    from flextool.plot_outputs.orchestrator import (
+        _apply_dimension_rules, _resolve_shared_axis_bounds, _process_file_member,
+    )
+    from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
+    from flextool.plot_outputs.format_helpers import insert_timeline_breaks
+
+    full_range = (0, len(df))
+    dim_result = _apply_dimension_rules(df, cfg, full_range)
+    if dim_result is None:
+        return None
+    df_processed, rules, chart_type, summed_dims, averaged_dims = dim_result
+
+    col_rules = rules[df_processed.index.nlevels:]
+    grouped_bar_levels = [i for i, c in enumerate(col_rules) if c == 'g']
+    stack_levels = [i for i, c in enumerate(col_rules) if c == 's']
+    expand_axis_levels = [i for i, c in enumerate(col_rules) if c == 'e']
+    subplot_levels = [i for i, c in enumerate(col_rules) if c == 'u']
+    line_levels = [i for i, c in enumerate(col_rules) if c == 'l']
+    file_levels = [i for i, c in enumerate(col_rules) if c == 'f']
+
+    plot_title = plot_name
+    if summed_dims:
+        plot_title = f"{plot_title} ('{', '.join(str(d) for d in summed_dims)}' summed)"
+    if averaged_dims:
+        plot_title = f"{plot_title} ('{', '.join(str(d) for d in averaged_dims)}' averaged)"
+
+    # File members (take the first — live plans don't split across files by member)
+    file_member = None
+    if file_levels:
+        if len(file_levels) == 1:
+            members = df_processed.columns.get_level_values(file_levels[0]).unique().tolist()
+        else:
+            fm_df = df_processed.columns.to_frame().iloc[:, file_levels].drop_duplicates()
+            members = [tuple(row) for row in fm_df.values]
+        if members:
+            file_member = members[0]
+
+    axis_bounds = _normalize_axis_bounds(cfg.axis_bounds)
+    axis_bounds = _resolve_shared_axis_bounds(
+        df_processed, axis_bounds, stack_levels, subplot_levels,
+        cfg.always_include_zero_in_axis,
+    )
+
+    result = _process_file_member(
+        df_processed, file_member, file_levels, plot_title,
+        grouped_bar_levels, stack_levels, expand_axis_levels,
+        subplot_levels, line_levels,
+    )
+    if result is None:
+        return None
+    (df_fm, effective_plot_name, _member_str,
+     fm_grouped_bar_levels, fm_stack_levels, fm_expand_axis_levels,
+     fm_subplot_levels, fm_line_levels) = result
+
+    if cfg.skip_data_with_only_zeroes:
+        df_fm = df_fm.loc[:, (df_fm.abs() > 1e-6).any()]
+        if chart_type == 'bar':
+            df_fm = df_fm.loc[(df_fm.abs() > 1e-6).any(axis=1)]
+        if df_fm.empty:
+            return None
+
+    if cfg.multiply_by is not None:
+        df_fm = df_fm * cfg.multiply_by
+
+    if chart_type == 'time' and break_times:
+        df_fm = insert_timeline_breaks(df_fm, break_times)
+
+    if chart_type == 'bar':
+        return _compute_bar_plan(
+            df_fm, effective_plot_name, cfg,
+            fm_stack_levels, fm_expand_axis_levels,
+            fm_subplot_levels, fm_grouped_bar_levels,
+            axis_bounds,
+        )
+    elif chart_type == 'time':
+        return _compute_time_plan(
+            df_fm, effective_plot_name, cfg,
+            fm_stack_levels, fm_subplot_levels, fm_line_levels,
+            axis_bounds, full_range,
+        )
+    return None
