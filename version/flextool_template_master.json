@@ -667,6 +667,10 @@
       "bind_forward_only"
     ],
     [
+      "storage_binding_methods",
+      "bind_using_rp_weights"
+    ],
+    [
       "storage_nested_fix_method",
       "fix_nothing"
     ],

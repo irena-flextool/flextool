@@ -204,6 +204,18 @@ set storage_solve_horizon_method 'methods to set reference value or price for th
 set node__storage_solve_horizon_method within {node, storage_solve_horizon_method};
 set storage_nested_fix_method 'methods to set the storage value for lower level solves';
 set node__storage_nested_fix_method within {node, storage_nested_fix_method};
+
+# Representative period sets and parameters (populated only when RP weights are used)
+set rp_base__rep 'weight matrix (base_period_start, rep_period_start)' dimen 2;
+set rp_base_chain 'chronological chain of base periods (current, previous)' dimen 2;
+set rp_base_first 'first base period start timestep' dimen 1;
+set rp_base_last 'last base period start timestep' dimen 1;
+set rp_block_first 'first timestep of each RP block (period, step)' dimen 2;
+set rp_block_last 'last timestep of each RP block (period, step)' dimen 2;
+set rp_base_period := setof{(b, r) in rp_base__rep}(b);
+set rp_rep_period := setof{(b, r) in rp_base__rep}(r);
+set nodeState_rp := {n in nodeState : (n, 'bind_using_rp_weights') in node__storage_binding_method};
+
 set node__profile__profile_method dimen 3 within {node,profile,profile_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
@@ -366,6 +378,11 @@ param p_node_constraint_capacity_coefficient {node, constraint};
 param p_node_constraint_state_coefficient {node, constraint};
 param step_duration{(d, t) in dt};
 param p_hole_multiplier {solve_current} default 1;
+
+# Representative period parameters
+param p_rp_weight{rp_base__rep} default 0;
+param p_rp_last_step{rp_rep_period} symbolic;
+param p_rp_cost_weight{(d,t) in dt} default 1;
 
 param p_years_represented{d in period, y in year} default 1;
 param p_years_from_solve{d in period, y in year} default 0;
@@ -607,6 +624,16 @@ table data IN 'CSV' 'solve_data/fix_storage_price.csv' : ndt_fix_storage_price <
 table data IN 'CSV' 'solve_data/fix_storage_quantity.csv' : ndt_fix_storage_quantity <- [node, period, step], p_fix_storage_quantity~p_fix_storage_quantity;
 table data IN 'CSV' 'solve_data/fix_storage_usage.csv' : ndt_fix_storage_usage <- [node, period, step], p_fix_storage_usage~p_fix_storage_usage;
 table data IN 'CSV' 'solve_data/timeline_matching_map.csv' : dtt_timeline_matching <- [period, step, upper_step];
+
+# Representative period data (empty files when not using RP weights)
+table data IN 'CSV' 'solve_data/rp_weights.csv' : rp_base__rep <- [base_start, rep_start], p_rp_weight~weight;
+table data IN 'CSV' 'solve_data/rp_base_chain.csv' : rp_base_chain <- [base_start, prev_base_start];
+table data IN 'CSV' 'solve_data/rp_base_first.csv' : rp_base_first <- [base_start];
+table data IN 'CSV' 'solve_data/rp_base_last.csv' : rp_base_last <- [base_start];
+table data IN 'CSV' 'solve_data/rp_block_first.csv' : rp_block_first <- [period, step];
+table data IN 'CSV' 'solve_data/rp_block_last.csv' : rp_block_last <- [period, step];
+table data IN 'CSV' 'solve_data/rp_block_start_last.csv' : [rep_start], p_rp_last_step~last_step;
+table data IN 'CSV' 'solve_data/rp_cost_weight.csv' : [period, time], p_rp_cost_weight~weight;
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : dt_complete <- [period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : [period, step], complete_step_duration;
 table data IN 'CSV' 'solve_data/p_roll_continue_state.csv' : [node], p_roll_continue_state;
@@ -1820,6 +1847,10 @@ var v_angle {n in node_dc_power_flow, (d, t) in dt} >= p_angle_lower[n], <= p_an
 var v_ramp {(p, source, sink) in process_source_sink_ramp, (d, t) in dt} >=-p_entity_max_units[p, d], <= p_entity_max_units[p, d];
 var v_reserve {(p, r, ud, n, d, t) in prundt : sum{(r, ud, g) in reserve__upDown__group} 1 } >= 0, <= p_entity_max_units[p, d];
 var v_state {n in nodeState, (d, t) in dt} >= 0, <= p_entity_max_units[n, d];
+# Inter-period storage state for representative period method (Paper: σ^{inter}_{s,d})
+var v_state_inter {n in nodeState_rp, b in rp_base_period} >= 0;
+# Starting state of each representative period (Paper: σ^{intra,0}_{s,r})
+var v_state_rp_start {n in nodeState_rp, (d, t) in rp_block_first} >= 0, <= p_entity_max_units[n, d];
 var v_online_linear {p in process_online_linear,(d, t) in dt} >=0, <= p_entity_max_units[p, d];
 var v_startup_linear {p in process_online_linear, (d, t) in dt} >=0, <= p_entity_max_units[p, d];
 var v_shutdown_linear {p in process_online_linear, (d, t) in dt} >=0, <= p_entity_max_units[p, d];
@@ -2012,7 +2043,7 @@ minimize total_cost:
 			  + v_flow[p, source, n, d, t] * p_entity_unitsize[p]
 			)
 		)
-	  * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
+	  * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
 	)
   + sum {(g, c, n, d, t) in gcndt_co2_price}
     (+ p_commodity[c, 'co2_content'] * pdtGroup[g, 'co2_price', d, t]
@@ -2037,22 +2068,22 @@ minimize total_cost:
 			  + v_flow[p, source, n, d, t] * p_entity_unitsize[p]
 			)
 	    )
-	  * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
+	  * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
 	)
   + sum {(p, d, t) in pdt_online_linear}
       ( + v_startup_linear[p, d, t] * pdProcess[p, 'startup_cost', d]
 	      * p_entity_unitsize[p]
-		  * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
+		  * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
 	  )
   + sum {(p, d, t) in pdt_online_integer}
       ( + v_startup_integer[p, d, t] * pdProcess[p, 'startup_cost', d]
 	      * p_entity_unitsize[p]
-		  * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
+		  * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
 	  )
   + sum {(p, source, sink, d, t) in pssdt_varCost_noEff}
     ( + pdtProcess__source__sink__dt_varCost[p, source, sink, d, t]
 	    * v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
-        * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
+        * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
 	)
   + sum {(p, source, sink, d, t) in pssdt_varCost_eff_unit_source}
     ( - pdtProcess_source[p, source, 'other_operational_cost', d, t]
@@ -2068,34 +2099,34 @@ minimize total_cost:
 			    * p_entity_unitsize[p]
 			)
 		)
-        * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
+        * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
 	)
   + sum {(p, source, sink, d, t) in pssdt_varCost_eff_unit_sink}
     ( + pdtProcess_sink[p, sink, 'other_operational_cost', d, t]
 	    * v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
-        * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
+        * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
 	)
   + sum {(p, source, sink, d, t) in pssdt_varCost_eff_connection}
     ( + pdtProcess[p, 'other_operational_cost', d, t]
  	   * v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
-       * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
+       * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
 	)
 #  + sum {(p, source, sink, m) in process__source__sink__ramp_method, (d, t) in dt : m in ramp_cost_method}
 #    ( + v_ramp[p, source, sink, d, t] * p_entity_unitsize[p] * pProcess_source_sink[p, source, sink, 'ramp_cost'] ) * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
   + sum {g in groupInertia, (d, t) in dt} pdt_branch_weight[d,t] * vq_inertia[g, d, t] * pdGroup[g, 'inertia_limit', d]
-                                            * pdGroup[g, 'penalty_inertia', d] * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
+                                            * pdGroup[g, 'penalty_inertia', d] * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
   + sum {g in groupNonSync, (d, t) in dt} pdt_branch_weight[d,t] * vq_non_synchronous[g, d, t] * group_capacity_for_scaling[g, d]
-                                            * pdGroup[g, 'penalty_non_synchronous', d] * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
+                                            * pdGroup[g, 'penalty_non_synchronous', d] * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
   + sum {n in nodeBalance union nodeBalancePeriod, (d, t) in dt} pdt_branch_weight[d,t] * vq_state_up[n, d, t] * node_capacity_for_scaling[n, d]
-                                            * pdtNode[n, 'penalty_up', d, t] * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
+                                            * pdtNode[n, 'penalty_up', d, t] * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
   + sum {n in nodeBalance union nodeBalancePeriod, (d, t) in dt} pdt_branch_weight[d,t] * vq_state_down[n, d, t] * node_capacity_for_scaling[n, d]
-                                            * pdtNode[n, 'penalty_down', d, t] * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
+                                            * pdtNode[n, 'penalty_down', d, t] * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
   + sum {(r, ud, ng) in reserve__upDown__group, (d, t) in dt} pdt_branch_weight[d,t] * vq_reserve[r, ud, ng, d, t]  * pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]
-                                            * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve'] * step_duration[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
+                                            * p_reserve_upDown_group[r, ud, ng, 'penalty_reserve'] * step_duration[d, t] * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d]
   - sum {n in nodeState, (d, t) in period__time_last : (n, 'use_reference_price') in node__storage_solve_horizon_method && d in period_last}
     (+ p_storage_state_reference_price[n,d]
         * v_state[n, d, t] * p_entity_unitsize[n]
-		 * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
+		 * p_rp_cost_weight[d, t] * p_inflation_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
     )
   + sum {e in entity, d in period_in_use}  # This is constant term and will be dropped by the solver. Here for completeness.
     + p_entity_all_existing[e, d]
@@ -2132,6 +2163,10 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
   + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_timeset') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous_within_timeset]) * p_entity_unitsize[n] )
+  # bind_using_rp_weights: within RP, NOT at first timestep — standard intra-period state tracking
+  + (if n in nodeState_rp && not ((d, t) in rp_block_first) then (v_state[n, d, t] - v_state[n, d, t_previous_within_timeset]) * p_entity_unitsize[n] )
+  # bind_using_rp_weights: at first timestep of RP — state change from free starting variable
+  + (if n in nodeState_rp && (d, t) in rp_block_first then (v_state[n, d, t] - v_state_rp_start[n, d, t]) * p_entity_unitsize[n] )
   + (if n in nodeState && (d, t) in period__time_first && d in period_first_of_solve && not p_nested_model['solveFirst'] then (v_state[n,d,t] * p_entity_unitsize[n] - p_roll_continue_state[n]))
   + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && (d, t) in period__time_first && d in period_first_of_solve && p_nested_model['solveFirst']
     && ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
@@ -2629,6 +2664,43 @@ s.t. maxState {n in nodeState, (d, t) in dt} :
       - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
     )
 	* pdtNode[n, 'availability', d, t]
+;
+
+# Representative period inter-period storage balance (Paper Eq 2i-2j)
+# Net change in inter-period state = weighted sum of intra-period net changes
+s.t. rp_inter_period_balance
+    {n in nodeState_rp, (b, b_prev) in rp_base_chain} :
+  v_state_inter[n, b] - v_state_inter[n, b_prev]
+  =
+  sum{(b, r) in rp_base__rep, d in period_in_use : (d, r) in rp_block_first}
+  (
+    p_rp_weight[b, r]
+    * ( v_state[n, d, p_rp_last_step[r]] - v_state_rp_start[n, d, r] )
+    * p_entity_unitsize[n]
+  )
+;
+
+# Cyclic constraint (Paper Eq 2k): first base period wraps to last
+s.t. rp_inter_period_cyclic
+    {n in nodeState_rp, b_first in rp_base_first, b_last in rp_base_last} :
+  v_state_inter[n, b_first] - v_state_inter[n, b_last]
+  =
+  sum{(b_first, r) in rp_base__rep, d in period_in_use : (d, r) in rp_block_first}
+  (
+    p_rp_weight[b_first, r]
+    * ( v_state[n, d, p_rp_last_step[r]] - v_state_rp_start[n, d, r] )
+    * p_entity_unitsize[n]
+  )
+;
+
+# Inter-period state upper bound (must not exceed storage capacity)
+s.t. rp_inter_period_max_state
+    {n in nodeState_rp, b in rp_base_period, d in period_in_use} :
+  v_state_inter[n, b] * p_entity_unitsize[n]
+  <=
+  + p_entity_all_existing[n, d]
+  + sum {(n, d_invest, d) in edd_invest} v_invest[n, d_invest] * p_entity_unitsize[n]
+  - sum {(n, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d_divest] * p_entity_unitsize[n]
 ;
 
 s.t. maxToSink {(p, source, sink) in process__source__sinkIsNode, (d, t) in dt : p_process_sink_coefficient[p, sink]} :

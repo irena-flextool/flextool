@@ -39,6 +39,8 @@ class TimelineConfig:
         timeset_name -> [(start, count), ...].
     new_step_durations : dict[str, str]
         timeset_name -> new_duration.
+    rp_weights : dict[str, dict]
+        timeset_name -> {base_start: {rep_start: weight}}.
     stochastic_timesteps : defaultdict[str, list[tuple]]
         Mutable — populated during the solve loop.
     original_timeline : defaultdict[str, str]
@@ -52,12 +54,14 @@ class TimelineConfig:
         timesets__timeline: defaultdict,
         timeset_durations: defaultdict,
         new_step_durations: dict,
+        rp_weights: dict | None = None,
     ) -> None:
         self.timelines = timelines
         self.timesets = timesets
         self.timesets__timeline = timesets__timeline
         self.timeset_durations = timeset_durations
         self.new_step_durations = new_step_durations
+        self.rp_weights: dict = rp_weights or {}
 
         # Mutable state — populated later
         self.stochastic_timesteps: defaultdict[str, list] = defaultdict(list)
@@ -85,12 +89,44 @@ class TimelineConfig:
         new_step_durations: dict = params_to_dict(
             db=db, cl="timeset", par="new_stepduration", mode=DictMode.DICT
         )
+        # Read representative period weights (nested Map: base_start -> {rep_start -> weight})
+        rp_weights_raw = params_to_dict(
+            db=db, cl="timeset", par="representative_period_weights", mode=DictMode.DICT
+        )
+        rp_weights: dict = {}
+        import spinedb_api as api
+        for timeset_name, nested_map in rp_weights_raw.items():
+            if isinstance(nested_map, api.Map):
+                weight_dict: dict[str, dict[str, float]] = {}
+                for i, base_key in enumerate(nested_map.indexes):
+                    inner = nested_map.values[i]
+                    if isinstance(inner, api.Map):
+                        weight_dict[str(base_key)] = {
+                            str(k): float(v) for k, v in zip(inner.indexes, inner.values)
+                        }
+                rp_weights[timeset_name] = weight_dict
+            elif isinstance(nested_map, list):
+                # params_to_dict may return list of tuples for nested maps
+                weight_dict = {}
+                for entry in nested_map:
+                    if len(entry) >= 2:
+                        base_key = str(entry[0])
+                        inner_data = entry[1]
+                        if isinstance(inner_data, list):
+                            weight_dict[base_key] = {str(k): float(v) for k, v in inner_data}
+                        elif isinstance(inner_data, api.Map):
+                            weight_dict[base_key] = {
+                                str(k): float(v) for k, v in zip(inner_data.indexes, inner_data.values)
+                            }
+                if weight_dict:
+                    rp_weights[timeset_name] = weight_dict
         return cls(
             timelines=timelines,
             timesets=timesets,
             timesets__timeline=timesets__timeline,
             timeset_durations=timeset_durations,
             new_step_durations=new_step_durations,
+            rp_weights=rp_weights,
         )
 
     # ------------------------------------------------------------------

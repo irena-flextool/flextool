@@ -320,6 +320,28 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
                 with open(wf / "solve_data" / fname, "w", newline="") as f:
                     csv.writer(f).writerow(["process", "period", "time", "period_back", "time_back"])
 
+        # Write representative period data if available
+        active_timeset_names = [ts for _, ts in state.solve.timesets_used_by_solves.get(complete_solve[solve], [])]
+        rp_written = False
+        for ts_name in active_timeset_names:
+            if ts_name in state.timeline.rp_weights:
+                period_name = None
+                for p, ts in state.solve.timesets_used_by_solves.get(complete_solve[solve], []):
+                    if ts == ts_name:
+                        period_name = p
+                        break
+                if period_name:
+                    solve_writers.write_rp_data(
+                        rp_weights=state.timeline.rp_weights[ts_name],
+                        timeset_duration_entries=state.timeline.timeset_durations[ts_name],
+                        period_name=period_name,
+                        work_folder=wf,
+                    )
+                    rp_written = True
+                    break
+        if not rp_written:
+            solve_writers.write_empty_rp_data(work_folder=wf)
+
         state.logger.info("Starting model creation")
 
         with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:

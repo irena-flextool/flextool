@@ -562,3 +562,131 @@ def write_delayed_durations(
                         writer.writerow([period_name, time_step.timestep, time_steps[k + int(float(delay_duration))].timestep, str(delay_duration)])
                     elif k + int(float(delay_duration)) >= len(time_steps):
                         writer.writerow([period_name, time_step.timestep, time_steps[k - len(time_steps) + int(float(delay_duration))].timestep, str(delay_duration)])
+
+
+# ---------------------------------------------------------------------------
+# Representative period CSV writers
+# ---------------------------------------------------------------------------
+
+def write_rp_data(
+    rp_weights: dict[str, dict[str, float]],
+    timeset_duration_entries: list[tuple[str, float]],
+    period_name: str,
+    work_folder: Path | None = None,
+) -> None:
+    """Write all representative period CSV files for the GMPL solver.
+
+    Args:
+        rp_weights: {base_start: {rep_start: weight}} — the full weight matrix.
+        timeset_duration_entries: [(start_step, count), ...] for the RP timeset.
+        period_name: The FlexTool period name (e.g. 'p2025').
+        work_folder: Working directory for output.
+    """
+    wf = work_folder if work_folder is not None else Path.cwd()
+    sd = wf / "solve_data"
+
+    # Determine RP block boundaries from timeset_duration
+    rp_starts: list[str] = []
+    rp_lasts: list[str] = []
+    for start_step, count in timeset_duration_entries:
+        start_step = str(start_step)
+        rp_starts.append(start_step)
+        # Last timestep: compute from start + count - 1
+        # We need the actual timestep name. For t-indexed names, increment the index.
+        start_idx = int(start_step[1:])  # e.g. 't0001' -> 1
+        last_idx = start_idx + int(float(count)) - 1
+        last_step = f"t{last_idx:04d}"
+        rp_lasts.append(last_step)
+
+    # Base period starts (sorted chronologically)
+    base_starts = sorted(rp_weights.keys(), key=lambda s: int(s[1:]))
+    n_base = len(base_starts)
+    n_rp = len(rp_starts)
+
+    # 1. rp_weights.csv
+    with open(sd / "rp_weights.csv", 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["base_start", "rep_start", "weight"])
+        for base in base_starts:
+            for rep, weight in rp_weights[base].items():
+                if weight > 1e-10:
+                    writer.writerow([base, rep, weight])
+
+    # 2. rp_base_chain.csv (chronological, excludes first)
+    with open(sd / "rp_base_chain.csv", 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["base_start", "prev_base_start"])
+        for i in range(1, n_base):
+            writer.writerow([base_starts[i], base_starts[i - 1]])
+
+    # 3. rp_base_first.csv / rp_base_last.csv
+    with open(sd / "rp_base_first.csv", 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["base_start"])
+        writer.writerow([base_starts[0]])
+
+    with open(sd / "rp_base_last.csv", 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["base_start"])
+        writer.writerow([base_starts[-1]])
+
+    # 4. rp_block_first.csv / rp_block_last.csv
+    with open(sd / "rp_block_first.csv", 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["period", "step"])
+        for start in rp_starts:
+            writer.writerow([period_name, start])
+
+    with open(sd / "rp_block_last.csv", 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["period", "step"])
+        for last in rp_lasts:
+            writer.writerow([period_name, last])
+
+    # 5. rp_block_start_last.csv (maps RP start to last step)
+    with open(sd / "rp_block_start_last.csv", 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["rep_start", "last_step"])
+        for start, last in zip(rp_starts, rp_lasts):
+            writer.writerow([start, last])
+
+    # 6. rp_cost_weight.csv — per-timestep cost weight
+    # W_r = sum_d W[d,r] for each RP r. Normalized: w_r = W_r * n_rp / n_base
+    w_r: dict[str, float] = {r: 0.0 for r in rp_starts}
+    for base_weights in rp_weights.values():
+        for rep, weight in base_weights.items():
+            if rep in w_r:
+                w_r[rep] += weight
+    # Normalize so uniform weights give w_r = 1
+    for rep in w_r:
+        w_r[rep] = w_r[rep] * n_rp / n_base if n_base > 0 else 1.0
+
+    with open(sd / "rp_cost_weight.csv", 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["period", "time", "weight"])
+        for start, last in zip(rp_starts, rp_lasts):
+            start_idx = int(start[1:])
+            last_idx = int(last[1:])
+            weight = w_r[start]
+            for t_idx in range(start_idx, last_idx + 1):
+                writer.writerow([period_name, f"t{t_idx:04d}", weight])
+
+
+def write_empty_rp_data(work_folder: Path | None = None) -> None:
+    """Write empty RP CSV files (headers only) for non-RP models."""
+    wf = work_folder if work_folder is not None else Path.cwd()
+    sd = wf / "solve_data"
+    empty_files = {
+        "rp_weights.csv": ["base_start", "rep_start", "weight"],
+        "rp_base_chain.csv": ["base_start", "prev_base_start"],
+        "rp_base_first.csv": ["base_start"],
+        "rp_base_last.csv": ["base_start"],
+        "rp_block_first.csv": ["period", "step"],
+        "rp_block_last.csv": ["period", "step"],
+        "rp_block_start_last.csv": ["rep_start", "last_step"],
+        "rp_cost_weight.csv": ["period", "time", "weight"],
+    }
+    for filename, headers in empty_files.items():
+        with open(sd / filename, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
