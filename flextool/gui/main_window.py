@@ -43,6 +43,32 @@ from flextool.gui.db_editor_integration import DbEditorManager
 
 logger = logging.getLogger(__name__)
 
+
+def _unlink_sqlite(db_path: Path) -> None:
+    """Delete an SQLite file and its WAL/SHM journals, retrying on Windows lock errors.
+
+    On Windows, SQLAlchemy's connection pool may briefly hold file handles
+    after a ``DatabaseMapping`` context manager exits (the engine is not
+    disposed in ``__exit__``).  A short retry loop lets the GC and OS
+    release the handles before we give up.
+    """
+    import gc
+    import time
+
+    for path in (db_path, db_path.with_suffix(".sqlite-wal"), db_path.with_suffix(".sqlite-shm")):
+        if not path.exists():
+            continue
+        for attempt in range(5):
+            try:
+                path.unlink()
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                gc.collect()
+                time.sleep(0.5)
+
+
 # Unicode checkbox characters for Treeview checkbox simulation
 # Using geometric shapes (U+25A1 / U+25A3) which render noticeably larger
 # than ballot box characters at the same font size.
@@ -1915,7 +1941,7 @@ class MainWindow(tk.Tk):
         target_db_url = f"sqlite:///{db_path}"
 
         if db_path.exists():
-            db_path.unlink()
+            _unlink_sqlite(db_path)
 
         # Detect format and build command
         from flextool.process_inputs import (

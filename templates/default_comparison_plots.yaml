@@ -448,7 +448,7 @@ plots:
       sum_periods:
         variant: a
         max_items_per_plot: 40
-        map_dimensions_for_plots: [d_see, m_gb]
+        map_dimensions_for_plots: [d_se, m_gb]
         legend: shared
         skip_data_with_only_zeroes: true
         xlabel: MWh

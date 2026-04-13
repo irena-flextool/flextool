@@ -107,8 +107,8 @@ def main():
         print("--- Write time %.4s seconds ---" % (timer[0] - timer[1]))
         with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
             solve_progress.write('Write all input time,' + str(round(timer[0] - timer[1],4)) + '\n')
-        db_map = DatabaseMapping(input_db_url)
-        scenario_name = name_from_dict(db_map.get_filter_configs()[0])
+        with DatabaseMapping(input_db_url) as db_map:
+            scenario_name = name_from_dict(db_map.get_filter_configs()[0])
 
     print(f'Scenario: {scenario_name}')
     try:

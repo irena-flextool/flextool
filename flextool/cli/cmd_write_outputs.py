@@ -51,56 +51,61 @@ def main():
         read_parquet_dir=args.read_parquet_dir
         output_location = args.output_location
 
-        if input_db_url:
-            db_map = DatabaseMapping(input_db_url)
-            scenario_names = [name_from_dict(db_map.get_filter_configs()[0])]
-        elif output_locations_db_url:
-            db_map = DatabaseMapping(output_locations_db_url)
-            filter_configs = db_map.get_filter_configs()
-            if filter_configs:
-                alternative_names = filter_configs[0]['alternatives']
-                scenario_names = alternative_names
-            read_parquet_dir = True
+        db_map = None
+        try:
+            if input_db_url:
+                with DatabaseMapping(input_db_url) as db_map_tmp:
+                    scenario_names = [name_from_dict(db_map_tmp.get_filter_configs()[0])]
+            elif output_locations_db_url:
+                db_map = DatabaseMapping(output_locations_db_url)
+                filter_configs = db_map.get_filter_configs()
+                if filter_configs:
+                    alternative_names = filter_configs[0]['alternatives']
+                    scenario_names = alternative_names
+                read_parquet_dir = True
 
-        if not scenario_names:
-            logging.critical("No scenario provided through any of the arguments: scenario-name or output-locations-db-url (or input-db-url by run_flextool.py)")
-            sys.exit(1)
+            if not scenario_names:
+                logging.critical("No scenario provided through any of the arguments: scenario-name or output-locations-db-url (or input-db-url by run_flextool.py)")
+                sys.exit(1)
 
-        if args.subdir:
-            subdir = args.subdir
-        else:
-            subdir = scenario_names[0]
+            if args.subdir:
+                subdir = args.subdir
+            else:
+                subdir = scenario_names[0]
 
-        for i, scenario_name in enumerate(scenario_names):
-            if not input_db_url and output_locations_db_url:
-                param_value = db_map.get_parameter_value_item(
-                    entity_class_name='scenario',
-                    entity_byname=(scenario_name,),
-                    parameter_definition_name='output_location',
-                    alternative_name=scenario_name
+            for i, scenario_name in enumerate(scenario_names):
+                if not input_db_url and output_locations_db_url:
+                    param_value = db_map.get_parameter_value_item(
+                        entity_class_name='scenario',
+                        entity_byname=(scenario_name,),
+                        parameter_definition_name='output_location',
+                        alternative_name=scenario_name
+                    )
+                    if param_value:
+                        output_location = param_value['parsed_value']
+                    else:
+                        raise FileNotFoundError(f"Could not find output data location directory for scenario {scenario_name} from db {output_locations_db_url}.")
+                    subdir = scenario_name
+
+                write_outputs(
+                    scenario_name=scenario_name,
+                    output_config_path=args.config_path,
+                    active_configs=args.active_configs,
+                    output_funcs=None,
+                    output_location=output_location,
+                    subdir=subdir,
+                    read_parquet_dir=read_parquet_dir,
+                    write_methods=args.write_methods,
+                    plot_rows=tuple(args.plot_rows) if args.plot_rows else None,
+                    debug=args.debug,
+                    single_result=tuple(args.single_result) if args.single_result else None,
+                    settings_db_url=args.settings_db_url,
+                    plot_file_format=args.plot_file_format,
+                    only_first_file=args.only_first_file_per_plot,
                 )
-                if param_value:
-                    output_location = param_value['parsed_value']
-                else:
-                    raise FileNotFoundError(f"Could not find output data location directory for scenario {scenario_name} from db {output_locations_db_url}.")
-                subdir = scenario_name
-        
-            write_outputs(
-                scenario_name=scenario_name,
-                output_config_path=args.config_path,
-                active_configs=args.active_configs,
-                output_funcs=None,
-                output_location=output_location,
-                subdir=subdir,
-                read_parquet_dir=read_parquet_dir,
-                write_methods=args.write_methods,
-                plot_rows=tuple(args.plot_rows) if args.plot_rows else None,
-                debug=args.debug,
-                single_result=tuple(args.single_result) if args.single_result else None,
-                settings_db_url=args.settings_db_url,
-                plot_file_format=args.plot_file_format,
-                only_first_file=args.only_first_file_per_plot,
-            )
+        finally:
+            if db_map is not None:
+                db_map.close()
 
 if __name__ == '__main__':
     main()

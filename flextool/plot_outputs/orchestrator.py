@@ -116,11 +116,19 @@ def _apply_dimension_rules(
         df.columns = pd.MultiIndex.from_arrays([df.columns], names=[df.columns.name])
 
     nr_row_levels = df.index.nlevels
-    if len(rules) != nr_row_levels + df.columns.nlevels:
+    nr_col_levels = df.columns.nlevels
+    if len(rules) != nr_row_levels + nr_col_levels:
         raise ValueError(
             f"Number of plot_type rules different from the number of index + "
             f"column levels in the dataframe. {cfg.plot_name}"
         )
+    if len(df_columns_levels) != nr_col_levels:
+        logging.warning(
+            "Plot config '%s': map_dimensions_for_plots column part has %d "
+            "levels but DataFrame has %d column levels — skipping",
+            cfg.plot_name, len(df_columns_levels), nr_col_levels,
+        )
+        return None
 
     levels_to_sort = [i for i, c in enumerate(df_columns_levels) if c in ('e', 'g')]
     if levels_to_sort:
