@@ -34,6 +34,7 @@ class AddDialog(tk.Toplevel):
         self.title("Add input sources")
         self.result: bool = False
         self.old_convert_started: bool = False  # True if old FlexTool conversion was started
+        self.files_to_convert: list[str] = []  # Excel files the user chose to convert to sqlite
         self._project_path = project_path
         self._input_dir = project_path / "input_sources"
         self._input_dir.mkdir(parents=True, exist_ok=True)
@@ -215,6 +216,7 @@ class AddDialog(tk.Toplevel):
             fp = Path(fp)
 
             # Validate Excel files before copying
+            needs_migration = False
             if fp.suffix.lower() in (".xlsx", ".xlsm", ".ods"):
                 info = detect_excel_format(fp)
 
@@ -227,18 +229,17 @@ class AddDialog(tk.Toplevel):
                     )
                     continue
 
+                # Check whether the file needs migration
+                needs_migration = (
+                    info.format == ExcelFormat.SPECIFICATION
+                    or (
+                        info.format == ExcelFormat.SELF_DESCRIBING
+                        and info.version is not None
+                        and info.version < CURRENT_FLEXTOOL_DB_VERSION
+                    )
+                )
+
                 if info.format == ExcelFormat.SPECIFICATION:
-                    if info.version is not None and info.version < CURRENT_FLEXTOOL_DB_VERSION:
-                        messagebox.showwarning(
-                            "Cannot convert safely",
-                            f"'{fp.name}' is an older FlexTool 3.0 file "
-                            f"(version {info.version}).\n\n"
-                            f"It should be version {CURRENT_FLEXTOOL_DB_VERSION} "
-                            f"or higher to be converted safely.",
-                            parent=self,
-                        )
-                        continue
-                    # v25 or higher — warn but continue
                     proceed = messagebox.askokcancel(
                         "Older FlexTool 3.0 format",
                         f"'{fp.name}' uses the older FlexTool 3.0 Excel format "
@@ -275,6 +276,27 @@ class AddDialog(tk.Toplevel):
             except OSError as exc:
                 errors.append(f"{fp.name}: {exc}")
                 logger.error("Failed to copy %s: %s", fp, exc)
+                continue
+
+            # For older Excel files that need migration, offer to convert
+            # to Spine DB now.  The file will be converted anyway when run,
+            # so doing the round-trip back to Excel increases the risk of
+            # something going wrong.
+            if needs_migration:
+                version_str = str(info.version) if info.version is not None else "unknown"
+                convert = messagebox.askyesno(
+                    "Convert to Spine DB?",
+                    f"'{fp.name}' is version {version_str} "
+                    f"(current is {CURRENT_FLEXTOOL_DB_VERSION}) and needs "
+                    f"to be migrated.\n\n"
+                    f"Convert to Spine DB now?\n\n"
+                    f"Recommended — the file will be converted to a database "
+                    f"when run anyway, so keeping it as Excel means an extra "
+                    f"round-trip that may cause issues.",
+                    parent=self,
+                )
+                if convert:
+                    self.files_to_convert.append(fp.name)
 
         if errors:
             messagebox.showerror(

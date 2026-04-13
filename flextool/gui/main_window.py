@@ -1025,6 +1025,9 @@ class MainWindow(tk.Tk):
             self._autocheck_new_sources(old_sources)
         if dlg.old_convert_started:
             self._open_or_raise_execution_window()
+        # Convert files that the user chose to migrate to Spine DB
+        for name in dlg.files_to_convert:
+            self._convert_xlsx_to_sqlite(name, confirm=False)
 
     def _autocheck_new_sources(self, old_sources: set[str]) -> None:
         """Check (tick) newly added input sources and their available scenarios."""
@@ -1421,8 +1424,15 @@ class MainWindow(tk.Tk):
 
     # ── Conversion: xlsx → sqlite ────────────────────────────────
 
-    def _convert_xlsx_to_sqlite(self, source_name: str) -> None:
-        """Convert an xlsx input source to sqlite format via subprocess."""
+    def _convert_xlsx_to_sqlite(self, source_name: str, confirm: bool = True) -> None:
+        """Convert an xlsx input source to sqlite format via subprocess.
+
+        Args:
+            source_name: Name of the xlsx file in ``input_sources/``.
+            confirm: If True (default), ask the user to confirm before
+                converting.  Set to False when the caller has already
+                obtained confirmation (e.g. from the add-dialog).
+        """
         project_path = get_projects_dir() / self.current_project
         input_dir = project_path / "input_sources"
         xlsx_path = input_dir / source_name
@@ -1438,13 +1448,14 @@ class MainWindow(tk.Tk):
         if not self._resolve_file_conflict(target_sqlite):
             return
 
-        answer = messagebox.askokcancel(
-            "Convert to database",
-            f"Convert '{source_name}' to a database input source?\n\n"
-            f"The xlsx will be moved to the 'converted' folder for safekeeping.",
-        )
-        if not answer:
-            return
+        if confirm:
+            answer = messagebox.askokcancel(
+                "Convert to database",
+                f"Convert '{source_name}' to a database input source?\n\n"
+                f"The xlsx will be moved to the 'converted' folder for safekeeping.",
+            )
+            if not answer:
+                return
 
         target_db_url = f"sqlite:///{target_sqlite}"
 
@@ -1453,29 +1464,34 @@ class MainWindow(tk.Tk):
             detect_excel_format, ExcelFormat, CURRENT_FLEXTOOL_DB_VERSION,
         )
         from flextool.update_flextool.initialize_database import initialize_database
+        from flextool.update_flextool.db_migration import migrate_database
         info = detect_excel_format(xlsx_path)
 
         flextool_root = Path(__file__).resolve().parent.parent.parent
-        if info.format == ExcelFormat.SPECIFICATION:
-            # Old 3.x format: must import against frozen v25 schema, then migrate
-            template = flextool_root / "version" / "flextool_template_v25.json"
-        else:
+        needs_migration = False
+
+        if info.format == ExcelFormat.SELF_DESCRIBING and (
+            info.version is None or info.version >= CURRENT_FLEXTOOL_DB_VERSION
+        ):
+            # Current version — import directly against the current schema
             template = flextool_root / "version" / "flextool_template_master.json"
+        else:
+            # Older Excel (SPECIFICATION or older SELF_DESCRIBING):
+            # init from v25 base, migrate to the Excel's version, import, then
+            # migrate the rest of the way to current after import.
+            template = flextool_root / "version" / "flextool_template_v25.json"
+            needs_migration = True
 
         if not template.exists():
             messagebox.showerror("Template missing", f"Cannot find template:\n{template}")
             return
         initialize_database(str(template), str(target_sqlite))
 
-        # Determine whether migration is needed after import
-        needs_migration = (
-            info.format == ExcelFormat.SPECIFICATION
-            or (
-                info.format == ExcelFormat.SELF_DESCRIBING
-                and info.version is not None
-                and info.version < CURRENT_FLEXTOOL_DB_VERSION
-            )
-        )
+        if needs_migration and info.version is not None and info.version > 25:
+            # Bring the empty schema up to the Excel's version so parameter
+            # names match during import.  The final migration to current
+            # happens after import via _run_conversion_subprocess.
+            migrate_database(str(target_sqlite), up_to=info.version)
 
         # Build the appropriate subprocess command
         if info.format == ExcelFormat.SELF_DESCRIBING:
@@ -1736,19 +1752,32 @@ class MainWindow(tk.Tk):
         from flextool.process_inputs import (
             detect_excel_format, ExcelFormat, CURRENT_FLEXTOOL_DB_VERSION,
         )
+        from flextool.update_flextool.initialize_database import initialize_database
+        from flextool.update_flextool.db_migration import migrate_database
         info = detect_excel_format(xlsx_path)
         flextool_root = Path(__file__).resolve().parent.parent.parent
         migrate_db_path: str | None = None
 
-        if info.format == ExcelFormat.SELF_DESCRIBING:
+        if info.format == ExcelFormat.SELF_DESCRIBING and (
+            info.version is None or info.version >= CURRENT_FLEXTOOL_DB_VERSION
+        ):
+            # Current version — import directly against the current schema
             template = flextool_root / "version" / "flextool_template_master.json"
             cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
                 str(xlsx_path), target_db_url, "--keep-entities",
             ]
-            if info.version is not None and info.version < CURRENT_FLEXTOOL_DB_VERSION:
-                migrate_db_path = str(db_path)
+        elif info.format == ExcelFormat.SELF_DESCRIBING:
+            # Older self-describing: init from v25 base, pre-migrate to
+            # the Excel's version, import, then migrate to current.
+            template = flextool_root / "version" / "flextool_template_v25.json"
+            cmd = [
+                sys.executable, "-m",
+                "flextool.cli.cmd_read_self_describing_tabular_input",
+                str(xlsx_path), target_db_url, "--keep-entities",
+            ]
+            migrate_db_path = str(db_path)
         else:
             template = flextool_root / "version" / "flextool_template_v25.json"
             cmd = [
@@ -1760,8 +1789,16 @@ class MainWindow(tk.Tk):
             migrate_db_path = str(db_path)
 
         # Initialize database from template
-        from flextool.update_flextool.initialize_database import initialize_database
         initialize_database(str(template), str(db_path))
+
+        # For older self-describing Excel, bring the empty schema up to the
+        # Excel's version so parameter names match during import.
+        if (
+            info.format == ExcelFormat.SELF_DESCRIBING
+            and info.version is not None
+            and 25 < info.version < CURRENT_FLEXTOOL_DB_VERSION
+        ):
+            migrate_database(str(db_path), up_to=info.version)
 
         # Create auxiliary job in the execution window
         job = self.execution_mgr.add_auxiliary_job(

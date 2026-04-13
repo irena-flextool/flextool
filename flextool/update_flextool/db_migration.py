@@ -6,7 +6,14 @@ import logging
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 
-def migrate_database(database_path):
+def migrate_database(database_path, up_to: int | None = None):
+    """Migrate a FlexTool database to a target schema version.
+
+    Args:
+        database_path: Path or URL to the SQLite database.
+        up_to: Target version to migrate to.  When ``None`` (the default),
+            migrates all the way to :data:`FLEXTOOL_DB_VERSION`.
+    """
 
     if database_path.startswith('sqlite://') or database_path.startswith('http://'):
         mapping_name = database_path
@@ -27,7 +34,7 @@ def migrate_database(database_path):
             version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
         next_version = int(version) + 1
-        new_version = FLEXTOOL_DB_VERSION
+        new_version = up_to if up_to is not None else FLEXTOOL_DB_VERSION
 
         while next_version <= new_version:
             if next_version == 0:
