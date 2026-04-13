@@ -1025,9 +1025,11 @@ class MainWindow(tk.Tk):
             self._autocheck_new_sources(old_sources)
         if dlg.old_convert_started:
             self._open_or_raise_execution_window()
-        # Convert files that the user chose to migrate to Spine DB
+        # Handle files the user chose to migrate
         for name in dlg.files_to_convert:
             self._convert_xlsx_to_sqlite(name, confirm=False)
+        for name in dlg.files_to_update_xlsx:
+            self._update_xlsx_version(name)
 
     def _autocheck_new_sources(self, old_sources: set[str]) -> None:
         """Check (tick) newly added input sources and their available scenarios."""
@@ -1543,6 +1545,172 @@ class MainWindow(tk.Tk):
             migrate_db_path=str(target_sqlite) if needs_migration else None,
             version_note=version_note,
         )
+
+    # ── Update xlsx version via round-trip ───────���──────────────
+
+    def _update_xlsx_version(self, source_name: str) -> None:
+        """Migrate an older xlsx to the current version in-place.
+
+        Round-trips through a temporary SQLite database:
+        old xlsx → temp sqlite (import + migrate) → updated xlsx.
+        """
+        from flextool.gui.execution_manager import JobType
+        from flextool.process_inputs import (
+            detect_excel_format, ExcelFormat, CURRENT_FLEXTOOL_DB_VERSION,
+        )
+        from flextool.update_flextool.initialize_database import initialize_database
+        from flextool.update_flextool.db_migration import migrate_database
+
+        project_path = get_projects_dir() / self.current_project
+        input_dir = project_path / "input_sources"
+        xlsx_path = input_dir / source_name
+
+        if not xlsx_path.exists():
+            messagebox.showerror("File not found", f"Cannot find:\n{xlsx_path}")
+            return
+
+        info = detect_excel_format(xlsx_path)
+        flextool_root = Path(__file__).resolve().parent.parent.parent
+
+        # Create a temporary directory for the intermediate sqlite
+        import tempfile
+        tmp_dir = Path(tempfile.mkdtemp(prefix="flextool_update_"))
+        tmp_sqlite = tmp_dir / "temp_import.sqlite"
+        tmp_db_url = f"sqlite:///{tmp_sqlite}"
+
+        # Choose template and build import command (same logic as _convert)
+        if info.format == ExcelFormat.SELF_DESCRIBING and (
+            info.version is None or info.version >= CURRENT_FLEXTOOL_DB_VERSION
+        ):
+            # Already current — nothing to do
+            try:
+                tmp_dir.rmdir()
+            except OSError:
+                pass
+            return
+        elif info.format == ExcelFormat.SELF_DESCRIBING:
+            template = flextool_root / "version" / "flextool_template_v25.json"
+            import_cmd = [
+                sys.executable, "-m",
+                "flextool.cli.cmd_read_self_describing_tabular_input",
+                str(xlsx_path), tmp_db_url, "--keep-entities",
+            ]
+        else:
+            # SPECIFICATION format
+            template = flextool_root / "version" / "flextool_template_v25.json"
+            import_cmd = [
+                sys.executable, "-m",
+                "flextool.cli.cmd_read_tabular_input",
+                tmp_db_url, "--tabular-file-path", str(xlsx_path),
+                "--migration-follows",
+            ]
+
+        export_cmd = [
+            sys.executable, "-m",
+            "flextool.cli.cmd_export_to_tabular",
+            tmp_db_url,
+            str(xlsx_path),
+        ]
+
+        # Initialize the temp database
+        initialize_database(str(template), str(tmp_sqlite))
+
+        # Pre-migrate to Excel's version for self-describing
+        if (
+            info.format == ExcelFormat.SELF_DESCRIBING
+            and info.version is not None
+            and 25 < info.version < CURRENT_FLEXTOOL_DB_VERSION
+        ):
+            migrate_database(str(tmp_sqlite), up_to=info.version)
+
+        # Set up execution job
+        self._ensure_execution_mgr()
+        if self.execution_mgr is None:
+            return
+
+        job = self.execution_mgr.add_auxiliary_job(
+            JobType.CONVERSION,
+            f"Update: {source_name} \u2192 version {CURRENT_FLEXTOOL_DB_VERSION}",
+            f"format_convert:{source_name}",
+        )
+        mgr = self.execution_mgr
+        mgr.append_stdout(job.job_id, f"Updating {source_name} to version {CURRENT_FLEXTOOL_DB_VERSION}\n")
+        mgr.append_stdout(job.job_id, "Step 1: Import into temporary database")
+        mgr.append_stdout(job.job_id, " ".join(import_cmd))
+        mgr.append_stdout(job.job_id, "")
+
+        self._open_or_raise_execution_window()
+        if self.execution_window is not None:
+            self.execution_window.select_job(job.job_id)
+
+        def _worker() -> None:
+            import shutil as _shutil
+            success = False
+            try:
+                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+
+                # Step 1: import old Excel into temp sqlite
+                proc = subprocess.Popen(
+                    import_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1, cwd=str(flextool_root), env=env,
+                )
+                with mgr._lock:
+                    job.process = proc
+                for line in proc.stdout:  # type: ignore[union-attr]
+                    mgr.append_stdout(job.job_id, line.rstrip("\n"))
+                proc.wait()
+
+                if proc.returncode != 0:
+                    mgr.append_stdout(job.job_id, f"\nImport failed (exit code {proc.returncode}).")
+                    return
+
+                # Step 2: migrate temp sqlite to current version
+                mgr.append_stdout(job.job_id, "\nStep 2: Migrating database to current version...")
+                try:
+                    from flextool.update_flextool.db_migration import migrate_database as _migrate
+                    _migrate(str(tmp_sqlite))
+                    mgr.append_stdout(job.job_id, "Database migration completed.")
+                except Exception as mig_exc:
+                    mgr.append_stdout(job.job_id, f"Database migration failed: {mig_exc}")
+                    return
+
+                # Step 3: export back to Excel
+                mgr.append_stdout(job.job_id, "\nStep 3: Exporting updated database to Excel...")
+                mgr.append_stdout(job.job_id, " ".join(export_cmd))
+                proc2 = subprocess.Popen(
+                    export_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1, cwd=str(flextool_root), env=env,
+                )
+                with mgr._lock:
+                    job.process = proc2
+                for line in proc2.stdout:  # type: ignore[union-attr]
+                    mgr.append_stdout(job.job_id, line.rstrip("\n"))
+                proc2.wait()
+
+                if proc2.returncode != 0:
+                    mgr.append_stdout(job.job_id, f"\nExport failed (exit code {proc2.returncode}).")
+                    return
+
+                success = True
+                mgr.append_stdout(
+                    job.job_id,
+                    f"\nSuccessfully updated {source_name} to version {CURRENT_FLEXTOOL_DB_VERSION}.",
+                )
+            except Exception as exc:
+                logger.error("Version update failed: %s", exc, exc_info=True)
+                mgr.append_stdout(job.job_id, f"\nError: {exc}")
+            finally:
+                # Clean up temp directory
+                try:
+                    _shutil.rmtree(tmp_dir, ignore_errors=True)
+                except Exception:
+                    pass
+
+            mgr.finish_job(job.job_id, success)
+            self.after(0, self._refresh_input_sources)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
 
     # ── Conversion: sqlite → xlsx ────────────────────────────────
 

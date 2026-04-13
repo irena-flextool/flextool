@@ -19,6 +19,71 @@ logger = logging.getLogger(__name__)
 _OLD_FLEX_ALTERNATIVE = "base"
 
 
+def _ask_migration_choice(
+    parent: tk.Misc,
+    filename: str,
+    version_str: str,
+    current_version: int,
+) -> str:
+    """Ask how to handle an older Excel file that needs migration.
+
+    Returns:
+        ``"sqlite"`` to convert to Spine DB, ``"excel"`` to migrate and
+        keep as Excel, or ``"cancel"`` to do nothing.
+    """
+    dlg = tk.Toplevel(parent)
+    dlg.title("Version migration needed")
+    dlg.transient(parent)
+    dlg.grab_set()
+    dlg.resizable(False, False)
+
+    result = "cancel"
+
+    msg = (
+        f"'{filename}' is version {version_str} "
+        f"(current is {current_version}) and needs to be migrated.\n\n"
+        f"Choose how to handle the update:"
+    )
+    lbl = ttk.Label(dlg, text=msg, wraplength=420, justify="left")
+    lbl.pack(padx=16, pady=(16, 8))
+
+    btn_frame = ttk.Frame(dlg)
+    btn_frame.pack(padx=16, pady=(4, 16))
+
+    def _choose(choice: str) -> None:
+        nonlocal result
+        result = choice
+        dlg.destroy()
+
+    ttk.Button(
+        btn_frame, text="Convert to Spine DB",
+        command=lambda: _choose("sqlite"),
+    ).pack(side="left", padx=4)
+    ttk.Button(
+        btn_frame, text="Update Excel",
+        command=lambda: _choose("excel"),
+    ).pack(side="left", padx=4)
+    ttk.Button(
+        btn_frame, text="Cancel",
+        command=lambda: _choose("cancel"),
+    ).pack(side="left", padx=4)
+
+    dlg.protocol("WM_DELETE_WINDOW", lambda: _choose("cancel"))
+
+    # Center on parent
+    dlg.update_idletasks()
+    pw = parent.winfo_width()
+    ph = parent.winfo_height()
+    px = parent.winfo_rootx()
+    py = parent.winfo_rooty()
+    dw = dlg.winfo_width()
+    dh = dlg.winfo_height()
+    dlg.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+
+    parent.wait_window(dlg)
+    return result
+
+
 class AddDialog(tk.Toplevel):
     """Modal dialog for adding input source files to a project.
 
@@ -34,7 +99,8 @@ class AddDialog(tk.Toplevel):
         self.title("Add input sources")
         self.result: bool = False
         self.old_convert_started: bool = False  # True if old FlexTool conversion was started
-        self.files_to_convert: list[str] = []  # Excel files the user chose to convert to sqlite
+        self.files_to_convert: list[str] = []  # Excel files to convert to sqlite
+        self.files_to_update_xlsx: list[str] = []  # Excel files to round-trip (migrate and keep as xlsx)
         self._project_path = project_path
         self._input_dir = project_path / "input_sources"
         self._input_dir.mkdir(parents=True, exist_ok=True)
@@ -217,6 +283,7 @@ class AddDialog(tk.Toplevel):
 
             # Validate Excel files before copying
             needs_migration = False
+            migration_choice: str | None = None
             if fp.suffix.lower() in (".xlsx", ".xlsm", ".ods"):
                 info = detect_excel_format(fp)
 
@@ -239,18 +306,6 @@ class AddDialog(tk.Toplevel):
                     )
                 )
 
-                if info.format == ExcelFormat.SPECIFICATION:
-                    proceed = messagebox.askokcancel(
-                        "Older FlexTool 3.0 format",
-                        f"'{fp.name}' uses the older FlexTool 3.0 Excel format "
-                        f"(with separate version sheet).\n\n"
-                        f"It will be copied to the project and can be used, but "
-                        f"consider converting to the new format for best results.",
-                        parent=self,
-                    )
-                    if not proceed:
-                        continue
-
                 if info.format == ExcelFormat.UNKNOWN:
                     messagebox.showwarning(
                         "Unrecognised format",
@@ -259,6 +314,18 @@ class AddDialog(tk.Toplevel):
                         parent=self,
                     )
                     continue
+
+                # For older files, ask how to handle migration before copying
+                if needs_migration:
+                    version_str = str(info.version) if info.version is not None else "unknown"
+                    migration_choice = _ask_migration_choice(
+                        self,
+                        fp.name,
+                        version_str,
+                        CURRENT_FLEXTOOL_DB_VERSION,
+                    )
+                    if migration_choice == "cancel":
+                        continue
 
             dest = self._input_dir / fp.name
             if dest.exists():
@@ -278,25 +345,10 @@ class AddDialog(tk.Toplevel):
                 logger.error("Failed to copy %s: %s", fp, exc)
                 continue
 
-            # For older Excel files that need migration, offer to convert
-            # to Spine DB now.  The file will be converted anyway when run,
-            # so doing the round-trip back to Excel increases the risk of
-            # something going wrong.
-            if needs_migration:
-                version_str = str(info.version) if info.version is not None else "unknown"
-                convert = messagebox.askyesno(
-                    "Convert to Spine DB?",
-                    f"'{fp.name}' is version {version_str} "
-                    f"(current is {CURRENT_FLEXTOOL_DB_VERSION}) and needs "
-                    f"to be migrated.\n\n"
-                    f"Convert to Spine DB now?\n\n"
-                    f"Recommended — the file will be converted to a database "
-                    f"when run anyway, so keeping it as Excel means an extra "
-                    f"round-trip that may cause issues.",
-                    parent=self,
-                )
-                if convert:
-                    self.files_to_convert.append(fp.name)
+            if migration_choice == "sqlite":
+                self.files_to_convert.append(fp.name)
+            elif migration_choice == "excel":
+                self.files_to_update_xlsx.append(fp.name)
 
         if errors:
             messagebox.showerror(
