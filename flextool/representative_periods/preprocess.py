@@ -221,9 +221,11 @@ def _write_results_to_db(
     timeline_name: str,
     timeset_duration_map: Map,
     weights_map: Map,
+    solve_period_timesets: dict,
 ) -> None:
     """Write clustering results to the database in a new alternative.
 
+    Also updates each solve's period_timeset to point to the new RP timeset.
     Opens a NEW connection WITHOUT scenario filter.
     """
     with DatabaseMapping(db_url) as db:
@@ -245,10 +247,30 @@ def _write_results_to_db(
             ("timeset", timeset_name, "representative_period_weights", weights_map, alternative_name),
         ]
 
-        # Entity alternatives
+        # Update each solve's period_timeset to use the new RP timeset
         entity_alternatives = [
             ("timeset", timeset_name, alternative_name, True),
         ]
+        for solve_name, pts_data in solve_period_timesets.items():
+            # pts_data is a list of (period, timeset) tuples or a Map
+            if isinstance(pts_data, list):
+                periods = [entry[0] for entry in pts_data]
+            elif isinstance(pts_data, api.Map):
+                periods = list(pts_data.indexes)
+            else:
+                continue
+            # Replace all timesets with the new RP timeset
+            new_map = Map(
+                [str(p) for p in periods],
+                [timeset_name] * len(periods),
+            )
+            parameter_values.append(
+                ("solve", solve_name, "period_timeset", new_map, alternative_name)
+            )
+            entity_alternatives.append(
+                ("solve", solve_name, alternative_name, True)
+            )
+            print(f"  Updated solve '{solve_name}' period_timeset → '{timeset_name}' for periods {[str(p) for p in periods]}")
 
         count, errors = import_data(
             db,
@@ -308,6 +330,11 @@ def preprocess_representative_periods(
         )
         timeline_name = next(iter(timelines))
 
+        # Read solve period_timeset mappings so we can update them
+        solve_period_timesets: dict = params_to_dict(
+            db=db, cl="solve", par="period_timeset", mode=DictMode.DICT
+        )
+
     # ------------------------------------------------------------------
     # 3. Build clustering matrix
     # ------------------------------------------------------------------
@@ -361,6 +388,7 @@ def preprocess_representative_periods(
         timeline_name,
         timeset_duration_map,
         weights_map,
+        solve_period_timesets,
     )
 
     # ------------------------------------------------------------------

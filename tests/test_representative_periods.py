@@ -165,18 +165,21 @@ def _run_flextool(db_path: str, out_path: str, scenario: str) -> float:
 
 
 def _setup_rp_scenario(db_url: str, n_rp: int, period_length: int, storage_nodes: list[str]) -> None:
-    """Run RP pre-processing and create a scenario that uses the RP timeset."""
-    from spinedb_api import DatabaseMapping, import_data, Map
+    """Run RP pre-processing and create a scenario that uses the RP timeset.
+
+    The pre-processing now writes both the timeset entity AND the solve's
+    period_timeset override in the hull_* alternative. We only need to add
+    the storage_binding_method overrides and wire up the scenario.
+    """
+    from spinedb_api import DatabaseMapping, import_data
     from flextool.representative_periods.preprocess import preprocess_representative_periods
 
     timeset_name = preprocess_representative_periods(db_url, "generated_scenario", n_rp, period_length)
+    hull_alt = f"hull_{n_rp}rp_{period_length}h"
 
     with DatabaseMapping(db_url) as db:
         rp_alt = "rp_override"
-        param_values = [
-            ("solve", "generated_solve", "period_timeset",
-             Map(["p2025"], [timeset_name]), rp_alt),
-        ]
+        param_values = []
         for node_name in storage_nodes:
             param_values.append(
                 ("node", node_name, "storage_binding_method",
@@ -188,7 +191,7 @@ def _setup_rp_scenario(db_url: str, n_rp: int, period_length: int, storage_nodes
             scenarios=[("rp_scenario", True, "RP test")],
             scenario_alternatives=[
                 ("rp_scenario", "generated"),
-                ("rp_scenario", f"hull_{n_rp}rp_{period_length}h"),
+                ("rp_scenario", hull_alt),
                 ("rp_scenario", rp_alt),
             ],
             parameter_values=param_values,
