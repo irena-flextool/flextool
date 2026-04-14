@@ -54,56 +54,6 @@ class AvailableScenarioManager:
         self._scenarios = ordered
         return ordered
 
-    def move_up(self, indices: list[int]) -> list[int]:
-        """Move scenarios at given indices up by one position.
-
-        Returns new indices after move. Cannot move past position 0.
-        """
-        if not indices:
-            return []
-
-        indices = sorted(indices)
-
-        # If the first selected item is already at position 0, do nothing
-        if indices[0] == 0:
-            return indices
-
-        for i, idx in enumerate(indices):
-            # Swap with the item above
-            self._scenarios[idx - 1], self._scenarios[idx] = (
-                self._scenarios[idx],
-                self._scenarios[idx - 1],
-            )
-            indices[i] = idx - 1
-
-        return indices
-
-    def move_down(self, indices: list[int]) -> list[int]:
-        """Move scenarios at given indices down by one position.
-
-        Returns new indices after move. Cannot move past the last position.
-        """
-        if not indices:
-            return []
-
-        indices = sorted(indices)
-        max_idx = len(self._scenarios) - 1
-
-        # If the last selected item is already at the bottom, do nothing
-        if indices[-1] >= max_idx:
-            return indices
-
-        # Process from bottom to top to avoid conflicts
-        for i in range(len(indices) - 1, -1, -1):
-            idx = indices[i]
-            self._scenarios[idx], self._scenarios[idx + 1] = (
-                self._scenarios[idx + 1],
-                self._scenarios[idx],
-            )
-            indices[i] = idx + 1
-
-        return indices
-
     def get_order(self) -> list[str]:
         """Return current order as list of 'source_number|scenario_name' keys for persistence."""
         return [f"{s.source_number}|{s.name}" for s in self._scenarios]
@@ -111,12 +61,15 @@ class AvailableScenarioManager:
     def get_checked_scenarios(self, tree: ttk.Treeview) -> list[ScenarioInfo]:
         """Get scenarios that have checkboxes checked in the treeview."""
         checked: list[ScenarioInfo] = []
-        children = tree.get_children()
-        for i, item in enumerate(children):
+        scenario_by_key: dict[str, ScenarioInfo] = {
+            f"{s.source_number}|{s.name}": s for s in self._scenarios
+        }
+        for item in tree.get_children():
             values = tree.item(item, "values")
             if values and values[0] == CHECK_ON:
-                if i < len(self._scenarios):
-                    checked.append(self._scenarios[i])
+                key = f"{values[1]}|{values[2]}"
+                if key in scenario_by_key:
+                    checked.append(scenario_by_key[key])
         return checked
 
     @property

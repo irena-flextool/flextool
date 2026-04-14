@@ -119,7 +119,7 @@ class AddDialog(tk.Toplevel):
         lh: int = default_font.metrics("linespace")
 
         # ── Dialog size ─────────────────────────────────────────────
-        self.geometry(f"{self._cw * 55}x{lh * 25}")
+        self.geometry(f"{self._cw * 55}x{lh * 28}")
         self.resizable(False, False)
 
         self._build_widgets()
@@ -146,9 +146,18 @@ class AddDialog(tk.Toplevel):
 
     def _build_widgets(self) -> None:
         pad = dict(padx=10, pady=5)
+        lh = tkfont.nametofont("TkDefaultFont").metrics("linespace")
+        section_pad = dict(padx=10, pady=(lh, 5))
+
+        # Use default font for LabelFrame labels (same size as everything else)
+        default_font = tkfont.nametofont("TkDefaultFont")
+        style = ttk.Style()
+        style.configure("AddDialog.TLabelframe.Label", font=default_font)
 
         # ── Copy to project section ─────────────────────────────────
-        copy_frame = ttk.LabelFrame(self, text="Copy to project", padding=8)
+        copy_frame = ttk.LabelFrame(
+            self, text="Copy an existing input file to the project", padding=8, style="AddDialog.TLabelframe",
+        )
         copy_frame.pack(fill="x", **pad)
 
         choose_copy_btn = ttk.Button(
@@ -158,11 +167,12 @@ class AddDialog(tk.Toplevel):
         )
         choose_copy_btn.pack(fill="x")
 
-        # ── Add FlexTool input Excel section ────────────────────────
+        # ── Add empty FlexTool input Excel section ──────────────────
         xlsx_frame = ttk.LabelFrame(
-            self, text="Add FlexTool input Excel", padding=8
+            self, text="Add empty FlexTool input Excel", padding=8,
+            style="AddDialog.TLabelframe",
         )
-        xlsx_frame.pack(fill="x", **pad)
+        xlsx_frame.pack(fill="x", **section_pad)
 
         xlsx_row = ttk.Frame(xlsx_frame)
         xlsx_row.pack(fill="x")
@@ -180,11 +190,12 @@ class AddDialog(tk.Toplevel):
         )
         xlsx_add_btn.pack(side="right")
 
-        # ── Add FlexTool input database section ─────────────────────
+        # ── Add empty FlexTool input database section ───────────────
         sqlite_frame = ttk.LabelFrame(
-            self, text="Add FlexTool input database", padding=8
+            self, text="Add empty FlexTool input database", padding=8,
+            style="AddDialog.TLabelframe",
         )
-        sqlite_frame.pack(fill="x", **pad)
+        sqlite_frame.pack(fill="x", **section_pad)
 
         sqlite_row = ttk.Frame(sqlite_frame)
         sqlite_row.pack(fill="x")
@@ -204,24 +215,31 @@ class AddDialog(tk.Toplevel):
 
         # ── Convert from old FlexTool section ─────────────────────────
         old_frame = ttk.LabelFrame(
-            self, text="Convert from FlexTool 2.0 input file", padding=8
+            self, text="Convert from FlexTool 2.0 input file", padding=8,
+            style="AddDialog.TLabelframe",
         )
-        old_frame.pack(fill="x", **pad)
+        old_frame.pack(fill="x", **section_pad)
 
+        convert_row = ttk.Frame(old_frame)
+        convert_row.pack(fill="x")
+        ttk.Label(convert_row, text="1st step:").pack(side="left")
         convert_btn = ttk.Button(
-            old_frame,
-            text="Choose file and convert...",
+            convert_row,
+            text="Convert base input data file...",
             command=self._on_convert_old_flextool,
         )
-        convert_btn.pack(fill="x")
+        convert_btn.pack(side="left", padx=(5, 0))
 
+        sens_row = ttk.Frame(old_frame)
+        sens_row.pack(fill="x", pady=(5, 0))
+        ttk.Label(sens_row, text="2nd optional step:").pack(side="left")
         self._import_sens_btn = ttk.Button(
-            old_frame,
-            text="Import sensitivities from master file...",
+            sens_row,
+            text="Import sensitivities from compatible master file...",
             command=self._on_import_sensitivities,
             state="disabled",
         )
-        self._import_sens_btn.pack(fill="x", pady=(5, 0))
+        self._import_sens_btn.pack(side="left", padx=(5, 0))
 
         # Stored after successful 2.0 base conversion
         self._last_base_xlsm: Path | None = None
@@ -400,7 +418,7 @@ class AddDialog(tk.Toplevel):
             )
 
     def _on_add_xlsx(self) -> None:
-        """Copy the example xlsx template to input_sources."""
+        """Create an empty FlexTool Excel from the JSON master template."""
         name = self._xlsx_name_var.get().strip()
         if not name:
             messagebox.showwarning(
@@ -418,20 +436,49 @@ class AddDialog(tk.Toplevel):
             )
             return
 
-        template = self._flextool_root / "templates" / "example_input_template.xlsx"
-        if not template.exists():
+        json_template = (
+            self._flextool_root / "version" / "flextool_template_master.json"
+        )
+        if not json_template.exists():
             messagebox.showerror(
                 "Template missing",
-                f"Cannot find template:\n{template}",
+                f"Cannot find template:\n{json_template}",
                 parent=self,
             )
             return
 
+        import tempfile
+
+        tmp_sqlite = None
         try:
-            shutil.copy2(str(template), str(dest))
-        except OSError as exc:
-            messagebox.showerror("Error", str(exc), parent=self)
+            from flextool.update_flextool.initialize_database import (
+                initialize_database,
+            )
+            from flextool.export_to_tabular.export_to_excel import export_to_excel
+
+            # Create a temporary sqlite from the JSON template
+            with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+                tmp_sqlite = Path(tmp.name)
+            initialize_database(str(json_template), str(tmp_sqlite))
+
+            # Export the sqlite to Excel
+            db_url = f"sqlite:///{tmp_sqlite}"
+            export_to_excel(db_url, str(dest))
+        except ImportError as exc:
+            messagebox.showerror(
+                "Missing dependency",
+                f"Required dependency not available:\n{exc}",
+                parent=self,
+            )
             return
+        except Exception as exc:
+            messagebox.showerror("Error", str(exc), parent=self)
+            if dest.exists():
+                dest.unlink(missing_ok=True)
+            return
+        finally:
+            if tmp_sqlite is not None and tmp_sqlite.exists():
+                tmp_sqlite.unlink(missing_ok=True)
 
         self.result = True
         messagebox.showinfo(

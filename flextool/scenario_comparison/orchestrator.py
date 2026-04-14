@@ -153,19 +153,19 @@ def run(
             _logging.warning("Dispatch metadata computation failed (non-fatal): %s", exc)
 
     # Compute plot plans for the viewer (always in comparison parquet dir)
-    plan_output_dir = comparison_parquet_dir
-    try:
-        from flextool.plot_outputs.orchestrator import compute_all_plot_plans
-        compute_all_plot_plans(
-            combined_dfs, settings.get('plots', {}), plan_output_dir,
-            active_settings=active_configs, plot_rows=plot_rows,
-            break_times=break_times,
-            strip_scenario_level=False,
-        )
-        print("Computed plot plans for viewer")
-    except Exception as exc:
-        import logging as _logging
-        _logging.warning("Plot plan computation failed (non-fatal): %s", exc)
+    if comparison_parquet_dir:
+        try:
+            from flextool.plot_outputs.orchestrator import compute_all_plot_plans
+            compute_all_plot_plans(
+                combined_dfs, settings.get('plots', {}), comparison_parquet_dir,
+                active_settings=active_configs, plot_rows=plot_rows,
+                break_times=break_times,
+                strip_scenario_level=False,
+            )
+            print("Computed plot plans for viewer")
+        except Exception as exc:
+            import logging as _logging
+            _logging.warning("Plot plan computation failed (non-fatal): %s", exc)
 
     # Generate original comparison plots (from default_comparison_plots.yaml)
     plot_dict_of_dataframes(

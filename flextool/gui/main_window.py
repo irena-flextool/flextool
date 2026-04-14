@@ -131,10 +131,17 @@ class MainWindow(tk.Tk):
         bold_font.configure(weight="bold")
         self._bold_font = bold_font
 
-        # ── Treeview row height (global) ──────────────────────────
+        # ── Treeview row height and selection visibility ──────────
         style = ttk.Style()
         row_height = self._line_height
         style.configure("Treeview", rowheight=row_height)
+
+        # Make selected rows clearly visible in both dark and light themes
+        style.map(
+            "Treeview",
+            background=[("selected", "#3874c8")],
+            foreground=[("selected", "#ffffff")],
+        )
 
         # ── Custom button styles for visual highlighting ──────────
         # Note: Accent.TButton is built into sv_ttk and reliably renders
@@ -166,6 +173,11 @@ class MainWindow(tk.Tk):
         self._xlsx_converting_sources: set[str] = set()
         self._xlsx_pending_scenarios: list[ScenarioInfo] = []
         self._xlsx_conversion_queue: list[tuple[str, Path]] = []
+
+        # Sort mode for each treeview: "alpha" (by name) or "number" (by # column)
+        self._input_sort_mode: str = "alpha"
+        self._available_sort_mode: str = "alpha"
+        self._executed_sort_mode: str = "alpha"
 
         # ── Font-metric locals used throughout widget construction ──
         cw = self._char_width
@@ -239,8 +251,14 @@ class MainWindow(tk.Tk):
             height=8,
         )
         self.input_sources_tree.heading("check", text="▽")
-        self.input_sources_tree.heading("name", text="Name")
-        self.input_sources_tree.heading("number", text="#")
+        self.input_sources_tree.heading(
+            "name", text="Name \u25b2",
+            command=self._sort_input_by_name,
+        )
+        self.input_sources_tree.heading(
+            "number", text="#",
+            command=self._sort_input_by_number,
+        )
         self.input_sources_tree.heading("status", text="")
         self.input_sources_tree.column("check", width=cw * 2, minwidth=cw * 2, stretch=False)
         self.input_sources_tree.column("name", width=cw * 25, minwidth=cw * 12)
@@ -257,6 +275,7 @@ class MainWindow(tk.Tk):
         self.input_sources_tree.bind("<Double-1>", self._on_input_source_dblclick)
         self.input_sources_tree.bind("<B1-Motion>", self._on_tree_drag_select)
         self.input_sources_tree.bind("<<TreeviewSelect>>", lambda _e: self._update_input_button_states())
+        self.input_sources_tree.bind("<Button-3>", self._on_input_source_right_click)
 
         # --- Input source buttons (col 1, rows 2-8) ---
         btn_col = 1
@@ -358,8 +377,8 @@ class MainWindow(tk.Tk):
 
 
         output_info: list[tuple[str, str, str | None]] = [
-            ("Re-plot scenarios", "scen_plots", None),      # No show button
-            ("Scenarios to Excel", "scen_excel", "Open"),
+            ("Re-plot scenarios", "scen_plots", "Show"),
+            ("Scenarios to Excel", "scen_excel", "Show"),
             ("Scenarios to csvs", "scen_csvs", "Show"),
             ("Comparison pngs", "comp_plots", "Show"),
             ("Comparison to Excel", "comp_excel", "Open"),
@@ -379,6 +398,7 @@ class MainWindow(tk.Tk):
             "comp_excel": "_on_gen_comp_excel",
         }
         _show_commands: dict[str, str] = {
+            "scen_plots": "_on_show_scen_plots",
             "scen_excel": "_on_show_scen_excel",
             "scen_csvs": "_on_show_scen_csvs",
             "comp_plots": "_on_show_comp_plots",
@@ -405,14 +425,14 @@ class MainWindow(tk.Tk):
                 action_btn.grid(row=i, column=2, sticky="w", padx=(2, 0), pady=2)
                 self.output_action_btns[key] = action_btn
 
-        # View Results button (opens the ResultViewer window)
+        # Results viewer button (opens the ResultViewer window)
         next_row = len(output_info)
         self.view_results_btn = ttk.Button(
-            self.output_frame, text="View Results", width=20,
+            self.output_frame, text="Results viewer", width=20,
             command=self._on_view_results,
         )
         self.view_results_btn.grid(
-            row=next_row, column=0, columnspan=3, sticky="w", padx=(0, 2), pady=(8, 2),
+            row=next_row, column=0, columnspan=3, sticky="w", padx=(0, 2), pady=(18, 2),
         )
 
         # ── Separator ────────────────────────────────────────────────
@@ -446,8 +466,14 @@ class MainWindow(tk.Tk):
             height=8,
         )
         self.available_tree.heading("check", text="▽")
-        self.available_tree.heading("source_num", text="#")
-        self.available_tree.heading("scenario_name", text="Scenario")
+        self.available_tree.heading(
+            "source_num", text="#",
+            command=self._sort_available_by_number,
+        )
+        self.available_tree.heading(
+            "scenario_name", text="Scenario \u25b2",
+            command=self._sort_available_by_name,
+        )
         self.available_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.available_tree.column("source_num", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.available_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
@@ -460,6 +486,7 @@ class MainWindow(tk.Tk):
         self.available_tree.bind("<Button-1>", self._on_available_click)
         self.available_tree.bind("<B1-Motion>", self._on_tree_drag_select)
         self.available_tree.bind("<space>", self._on_available_space)
+        self.available_tree.bind("<Button-3>", self._on_available_right_click)
 
         # ── Row 11: Executed scenarios Treeview ──────────────────────
         exec_frame = ttk.Frame(outer)
@@ -475,10 +502,19 @@ class MainWindow(tk.Tk):
             height=8,
         )
         self.executed_tree.heading("check", text="▽")
-        self.executed_tree.heading("source_num", text="#")
-        self.executed_tree.heading("scenario_name", text="Scenario")
+        self.executed_tree.heading(
+            "source_num", text="#",
+            command=self._sort_executed_by_number,
+        )
+        self.executed_tree.heading(
+            "scenario_name", text="Scenario \u25b2",
+            command=self._sort_executed_by_name,
+        )
         self.executed_tree.heading("view", text="")
-        self.executed_tree.heading("timestamp", text="Timestamp")
+        self.executed_tree.heading(
+            "timestamp", text="Timestamp",
+            command=self._sort_executed_by_timestamp,
+        )
         self.executed_tree.column("check", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.executed_tree.column("source_num", width=cw * 3, minwidth=cw * 3, stretch=False)
         self.executed_tree.column("scenario_name", width=cw * 25, minwidth=cw * 12, stretch=True)
@@ -497,57 +533,57 @@ class MainWindow(tk.Tk):
         self.executed_tree.bind("<B1-Motion>", self._on_tree_drag_select)
         self.executed_tree.bind("<space>", self._on_executed_space)
         self.executed_tree.bind("<<TreeviewSelect>>", self._on_executed_selection_changed)
+        self.executed_tree.bind("<Button-3>", self._on_executed_right_click)
 
         # ── Row 12: Bottom action buttons ────────────────────────────
         row = 12
         bottom_left = ttk.Frame(outer)
         bottom_left.grid(row=row, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
+        self.select_all_btn = ttk.Button(
+            bottom_left, text="Select all [A]",
+            command=self._on_select_all,
+        )
+        self.select_all_btn.grid(row=0, column=0, padx=(0, 10))
+
         self.check_btn = ttk.Button(
             bottom_left, text="Check/uncheck\nselected [Space]",
             command=self._on_check_selected,
         )
-        self.check_btn.grid(row=0, column=0, padx=(0, 10))
+        self.check_btn.grid(row=0, column=1, padx=(0, 10))
 
         self.add_to_execution_btn = ttk.Button(
             bottom_left, text="Add checked scenarios to\nthe execution list [F9]",
             command=self._on_add_to_execution,
         )
-        self.add_to_execution_btn.grid(row=0, column=1, padx=(0, 10))
-
-        move_frame = ttk.Frame(bottom_left)
-        move_frame.grid(row=0, column=2, padx=10)
-
-        self.move_up_btn = ttk.Button(
-            move_frame, text="\u25b2", width=3, command=self._on_move_up
-        )
-        self.move_up_btn.grid(row=0, column=0, padx=(0, 2))
-
-        ttk.Label(move_frame, text="(PgUp)").grid(row=0, column=1, padx=(0, 4))
-
-        self.move_down_btn = ttk.Button(
-            move_frame, text="\u25bc", width=3, command=self._on_move_down
-        )
-        self.move_down_btn.grid(row=1, column=0, padx=(0, 2))
-
-        ttk.Label(move_frame, text="(PgDn)").grid(row=1, column=1, padx=(0, 4))
+        self.add_to_execution_btn.grid(row=0, column=2, padx=(0, 10))
 
         bottom_right = ttk.Frame(outer)
         bottom_right.grid(row=row, column=2, columnspan=5, sticky="e", pady=(8, 0))
+
+        self.check_executed_btn = ttk.Button(
+            bottom_right, text="Check/uncheck\nall [E]",
+            command=self._on_check_executed,
+        )
+        self.check_executed_btn.grid(row=0, column=0, padx=(0, 10))
 
         self.delete_results_btn = ttk.Button(
             bottom_right, text="Delete selected\nresults irrevocably",
             command=self._on_delete_results,
         )
-        self.delete_results_btn.grid(row=0, column=0)
+        self.delete_results_btn.grid(row=0, column=1)
 
         # ── Keyboard shortcuts ──────────────────────────────────────
         self.bind_all("<Alt-Key-c>", lambda e: self._on_check_selected())
         self.bind_all("<F9>", lambda e: self._on_add_to_execution())
-        self.bind_all("<Prior>", lambda e: self._on_move_up())
-        self.bind_all("<Next>", lambda e: self._on_move_down())
         self.bind_all("<Control-Key-a>", self._on_ctrl_a)
         self.bind_all("<Control-Key-A>", self._on_ctrl_a)
+        # Plain 'a' also selects all (only in Treeviews, not text entries)
+        self.bind_all("<Key-a>", self._on_key_a)
+        self.bind_all("<Key-A>", self._on_key_a)
+        # 'e' toggles checkboxes on selected executed scenarios
+        self.bind_all("<Key-e>", self._on_key_e)
+        self.bind_all("<Key-E>", self._on_key_e)
 
         # ── Window close handler ─────────────────────────────────────
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -974,6 +1010,104 @@ class MainWindow(tk.Tk):
         new_value = CHECK_OFF if current == CHECK_ON else CHECK_ON
         tree.set(item, col, new_value)
 
+    # ── Column sort handlers ──────────────────────────────────────
+
+    def _update_sort_headings(
+        self,
+        tree: ttk.Treeview,
+        active_col: str,
+        col_labels: dict[str, str],
+    ) -> None:
+        """Update heading text to show ▲ indicator on the active sort column."""
+        for col, label in col_labels.items():
+            if col == active_col:
+                tree.heading(col, text=f"{label} \u25b2")
+            else:
+                tree.heading(col, text=label)
+
+    _INPUT_COL_LABELS: dict[str, str] = {"name": "Name", "number": "#"}
+    _AVAIL_COL_LABELS: dict[str, str] = {"scenario_name": "Scenario", "source_num": "#"}
+    _EXEC_COL_LABELS: dict[str, str] = {
+        "scenario_name": "Scenario", "source_num": "#", "timestamp": "Timestamp",
+    }
+
+    def _sort_input_by_name(self) -> None:
+        """Sort input sources tree alphabetically by name."""
+        self._input_sort_mode = "alpha"
+        self._update_sort_headings(self.input_sources_tree, "name", self._INPUT_COL_LABELS)
+        self._sort_tree_items(self.input_sources_tree, col_index=1, numeric=False)
+
+    def _sort_input_by_number(self) -> None:
+        """Sort input sources tree by source number."""
+        self._input_sort_mode = "number"
+        self._update_sort_headings(self.input_sources_tree, "number", self._INPUT_COL_LABELS)
+        self._sort_tree_items(self.input_sources_tree, col_index=2, numeric=True)
+
+    def _sort_available_by_name(self) -> None:
+        """Sort available scenarios tree alphabetically by scenario name."""
+        self._available_sort_mode = "alpha"
+        self._update_sort_headings(self.available_tree, "scenario_name", self._AVAIL_COL_LABELS)
+        self._sort_tree_items(self.available_tree, col_index=2, numeric=False)
+
+    def _sort_available_by_number(self) -> None:
+        """Sort available scenarios tree by source number."""
+        self._available_sort_mode = "number"
+        self._update_sort_headings(self.available_tree, "source_num", self._AVAIL_COL_LABELS)
+        self._sort_tree_items(self.available_tree, col_index=1, numeric=True)
+
+    def _sort_executed_by_name(self) -> None:
+        """Sort executed scenarios tree alphabetically by scenario name."""
+        self._executed_sort_mode = "alpha"
+        self._update_sort_headings(self.executed_tree, "scenario_name", self._EXEC_COL_LABELS)
+        self._sort_tree_items(self.executed_tree, col_index=2, numeric=False)
+
+    def _sort_executed_by_number(self) -> None:
+        """Sort executed scenarios tree by source number."""
+        self._executed_sort_mode = "number"
+        self._update_sort_headings(self.executed_tree, "source_num", self._EXEC_COL_LABELS)
+        self._sort_tree_items(self.executed_tree, col_index=1, numeric=True, secondary_col=4)
+
+    def _sort_executed_by_timestamp(self) -> None:
+        """Sort executed scenarios tree by timestamp."""
+        self._executed_sort_mode = "timestamp"
+        self._update_sort_headings(self.executed_tree, "timestamp", self._EXEC_COL_LABELS)
+        self._sort_tree_items(self.executed_tree, col_index=4, numeric=False)
+
+    def _sort_tree_items(
+        self,
+        tree: ttk.Treeview,
+        col_index: int,
+        numeric: bool,
+        secondary_col: int | None = None,
+    ) -> None:
+        """Re-sort existing treeview items in place by the given column."""
+        items = [(tree.item(iid, "values"), iid) for iid in tree.get_children()]
+        if numeric:
+            def sort_key(pair: tuple) -> tuple:
+                vals = pair[0]
+                try:
+                    primary = int(vals[col_index])
+                except (ValueError, IndexError):
+                    primary = 0
+                secondary = ""
+                if secondary_col is not None:
+                    try:
+                        secondary = str(vals[secondary_col])
+                    except IndexError:
+                        pass
+                return (primary, secondary)
+        else:
+            def sort_key(pair: tuple) -> tuple:  # type: ignore[no-redef]
+                vals = pair[0]
+                try:
+                    return (str(vals[col_index]).lower(),)
+                except IndexError:
+                    return ("",)
+
+        items.sort(key=sort_key)
+        for idx, (_vals, iid) in enumerate(items):
+            tree.move(iid, "", idx)
+
     def _on_input_source_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         tree = self.input_sources_tree
         region = tree.identify_region(event.x, event.y)
@@ -1027,6 +1161,78 @@ class MainWindow(tk.Tk):
                 if values and values[3]:
                     scenario_name = values[2]
                     self._view_scenario_plots(scenario_name)
+
+    # ── Right-click context menus ──────────────────────────────────
+
+    def _on_input_source_right_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Show context menu for input sources tree."""
+        tree = self.input_sources_tree
+        item = tree.identify_row(event.y)
+        if item:
+            # Select the right-clicked row if not already selected
+            if item not in tree.selection():
+                tree.selection_set(item)
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Edit", command=self._on_edit_source)
+        menu.add_command(label="Convert", command=self._on_convert_source)
+        menu.add_separator()
+        menu.add_command(label="Delete", command=self._on_delete_source)
+        menu.add_separator()
+        menu.add_command(label="Refresh", command=self._on_refresh_sources)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _on_available_right_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Show context menu for available scenarios tree."""
+        tree = self.available_tree
+        item = tree.identify_row(event.y)
+        if item:
+            if item not in tree.selection():
+                tree.selection_set(item)
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Check/uncheck selected", command=self._on_check_selected)
+        menu.add_separator()
+        menu.add_command(
+            label="Add selected to execution jobs",
+            command=self._on_add_selected_to_execution,
+        )
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _on_executed_right_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Show context menu for executed scenarios tree."""
+        tree = self.executed_tree
+        item = tree.identify_row(event.y)
+        if item:
+            if item not in tree.selection():
+                tree.selection_set(item)
+
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(
+            label="Check/uncheck selected",
+            command=self._on_executed_space_from_menu,
+        )
+        menu.add_separator()
+        # View — only if a single scenario is right-clicked and has plots
+        if item:
+            values = tree.item(item, "values")
+            if values and values[3]:  # has view text
+                scenario_name = values[2]
+                menu.add_command(
+                    label="View results",
+                    command=lambda s=scenario_name: self._view_scenario_plots(s),
+                )
+                menu.add_separator()
+        menu.add_command(
+            label="Delete irrevocably",
+            command=self._on_delete_results,
+        )
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _on_executed_space_from_menu(self) -> None:
+        """Toggle checkboxes for selected items in executed_tree (from context menu)."""
+        for item in self.executed_tree.selection():
+            self._toggle_check(self.executed_tree, item, "check")
+        self._update_output_status()
+        self._save_checked_executed_scenarios()
 
     # ── Input source management ──────────────────────────────────────
 
@@ -1174,6 +1380,12 @@ class MainWindow(tk.Tk):
                 tags=tags,
             )
 
+        # Apply current sort mode
+        if self._input_sort_mode == "alpha":
+            self._sort_tree_items(self.input_sources_tree, col_index=1, numeric=False)
+        else:
+            self._sort_tree_items(self.input_sources_tree, col_index=2, numeric=True)
+
         # Update Add button appearance based on whether there are sources
         self._update_add_button_style(len(sources) == 0)
 
@@ -1209,11 +1421,15 @@ class MainWindow(tk.Tk):
             self.add_to_execution_btn.configure(style="TButton")
 
     def _update_execution_menu_style(self) -> None:
-        """Highlight 'Execution jobs' green when there are jobs on the execution list."""
+        """Highlight 'Execution jobs' when there are jobs and the window is not open."""
         has_jobs = False
         if self.execution_mgr is not None:
             has_jobs = len(self.execution_mgr.get_jobs()) > 0
-        if has_jobs:
+        window_open = (
+            self.execution_window is not None
+            and self.execution_window.winfo_exists()
+        )
+        if has_jobs and not window_open:
             self.execution_menu_btn.configure(style="Accent.TButton")
         else:
             self.execution_menu_btn.configure(style="TButton")
@@ -1302,6 +1518,12 @@ class MainWindow(tk.Tk):
                 values=(check_char, scenario.source_number, scenario.name),
                 tags=tags,
             )
+
+        # Apply current sort mode
+        if self._available_sort_mode == "alpha":
+            self._sort_tree_items(self.available_tree, col_index=2, numeric=False)
+        else:
+            self._sort_tree_items(self.available_tree, col_index=1, numeric=True)
 
         self._update_add_to_execution_style()
 
@@ -2222,6 +2444,40 @@ class MainWindow(tk.Tk):
 
     def _on_ctrl_a(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
         """Select all items in the focused Treeview, if any."""
+        return self._select_all_in_focused_tree(event)
+
+    def _on_key_a(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Select all items in the focused Treeview on plain 'a' press.
+
+        Only fires when focus is on a Treeview (not text entries).
+        """
+        widget = event.widget
+        # Only handle 'a' when a Treeview has focus (skip entries, text widgets)
+        w = widget
+        while w is not None:
+            if isinstance(w, ttk.Treeview):
+                return self._select_all_in_focused_tree(event)
+            if isinstance(w, (tk.Entry, ttk.Entry, tk.Text)):
+                return None
+            w = getattr(w, "master", None)
+        return None
+
+    def _on_select_all(self) -> None:
+        """Select all items in whichever treeview last had focus."""
+        # Try each tree — select all in the one that has focus, or the first non-empty one
+        for tree in (self.input_sources_tree, self.available_tree, self.executed_tree):
+            if str(tree.focus_get()) == str(tree) or tree.focus_get() is tree:
+                children = tree.get_children()
+                if children:
+                    tree.selection_set(children)
+                return
+        # Fallback: select all in available_tree
+        children = self.available_tree.get_children()
+        if children:
+            self.available_tree.selection_set(children)
+
+    def _select_all_in_focused_tree(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Select all items in the focused Treeview, if any."""
         widget = event.widget
         # Walk up to find the Treeview that contains the focused widget
         while widget is not None:
@@ -2255,6 +2511,31 @@ class MainWindow(tk.Tk):
             self._toggle_check(self.executed_tree, item, "check")
         self._update_output_status()
         self._save_checked_executed_scenarios()
+
+    def _on_check_executed(self) -> None:
+        """Check all executed scenarios if any are unchecked, otherwise uncheck all."""
+        children = self.executed_tree.get_children()
+        all_checked = all(
+            self.executed_tree.item(item, "values")[0] == CHECK_ON
+            for item in children
+            if self.executed_tree.item(item, "values")
+        )
+        new_state = CHECK_OFF if all_checked else CHECK_ON
+        for item in children:
+            self.executed_tree.set(item, "check", new_state)
+        self._update_output_status()
+        self._save_checked_executed_scenarios()
+
+    def _on_key_e(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Toggle checkboxes on selected executed scenarios on 'e' press."""
+        widget = event.widget
+        w = widget
+        while w is not None:
+            if isinstance(w, (tk.Entry, ttk.Entry, tk.Text)):
+                return None
+            w = getattr(w, "master", None)
+        self._on_check_executed()
+        return "break"
 
     # ── Executed scenarios management ────────────────────────────
 
@@ -2303,45 +2584,21 @@ class MainWindow(tk.Tk):
                 values=(check_char, src_num, info.name, view_text, info.timestamp),
             )
 
+        # Apply current sort mode
+        if self._executed_sort_mode == "alpha":
+            self._sort_tree_items(self.executed_tree, col_index=2, numeric=False)
+        elif self._executed_sort_mode == "number":
+            self._sort_tree_items(
+                self.executed_tree, col_index=1, numeric=True, secondary_col=4,
+            )
+        else:  # timestamp
+            self._sort_tree_items(self.executed_tree, col_index=4, numeric=False)
+
         self._update_output_status()
 
     def _on_executed_selection_changed(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
         """Update output status indicators when executed_tree selection changes."""
         self._update_output_status()
-
-    # ── Move up/down handlers ────────────────────────────────────
-
-    def _on_move_up(self) -> None:
-        """Move the selected (highlighted) items in available_tree up by one."""
-        if not self.avail_scenario_mgr:
-            return
-
-        selected_items = self.available_tree.selection()
-        if not selected_items:
-            return
-
-        children = self.available_tree.get_children()
-        indices = [children.index(item) for item in selected_items]
-
-        new_indices = self.avail_scenario_mgr.move_up(indices)
-        self._repopulate_available_tree(new_indices)
-        self._save_scenario_order()
-
-    def _on_move_down(self) -> None:
-        """Move the selected (highlighted) items in available_tree down by one."""
-        if not self.avail_scenario_mgr:
-            return
-
-        selected_items = self.available_tree.selection()
-        if not selected_items:
-            return
-
-        children = self.available_tree.get_children()
-        indices = [children.index(item) for item in selected_items]
-
-        new_indices = self.avail_scenario_mgr.move_down(indices)
-        self._repopulate_available_tree(new_indices)
-        self._save_scenario_order()
 
     def _repopulate_available_tree(self, select_indices: list[int] | None = None) -> None:
         """Repopulate available_tree from the manager's scenario list and re-select items."""
@@ -2386,6 +2643,12 @@ class MainWindow(tk.Tk):
                 tags=tags,
             )
 
+        # Apply current sort mode
+        if self._available_sort_mode == "alpha":
+            self._sort_tree_items(self.available_tree, col_index=2, numeric=False)
+        else:
+            self._sort_tree_items(self.available_tree, col_index=1, numeric=True)
+
         # Re-select items at new positions
         if select_indices:
             new_children = self.available_tree.get_children()
@@ -2405,9 +2668,35 @@ class MainWindow(tk.Tk):
 
     # ── Add to execution list handler ────────────────────────────
 
+    def _on_add_selected_to_execution(self) -> None:
+        """Add selected (highlighted) scenarios from available_tree to execution."""
+        if not self.avail_scenario_mgr or not self.current_project:
+            return
+        scenario_by_key: dict[str, ScenarioInfo] = {
+            f"{s.source_number}|{s.name}": s
+            for s in self.avail_scenario_mgr.scenarios
+        }
+        selected: list[ScenarioInfo] = []
+        for item in self.available_tree.selection():
+            values = self.available_tree.item(item, "values")
+            if values:
+                key = f"{values[1]}|{values[2]}"
+                if key in scenario_by_key:
+                    selected.append(scenario_by_key[key])
+        if selected:
+            self._add_scenarios_to_execution(selected)
+
     @safe_callback
     def _on_add_to_execution(self) -> None:
         """Add checked scenarios from available_tree to the execution queue."""
+        if not self.avail_scenario_mgr or not self.current_project:
+            return
+        checked = self.avail_scenario_mgr.get_checked_scenarios(self.available_tree)
+        if checked:
+            self._add_scenarios_to_execution(checked)
+
+    def _add_scenarios_to_execution(self, scenarios: list[ScenarioInfo]) -> None:
+        """Shared logic for adding scenarios to the execution queue."""
         if not self.avail_scenario_mgr or not self.current_project:
             return
 
@@ -2420,7 +2709,7 @@ class MainWindow(tk.Tk):
             )
             return
 
-        checked = self.avail_scenario_mgr.get_checked_scenarios(self.available_tree)
+        checked = scenarios
         if not checked:
             logger.info("No scenarios checked for execution")
             return
@@ -2580,7 +2869,7 @@ class MainWindow(tk.Tk):
         self._result_viewer.bind("<Destroy>", lambda e: self._update_view_results_btn())
 
     def _update_view_results_btn(self) -> None:
-        """Update the View Results button text based on viewer state."""
+        """Update the Results viewer button text and style based on viewer and scenario state."""
         viewer_open = (
             self._result_viewer is not None
             and self._result_viewer.winfo_exists()
@@ -2588,7 +2877,19 @@ class MainWindow(tk.Tk):
         if viewer_open:
             self.view_results_btn.configure(text="Update view scenarios")
         else:
-            self.view_results_btn.configure(text="View Results")
+            self.view_results_btn.configure(text="Results viewer")
+
+        # Blue accent when there are checked executed scenarios (results to show)
+        has_checked = False
+        for item in self.executed_tree.get_children():
+            values = self.executed_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                has_checked = True
+                break
+        if has_checked:
+            self.view_results_btn.configure(style="Accent.TButton")
+        else:
+            self.view_results_btn.configure(style="TButton")
 
     def _get_scenario_db_map(self) -> dict[str, Path]:
         """Build a mapping of scenario names to database paths.
@@ -2643,12 +2944,18 @@ class MainWindow(tk.Tk):
             self.execution_window.attributes("-topmost", True)
             self.execution_window.attributes("-topmost", False)
             self.execution_window.focus_force()
+            self._update_execution_menu_style()
             return
 
         if self.execution_mgr is None:
             return
 
         self.execution_window = ExecutionWindow(self, self.execution_mgr)
+        self._update_execution_menu_style()
+        # When the window closes, revert button accent
+        self.execution_window.bind(
+            "<Destroy>", lambda e: self._update_execution_menu_style(),
+        )
 
     def _on_job_status_change(self, job: ExecutionJob) -> None:
         """Callback from ExecutionManager when a job's status changes.
@@ -2735,6 +3042,7 @@ class MainWindow(tk.Tk):
         if not checked_names:
             self._reset_output_status()
             self._update_output_frame_style()
+            self._update_view_results_btn()
             return
 
         # Check per-scenario outputs
@@ -2782,6 +3090,7 @@ class MainWindow(tk.Tk):
                     self.output_action_btns[key].configure(style="Grey.TButton")
 
         self._update_output_frame_style()
+        self._update_view_results_btn()
 
     def _reset_output_status(self) -> None:
         """Reset all output status labels to the default (no output) state."""
@@ -2978,22 +3287,30 @@ class MainWindow(tk.Tk):
     # ── Show / Open button handlers ───────────────────────────────
 
     @safe_callback
-    def _on_show_scen_excel(self) -> None:
-        """Open the Excel file for the first checked executed scenario."""
+    def _on_show_scen_plots(self) -> None:
+        """Open the output_plots folder."""
         if not self.current_project:
             return
-        names = self._get_checked_executed_names()
-        if not names:
-            return
-        mgr = self._ensure_output_action_mgr()
-        if mgr is None:
-            return
-        xlsx = mgr.find_scenario_excel(names[0])
-        if xlsx is not None:
+        project_path = get_projects_dir() / self.current_project
+        plots_dir = project_path / "output_plots"
+        if plots_dir.is_dir():
             try:
-                open_file_in_default_app(xlsx)
+                open_folder(plots_dir)
             except OSError as exc:
-                logger.warning("Could not open Excel file: %s", exc)
+                logger.warning("Could not open plots folder: %s", exc)
+
+    @safe_callback
+    def _on_show_scen_excel(self) -> None:
+        """Open the output_excel folder."""
+        if not self.current_project:
+            return
+        project_path = get_projects_dir() / self.current_project
+        excel_dir = project_path / "output_excel"
+        if excel_dir.is_dir():
+            try:
+                open_folder(excel_dir)
+            except OSError as exc:
+                logger.warning("Could not open Excel folder: %s", exc)
 
     @safe_callback
     def _on_show_scen_csvs(self) -> None:
@@ -3016,20 +3333,16 @@ class MainWindow(tk.Tk):
 
     @safe_callback
     def _on_show_comp_plots(self) -> None:
-        """Open the first .png from output_plot_comparisons/."""
+        """Open the output_plot_comparisons folder."""
         if not self.current_project:
             return
         project_path = get_projects_dir() / self.current_project
         comp_dir = project_path / "output_plot_comparisons"
-        mgr = self._ensure_output_action_mgr()
-        if mgr is None:
-            return
-        first_png = mgr.find_first_plot(comp_dir)
-        if first_png is not None:
+        if comp_dir.is_dir():
             try:
-                open_file_in_default_app(first_png)
+                open_folder(comp_dir)
             except OSError as exc:
-                logger.warning("Could not open comparison plot: %s", exc)
+                logger.warning("Could not open comparison plots folder: %s", exc)
 
     @safe_callback
     def _on_show_comp_excel(self) -> None:
@@ -3049,19 +3362,17 @@ class MainWindow(tk.Tk):
     # ── View scenario plots (from executed_tree view column) ──────
 
     def _view_scenario_plots(self, scenario_name: str) -> None:
-        """Open the first plot for the given scenario."""
+        """Open the ResultViewer for the given scenario."""
         if not self.current_project:
             return
-        project_path = get_projects_dir() / self.current_project
-        plot_dir = project_path / "output_plots" / scenario_name
-        if not plot_dir.is_dir():
-            return
-        pngs = sorted(plot_dir.rglob("*.png"))
-        if pngs:
-            try:
-                open_file_in_default_app(pngs[0])
-            except OSError as exc:
-                logger.warning("Could not open plot: %s", exc)
+        # Auto-check this scenario in the executed tree so the viewer picks it up
+        for item in self.executed_tree.get_children():
+            values = self.executed_tree.item(item, "values")
+            if values and values[2] == scenario_name:
+                self.executed_tree.set(item, "check", CHECK_ON)
+                break
+        self._save_checked_executed_scenarios()
+        self._open_or_raise_result_viewer()
 
     # ── Checkbox state persistence helpers ────────────────────────
 
