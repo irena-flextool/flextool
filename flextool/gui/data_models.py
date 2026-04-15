@@ -22,7 +22,8 @@ class ViewerSettings:
     last_variant: str = ""    # e.g., "t"
     last_mode: str = "single" # "single", "comparison", "network"
     window_geometry: str = ""  # saved Tk geometry string
-    left_pane_width: int = 0  # saved sash position (0 = use default)
+    left_pane_width: int = 0  # saved horizontal sash position (0 = use default)
+    scenario_pane_height: int = 0  # saved vertical sash in left column (0 = default)
     cache_gb: float = 0.5     # plot cache memory limit in GB
 
 

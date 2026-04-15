@@ -140,7 +140,7 @@ class MainWindow(tk.Tk):
         # Make LabelFrame titles the same font size as everything else
         style.configure("TLabelframe.Label", font=tkfont.nametofont("TkDefaultFont"))
 
-        # Make selected rows clearly visible in both dark and light themes
+        # Make selected rows clearly visible in the focused tree
         style.map(
             "Treeview",
             background=[("selected", "#3874c8")],
@@ -304,6 +304,9 @@ class MainWindow(tk.Tk):
         self.input_sources_tree.bind("<Button-3>", self._on_input_source_right_click)
         self.input_sources_tree.bind("<Motion>", self._on_input_source_motion)
         self.input_sources_tree.bind("<Leave>", lambda e: self._hide_input_status_tip())
+        self.input_sources_tree.bind("<Shift-Up>", self._on_shift_arrow_up)
+        self.input_sources_tree.bind("<Shift-Down>", self._on_shift_arrow_down)
+        self.input_sources_tree.bind("<FocusIn>", self._on_tree_focus_in)
 
         # --- Input source buttons (col 1, rows 2-8) ---
         btn_col = 1
@@ -395,6 +398,7 @@ class MainWindow(tk.Tk):
         theme_fg = style.lookup("TLabel", "foreground") or "white"
         output_label = tk.Label(
             outer, text=" Output actions ", bg=theme_bg, fg=theme_fg,
+            font=tkfont.nametofont("TkDefaultFont"),
         )
         self.output_frame = tk.LabelFrame(
             outer, labelwidget=output_label, padx=5, pady=5,
@@ -479,7 +483,7 @@ class MainWindow(tk.Tk):
 
         # ── Row 10: Scenario section headers ─────────────────────────
         row = 10
-        avail_lbl = ttk.Label(outer, text="Av\u0332ailable scenarios", font=self._bold_font)
+        avail_lbl = ttk.Label(outer, text="Available scenarios [V]", font=self._bold_font)
         avail_lbl.grid(row=row, column=0, columnspan=2, sticky="sw", pady=(0, 2))
         attach_tooltip(avail_lbl, (
             "Scenarios found in checked input sources.\n"
@@ -491,7 +495,7 @@ class MainWindow(tk.Tk):
             "  \u2022 Click column headers to sort"
         ))
 
-        exec_lbl = ttk.Label(outer, text="Ex\u0332ecuted scenarios", font=self._bold_font)
+        exec_lbl = ttk.Label(outer, text="Executed scenarios [X]", font=self._bold_font)
         exec_lbl.grid(
             row=row, column=2, columnspan=4, sticky="sw", padx=(20, 0), pady=(0, 2)
         )
@@ -544,6 +548,9 @@ class MainWindow(tk.Tk):
         self.available_tree.bind("<B1-Motion>", self._on_tree_drag_select)
         self.available_tree.bind("<space>", self._on_available_space)
         self.available_tree.bind("<Button-3>", self._on_available_right_click)
+        self.available_tree.bind("<Shift-Up>", self._on_shift_arrow_up)
+        self.available_tree.bind("<Shift-Down>", self._on_shift_arrow_down)
+        self.available_tree.bind("<FocusIn>", self._on_tree_focus_in)
 
         # ── Row 11: Executed scenarios Treeview ──────────────────────
         exec_frame = ttk.Frame(outer)
@@ -591,6 +598,9 @@ class MainWindow(tk.Tk):
         self.executed_tree.bind("<space>", self._on_executed_space)
         self.executed_tree.bind("<<TreeviewSelect>>", self._on_executed_selection_changed)
         self.executed_tree.bind("<Button-3>", self._on_executed_right_click)
+        self.executed_tree.bind("<Shift-Up>", self._on_shift_arrow_up)
+        self.executed_tree.bind("<Shift-Down>", self._on_shift_arrow_down)
+        self.executed_tree.bind("<FocusIn>", self._on_tree_focus_in)
 
         # ── Row 12: Bottom action buttons ────────────────────────────
         row = 12
@@ -2667,10 +2677,7 @@ class MainWindow(tk.Tk):
             if isinstance(w, (tk.Entry, ttk.Entry, tk.Text)):
                 return None
             w = getattr(w, "master", None)
-        self.available_tree.focus_set()
-        children = self.available_tree.get_children()
-        if children and not self.available_tree.selection():
-            self.available_tree.selection_set(children[0])
+        self._focus_tree(self.available_tree)
         return "break"
 
     def _on_key_x(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
@@ -2680,10 +2687,59 @@ class MainWindow(tk.Tk):
             if isinstance(w, (tk.Entry, ttk.Entry, tk.Text)):
                 return None
             w = getattr(w, "master", None)
-        self.executed_tree.focus_set()
-        children = self.executed_tree.get_children()
-        if children and not self.executed_tree.selection():
-            self.executed_tree.selection_set(children[0])
+        self._focus_tree(self.executed_tree)
+        return "break"
+
+    def _on_tree_focus_in(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """When a treeview gets focus, clear selection in the other trees."""
+        focused = event.widget
+        for tree in (self.input_sources_tree, self.available_tree, self.executed_tree):
+            if tree is not focused:
+                tree.selection_remove(*tree.selection())
+
+    def _focus_tree(self, tree: ttk.Treeview) -> None:
+        """Give keyboard focus to a treeview, ensuring arrow keys work."""
+        tree.focus_set()
+        children = tree.get_children()
+        if not children:
+            return
+        # Use existing selection, or default to first item
+        sel = tree.selection()
+        item = sel[0] if sel else children[0]
+        tree.selection_set(item)
+        tree.focus(item)  # set internal focus item for arrow navigation
+        tree.see(item)
+
+    def _on_shift_arrow_up(self, event: tk.Event) -> str:  # type: ignore[type-arg]
+        """Extend selection upward with Shift+Up."""
+        tree = event.widget
+        if not isinstance(tree, ttk.Treeview):
+            return "break"
+        focused = tree.focus()
+        if not focused:
+            return "break"
+        prev_item = tree.prev(focused)
+        if not prev_item:
+            return "break"
+        tree.selection_add(prev_item)
+        tree.focus(prev_item)
+        tree.see(prev_item)
+        return "break"
+
+    def _on_shift_arrow_down(self, event: tk.Event) -> str:  # type: ignore[type-arg]
+        """Extend selection downward with Shift+Down."""
+        tree = event.widget
+        if not isinstance(tree, ttk.Treeview):
+            return "break"
+        focused = tree.focus()
+        if not focused:
+            return "break"
+        next_item = tree.next(focused)
+        if not next_item:
+            return "break"
+        tree.selection_add(next_item)
+        tree.focus(next_item)
+        tree.see(next_item)
         return "break"
 
     # ── Executed scenarios management ────────────────────────────

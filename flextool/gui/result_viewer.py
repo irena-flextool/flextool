@@ -210,9 +210,8 @@ class ResultViewer(tk.Toplevel):
         # ── Window close ─────────────────────────────────────────────
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # ── Restore saved left pane width after layout is ready ─────
-        if self._viewer_settings.left_pane_width > 0:
-            self.after(50, self._restore_sash_position)
+        # ── Restore saved sash positions after layout is ready ───────
+        self.after(50, self._restore_sash_position)
 
     # ------------------------------------------------------------------
     # Layout builders
@@ -226,11 +225,24 @@ class ResultViewer(tk.Toplevel):
         self._paned.add(left, weight=0)
 
         left.columnconfigure(0, weight=1)
-        left.rowconfigure(1, weight=1)
+        left.rowconfigure(0, weight=1)
+
+        # Vertical PanedWindow so user can resize Scenarios vs Plots
+        self._left_paned = ttk.PanedWindow(left, orient="vertical")
+        self._left_paned.grid(row=0, column=0, sticky="nsew")
 
         # ── Scenario listbox ─────────────────────────────────────────
-        scen_frame = ttk.LabelFrame(left, text="S\u0332cenarios", padding=5)
-        scen_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
+        from flextool.gui.hover_tooltip import attach_tooltip
+        _lf_font = tkfont.nametofont("TkDefaultFont")
+        scen_label = ttk.Label(left, text=" Scenarios [S] ", font=_lf_font)
+        scen_frame = ttk.LabelFrame(self._left_paned, labelwidget=scen_label, padding=5)
+        attach_tooltip(scen_label, (
+            "Scenarios available in the chosen results.\n"
+            "\n"
+            "  \u2022 S \u2014 focus this list\n"
+            "  \u2022 \u2191\u2193 \u2014 navigate scenarios"
+        ))
+        self._left_paned.add(scen_frame, weight=0)
         scen_frame.columnconfigure(0, weight=1)
         scen_frame.rowconfigure(0, weight=1)
 
@@ -282,8 +294,16 @@ class ResultViewer(tk.Toplevel):
         comp_canvas.bind("<Configure>", _on_comp_canvas_configure)
 
         # ── Plot tree + variant canvas ───────────────────────────────
-        tree_frame = ttk.LabelFrame(left, text="P\u0332lots", padding=5)
-        tree_frame.grid(row=1, column=0, sticky="nsew")
+        plots_label = ttk.Label(left, text=" Plots [P] ", font=_lf_font)
+        tree_frame = ttk.LabelFrame(self._left_paned, labelwidget=plots_label, padding=5)
+        attach_tooltip(plots_label, (
+            "Available plots (plots without data greyed out).\n"
+            "\n"
+            "  \u2022 P \u2014 focus this list\n"
+            "  \u2022 \u2191\u2193\u2190\u2192 \u2014 navigate plots\n"
+            "  \u2022 PgUp/PgDn \u2014 prev/next file"
+        ))
+        self._left_paned.add(tree_frame, weight=1)
         tree_frame.columnconfigure(0, weight=1)
         # column 1 = variant canvas (fixed width, set later)
         # column 2 = scrollbar (fixed width)
@@ -720,12 +740,15 @@ class ResultViewer(tk.Toplevel):
                     visible.append(entry_iid)
         return visible
 
-    def _should_skip_group(self, iid: str) -> bool:
-        """Return True if this group header should be skipped during navigation.
+    def _should_skip_item(self, iid: str) -> bool:
+        """Return True if this item should be skipped during navigation.
 
         Open groups are skipped (their children are visible).
         Closed groups stop the cursor so the user can open them.
+        Disabled (greyed-out) entries are always skipped.
         """
+        if "disabled" in self._plot_tree.item(iid, "tags"):
+            return True
         if not iid.startswith("group_"):
             return False
         return bool(self._plot_tree.item(iid, "open"))
@@ -789,7 +812,7 @@ class ResultViewer(tk.Toplevel):
             return "break"
         idx = visible.index(current)
         for new_idx in range(idx - 1, -1, -1):
-            if not self._should_skip_group(visible[new_idx]):
+            if not self._should_skip_item(visible[new_idx]):
                 self._plot_tree.selection_set(visible[new_idx])
                 self._plot_tree.see(visible[new_idx])
                 self._plot_tree.event_generate("<<TreeviewSelect>>")
@@ -815,7 +838,7 @@ class ResultViewer(tk.Toplevel):
             return "break"
         idx = visible.index(current)
         for new_idx in range(idx + 1, len(visible)):
-            if not self._should_skip_group(visible[new_idx]):
+            if not self._should_skip_item(visible[new_idx]):
                 self._plot_tree.selection_set(visible[new_idx])
                 self._plot_tree.see(visible[new_idx])
                 self._plot_tree.event_generate("<<TreeviewSelect>>")
@@ -1559,6 +1582,13 @@ class ResultViewer(tk.Toplevel):
                 return None
         except (tk.TclError, AttributeError):
             return None
+        # For Left/Right arrows, let the plot tree and scenario listbox
+        # handle them natively (expand/collapse, scrolling)
+        keysym = getattr(event, "keysym", "")
+        if keysym in ("Left", "Right"):
+            w = event.widget
+            if isinstance(w, (ttk.Treeview, tk.Listbox)):
+                return None
         self._on_prev_file()
         return "break"
 
@@ -1569,6 +1599,13 @@ class ResultViewer(tk.Toplevel):
                 return None
         except (tk.TclError, AttributeError):
             return None
+        # For Left/Right arrows, let the plot tree and scenario listbox
+        # handle them natively (expand/collapse, scrolling)
+        keysym = getattr(event, "keysym", "")
+        if keysym in ("Left", "Right"):
+            w = event.widget
+            if isinstance(w, (ttk.Treeview, tk.Listbox)):
+                return None
         self._on_next_file()
         return "break"
 
@@ -2520,9 +2557,15 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _restore_sash_position(self) -> None:
-        """Restore the saved left pane width after the window is laid out."""
+        """Restore saved sash positions after the window is laid out."""
         try:
-            self._paned.sashpos(0, self._viewer_settings.left_pane_width)
+            if self._viewer_settings.left_pane_width > 0:
+                self._paned.sashpos(0, self._viewer_settings.left_pane_width)
+        except (tk.TclError, IndexError):
+            pass
+        try:
+            if self._viewer_settings.scenario_pane_height > 0:
+                self._left_paned.sashpos(0, self._viewer_settings.scenario_pane_height)
         except (tk.TclError, IndexError):
             pass
 
@@ -2538,10 +2581,14 @@ class ResultViewer(tk.Toplevel):
                      "<Key-s>", "<Key-p>"):
             self.unbind_all(seq)
 
-        # Save window geometry and left pane width
+        # Save window geometry and sash positions
         self._viewer_settings.window_geometry = self.geometry()
         try:
             self._viewer_settings.left_pane_width = self._paned.sashpos(0)
+        except (tk.TclError, IndexError):
+            pass
+        try:
+            self._viewer_settings.scenario_pane_height = self._left_paned.sashpos(0)
         except (tk.TclError, IndexError):
             pass
 
