@@ -89,6 +89,7 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
             last_variant=viewer.get("last_variant", ""),
             last_mode=viewer.get("last_mode", "single"),
             window_geometry=viewer.get("window_geometry", ""),
+            left_pane_width=viewer.get("left_pane_width", 0),
             cache_gb=viewer.get("cache_gb", 0.5),
         )
 

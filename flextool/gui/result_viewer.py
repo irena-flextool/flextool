@@ -195,11 +195,24 @@ class ResultViewer(tk.Toplevel):
         self._plot_tree.bind("<Tab>", self._focus_variant_canvas)
 
         # ── Global key bindings ──────────────────────────────────────
-        self.bind("<Prior>", lambda e: self._on_prev_file())
-        self.bind("<Next>", lambda e: self._on_next_file())
+        # Use bind_all so these work even when child widgets (Treeview,
+        # Listbox) have focus — they consume Prior/Next for scrolling
+        # before Toplevel bindings fire (especially on Windows).
+        self.bind_all("<Prior>", self._on_prev_file_event)
+        self.bind_all("<Next>", self._on_next_file_event)
+        self.bind_all("<Left>", self._on_prev_file_event)
+        self.bind_all("<Right>", self._on_next_file_event)
+
+        # Panel focus shortcuts: s = Scenarios, p = Plots
+        self.bind_all("<Key-s>", self._on_focus_scenarios_event)
+        self.bind_all("<Key-p>", self._on_focus_plots_event)
 
         # ── Window close ─────────────────────────────────────────────
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # ── Restore saved left pane width after layout is ready ─────
+        if self._viewer_settings.left_pane_width > 0:
+            self.after(50, self._restore_sash_position)
 
     # ------------------------------------------------------------------
     # Layout builders
@@ -208,13 +221,15 @@ class ResultViewer(tk.Toplevel):
     def _build_left_column(self) -> None:
         """Build the left column: scenario listbox + plot tree."""
         left = ttk.Frame(self._paned, padding=5)
+        # Request a wider default left pane (40 chars)
+        left.configure(width=self._char_width * 40)
         self._paned.add(left, weight=0)
 
         left.columnconfigure(0, weight=1)
         left.rowconfigure(1, weight=1)
 
         # ── Scenario listbox ─────────────────────────────────────────
-        scen_frame = ttk.LabelFrame(left, text="Scenarios", padding=5)
+        scen_frame = ttk.LabelFrame(left, text="S\u0332cenarios", padding=5)
         scen_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
         scen_frame.columnconfigure(0, weight=1)
         scen_frame.rowconfigure(0, weight=1)
@@ -267,7 +282,7 @@ class ResultViewer(tk.Toplevel):
         comp_canvas.bind("<Configure>", _on_comp_canvas_configure)
 
         # ── Plot tree + variant canvas ───────────────────────────────
-        tree_frame = ttk.LabelFrame(left, text="Plots", padding=5)
+        tree_frame = ttk.LabelFrame(left, text="P\u0332lots", padding=5)
         tree_frame.grid(row=1, column=0, sticky="nsew")
         tree_frame.columnconfigure(0, weight=1)
         # column 1 = variant canvas (fixed width, set later)
@@ -1513,6 +1528,50 @@ class ResultViewer(tk.Toplevel):
         self._prev_file_btn.configure(state=state)
         self._next_file_btn.configure(state=state)
 
+    def _on_focus_scenarios_event(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Focus the scenario listbox on 's' press (only in this window)."""
+        try:
+            if event.widget.winfo_toplevel() is not self:
+                return None
+            if isinstance(event.widget, (tk.Entry, ttk.Entry, tk.Text)):
+                return None
+        except (tk.TclError, AttributeError):
+            return None
+        self._scenario_listbox.focus_set()
+        return "break"
+
+    def _on_focus_plots_event(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Focus the plot tree on 'p' press (only in this window)."""
+        try:
+            if event.widget.winfo_toplevel() is not self:
+                return None
+            if isinstance(event.widget, (tk.Entry, ttk.Entry, tk.Text)):
+                return None
+        except (tk.TclError, AttributeError):
+            return None
+        self._plot_tree.focus_set()
+        return "break"
+
+    def _on_prev_file_event(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Handle prev file key event — only if from this window."""
+        try:
+            if event.widget.winfo_toplevel() is not self:
+                return None
+        except (tk.TclError, AttributeError):
+            return None
+        self._on_prev_file()
+        return "break"
+
+    def _on_next_file_event(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Handle next file key event — only if from this window."""
+        try:
+            if event.widget.winfo_toplevel() is not self:
+                return None
+        except (tk.TclError, AttributeError):
+            return None
+        self._on_next_file()
+        return "break"
+
     def _on_prev_file(self) -> None:
         """Navigate to previous file."""
         if self._file_index > 0:
@@ -1862,7 +1921,7 @@ class ResultViewer(tk.Toplevel):
                     )
                     return
         except Exception:
-            logger.debug("Plan path failed for %s", variant.result_key, exc_info=True)
+            logger.warning("Plan path failed for %s", variant.result_key, exc_info=True)
 
         # 2. Check prefetch cache for instant display
         cache_key = self._make_figure_cache_key(
@@ -2090,7 +2149,7 @@ class ResultViewer(tk.Toplevel):
                     )
                     return
         except Exception:
-            logger.debug("Plan path failed for comparison %s", variant.result_key, exc_info=True)
+            logger.warning("Plan path failed for comparison %s", variant.result_key, exc_info=True)
 
         # Fallback: full prepare_plot_data pipeline
         self._update_time_range(len(df))
@@ -2460,6 +2519,13 @@ class ResultViewer(tk.Toplevel):
     # Window close
     # ------------------------------------------------------------------
 
+    def _restore_sash_position(self) -> None:
+        """Restore the saved left pane width after the window is laid out."""
+        try:
+            self._paned.sashpos(0, self._viewer_settings.left_pane_width)
+        except (tk.TclError, IndexError):
+            pass
+
     def _on_close(self) -> None:
         """Handle window close — persist settings and clean up resources."""
         self._hide_tooltip()
@@ -2467,8 +2533,17 @@ class ResultViewer(tk.Toplevel):
         self._executor.shutdown(wait=False)
         self._clear_figure_cache()
 
-        # Save window geometry
+        # Unbind global key bindings added with bind_all
+        for seq in ("<Prior>", "<Next>", "<Left>", "<Right>",
+                     "<Key-s>", "<Key-p>"):
+            self.unbind_all(seq)
+
+        # Save window geometry and left pane width
         self._viewer_settings.window_geometry = self.geometry()
+        try:
+            self._viewer_settings.left_pane_width = self._paned.sashpos(0)
+        except (tk.TclError, IndexError):
+            pass
 
         # Save comparison scenarios if in comparison mode
         if self._mode.get() == "comparison":

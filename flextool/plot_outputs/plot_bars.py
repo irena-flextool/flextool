@@ -982,7 +982,9 @@ def build_bar_figures(
         expand_level_name = None
         n_expand_groups = 1
 
-    # Build effective_plots
+    # Build effective_plots — split subplots that exceed max_items_per_plot.
+    # The "items" are visual bar-label rows: n_rows * n_expand_groups.
+    # Splitting can happen by expand groups, by rows, or both.
     effective_plots: list[tuple[str | None, pd.DataFrame]] = []
     for sub in subs:
         df_sub = _extract_subplot_data(df, sub, sub_levels)
@@ -995,26 +997,33 @@ def build_bar_figures(
             else str(sub) if sub is not None else None
         )
         n_rows = len(df_sub)
-        effective_max = max_items_per_plot // max(n_expand_groups, 1) if max_items_per_plot else 0
-        effective_max = max(effective_max, 1) if effective_max else 0
-        if effective_max and n_rows > effective_max:
-            max_row_items = effective_max
-            if n_rows > max_row_items:
-                for i in range(0, n_rows, max_row_items):
-                    chunk = df_sub.iloc[i:i + max_row_items]
-                    chunk_label = f"{title}_{i // max_row_items + 1}" if title else None
-                    effective_plots.append((chunk_label, chunk))
-            elif expand_level_name is not None:
-                max_groups = max(1, max_items_per_plot // n_rows)
-                all_groups = df_sub.columns.get_level_values(expand_level_name).unique().tolist()
-                for gi, grp_start in enumerate(range(0, len(all_groups), max_groups)):
-                    grp_chunk = all_groups[grp_start:grp_start + max_groups]
-                    mask = df_sub.columns.get_level_values(expand_level_name).isin(grp_chunk)
-                    chunk = df_sub.loc[:, mask]
-                    chunk_label = f"{title}_{gi + 1}" if title else None
-                    effective_plots.append((chunk_label, chunk))
-            else:
-                effective_plots.append((title, df_sub))
+
+        if not max_items_per_plot:
+            effective_plots.append((title, df_sub))
+            continue
+
+        # Total visual items = n_rows * n_expand_groups
+        total_items = n_rows * max(n_expand_groups, 1)
+        if total_items <= max_items_per_plot:
+            effective_plots.append((title, df_sub))
+            continue
+
+        # Split by expand groups first (if present), then by rows within each group chunk
+        if expand_level_name is not None and n_expand_groups > 1:
+            max_groups = max(1, max_items_per_plot // max(n_rows, 1))
+            all_groups = df_sub.columns.get_level_values(expand_level_name).unique().tolist()
+            for gi, grp_start in enumerate(range(0, len(all_groups), max_groups)):
+                grp_chunk = all_groups[grp_start:grp_start + max_groups]
+                mask = df_sub.columns.get_level_values(expand_level_name).isin(grp_chunk)
+                chunk = df_sub.loc[:, mask]
+                chunk_label = f"{title}_{gi + 1}" if title else None
+                effective_plots.append((chunk_label, chunk))
+        elif n_rows > max_items_per_plot:
+            # No expand groups — split by rows
+            for i in range(0, n_rows, max_items_per_plot):
+                chunk = df_sub.iloc[i:i + max_items_per_plot]
+                chunk_label = f"{title}_{i // max_items_per_plot + 1}" if title else None
+                effective_plots.append((chunk_label, chunk))
         else:
             effective_plots.append((title, df_sub))
 
@@ -1069,21 +1078,48 @@ def build_bar_figures(
         if bar_orientation == 'horizontal' else 0
     )
 
+    # Compute the effective visual item count per subplot.  When expand
+    # groups are present, each group contributes its own set of bar labels,
+    # so the count is much larger than len(df_sub).
+    def _count_visual_items(df_sub: pd.DataFrame) -> int:
+        if not expand_axis_level_names or not isinstance(df_sub.columns, pd.MultiIndex):
+            return max(len(df_sub), 1)
+        count = 0
+        if len(expand_axis_level_names) == 1:
+            groups = df_sub.columns.get_level_values(expand_axis_level_names[0]).unique()
+        else:
+            gf = df_sub.columns.to_frame()[expand_axis_level_names].drop_duplicates()
+            groups = [tuple(r) for r in gf.values]
+        for grp in groups:
+            try:
+                if len(expand_axis_level_names) == 1:
+                    df_g = df_sub.xs(grp, level=expand_axis_level_names[0], axis=1)
+                else:
+                    df_g = df_sub.xs(grp, level=expand_axis_level_names, axis=1)
+            except KeyError:
+                continue
+            if isinstance(df_g, pd.Series):
+                df_g = df_g.to_frame()
+            count += len(df_g)
+        return max(count, 1)
+
+    visual_item_counts = [_count_visual_items(df_sub) for _, df_sub in effective_plots]
+
     # Group subplots into grid rows so we never break mid-row.
-    grid_rows: list[list] = []
+    grid_rows: list[list[int]] = []
     for gi in range(0, len(effective_plots), spr):
-        grid_rows.append(effective_plots[gi:gi + spr])
+        grid_rows.append(list(range(gi, min(gi + spr, len(effective_plots)))))
 
     _file_batches: list[tuple[list, None]] = []
     cur: list = []
     col_counts = [0] * spr
 
-    for row in grid_rows:
-        would_exceed_subplots = len(cur) + len(row) > _max
+    for row_indices in grid_rows:
+        would_exceed_subplots = len(cur) + len(row_indices) > _max
         would_exceed_col = False
         if col_limit and cur:
-            for j, (_, df_sub) in enumerate(row):
-                if col_counts[j] + len(df_sub) > col_limit:
+            for j, idx in enumerate(row_indices):
+                if col_counts[j] + visual_item_counts[idx] > col_limit:
                     would_exceed_col = True
                     break
 
@@ -1092,9 +1128,9 @@ def build_bar_figures(
             cur = []
             col_counts = [0] * spr
 
-        cur.extend(row)
-        for j, (_, df_sub) in enumerate(row):
-            col_counts[j] += len(df_sub)
+        cur.extend([effective_plots[i] for i in row_indices])
+        for j, idx in enumerate(row_indices):
+            col_counts[j] += visual_item_counts[idx]
 
     if cur:
         _file_batches.append((cur, None))
@@ -1248,33 +1284,33 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
             ' | '.join(str(v) for v in sub) if isinstance(sub, tuple)
             else str(sub) if sub is not None else None
         )
-        # Limit total y-axis labels (row items × expand groups) to max_items_per_plot.
-        # Each row appears once per expand group, so divide the limit accordingly.
+        # Limit total visual bar labels (n_rows * n_expand_groups) to max_items_per_plot.
         n_rows = len(df_sub)
-        effective_max = max_items_per_plot // max(n_expand_groups, 1) if max_items_per_plot else 0
-        effective_max = max(effective_max, 1) if effective_max else 0
-        if effective_max and n_rows > effective_max:
-            max_row_items = effective_max
-            if n_rows > max_row_items:
-                # Split by rows
-                for i in range(0, n_rows, max_row_items):
-                    chunk = df_sub.iloc[i:i + max_row_items]
-                    chunk_label = f"{title}_{i // max_row_items + 1}" if title else None
-                    effective_plots.append((chunk_label, chunk))
-            elif expand_level_name is not None:
-                # Can't reduce rows further — split by expand-axis groups
-                max_groups = max(1, max_items_per_plot // n_rows)
-                all_groups = df_sub.columns.get_level_values(
-                    expand_level_name
-                ).unique().tolist()
-                for gi, grp_start in enumerate(range(0, len(all_groups), max_groups)):
-                    grp_chunk = all_groups[grp_start:grp_start + max_groups]
-                    mask = df_sub.columns.get_level_values(expand_level_name).isin(grp_chunk)
-                    chunk = df_sub.loc[:, mask]
-                    chunk_label = f"{title}_{gi + 1}" if title else None
-                    effective_plots.append((chunk_label, chunk))
-            else:
-                effective_plots.append((title, df_sub))
+        if not max_items_per_plot:
+            effective_plots.append((title, df_sub))
+            continue
+
+        total_items = n_rows * max(n_expand_groups, 1)
+        if total_items <= max_items_per_plot:
+            effective_plots.append((title, df_sub))
+            continue
+
+        if expand_level_name is not None and n_expand_groups > 1:
+            max_groups = max(1, max_items_per_plot // max(n_rows, 1))
+            all_groups = df_sub.columns.get_level_values(
+                expand_level_name
+            ).unique().tolist()
+            for gi, grp_start in enumerate(range(0, len(all_groups), max_groups)):
+                grp_chunk = all_groups[grp_start:grp_start + max_groups]
+                mask = df_sub.columns.get_level_values(expand_level_name).isin(grp_chunk)
+                chunk = df_sub.loc[:, mask]
+                chunk_label = f"{title}_{gi + 1}" if title else None
+                effective_plots.append((chunk_label, chunk))
+        elif n_rows > max_items_per_plot:
+            for i in range(0, n_rows, max_items_per_plot):
+                chunk = df_sub.iloc[i:i + max_items_per_plot]
+                chunk_label = f"{title}_{i // max_items_per_plot + 1}" if title else None
+                effective_plots.append((chunk_label, chunk))
         else:
             effective_plots.append((title, df_sub))
 

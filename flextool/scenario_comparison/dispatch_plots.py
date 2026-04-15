@@ -400,7 +400,14 @@ def create_dispatch_plots(
                 colors=colors, config_order=config_order,
             )
 
-            if df_dispatch is not None and not df_dispatch.empty:
+            has_dispatch = df_dispatch is not None and not df_dispatch.empty
+            has_demand = inflow is not None and not inflow.empty
+            if has_dispatch or has_demand:
+                if df_dispatch is None or df_dispatch.empty:
+                    # Create a minimal DataFrame so plot_dispatch_area can
+                    # draw the demand line even when there are no supply flows.
+                    idx = inflow.index if has_demand else pd.RangeIndex(1)
+                    df_dispatch = pd.DataFrame(index=idx)
                 # Ensure consistent columns across scenarios for same nodeGroup
                 if ng in ng_columns:
                     for col in ng_columns[ng]:
@@ -428,7 +435,12 @@ def create_dispatch_plots(
             df_node, inflow_node = prepare_node_dispatch_data(
                 results, scenario, node
             )
-            if df_node is not None and not df_node.empty:
+            has_node_dispatch = df_node is not None and not df_node.empty
+            has_node_demand = inflow_node is not None and not inflow_node.empty
+            if has_node_dispatch or has_node_demand:
+                if df_node is None or df_node.empty:
+                    idx = inflow_node.index if has_node_demand else pd.RangeIndex(1)
+                    df_node = pd.DataFrame(index=idx)
                 # Ensure consistent columns across scenarios for same node
                 if node in node_columns:
                     for col in node_columns[node]:

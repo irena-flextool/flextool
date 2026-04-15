@@ -1343,94 +1343,97 @@ plots:
         xlabel: Currency/year
 
 rename:
-  group_node: group_node
-  group_process: group_process
-  group_process_node: group_process_node
-  outputNodeGroup_does_specified_flows: outputNodeGroup_does_specified_flows
-  outputNodeGroup_does_generic_flows: outputNodeGroup_does_generic_flows
-  outputNodeGroup__connection_Not_in_aggregate: outputNodeGroup__connection_Not_in_aggregate
-  outputNodeGroup__process__unit__to_node_Not_in_aggregate: outputNodeGroup__process__unit__to_node_Not_in_aggregate
-  outputNodeGroup__process__node__to_unit_Not_in_aggregate: outputNodeGroup__process__node__to_unit_Not_in_aggregate
-  outputNodeGroup__process__connection__to_node_Not_in_aggregate: outputNodeGroup__process__connection__to_node_Not_in_aggregate
-  outputNodeGroup__process__node__to_connection_Not_in_aggregate: outputNodeGroup__process__node__to_connection_Not_in_aggregate
-  outputNodeGroup__processGroup_Unit_to_group: outputNodeGroup__processGroup_Unit_to_group
-  outputNodeGroup__processGroup__process__unit__to_node: outputNodeGroup__processGroup__process__unit__to_node
-  outputNodeGroup__processGroup_Group_to_unit: outputNodeGroup__processGroup_Group_to_unit
-  outputNodeGroup__processGroup__process__node__to_unit: outputNodeGroup__processGroup__process__node__to_unit
-  outputNodeGroup__processGroup_Connection: outputNodeGroup__processGroup_Connection
-  outputNodeGroup__processGroup__process__connection__to_node: outputNodeGroup__processGroup__process__connection__to_node
-  outputNodeGroup__processGroup__process__node__to_connection: outputNodeGroup__processGroup__process__node__to_connection
-  outputNodeGroup__process_fully_inside: outputNodeGroup__process_fully_inside
-  node_inflow__dt: node_inflow__dt
-  annualized_costs_d_p: annualized_costs__d
-  CO2__: co2
-  connection_d_eee: connection__d
-  connection_losses_d_eee: connection_losses__d
-  connection_dt_eee: connection__dt
-  connection_losses_dt_eee: connection__dt_losses
-  connection_leftward_dt_eee: connection_leftward__dt
-  connection_leftward_d_eee: connection_leftward__d
-  connection_rightward_dt_eee: connection_rightward__dt
-  connection_rightward_d_eee: connection_rightward__d
-  connection_capacity_ed_p: connection_capacity__d
-  connection_cf_d_e: connection_cf__d
-  costs_dt_p: costs__dt
-  costs_discounted_d_p: costs_discounted
-  costs_discounted_p_: costs_discounted
-  discountFactors_d_p: discount_factors__d
-  dual_invest_effective_connection_d_e: connection_invest_marginal__d
-  dual_invest_effective_node_d_e: node_invest_marginal__d
-  dual_invest_effective_unit_d_e: unit_invest_marginal__d
-  entity_annuity_d_p: entity_annuity
-  nodeGroup_unit_node_inertia_dt_gee: group__unit__node_inertia__dt
-  nodeGroup_flows_d_g: group_total_inflow__d
-  nodeGroup_flows_dt_g: group_total_inflow__dt
-  nodeGroup_flows_d_gpe: group_flows__d
-  nodeGroup_flows_dt_gpe: group_flows__dt
-  nodeGroup_inertia_dt_g: group_inertia__dt
-  nodeGroup_inertia_largest_flow_dt_g: group_inertia_largest_flow__dt
-  nodeGroup_gdt_p: group_node__dt
-  nodeGroup_gd_p: group_node__d
-  nodeGroup_VRE_share_d_g: group_node_VRE_share__dt
-  nodeGroup_VRE_share_dt_g: group_node_VRE_share
-  CO2_d_g: group_CO2__d
-  node_d_ep: node__d
-  node_dt_ep: node__dt
-  node_capacity_ed_p: node_capacity__d
-  node_prices_dt_e: node_prices__dt
-  node_state_dt_e: node_state__dt
-  process_co2_d_eee: process__d_co2
-  process_reserve_upDown_node_dt_eppe: process__reserve__upDown__node__dt
-  process_reserve_average_d_eppe: process__reserve__upDown__node__d_average
-  reserve_prices_dt_ppg: reserve_price__upDown__group__dt
-  nodeGroup_slack_capacity_margin_d_g: slack__capacity_margin__d
-  node_slack_down_dt_e: slack__downward__node_state__dt
-  node_slack_down_d_e: slack__downward__node_state__d
-  nodeGroup_slack_inertia_d_g: slack__inertia_group__d
-  nodeGroup_slack_inertia_dt_g: slack__inertia_group__dt
-  nodeGroup_slack_nonsync_d_g: slack__nonsync_group__d
-  nodeGroup_slack_nonsync_dt_g: slack__nonsync_group__dt
-  nodeGroup_slack_reserve_d_eeg: slack__reserve__upDown__group__d
-  nodeGroup_slack_reserve_dt_eeg: slack__reserve__upDown__group__dt
-  node_slack_up_dt_e: slack__upward__node_state__dt
-  node_slack_up_d_e: slack__upward__node_state__d
-  unit_inputNode_d_ee: unit__inputNode__d
-  unit_inputNode_dt_ee: unit__inputNode__dt
-  unit_outputNode_d_ee: unit__outputNode__d
-  unit_outputNode_dt_ee: unit__outputNode__dt
-  unit_capacity_ed_p: unit_capacity__d
-  unit_inputs_cf_d_ee: unit_cf__inputNode__d
-  unit_outputs_cf_d_ee: unit_cf__outputNode__d
-  unit_curtailment_outputNode_d_ee: unit_curtailment__outputNode__d
-  unit_curtailment_outputNode_dt_ee: unit_curtailment__outputNode__dt
-  unit_online_dt_e: unit_online__dt
-  unit_online_average_d_e: unit_online__d_average
-  unit_ramp_inputs_dt_ee: unit_ramp__inputNode__dt
-  unit_ramp_outputs_dt_ee: unit_ramp__outputNode__dt
-  unit_startup_d_e: unit_startup__d
-  unit_VRE_potential_outputNode_dt_ee: unit_outputNode_VRE_potential__dt
-  unit_VRE_curtailment_outputNode_dt_ee: unit_outputNode_VRE_curtailment__dt
-  unit_curtailment_share_outputNode_dt_ee: unit_outputNode_VRE_curtailment_share__dt
-  unit_VRE_potential_outputNode_d_ee: unit_outputNode_VRE_potential__d
-  unit_VRE_curtailment_outputNode_d_ee: unit_outputNode_VRE_curtailment__d
-  unit_curtailment_share_outputNode_d_ee: unit_outputNode_VRE_curtailment_share__d
+  # [display_name, export_to_excel]
+  # display_name: used for CSV filenames and Excel sheet names
+  # export_to_excel: true/false — controls whether the sheet is included in Excel output
+  group_node: [group_node, true]
+  group_process: [group_process, true]
+  group_process_node: [group_process_node, true]
+  outputNodeGroup_does_specified_flows: [outputNodeGroup_does_specified_flows, false]
+  outputNodeGroup_does_generic_flows: [outputNodeGroup_does_generic_flows, false]
+  outputNodeGroup__connection_Not_in_aggregate: [outputNodeGroup__connection_Not_in_aggregate, false]
+  outputNodeGroup__process__unit__to_node_Not_in_aggregate: [outputNodeGroup__process__unit__to_node_Not_in_aggregate, false]
+  outputNodeGroup__process__node__to_unit_Not_in_aggregate: [outputNodeGroup__process__node__to_unit_Not_in_aggregate, false]
+  outputNodeGroup__process__connection__to_node_Not_in_aggregate: [outputNodeGroup__process__connection__to_node_Not_in_aggregate, false]
+  outputNodeGroup__process__node__to_connection_Not_in_aggregate: [outputNodeGroup__process__node__to_connection_Not_in_aggregate, false]
+  outputNodeGroup__processGroup_Unit_to_group: [outputNodeGroup__processGroup_Unit_to_group, false]
+  outputNodeGroup__processGroup__process__unit__to_node: [outputNodeGroup__processGroup__process__unit__to_node, false]
+  outputNodeGroup__processGroup_Group_to_unit: [outputNodeGroup__processGroup_Group_to_unit, false]
+  outputNodeGroup__processGroup__process__node__to_unit: [outputNodeGroup__processGroup__process__node__to_unit, false]
+  outputNodeGroup__processGroup_Connection: [outputNodeGroup__processGroup_Connection, false]
+  outputNodeGroup__processGroup__process__connection__to_node: [outputNodeGroup__processGroup__process__connection__to_node, false]
+  outputNodeGroup__processGroup__process__node__to_connection: [outputNodeGroup__processGroup__process__node__to_connection, false]
+  outputNodeGroup__process_fully_inside: [outputNodeGroup__process_fully_inside, false]
+  node_inflow__dt: [node_inflow__dt, true]
+  annualized_costs_d_p: [annualized_costs__d, true]
+  CO2__: [co2, false]
+  connection_d_eee: [connection__d, true]
+  connection_losses_d_eee: [connection_losses__d, true]
+  connection_dt_eee: [connection__dt, true]
+  connection_losses_dt_eee: [connection__dt_losses, true]
+  connection_leftward_dt_eee: [connection_leftward__dt, true]
+  connection_leftward_d_eee: [connection_leftward__d, true]
+  connection_rightward_dt_eee: [connection_rightward__dt, true]
+  connection_rightward_d_eee: [connection_rightward__d, true]
+  connection_capacity_ed_p: [connection_capacity__d, true]
+  connection_cf_d_e: [connection_cf__d, true]
+  costs_dt_p: [costs__dt, true]
+  costs_discounted_d_p: [costs_discounted, true]
+  costs_discounted_p_: [costs_discounted, true]
+  discountFactors_d_p: [discount_factors__d, true]
+  dual_invest_effective_connection_d_e: [connection_invest_marginal__d, true]
+  dual_invest_effective_node_d_e: [node_invest_marginal__d, true]
+  dual_invest_effective_unit_d_e: [unit_invest_marginal__d, true]
+  entity_annuity_d_p: [entity_annuity, true]
+  nodeGroup_unit_node_inertia_dt_gee: [group__unit__node_inertia__dt, true]
+  nodeGroup_flows_d_g: [group_total_inflow__d, true]
+  nodeGroup_flows_dt_g: [group_total_inflow__dt, true]
+  nodeGroup_flows_d_gpe: [group_flows__d, true]
+  nodeGroup_flows_dt_gpe: [group_flows__dt, true]
+  nodeGroup_inertia_dt_g: [group_inertia__dt, true]
+  nodeGroup_inertia_largest_flow_dt_g: [group_inertia_largest_flow__dt, true]
+  nodeGroup_gdt_p: [group_node__dt, true]
+  nodeGroup_gd_p: [group_node__d, true]
+  nodeGroup_VRE_share_d_g: [group_node_VRE_share__dt, true]
+  nodeGroup_VRE_share_dt_g: [group_node_VRE_share, true]
+  CO2_d_g: [group_CO2__d, true]
+  node_d_ep: [node__d, true]
+  node_dt_ep: [node__dt, true]
+  node_capacity_ed_p: [node_capacity__d, true]
+  node_prices_dt_e: [node_prices__dt, true]
+  node_state_dt_e: [node_state__dt, true]
+  process_co2_d_eee: [process__d_co2, true]
+  process_reserve_upDown_node_dt_eppe: [process__reserve__upDown__node__dt, true]
+  process_reserve_average_d_eppe: [process__reserve__upDown__node__d_average, true]
+  reserve_prices_dt_ppg: [reserve_price__upDown__group__dt, true]
+  nodeGroup_slack_capacity_margin_d_g: [slack__capacity_margin__d, true]
+  node_slack_down_dt_e: [slack__downward__node_state__dt, true]
+  node_slack_down_d_e: [slack__downward__node_state__d, true]
+  nodeGroup_slack_inertia_d_g: [slack__inertia_group__d, true]
+  nodeGroup_slack_inertia_dt_g: [slack__inertia_group__dt, true]
+  nodeGroup_slack_nonsync_d_g: [slack__nonsync_group__d, true]
+  nodeGroup_slack_nonsync_dt_g: [slack__nonsync_group__dt, true]
+  nodeGroup_slack_reserve_d_eeg: [slack__reserve__upDown__group__d, true]
+  nodeGroup_slack_reserve_dt_eeg: [slack__reserve__upDown__group__dt, true]
+  node_slack_up_dt_e: [slack__upward__node_state__dt, true]
+  node_slack_up_d_e: [slack__upward__node_state__d, true]
+  unit_inputNode_d_ee: [unit__inputNode__d, true]
+  unit_inputNode_dt_ee: [unit__inputNode__dt, true]
+  unit_outputNode_d_ee: [unit__outputNode__d, true]
+  unit_outputNode_dt_ee: [unit__outputNode__dt, true]
+  unit_capacity_ed_p: [unit_capacity__d, true]
+  unit_inputs_cf_d_ee: [unit_cf__inputNode__d, true]
+  unit_outputs_cf_d_ee: [unit_cf__outputNode__d, true]
+  unit_curtailment_outputNode_d_ee: [unit_curtailment__outputNode__d, true]
+  unit_curtailment_outputNode_dt_ee: [unit_curtailment__outputNode__dt, true]
+  unit_online_dt_e: [unit_online__dt, true]
+  unit_online_average_d_e: [unit_online__d_average, true]
+  unit_ramp_inputs_dt_ee: [unit_ramp__inputNode__dt, true]
+  unit_ramp_outputs_dt_ee: [unit_ramp__outputNode__dt, true]
+  unit_startup_d_e: [unit_startup__d, true]
+  unit_VRE_potential_outputNode_dt_ee: [unit_outputNode_VRE_potential__dt, true]
+  unit_VRE_curtailment_outputNode_dt_ee: [unit_outputNode_VRE_curtailment__dt, true]
+  unit_curtailment_share_outputNode_dt_ee: [unit_outputNode_VRE_curtailment_share__dt, true]
+  unit_VRE_potential_outputNode_d_ee: [unit_outputNode_VRE_potential__d, true]
+  unit_VRE_curtailment_outputNode_d_ee: [unit_outputNode_VRE_curtailment__d, true]
+  unit_curtailment_share_outputNode_d_ee: [unit_outputNode_VRE_curtailment_share__d, true]

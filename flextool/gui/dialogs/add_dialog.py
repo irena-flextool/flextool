@@ -156,7 +156,7 @@ class AddDialog(tk.Toplevel):
 
         # ── Copy to project section ─────────────────────────────────
         copy_frame = ttk.LabelFrame(
-            self, text="Copy an existing input file to the project", padding=8, style="AddDialog.TLabelframe",
+            self, text="Copy an existing FlexTool 3.x input file to the project", padding=8, style="AddDialog.TLabelframe",
         )
         copy_frame.pack(fill="x", **pad)
 

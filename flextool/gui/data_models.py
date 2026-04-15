@@ -22,6 +22,7 @@ class ViewerSettings:
     last_variant: str = ""    # e.g., "t"
     last_mode: str = "single" # "single", "comparison", "network"
     window_geometry: str = ""  # saved Tk geometry string
+    left_pane_width: int = 0  # saved sash position (0 = use default)
     cache_gb: float = 0.5     # plot cache memory limit in GB
 
 
@@ -75,7 +76,7 @@ class InputSourceInfo:
     name: str
     file_type: str  # "xlsx" or "sqlite"
     number: int
-    status: str  # "ok", "error", or "editing"
+    status: str  # "ok", "error", "empty", or "editing"
     scenarios: list[str] = field(default_factory=list)
 
 

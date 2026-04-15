@@ -7,6 +7,17 @@ import yaml
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
 
+
+def _parse_rename_entry(entry) -> tuple[str, bool]:
+    """Parse a rename map value: ``[display_name, export_to_excel]``.
+
+    Returns (display_name, export_to_excel).
+    """
+    if isinstance(entry, list) and len(entry) >= 2:
+        return str(entry[0]), bool(entry[1])
+    # Bare string (legacy) — treat as name with export=True
+    return str(entry), True
+
 from datetime import datetime, timezone
 from flextool.process_outputs.read_variables import read_variables
 from flextool.process_outputs.read_parameters import read_parameters
@@ -536,9 +547,10 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # Different CSV writing logic depending on data source
         if read_parquet_dir:
             # Simplified CSV writing from parquet (no par,s,v,r available)
-            rename = settings.get('rename', {})
+            rename_raw = settings.get('rename', {})
             for table_name, df in results.items():
-                csv_filename = rename.get(table_name, table_name) + '.csv'
+                display_name, _ = _parse_rename_entry(rename_raw.get(table_name, table_name))
+                csv_filename = display_name + '.csv'
                 csv_path = os.path.join(csv_dir, csv_filename)
                 df_copy = df.reset_index()
                 df_copy.columns.names = [None] * df_copy.columns.nlevels
@@ -547,7 +559,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             # Full CSV writing from output_raw (par,s,v,r available)
             write_summary_csv(par, s, v, r, csv_dir)
 
-            rename = settings.get('rename', {})
+            rename_raw = settings.get('rename', {})
             for table_name, df in results.items():
                 if isinstance(df, (pd.MultiIndex, pd.Index)):
                     df = df.to_frame(index=False)
@@ -591,7 +603,8 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                     names.insert(period_pos, 'solve')
                     df.index = df.index.reorder_levels(order=names)
 
-                csv_filename = rename.get(table_name, table_name) + '.csv'
+                display_name, _ = _parse_rename_entry(rename_raw.get(table_name, table_name))
+                csv_filename = display_name + '.csv'
                 csv_path = os.path.join(csv_dir, csv_filename)
                 df = df.reset_index()
                 df.columns.names = [None] * df.columns.nlevels
@@ -601,24 +614,34 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
     # Write to excel
     if 'excel' in write_methods:
+        rename_raw = settings.get('rename', {})
         excel_dir = os.path.join(output_location, 'output_excel')
         os.makedirs(excel_dir, exist_ok=True)
         excel_path = os.path.join(excel_dir, 'output_' + scenario_name + '.xlsx')
+        # Build list of (sheet_name, df) sorted alphabetically
+        sheets: list[tuple[str, pd.DataFrame]] = []
+        used_names: set[str] = set()
+        for name, df in results.items():
+            display_name, export = _parse_rename_entry(
+                rename_raw.get(name, name)
+            )
+            if not export:
+                continue
+            if isinstance(df, (pd.MultiIndex, pd.Index)):
+                df = df.to_frame(index=False)
+            if (not df.empty) & (len(df) > 0):
+                sheet_name = display_name[:31]
+                if sheet_name in used_names:
+                    suffix = 1
+                    while f"{sheet_name[:28]}_{suffix}" in used_names:
+                        suffix += 1
+                    sheet_name = f"{sheet_name[:28]}_{suffix}"
+                used_names.add(sheet_name)
+                sheets.append((sheet_name, df))
+        sheets.sort(key=lambda x: x[0].lower())
+
         with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
-            used_names = set()
-            for name, df in results.items():
-                if isinstance(df, (pd.MultiIndex, pd.Index)):
-                    df = df.to_frame(index=False)
-                if (not df.empty) & (len(df) > 0):
-                    # Excel sheet names limited to 31 characters
-                    sheet_name = name[:31]
-                    # Handle duplicates from truncation
-                    if sheet_name in used_names:
-                        suffix = 1
-                        while f"{sheet_name[:28]}_{suffix}" in used_names:
-                            suffix += 1
-                        sheet_name = f"{sheet_name[:28]}_{suffix}"
-                    used_names.add(sheet_name)
-                    df.to_excel(writer, sheet_name=sheet_name)
+            for sheet_name, df in sheets:
+                df.to_excel(writer, sheet_name=sheet_name)
 
         start = log_time('Wrote to Excel', start)

@@ -151,7 +151,7 @@ class InputSourceManager:
                             scenarios.append(value)
                     break
 
-                return scenarios if scenarios else None
+                return scenarios
 
         except Exception:
             logger.warning("Error reading scenarios from %s", filepath, exc_info=True)
@@ -232,7 +232,7 @@ class InputSourceManager:
             if scenarios is None:
                 source.status = "error"
             elif len(scenarios) == 0:
-                source.status = "error"
+                source.status = "empty"
             else:
                 source.status = "ok"
                 source.scenarios = scenarios

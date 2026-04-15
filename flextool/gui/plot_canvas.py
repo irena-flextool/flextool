@@ -53,12 +53,40 @@ class PlotCanvas(ttk.Frame):
         self._resize_pending: str | None = None
         self._natural_size_inches: tuple[float, float] = (6.0, 4.0)
 
+        # Detect system DPI so matplotlib renders at the correct scale.
+        # On Windows with e.g. 150% scaling the system DPI is 144 while
+        # matplotlib defaults to 100, making text appear ~30% too small.
+        self._system_dpi: float = self._detect_system_dpi()
+
+        # ── Scrollable container ──────────────────────────────────
+        # A tk.Canvas with scrollbars wraps the matplotlib widget so
+        # that figures larger than the window can be scrolled.
+        self._scroll_canvas = tk.Canvas(self, background=_BG, highlightthickness=0)
+        self._vscroll = ttk.Scrollbar(self, orient="vertical",
+                                       command=self._scroll_canvas.yview)
+        self._hscroll = ttk.Scrollbar(self, orient="horizontal",
+                                       command=self._scroll_canvas.xview)
+        self._scroll_canvas.configure(
+            yscrollcommand=self._vscroll.set,
+            xscrollcommand=self._hscroll.set,
+        )
+        self._scroll_canvas.grid(row=0, column=0, sticky="nsew")
+        self._vscroll.grid(row=0, column=1, sticky="ns")
+        self._hscroll.grid(row=1, column=0, sticky="ew")
+        self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=0)
+        self.rowconfigure(0, weight=1)
+        self.rowconfigure(1, weight=0)
+
         # Create a blank figure that fills the canvas with a solid bg
         self._figure = Figure(facecolor=_BG)
-        self._canvas = FigureCanvasTkAgg(self._figure, master=self)
+        self._canvas = FigureCanvasTkAgg(self._figure, master=self._scroll_canvas)
         self._canvas_widget = self._canvas.get_tk_widget()
         self._canvas_widget.configure(background=_BG)
-        self._canvas_widget.grid(row=0, column=0, sticky="nsew")
+        # Place the matplotlib widget as a window on the scroll canvas
+        self._inner_window = self._scroll_canvas.create_window(
+            0, 0, window=self._canvas_widget, anchor="nw",
+        )
 
         # ── Permanently disconnect matplotlib's resize handling ──
         # This prevents the <Configure> → resize() → draw_idle() →
@@ -83,12 +111,63 @@ class PlotCanvas(ttk.Frame):
 
         self._canvas_widget.configure = _no_resize_configure  # type: ignore[assignment]
 
+        # Mouse-wheel scrolling
+        self._scroll_canvas.bind("<Enter>", self._bind_mousewheel)
+        self._scroll_canvas.bind("<Leave>", self._unbind_mousewheel)
+
         # NavigationToolbar2Tk calls pack() in its __init__, so it needs
         # a dedicated container frame managed by grid in the outer layout.
         toolbar_frame = ttk.Frame(self)
-        toolbar_frame.grid(row=1, column=0, sticky="ew")
+        toolbar_frame.grid(row=2, column=0, columnspan=2, sticky="ew")
         self._toolbar = NavigationToolbar2Tk(self._canvas, toolbar_frame)
         self._toolbar.update()
+
+    def _bind_mousewheel(self, event: tk.Event) -> None:
+        self._scroll_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self._scroll_canvas.bind_all("<Button-4>", self._on_mousewheel)
+        self._scroll_canvas.bind_all("<Button-5>", self._on_mousewheel)
+
+    def _unbind_mousewheel(self, event: tk.Event) -> None:
+        self._scroll_canvas.unbind_all("<MouseWheel>")
+        self._scroll_canvas.unbind_all("<Button-4>")
+        self._scroll_canvas.unbind_all("<Button-5>")
+
+    @staticmethod
+    def _detect_system_dpi() -> float:
+        """Return the system DPI, falling back to matplotlib's default.
+
+        On Windows with display scaling (e.g. 150% → 144 DPI) this
+        ensures matplotlib renders text at the correct size.  On Linux
+        and macOS the system DPI is usually 96 which is close to
+        matplotlib's 100 default.
+        """
+        import sys
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                return float(ctypes.windll.user32.GetDpiForSystem())  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return matplotlib.rcParams.get("figure.dpi", 100)
+
+    def _apply_system_dpi(self, fig: Figure) -> None:
+        """Set the figure DPI to the system DPI.
+
+        This rescales the rendering so that point-sized fonts (9pt, 10pt,
+        etc.) appear at the correct physical size on high-DPI screens.
+        The figure size in inches is preserved; only the pixel count changes.
+        """
+        if self._system_dpi and fig.get_dpi() != self._system_dpi:
+            fig.set_dpi(self._system_dpi)
+
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        # Linux uses Button-4/5, Windows/Mac uses MouseWheel
+        if event.num == 4:
+            self._scroll_canvas.yview_scroll(-3, "units")
+        elif event.num == 5:
+            self._scroll_canvas.yview_scroll(3, "units")
+        elif event.delta:
+            self._scroll_canvas.yview_scroll(-event.delta // 120, "units")
 
     # ------------------------------------------------------------------
     # Resize handling (replaces matplotlib's <Configure> handler)
@@ -105,23 +184,31 @@ class PlotCanvas(ttk.Frame):
         self._resize_pending = self.after(50, self._do_resize)
 
     def _do_resize(self) -> None:
-        """Adapt the current figure to the new widget size and redraw."""
+        """Re-render figure at natural size and update scrollbars."""
         self._resize_pending = None
-        w = self._canvas_widget.winfo_width()
-        h = self._canvas_widget.winfo_height()
+        w = self._scroll_canvas.winfo_width()
+        h = self._scroll_canvas.winfo_height()
         if w < 2 or h < 2:
             return
+        self._apply_system_dpi(self._figure)
+        self._size_and_draw()
+        # Invalidate PNG cache if the size changed significantly
+        old_w, old_h = self._last_widget_size
+        if abs(w - old_w) > 4 or abs(h - old_h) > 4:
+            self._cache.clear()
+            self._last_widget_size = (w, h)
 
+    def _size_and_draw(self) -> None:
+        """Set the figure to its natural pixel size, update scroll region, draw."""
         dpi = self._figure.get_dpi() or 100
         nat_w, nat_h = self._natural_size_inches
-        # Scale down if figure exceeds canvas, preserving aspect ratio
-        scale = min(w / (nat_w * dpi), h / (nat_h * dpi), 1.0)
-        self._figure.set_size_inches(nat_w * scale, nat_h * scale, forward=False)
+        self._figure.set_size_inches(nat_w, nat_h, forward=False)
+        fig_w = int(nat_w * dpi)
+        fig_h = int(nat_h * dpi)
 
-        # Recreate the internal PhotoImage to match the (possibly scaled) figure
         try:
-            fig_w = int(self._figure.get_size_inches()[0] * dpi)
-            fig_h = int(self._figure.get_size_inches()[1] * dpi)
+            # Resize the matplotlib widget and its internal PhotoImage
+            self._orig_tk_configure(width=fig_w, height=fig_h)
             self._canvas._tkcanvas.delete(self._canvas._tkcanvas_image_region)
             self._canvas._tkphoto.configure(width=fig_w, height=fig_h)
             self._canvas._tkcanvas_image_region = (
@@ -129,28 +216,34 @@ class PlotCanvas(ttk.Frame):
                     0, 0, anchor="nw", image=self._canvas._tkphoto,
                 )
             )
+            self._scroll_canvas.configure(scrollregion=(0, 0, fig_w, fig_h))
         except (AttributeError, tk.TclError):
             pass
 
+        # Reset the toolbar's nav stack for the new figure
+        self._toolbar.update()
         self._cancel_pending_draws()
         self._canvas.draw()
         self._cancel_pending_draws()
 
-        # Invalidate PNG cache if the size changed significantly
-        old_w, old_h = self._last_widget_size
-        if abs(w - old_w) > 4 or abs(h - old_h) > 4:
-            self._cache.clear()
-            self._last_widget_size = (w, h)
+        # Show/hide scrollbars based on whether content exceeds viewport
+        w = self._scroll_canvas.winfo_width()
+        h = self._scroll_canvas.winfo_height()
+        self._vscroll.grid() if fig_h > h else self._vscroll.grid_remove()
+        self._hscroll.grid() if fig_w > w else self._hscroll.grid_remove()
+
+        # Scroll to top-left
+        self._scroll_canvas.xview_moveto(0)
+        self._scroll_canvas.yview_moveto(0)
 
     # ------------------------------------------------------------------
     # Figure display
     # ------------------------------------------------------------------
 
     def display_figure(self, fig: Figure) -> None:
-        """Display a matplotlib Figure on the canvas.
+        """Display a matplotlib Figure at its natural size.
 
-        Respects the figure's original size.  If the figure is larger
-        than the canvas, it is scaled down (preserving aspect ratio).
+        Scrollbars appear when the figure exceeds the visible area.
         Only one ``draw()`` call is made — no jitter, no redundant renders.
         """
         if fig is self._figure:
@@ -160,47 +253,14 @@ class PlotCanvas(ttk.Frame):
         fig.set_facecolor(_BG)
         # Remember the figure's designed size for resize handling
         self._natural_size_inches = tuple(fig.get_size_inches())
-
-        dpi = fig.get_dpi() or 100
-        nat_w, nat_h = self._natural_size_inches
-        w_px = self._canvas_widget.winfo_width()
-        h_px = self._canvas_widget.winfo_height()
-        if w_px > 1 and h_px > 1:
-            # Scale down if figure exceeds canvas, preserving aspect ratio
-            scale = min(w_px / (nat_w * dpi), h_px / (nat_h * dpi), 1.0)
-            if scale < 1.0:
-                fig.set_size_inches(nat_w * scale, nat_h * scale, forward=False)
+        # Render at system DPI so fonts match the OS scaling
+        self._apply_system_dpi(fig)
 
         self._figure = fig
         self._canvas.figure = fig
         fig.set_canvas(self._canvas)
 
-        # Resize the internal PhotoImage to match the new figure so no
-        # leftover pixels from a previous (larger) figure remain visible.
-        try:
-            tk_canvas = self._canvas._tkcanvas
-            tk_canvas.configure(background=_BG)
-            dpi = fig.get_dpi() or 100
-            new_w = int(fig.get_size_inches()[0] * dpi)
-            new_h = int(fig.get_size_inches()[1] * dpi)
-            tk_canvas.delete(self._canvas._tkcanvas_image_region)
-            self._canvas._tkphoto.configure(width=new_w, height=new_h)
-            cw = tk_canvas.winfo_width()
-            ch = tk_canvas.winfo_height()
-            self._canvas._tkcanvas_image_region = tk_canvas.create_image(
-                0, 0, anchor="nw", image=self._canvas._tkphoto,
-            )
-        except (AttributeError, tk.TclError):
-            pass
-
-        # Reset the toolbar's nav stack for the new figure so that
-        # zoom/pan/home/back/forward work correctly.
-        self._toolbar.update()
-
-        # Cancel any pending idle draws from set_canvas()/toolbar.update()
-        self._cancel_pending_draws()
-        self._canvas.draw()
-        self._cancel_pending_draws()
+        self._size_and_draw()
 
     def _cancel_pending_draws(self) -> None:
         """Cancel any ``after_idle(draw)`` scheduled by ``draw_idle()``."""
@@ -232,22 +292,22 @@ class PlotCanvas(ttk.Frame):
 
         img_h, img_w = img.shape[:2]
 
-        w_px = self._canvas_widget.winfo_width()
-        h_px = self._canvas_widget.winfo_height()
+        w_px = self._scroll_canvas.winfo_width()
+        h_px = self._scroll_canvas.winfo_height()
         widget_w = max(w_px, 100)
         widget_h = max(h_px, 100)
         self._last_widget_size = (widget_w, widget_h)
 
-        # Scale down if image exceeds widget, preserving aspect ratio
-        scale = min(widget_w / img_w, widget_h / img_h, 1.0)
-        disp_w = img_w * scale
-        disp_h = img_h * scale
+        # Display at natural size — scrollbars appear if needed
+        disp_w = img_w
+        disp_h = img_h
 
-        # Place the image at top-left inside a figure sized to the image
-        dpi = 100
+        # Place the image at top-left inside a figure sized to the image.
+        # Use system DPI so the image is rendered at the correct scale.
+        dpi = self._system_dpi or 100
         fig = Figure(figsize=(disp_w / dpi, disp_h / dpi), dpi=dpi)
         ax = fig.add_axes([0, 0, 1, 1])
-        ax.imshow(img, interpolation="lanczos" if scale < 1.0 else "nearest")
+        ax.imshow(img, interpolation="nearest")
         ax.set_axis_off()
 
         self._cache.put(cache_key, fig)

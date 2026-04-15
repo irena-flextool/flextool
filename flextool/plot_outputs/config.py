@@ -79,6 +79,10 @@ def flatten_new_format(plots: dict) -> dict:
     ``costs_dt_p`` under both "Costs" and "Costs lines"), the sub-configs
     from each entry are merged into a single dict for that result_key.
 
+    Sub-configs that lack an explicit ``plot_name`` get the entry name
+    (e.g. "Node flows") injected as ``_entry_name`` so the orchestrator
+    can use it as a filename fallback instead of the raw result_key.
+
     Already-flat entries (result_key → config dict without group/order)
     pass through unchanged for programmatic callers.
     """
@@ -90,10 +94,15 @@ def flatten_new_format(plots: dict) -> dict:
             for rk, rk_val in value.items():
                 if rk in ('group', 'order') or not isinstance(rk_val, dict):
                     continue
+                # Inject entry name into sub-configs that lack plot_name
+                enriched = dict(rk_val)
+                for setting_name, setting in enriched.items():
+                    if isinstance(setting, dict) and 'plot_name' not in setting:
+                        setting['_entry_name'] = key
                 if rk in flat:
-                    flat[rk].update(rk_val)
+                    flat[rk].update(enriched)
                 else:
-                    flat[rk] = dict(rk_val)
+                    flat[rk] = enriched
         else:
             # Already flat (result_key → config dict) — pass through
             flat[key] = value

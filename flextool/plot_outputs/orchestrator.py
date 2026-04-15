@@ -693,6 +693,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         for setting in chosen_settings:
             # Parse raw dict into typed PlotConfig; warn about unknown keys
             # Backward compat: map old 'axis_scale_min_max' key to 'axis_bounds'
+            # _entry_name is injected by flatten_new_format, not a PlotConfig field
+            entry_name = setting.pop('_entry_name', None)
             unknown_keys = [k for k in setting if k not in PLOT_FIELD_NAMES]
             if unknown_keys:
                 logging.warning(
@@ -704,10 +706,18 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 filtered['axis_bounds'] = filtered.pop('axis_scale_min_max')
             elif 'axis_scale_min_max' in filtered:
                 del filtered['axis_scale_min_max']
-            filtered.pop('variant', None)  # used by config reader, not PlotConfig
+            variant = filtered.pop('variant', None)
             cfg = PlotConfig(**filtered)
 
-            plot_name = cfg.plot_name or key
+            # Plot title: explicit plot_name > entry name > result key
+            plot_name = cfg.plot_name or entry_name or key
+
+            # Filename: use plot_name, append variant to avoid collisions
+            # between e.g. period bars (_p) and totals (_a)
+            if variant and not cfg.plot_name:
+                file_name = f"{plot_name}_{variant}"
+            else:
+                file_name = plot_name
 
             # Use prepare_plot_data for the core logic
             figures, _total_count = prepare_plot_data(
@@ -724,7 +734,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
             # Save each figure to disk
             for fig_idx, (fig_title, fig) in enumerate(figures, start=1):
                 filepath = generate_split_filename(
-                    plot_name, plot_dir, plot_file_format,
+                    file_name, plot_dir, plot_file_format,
                     file_idx=fig_idx if len(figures) > 1 else None,
                     needs_split=(len(figures) > 1),
                 )

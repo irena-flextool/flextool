@@ -74,9 +74,10 @@ def _unlink_sqlite(db_path: Path) -> None:
 # than ballot box characters at the same font size.
 CHECK_ON = "\u25a3"   # ▣
 CHECK_OFF = "\u25a1"  # □
-STATUS_OK = "\u2713"  # ✓
-STATUS_ERR = "\u2717"  # ✗
-STATUS_EDITING = "\u23f3"  # ⏳
+STATUS_OK = "\u2713"      # ✓
+STATUS_ERR = "\u2717"     # ✗
+STATUS_EMPTY = "\u2300"   # ⌀  (no scenarios)
+STATUS_EDITING = "\u23f3" # ⏳
 
 # Animated spinner frames for output action progress indication
 _SPINNER_FRAMES = ["\u29d6", "\u29d7"]  # ⧖ ⧗ (hourglass variants)
@@ -136,6 +137,9 @@ class MainWindow(tk.Tk):
         row_height = self._line_height
         style.configure("Treeview", rowheight=row_height)
 
+        # Make LabelFrame titles the same font size as everything else
+        style.configure("TLabelframe.Label", font=tkfont.nametofont("TkDefaultFont"))
+
         # Make selected rows clearly visible in both dark and light themes
         style.map(
             "Treeview",
@@ -173,6 +177,9 @@ class MainWindow(tk.Tk):
         self._xlsx_converting_sources: set[str] = set()
         self._xlsx_pending_scenarios: list[ScenarioInfo] = []
         self._xlsx_conversion_queue: list[tuple[str, Path]] = []
+
+        # Tooltip for input source status column
+        self._input_status_tip: tk.Toplevel | None = None
 
         # Sort mode for each treeview: "alpha" (by name) or "number" (by # column)
         self._input_sort_mode: str = "alpha"
@@ -228,13 +235,32 @@ class MainWindow(tk.Tk):
             ).pack(side="left", padx=3)
 
         # ── Row 1: Section headers ───────────────────────────────────
+        from flextool.gui.hover_tooltip import attach_tooltip
+
         row = 1
-        ttk.Label(outer, text="Input sources", font=self._bold_font).grid(
-            row=row, column=0, sticky="sw", pady=(10, 2)
-        )
-        ttk.Label(outer, text="Auto-generate", font=self._bold_font).grid(
+        input_lbl = ttk.Label(outer, text="Input sources", font=self._bold_font)
+        input_lbl.grid(row=row, column=0, sticky="sw", pady=(10, 2))
+        attach_tooltip(input_lbl, (
+            "Input files (.xlsx/.sqlite) for FlexTool scenarios.\n"
+            "\n"
+            "  \u2022 Double-click to edit a source\n"
+            "  \u2022 Right-click for actions (Edit, Convert, Delete)\n"
+            "  \u2022 Click column headers to sort"
+        ))
+
+        autogen_lbl = ttk.Label(outer, text="Auto-generate", font=self._bold_font)
+        autogen_lbl.grid(
             row=row, column=2, columnspan=2, sticky="sw", padx=(20, 0), pady=(10, 2)
         )
+        attach_tooltip(autogen_lbl, (
+            "Select which outputs to generate\n"
+            "automatically after scenario execution.\n\n"
+            "All different results can be generated also\n"
+            "afterwards from 'Output actions', since full\n"
+            "results are always stored as parquet files.\n\n"
+            "Png settings control only what is plotted to files -\n"
+            "result viewer is not limited by png settings."
+        ))
 
         # ── Rows 2-8: Input sources tree + buttons + auto-gen + output status ──
         # --- Input sources Treeview (rows 2-8, col 0) ---
@@ -276,6 +302,8 @@ class MainWindow(tk.Tk):
         self.input_sources_tree.bind("<B1-Motion>", self._on_tree_drag_select)
         self.input_sources_tree.bind("<<TreeviewSelect>>", lambda _e: self._update_input_button_states())
         self.input_sources_tree.bind("<Button-3>", self._on_input_source_right_click)
+        self.input_sources_tree.bind("<Motion>", self._on_input_source_motion)
+        self.input_sources_tree.bind("<Leave>", lambda e: self._hide_input_status_tip())
 
         # --- Input source buttons (col 1, rows 2-8) ---
         btn_col = 1
@@ -315,27 +343,27 @@ class MainWindow(tk.Tk):
         auto_frame.grid(row=2, column=2, rowspan=5, columnspan=2, sticky="nw", padx=(20, 10))
 
         self.auto_scen_plots_cb = ttk.Checkbutton(
-            auto_frame, text="Scen. plots", variable=self.auto_scen_plots_var
+            auto_frame, text="Scenario plots", variable=self.auto_scen_plots_var
         )
         self.auto_scen_plots_cb.grid(row=0, column=0, sticky="w", pady=2)
 
         self.auto_scen_excels_cb = ttk.Checkbutton(
-            auto_frame, text="Scen. Excels", variable=self.auto_scen_excels_var
+            auto_frame, text="Scenario Excels", variable=self.auto_scen_excels_var
         )
         self.auto_scen_excels_cb.grid(row=1, column=0, sticky="w", pady=2)
 
         self.auto_scen_csvs_cb = ttk.Checkbutton(
-            auto_frame, text="Scen. csvs", variable=self.auto_scen_csvs_var
+            auto_frame, text="Scenario csvs", variable=self.auto_scen_csvs_var
         )
         self.auto_scen_csvs_cb.grid(row=2, column=0, sticky="w", pady=2)
 
         self.auto_comp_plots_cb = ttk.Checkbutton(
-            auto_frame, text="Comp. plots", variable=self.auto_comp_plots_var
+            auto_frame, text="Comparison plots", variable=self.auto_comp_plots_var
         )
         self.auto_comp_plots_cb.grid(row=3, column=0, sticky="w", pady=2)
 
         self.auto_comp_excel_cb = ttk.Checkbutton(
-            auto_frame, text="Comp. Excel", variable=self.auto_comp_excel_var
+            auto_frame, text="Comparison Excel", variable=self.auto_comp_excel_var
         )
         self.auto_comp_excel_cb.grid(row=4, column=0, sticky="w", pady=2)
 
@@ -351,13 +379,13 @@ class MainWindow(tk.Tk):
             outer, text="Png settings", width=14,
             command=self._on_plot_menu,
         )
-        self.plot_menu_btn.grid(row=7, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
+        self.plot_menu_btn.grid(row=6, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
 
         self.execution_menu_btn = ttk.Button(
             outer, text="Execution jobs", width=14,
             command=self._on_execution_menu,
         )
-        self.execution_menu_btn.grid(row=8, column=2, columnspan=2, sticky="nw", padx=(20, 10), pady=2)
+        self.execution_menu_btn.grid(row=8, column=2, columnspan=3, sticky="s", padx=10, pady=2)
 
         # --- Output actions LabelFrame (col 5, rows 2-8, right-aligned, above executed scenarios) ---
         # Use tk.LabelFrame (not ttk) so that background color changes apply
@@ -365,8 +393,11 @@ class MainWindow(tk.Tk):
         # Pull the background color from the ttk theme so it matches dark/light mode.
         theme_bg = style.lookup("TFrame", "background") or self.cget("background")
         theme_fg = style.lookup("TLabel", "foreground") or "white"
+        output_label = tk.Label(
+            outer, text=" Output actions ", bg=theme_bg, fg=theme_fg,
+        )
         self.output_frame = tk.LabelFrame(
-            outer, text="Output actions", padx=5, pady=5,
+            outer, labelwidget=output_label, padx=5, pady=5,
             bg=theme_bg, fg=theme_fg,
         )
         self.output_frame.grid(
@@ -375,6 +406,13 @@ class MainWindow(tk.Tk):
         # Store default bg so we can revert the green tint later
         self._output_frame_default_bg = theme_bg
 
+        attach_tooltip(output_label, (
+            "Generate and view outputs for checked executed scenarios.\n"
+            "\n"
+            "  \u2022 Click a button to (re-)generate that output\n"
+            "  \u2022 Show opens the output folder\n"
+            "  \u2022 \u2713 = outputs exist, spinner = running"
+        ))
 
         output_info: list[tuple[str, str, str | None]] = [
             ("Re-plot scenarios", "scen_plots", "Show"),
@@ -441,12 +479,31 @@ class MainWindow(tk.Tk):
 
         # ── Row 10: Scenario section headers ─────────────────────────
         row = 10
-        ttk.Label(outer, text="Available scenarios", font=self._bold_font).grid(
-            row=row, column=0, columnspan=2, sticky="sw", pady=(0, 2)
-        )
-        ttk.Label(outer, text="Executed scenarios", font=self._bold_font).grid(
+        avail_lbl = ttk.Label(outer, text="Av\u0332ailable scenarios", font=self._bold_font)
+        avail_lbl.grid(row=row, column=0, columnspan=2, sticky="sw", pady=(0, 2))
+        attach_tooltip(avail_lbl, (
+            "Scenarios found in checked input sources.\n"
+            "\n"
+            "  \u2022 V \u2014 focus this list\n"
+            "  \u2022 A \u2014 select all rows\n"
+            "  \u2022 Space \u2014 check/uncheck selected\n"
+            "  \u2022 Right-click for actions\n"
+            "  \u2022 Click column headers to sort"
+        ))
+
+        exec_lbl = ttk.Label(outer, text="Ex\u0332ecuted scenarios", font=self._bold_font)
+        exec_lbl.grid(
             row=row, column=2, columnspan=4, sticky="sw", padx=(20, 0), pady=(0, 2)
         )
+        attach_tooltip(exec_lbl, (
+            "Scenarios with results in output_parquet/.\n"
+            "\n"
+            "  \u2022 X \u2014 focus this list\n"
+            "  \u2022 E \u2014 check/uncheck all\n"
+            "  \u2022 Space \u2014 check/uncheck selected\n"
+            "  \u2022 Right-click for actions\n"
+            "  \u2022 Click column headers to sort"
+        ))
 
         # ── Row 11: Available scenarios Treeview ─────────────────────
         row = 11
@@ -584,6 +641,9 @@ class MainWindow(tk.Tk):
         # 'e' toggles checkboxes on selected executed scenarios
         self.bind_all("<Key-e>", self._on_key_e)
         self.bind_all("<Key-E>", self._on_key_e)
+        # 'v' focuses available scenarios, 'x' focuses executed scenarios
+        self.bind_all("<Key-v>", self._on_key_v)
+        self.bind_all("<Key-x>", self._on_key_x)
 
         # ── Window close handler ─────────────────────────────────────
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1181,6 +1241,61 @@ class MainWindow(tk.Tk):
         menu.add_command(label="Refresh", command=self._on_refresh_sources)
         menu.tk_popup(event.x_root, event.y_root)
 
+    def _on_input_source_motion(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Show a tooltip when hovering over an error/empty row."""
+        tree = self.input_sources_tree
+        item = tree.identify_row(event.y)
+        if not item:
+            self._hide_input_status_tip()
+            return
+        values = tree.item(item, "values")
+        if not values:
+            self._hide_input_status_tip()
+            return
+
+        status_char = values[3]
+        if status_char == STATUS_EMPTY:
+            tip_text = "No scenarios found in this file."
+        elif status_char == STATUS_ERR:
+            tip_text = "Could not read scenarios (invalid or missing file)."
+        elif status_char == STATUS_EDITING:
+            tip_text = "File is currently open for editing."
+        else:
+            self._hide_input_status_tip()
+            return
+
+        # Show or reposition tooltip
+        if self._input_status_tip is not None:
+            try:
+                self._input_status_tip.wm_geometry(
+                    f"+{event.x_root + 15}+{event.y_root + 10}"
+                )
+                self._input_status_tip.children["!label"].configure(text=tip_text)
+                return
+            except (tk.TclError, KeyError):
+                self._input_status_tip = None
+
+        tw = tk.Toplevel(self)
+        tw.wm_overrideredirect(True)
+        tw.wm_attributes("-topmost", True)
+        tw.wm_geometry(f"+{event.x_root + 15}+{event.y_root + 10}")
+        lbl = tk.Label(
+            tw, text=tip_text, justify="left",
+            background="#333333", foreground="#ffffff",
+            relief="solid", borderwidth=1, padx=8, pady=4,
+        )
+        lbl.pack()
+        self._input_status_tip = tw
+
+    def _hide_input_status_tip(self) -> None:
+        """Destroy the input source status tooltip if visible."""
+        if self._input_status_tip is not None:
+            try:
+                self._input_status_tip.destroy()
+            except tk.TclError:
+                pass
+            self._input_status_tip = None
+
     def _on_available_right_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         """Show context menu for available scenarios tree."""
         tree = self.available_tree
@@ -1351,8 +1466,9 @@ class MainWindow(tk.Tk):
         for item in self.input_sources_tree.get_children():
             self.input_sources_tree.delete(item)
 
-        # Configure tag for error rows
-        self.input_sources_tree.tag_configure("error", background="#ffcccc")
+        # Configure tags for problem rows
+        self.input_sources_tree.tag_configure("error", background="#6b2020")
+        self.input_sources_tree.tag_configure("empty", background="#5c4a00")
 
         # Populate input sources tree
         saved_checked = set(self.project_settings.checked_input_sources)
@@ -1362,6 +1478,8 @@ class MainWindow(tk.Tk):
                 status_char = STATUS_OK
             elif source.status == "editing":
                 status_char = STATUS_EDITING
+            elif source.status == "empty":
+                status_char = STATUS_EMPTY
             else:
                 status_char = STATUS_ERR
 
@@ -1372,7 +1490,12 @@ class MainWindow(tk.Tk):
             else:
                 check_char = CHECK_ON
 
-            tags = ("error",) if source.status == "error" else ()
+            if source.status == "error":
+                tags = ("error",)
+            elif source.status == "empty":
+                tags = ("empty",)
+            else:
+                tags = ()
             self.input_sources_tree.insert(
                 "",
                 "end",
@@ -2535,6 +2658,32 @@ class MainWindow(tk.Tk):
                 return None
             w = getattr(w, "master", None)
         self._on_check_executed()
+        return "break"
+
+    def _on_key_v(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Focus the available scenarios tree on 'v' press."""
+        w = event.widget
+        while w is not None:
+            if isinstance(w, (tk.Entry, ttk.Entry, tk.Text)):
+                return None
+            w = getattr(w, "master", None)
+        self.available_tree.focus_set()
+        children = self.available_tree.get_children()
+        if children and not self.available_tree.selection():
+            self.available_tree.selection_set(children[0])
+        return "break"
+
+    def _on_key_x(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Focus the executed scenarios tree on 'x' press."""
+        w = event.widget
+        while w is not None:
+            if isinstance(w, (tk.Entry, ttk.Entry, tk.Text)):
+                return None
+            w = getattr(w, "master", None)
+        self.executed_tree.focus_set()
+        children = self.executed_tree.get_children()
+        if children and not self.executed_tree.selection():
+            self.executed_tree.selection_set(children[0])
         return "break"
 
     # ── Executed scenarios management ────────────────────────────

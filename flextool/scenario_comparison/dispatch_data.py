@@ -32,12 +32,25 @@ from flextool.scenario_comparison.data_models import (
 def _get_time_index(results: TimeSeriesResults, scenario: str) -> pd.Index | None:
     """Find a time index from the first available result DataFrame.
 
-    Tries unit_outputNode_dt_ee first, falls back to connection_leftward_dt_eee.
+    Tries unit flows and connection flows first, then falls back to
+    slack and inflow data so that nodeGroups with only demand / loss-of-load
+    still get a valid time index.
     """
-    for df in (results.unit_outputNode_dt_ee, results.connection_leftward_dt_eee):
-        if df is not None:
+    candidates = [
+        results.unit_outputNode_dt_ee,
+        results.connection_leftward_dt_eee,
+        results.node_slack_up_dt_e,
+        results.node_inflow__dt,
+    ]
+    for df in candidates:
+        if df is None:
+            continue
+        if isinstance(df.columns, pd.MultiIndex) and 'scenario' in df.columns.names:
             if scenario in df.columns.get_level_values('scenario'):
                 return df.xs(scenario, axis=1, level='scenario').groupby('time').sum().index
+        elif df.index.nlevels >= 2:
+            # node_inflow__dt may not have a scenario column level
+            return df.groupby('time').sum().index
     return None
 
 

@@ -194,21 +194,48 @@ def run(
 
     # Write to Excel (combined results)
     if write_to_xlsx:
+        # Load rename/export config: use the comparison YAML's rename section
+        # if present, otherwise fall back to default_plots.yaml.
+        rename_raw = settings.get('rename')
+        if not rename_raw:
+            try:
+                default_plots_path = os.path.join(
+                    os.path.dirname(output_config_path), 'default_plots.yaml',
+                )
+                with open(default_plots_path, 'r', encoding='utf-8') as f_dp:
+                    rename_raw = yaml.safe_load(f_dp).get('rename', {})
+            except Exception:
+                rename_raw = {}
+
+        def _parse_rename(entry):
+            if isinstance(entry, list) and len(entry) >= 2:
+                return str(entry[0]), bool(entry[1])
+            return str(entry), True
+
         filename = 'compare_' + str(len(scenario_folders)) + '_scens.xlsx'
         target_dir = excel_dir if excel_dir is not None else plot_dir
         excel_path = os.path.join(target_dir, filename)
+        # Build list of (sheet_name, df) sorted alphabetically
+        sheets: list[tuple[str, pd.DataFrame]] = []
+        used_names: set[str] = set()
+        for name, df in combined_dfs.items():
+            display_name, export = _parse_rename(rename_raw.get(name, name))
+            if not export:
+                continue
+            if (not df.empty) & (len(df) > 0):
+                sheet_name = display_name[:31]
+                if sheet_name in used_names:
+                    suffix = 1
+                    while f"{sheet_name[:28]}_{suffix}" in used_names:
+                        suffix += 1
+                    sheet_name = f"{sheet_name[:28]}_{suffix}"
+                used_names.add(sheet_name)
+                sheets.append((sheet_name, df))
+        sheets.sort(key=lambda x: x[0].lower())
+
         with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
-            used_names: set[str] = set()
-            for name, df in combined_dfs.items():
-                if (not df.empty) & (len(df) > 0):
-                    sheet_name = name[:31]
-                    if sheet_name in used_names:
-                        suffix = 1
-                        while f"{sheet_name[:28]}_{suffix}" in used_names:
-                            suffix += 1
-                        sheet_name = f"{sheet_name[:28]}_{suffix}"
-                    used_names.add(sheet_name)
-                    df.to_excel(writer, sheet_name=sheet_name)
+            for sheet_name, df in sheets:
+                df.to_excel(writer, sheet_name=sheet_name)
         print(f'\nWrote comparison of {len(scenario_folders)} scenarios to xlsx file: {excel_path}')
 
     print('\nDone!')
