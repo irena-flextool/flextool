@@ -1829,21 +1829,39 @@ def _get_param_description(
 def _build_entity_def_label(spec: SheetSpec) -> str:
     """Build the 'entity: ...' definition label for the definition row.
 
-    Always uses simplified form with just dimension names.
-    Full multi-mapping details are on the navigate sheet.
+    When the spec merges multiple entity classes (e.g. unit__inputNode and
+    unit__outputNode), uses the multi-class syntax so that the reader can
+    reconstruct the mapping:
+        entity: (unit__inputNode: (unit, node), unit__outputNode: (unit, node))
+
+    Otherwise uses the simple form:
+        entity: unit, node
     """
-    return f"entity: {', '.join(spec.entity_columns)}"
+    dims = ', '.join(spec.entity_columns)
+    if spec.direction_map and len(spec.entity_classes) > 1:
+        parts = []
+        for cls_name in spec.entity_classes:
+            parts.append(f"{cls_name}: ({dims})")
+        return f"entity: ({', '.join(parts)})"
+    return f"entity: {dims}"
 
 
 def _build_filter_label(spec: SheetSpec) -> str | None:
-    """Build the filter column label.
+    """Build the filter column label for the definition row.
 
-    Returns the direction_column name (e.g. 'input_output') or None.
-    Full mapping details are on the navigate sheet.
+    When the spec merges multiple entity classes, returns the full filter
+    syntax so the reader can map filter values to entity classes:
+        filter: {unit__inputNode: ^input$, unit__outputNode: ^output$}
+
+    Otherwise returns None.
     """
     if not spec.direction_column or not spec.direction_map:
         return None
-    return spec.direction_column
+    pairs = ", ".join(
+        f"{cls}: ^{val}$"
+        for cls, val in spec.direction_map.items()
+    )
+    return f"filter: {{{pairs}}}"
 
 
 def _add_data_validation(

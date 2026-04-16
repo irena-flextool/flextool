@@ -95,6 +95,26 @@ def detect_excel_format(file_path: str | Path) -> ExcelFormatInfo:
                     )
                     return ExcelFormatInfo(ExcelFormat.SPECIFICATION, 25)
 
+        # --- Check navigate sheet for v2 self-describing format ---
+        # When exported in v2 format, the version sheet is removed and
+        # the version is written to the navigate sheet (row 15, col F-G).
+        if "navigate" in sheet_names_lower:
+            ws_nav = wb[sheet_names_lower["navigate"]]
+            nav_version_label = ws_nav.cell(row=15, column=6).value
+            if nav_version_label and "flextool db version" in str(nav_version_label).lower():
+                version = None
+                nav_version_val = ws_nav.cell(row=15, column=7).value
+                if nav_version_val is not None:
+                    try:
+                        version = int(nav_version_val)
+                    except (ValueError, TypeError):
+                        pass
+                logger.info(
+                    "Detected SELF_DESCRIBING v2 format (version %s): %s",
+                    version, file_path.name,
+                )
+                return ExcelFormatInfo(ExcelFormat.SELF_DESCRIBING, version)
+
         # --- Check for old 2.x .xlsm (has 'master' sheet) ---
         if "master" in sheet_names_lower:
             logger.info("Detected OLD_V2 format: %s", file_path.name)
