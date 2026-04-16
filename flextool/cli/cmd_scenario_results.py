@@ -148,8 +148,11 @@ def main() -> None:
                     shared_legend = bool(settings_params['shared-legend'])
 
     # Apply hardcoded defaults for anything still unset
+    _flextool_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if output_config_path is None:
-        output_config_path = 'templates/default_comparison_plots.yaml'
+        output_config_path = os.path.join(_flextool_root, 'templates', 'default_comparison_plots.yaml')
+    elif not os.path.isabs(output_config_path):
+        output_config_path = os.path.join(_flextool_root, output_config_path)
     if active_configs is None:
         active_configs = ['default']
     if plot_rows is None:

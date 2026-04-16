@@ -201,12 +201,20 @@ def _estimate_value_nbins(
     return max(min_nbins, min(max_nbins, nbins))
 
 
-def set_smart_xticks(ax, time_index, plot_width_inches: float) -> None:
+def set_smart_xticks(
+    ax,
+    time_index,
+    plot_width_inches: float,
+    period_labels: list[str] | None = None,
+) -> None:
     """Set x-tick labels smartly based on whether the index contains datetime strings.
 
     For datetime strings: parse, shorten labels, and space ticks based on plot width.
     For non-datetime strings: estimate label width and choose spacing from calendar-like
     intervals (24, 168, 336, 720) based on how many labels fit.
+
+    If *period_labels* is provided, adds a secondary row of period tick marks
+    and labels below the time tick labels.
     """
     if len(time_index) == 0:
         return
@@ -214,3 +222,74 @@ def set_smart_xticks(ax, time_index, plot_width_inches: float) -> None:
         _set_datetime_xticks(ax, time_index, plot_width_inches)
     else:
         _set_calendar_xticks(ax, time_index, plot_width_inches)
+
+    if period_labels:
+        _add_period_ticks(ax, period_labels, plot_width_inches)
+
+
+# ── Period tick marks ─────────────────────────────────────────────
+
+_PERIOD_TICK_COLOR = "#1a3a6b"  # dark blue
+
+
+def _add_period_ticks(ax, period_labels: list[str], plot_width_inches: float) -> None:
+    """Add period tick marks and labels below the time tick labels.
+
+    A tick is placed at position 0 (left edge, always labelled) and at
+    every position where the period changes.  When two adjacent period
+    labels would overlap, the later label is omitted but the tick mark
+    is kept.
+    """
+    if not period_labels:
+        return
+
+    # Build list of (x_position, period_name) for boundaries
+    boundaries: list[tuple[int, str]] = [(0, period_labels[0])]
+    for i in range(1, len(period_labels)):
+        if period_labels[i] != period_labels[i - 1]:
+            boundaries.append((i, period_labels[i]))
+
+    if not boundaries:
+        return
+
+    # Max label width in data-point units (for overlap check)
+    max_label_len = max(len(lbl) for _, lbl in boundaries)
+    char_width_points = max_label_len * 0.08 + 0.3  # approx inches per label
+    n_points = len(period_labels)
+    if n_points > 0 and plot_width_inches > 0:
+        points_per_inch = n_points / plot_width_inches
+        min_gap_points = char_width_points * points_per_inch
+    else:
+        min_gap_points = 0
+
+    # Draw tick marks at all boundary positions (always)
+    tick_positions = [pos for pos, _ in boundaries]
+
+    # Decide which labels to show (skip if overlapping)
+    labels_to_show: list[tuple[int, str]] = []
+    last_labelled_pos = -float('inf')
+    for pos, lbl in boundaries:
+        if pos == 0 or (pos - last_labelled_pos) >= min_gap_points:
+            labels_to_show.append((pos, lbl))
+            last_labelled_pos = pos
+        else:
+            labels_to_show.append((pos, ""))  # tick but no label
+
+    # Use a secondary x-axis for period ticks (below the primary)
+    ax2 = ax.secondary_xaxis('bottom')
+    ax2.set_xticks(tick_positions)
+    ax2.set_xticklabels(
+        [lbl for _, lbl in labels_to_show],
+        fontsize='medium',
+        color=_PERIOD_TICK_COLOR,
+        ha='left',
+    )
+    ax2.tick_params(
+        axis='x',
+        direction='out',
+        length=6,
+        width=1,
+        color=_PERIOD_TICK_COLOR,
+        pad=14,  # push labels below the time tick labels
+        zorder=1,  # behind time ticks (default zorder=2.5)
+    )

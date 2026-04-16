@@ -69,6 +69,7 @@ class GlobalSettings:
     """Global settings stored in projects/projects.yaml."""
     recent_project: str | None = None
     theme: str = "dark"  # Valid values: "dark", "light", "os"
+    exec_jobs_sash: int = 0  # saved Jobs/Progress sash position (0 = default)
 
 
 @dataclass

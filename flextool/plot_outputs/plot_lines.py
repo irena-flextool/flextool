@@ -26,12 +26,12 @@ LEFT_PAD = 0.1              # Left edge padding
 RIGHT_PAD = 0.2              # Right edge padding
 SUBPLOT_VPAD = 0.25          # Space above axes for subplot title
 INTER_COL_GAP = 0.2          # Horizontal gap between subplot columns
-INTER_ROW_GAP = 0.25          # Vertical gap between rows (room for x-axis tick labels of row above)
+INTER_ROW_GAP = 0.5           # Vertical gap between rows (room for time + period tick labels)
 YLABEL_WIDTH = 0.4           # Space reserved for y-axis label text
 XLABEL_HEIGHT = 0.25         # Space reserved for x-axis label text
 LEGEND_GAP = 0.15            # Gap between drawing area and legend box
 TITLE_PAD = 0.3              # Top margin for figure title
-BOTTOM_PAD = 0.35            # Bottom margin (room for x-axis tick labels)
+BOTTOM_PAD = 0.6             # Bottom margin (room for time + period tick labels)
 MIN_VALUE_LABEL_WIDTH = 0.35 # Minimum space for y-axis value tick labels
 
 
@@ -284,6 +284,7 @@ def _build_lines_figure(
     axis_bounds, axis_tick_format, always_include_zero_in_axis,
     layout: LineLayoutParams,
     shared_color_map: dict[str, tuple] | None = None,
+    period_labels: list[str] | None = None,
 ) -> plt.Figure:
     """Build a line-plot Figure and return it (without saving or closing)."""
     n_subs = len(effective_plots)
@@ -405,7 +406,7 @@ def _build_lines_figure(
         _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows)
 
         ax_width_inches = layout.base_width
-        set_smart_xticks(ax, time_index, ax_width_inches)
+        set_smart_xticks(ax, time_index, ax_width_inches, period_labels=period_labels)
 
     # ── Shared legend (one per file, anchored to top-right subplot) ──
     if legend_position == 'shared' and shared_color_map:
@@ -433,6 +434,7 @@ def _render_lines_figure(
     output_filepath,
     layout: LineLayoutParams,
     shared_color_map: dict[str, tuple] | None = None,
+    period_labels: list[str] | None = None,
 ):
     """Render one file's worth of line subplots and save to disk."""
     fig = _build_lines_figure(
@@ -441,6 +443,7 @@ def _render_lines_figure(
         xlabel, ylabel,
         axis_bounds, axis_tick_format, always_include_zero_in_axis,
         layout, shared_color_map,
+        period_labels=period_labels,
     )
     fig.savefig(output_filepath)
     plt.close(fig)
@@ -480,9 +483,15 @@ def build_line_figures(
     else:
         line_level_names = line_levels
 
-    # Get x-axis index
+    # Get x-axis index and period labels
+    period_labels: list[str] | None = None
     if isinstance(df_plot.index, pd.MultiIndex):
         time_index = df_plot.index.get_level_values(-1).astype(str)
+        # Extract period level if present
+        for lvl_i, name in enumerate(df_plot.index.names[:-1]):
+            if name and str(name).lower() in ('period', 'solve_period'):
+                period_labels = df_plot.index.get_level_values(lvl_i).astype(str).tolist()
+                break
     else:
         time_index = df_plot.index.astype(str)
 
@@ -532,6 +541,7 @@ def build_line_figures(
             xlabel, ylabel,
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
             layout, shared_color_map,
+            period_labels=period_labels,
         )
         result.append((batch_title, fig))
     return result, total_file_count
@@ -550,9 +560,14 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
     else:
         line_level_names = line_levels
 
-    # Get x-axis index
+    # Get x-axis index and period labels
+    period_labels: list[str] | None = None
     if isinstance(df_plot.index, pd.MultiIndex):
         time_index = df_plot.index.get_level_values(-1).astype(str)
+        for lvl_i, name in enumerate(df_plot.index.names[:-1]):
+            if name and str(name).lower() in ('period', 'solve_period'):
+                period_labels = df_plot.index.get_level_values(lvl_i).astype(str).tolist()
+                break
     else:
         time_index = df_plot.index.astype(str)
 
@@ -600,6 +615,7 @@ def plot_dt_sub_lines(df_plot, plot_name, plot_dir, sub_levels, line_levels,
             batch_filepath,
             layout=layout,
             shared_color_map=shared_color_map,
+            period_labels=period_labels,
         )
     return len(file_batches) - len(batches_to_render)
 
@@ -615,6 +631,7 @@ def _build_stack_figure(
     axis_bounds, axis_tick_format, always_include_zero_in_axis,
     layout: LineLayoutParams,
     shared_color_map: dict[str, tuple] | None = None,
+    period_labels: list[str] | None = None,
 ) -> plt.Figure:
     """Build a stacked-area Figure and return it (without saving or closing)."""
     n_subs = len(effective_plots)
@@ -778,7 +795,7 @@ def _build_stack_figure(
         _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows)
 
         ax_width_inches = layout.base_width
-        set_smart_xticks(ax, time_index, ax_width_inches)
+        set_smart_xticks(ax, time_index, ax_width_inches, period_labels=period_labels)
 
     # ── Shared legend (one per file, anchored to top-right subplot) ──
     # Reversed so top-of-stack = top-of-legend
@@ -855,9 +872,14 @@ def build_stack_figures(
     else:
         stack_level_names = stack_levels
 
-    # Get x-axis index
+    # Get x-axis index and period labels
+    period_labels: list[str] | None = None
     if isinstance(df_plot.index, pd.MultiIndex):
         time_index = df_plot.index.get_level_values(-1).astype(str)
+        for lvl_i, name in enumerate(df_plot.index.names[:-1]):
+            if name and str(name).lower() in ('period', 'solve_period'):
+                period_labels = df_plot.index.get_level_values(lvl_i).astype(str).tolist()
+                break
     else:
         time_index = df_plot.index.astype(str)
 
@@ -906,6 +928,7 @@ def build_stack_figures(
             xlabel, ylabel,
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
             layout, shared_color_map,
+            period_labels=period_labels,
         )
         result.append((batch_title, fig))
     return result, total_file_count

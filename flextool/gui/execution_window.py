@@ -33,12 +33,13 @@ class ExecutionWindow(tk.Toplevel):
         self,
         parent: tk.Tk,
         execution_mgr: ExecutionManager,
+        global_settings=None,
     ) -> None:
         super().__init__(parent)
         self.title("Execution Jobs")
 
-
         self._mgr = execution_mgr
+        self._global_settings = global_settings
         self._viewed_job_id: int | None = None
         # Track how many stdout lines we have already displayed per job
         # so that we only append new lines on each poll cycle.
@@ -81,13 +82,12 @@ class ExecutionWindow(tk.Toplevel):
             exec_w = max(screen_w - exec_x, 400)  # minimum 400px wide
             self.geometry(f"{exec_w}x{usable_h}+{exec_x}+0")
 
-        self.columnconfigure(0, weight=0)
-        self.columnconfigure(1, weight=1)
+        self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
         # ── Top row: max parallel executions ─────────────────────────
         top_frame = ttk.Frame(self, padding=(10, 5))
-        top_frame.grid(row=0, column=0, columnspan=2, sticky="e")
+        top_frame.grid(row=0, column=0, sticky="e")
 
         ttk.Label(top_frame, text="Max. parallel executions:").pack(side="left", padx=(0, 5))
 
@@ -109,9 +109,13 @@ class ExecutionWindow(tk.Toplevel):
         # Also sync the spinbox to the current manager value
         self._max_workers_var.set(self._mgr.max_workers)
 
+        # ── Horizontal PanedWindow for Jobs / Progress ─────────────────
+        self._paned = ttk.PanedWindow(self, orient="horizontal")
+        self._paned.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+
         # ── Jobs list (left) ──────────────────────────────────────────
-        left_frame = ttk.LabelFrame(self, text="Jobs", padding=5)
-        left_frame.grid(row=1, column=0, sticky="nsew", padx=(10, 5), pady=5)
+        left_frame = ttk.LabelFrame(self._paned, text="Jobs", padding=5)
+        self._paned.add(left_frame, weight=0)
         left_frame.rowconfigure(0, weight=1)
         left_frame.columnconfigure(0, weight=1)
 
@@ -141,8 +145,8 @@ class ExecutionWindow(tk.Toplevel):
         self._job_tree.bind("<B1-Motion>", self._on_drag_select)
 
         # ── Progress panel (right) ───────────────────────────────────
-        right_frame = ttk.LabelFrame(self, text="Progress", padding=5)
-        right_frame.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=5)
+        right_frame = ttk.LabelFrame(self._paned, text="Progress", padding=5)
+        self._paned.add(right_frame, weight=1)
         right_frame.rowconfigure(0, weight=1)
         right_frame.columnconfigure(0, weight=1)
 
@@ -166,7 +170,7 @@ class ExecutionWindow(tk.Toplevel):
 
         # ── Buttons row ──────────────────────────────────────────────
         btn_frame = ttk.Frame(self, padding=(10, 5, 10, 10))
-        btn_frame.grid(row=2, column=0, columnspan=2, sticky="ew")
+        btn_frame.grid(row=2, column=0, sticky="ew")
 
         col = 0
         self._pause_btn = ttk.Button(
@@ -219,6 +223,10 @@ class ExecutionWindow(tk.Toplevel):
 
         # ── Window close handler ─────────────────────────────────────
         self.protocol("WM_DELETE_WINDOW", self._on_close_attempt)
+
+        # ── Restore saved sash position ──────────────────────────────
+        if self._global_settings and self._global_settings.exec_jobs_sash > 0:
+            self.after(50, self._restore_sash)
 
         # ── Initial population and start polling ─────────────────────
         self._refresh_job_list()
@@ -605,6 +613,28 @@ class ExecutionWindow(tk.Toplevel):
         if self._job_tree.exists(iid):
             self._job_tree.selection_set(iid)
 
+    def _restore_sash(self) -> None:
+        """Restore the saved Jobs/Progress sash position."""
+        try:
+            self._paned.sashpos(0, self._global_settings.exec_jobs_sash)
+        except (tk.TclError, IndexError):
+            pass
+
+    def _save_sash(self) -> None:
+        """Save the current sash position to global settings."""
+        if self._global_settings is None:
+            return
+        try:
+            self._global_settings.exec_jobs_sash = self._paned.sashpos(0)
+        except (tk.TclError, IndexError):
+            pass
+        try:
+            from flextool.gui.project_utils import get_projects_dir
+            from flextool.gui.settings_io import save_global_settings
+            save_global_settings(get_projects_dir(), self._global_settings)
+        except Exception:
+            pass
+
     def _on_close_attempt(self) -> None:
         """Handle the close button or window manager close request."""
         if self._mgr.has_pending_or_running():
@@ -615,4 +645,5 @@ class ExecutionWindow(tk.Toplevel):
                 parent=self,
             )
             return
+        self._save_sash()
         self.destroy()

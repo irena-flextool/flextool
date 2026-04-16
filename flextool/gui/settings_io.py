@@ -132,6 +132,7 @@ def load_global_settings(projects_dir: Path) -> GlobalSettings:
     return GlobalSettings(
         recent_project=data.get("recent_project"),
         theme=theme,
+        exec_jobs_sash=data.get("exec_jobs_sash", 0),
     )
 
 

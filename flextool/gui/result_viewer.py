@@ -83,6 +83,10 @@ class ResultViewer(tk.Toplevel):
         self._file_index = 0
         self._file_count = 1
 
+        # Per-variant slider state: {letter: (start, duration)}
+        self._variant_slider_state: dict[str, tuple[int, int]] = {}
+        self._last_slider_variant: str | None = None
+
         # Caches for parquet pipeline
         self._yaml_cache: dict[Path, dict] = {}
         self._break_times_cache: dict[str, set[str] | None] = {}
@@ -204,8 +208,13 @@ class ResultViewer(tk.Toplevel):
         self.bind_all("<Right>", self._on_next_file_event)
 
         # Panel focus shortcuts: s = Scenarios, p = Plots
-        self.bind_all("<Key-s>", self._on_focus_scenarios_event)
-        self.bind_all("<Key-p>", self._on_focus_plots_event)
+        # Bind on specific widgets so Treeview type-ahead doesn't consume them
+        for w in (self._plot_tree, self._variant_canvas, self._scenario_listbox):
+            w.bind("<Key-s>", self._on_focus_scenarios_event)
+            w.bind("<Key-p>", self._on_focus_plots_event)
+        # Also bind at toplevel level for when buttons/controls have focus
+        self.bind("<Key-s>", self._on_focus_scenarios_event)
+        self.bind("<Key-p>", self._on_focus_plots_event)
 
         # ── Window close ─────────────────────────────────────────────
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1628,22 +1637,59 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _update_time_range(self, data_length: int) -> None:
-        """Update the Start slider range based on data length."""
+        """Update the Start slider and Duration spinbox for *data_length* rows.
+
+        Saves the current start/duration under the previous variant letter
+        and restores the values for the current variant letter.  The 'w'
+        (weekly) variant defaults to showing the full timeline.
+        """
         self._updating_time_range = True
         try:
+            # ── Save outgoing variant's slider state ──
+            prev = getattr(self, '_last_slider_variant', None)
+            current = self._active_variant or 'h'
+            if prev is not None and prev != current:
+                self._variant_slider_state[prev] = (
+                    self._start_var.get(), self._duration_var.get(),
+                )
+
+            # ── Restore or initialise incoming variant's slider state ──
+            if current != prev:
+                if current in self._variant_slider_state:
+                    saved_start, saved_dur = self._variant_slider_state[current]
+                elif current == 'w':
+                    # Weekly variant defaults to full timeline
+                    saved_start, saved_dur = 0, data_length
+                else:
+                    saved_start = self._start_var.get()
+                    saved_dur = self._duration_var.get()
+                self._duration_var.set(saved_dur)
+                self._start_var.set(saved_start)
+            self._last_slider_variant = current
+
+            # ── Clamp duration to data_length ──
             duration = self._duration_var.get()
+            if duration > data_length and data_length > 0:
+                duration = data_length
+                self._duration_var.set(duration)
+
+            # ── Update duration step list (always include data_length) ──
+            valid = [v for v in self._duration_steps if v <= data_length]
+            if data_length not in valid:
+                valid.append(data_length)
+            valid.sort()
+            self._duration_spin.configure(values=tuple(valid), state="normal")
+
+            # ── Update start slider ──
             max_start = max(0, data_length - duration)
             self._start_scale.configure(to=max(max_start, 1))
-            # Clamp: when no room to scroll, pin to the beginning
             if max_start <= 0:
                 self._start_var.set(0)
-            elif self._start_var.get() > max_start:
-                self._start_var.set(max_start)
-            # Update duration steps to only include values ≤ data_length
-            valid = tuple(v for v in self._duration_steps if v <= data_length)
-            if not valid:
-                valid = (data_length,) if data_length > 0 else (1,)
-            self._duration_spin.configure(values=valid)
+                self._start_scale.configure(state="disabled")
+            else:
+                self._start_scale.configure(state="normal")
+                if self._start_var.get() > max_start:
+                    self._start_var.set(max_start)
         finally:
             self._updating_time_range = False
 
@@ -1682,6 +1728,9 @@ class ResultViewer(tk.Toplevel):
 
     def _on_update(self) -> None:
         """Re-scan scenarios, regenerate comparison if needed, reload everything."""
+        self.config(cursor="watch")
+        self.update_idletasks()
+
         # Clear all caches first
         self._yaml_cache.clear()
         self._break_times_cache.clear()
@@ -1708,6 +1757,7 @@ class ResultViewer(tk.Toplevel):
 
         self._comp_needs_regen = False
         self._on_mode_changed()
+        self.config(cursor="")
 
     def _ensure_comparison_fresh(self) -> None:
         """Regenerate comparison parquets if stale or missing.
@@ -1919,12 +1969,8 @@ class ResultViewer(tk.Toplevel):
             self._plot_canvas.show_message(f"No config for {variant.result_key}")
             return
 
-        self._update_time_range(len(df))
         break_times = self._load_break_times(scenario)
         plot_name = config.plot_name or variant.full_name
-        start = self._start_var.get()
-        duration = self._duration_var.get()
-        plot_rows = (start, start + duration)
 
         # 1b. Try live plan (cached in memory) or disk plan for instant rendering.
         #     The plan caches dimension rules, layout, and colors; only the
@@ -1946,6 +1992,12 @@ class ResultViewer(tk.Toplevel):
                 self._live_plan_key = plan_key
 
             if plan is not None:
+                # Use the plan's processed_df length for the slider range
+                # (aggregated/weekly plots have a shorter processed_df)
+                self._update_time_range(len(plan.processed_df))
+                start = self._start_var.get()
+                duration = self._duration_var.get()
+                plot_rows = (start, start + duration)
                 self._file_count = plan.total_file_count
                 self._file_index = min(self._file_index, max(0, self._file_count - 1))
                 self._update_file_nav()
@@ -1959,6 +2011,11 @@ class ResultViewer(tk.Toplevel):
                     return
         except Exception:
             logger.warning("Plan path failed for %s", variant.result_key, exc_info=True)
+
+        # Fallback: use raw data length for slider range
+        self._update_time_range(len(df))
+        start = self._start_var.get()
+        duration = self._duration_var.get()
 
         # 2. Check prefetch cache for instant display
         cache_key = self._make_figure_cache_key(
@@ -2152,10 +2209,6 @@ class ResultViewer(tk.Toplevel):
 
         break_times = self._load_comparison_break_times()
         plot_name = config.plot_name or variant.full_name
-        self._update_time_range(len(df))
-        start = self._start_var.get()
-        duration = self._duration_var.get()
-        plot_rows = (start, start + duration)
 
         # Try live plan (cached) or disk plan for instant rendering
         try:
@@ -2174,6 +2227,10 @@ class ResultViewer(tk.Toplevel):
                 self._live_plan_key = plan_key
 
             if plan is not None:
+                self._update_time_range(len(plan.processed_df))
+                start = self._start_var.get()
+                duration = self._duration_var.get()
+                plot_rows = (start, start + duration)
                 self._file_count = plan.total_file_count
                 self._file_index = min(self._file_index, max(0, self._file_count - 1))
                 self._update_file_nav()
@@ -2190,6 +2247,9 @@ class ResultViewer(tk.Toplevel):
 
         # Fallback: full prepare_plot_data pipeline
         self._update_time_range(len(df))
+        start = self._start_var.get()
+        duration = self._duration_var.get()
+        plot_rows = (start, start + duration)
         figures, total_count = prepare_plot_data(
             df, config, plot_name, plot_rows, break_times,
             only_file_index=self._file_index,
@@ -2577,8 +2637,7 @@ class ResultViewer(tk.Toplevel):
         self._clear_figure_cache()
 
         # Unbind global key bindings added with bind_all
-        for seq in ("<Prior>", "<Next>", "<Left>", "<Right>",
-                     "<Key-s>", "<Key-p>"):
+        for seq in ("<Prior>", "<Next>", "<Left>", "<Right>"):
             self.unbind_all(seq)
 
         # Save window geometry and sash positions

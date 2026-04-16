@@ -88,6 +88,8 @@ class PlotPlan:
     sub_levels: list[int] = field(default_factory=list)
     item_level_names: list[str] = field(default_factory=list)
     time_index_values: list[str] | None = None  # serialized time index
+    period_labels: list[str] | None = None      # period name per x-position
+    max_period_label_len: int = 0               # longest period label (for overlap check)
 
     # Config params for figure builder
     subplots_per_row: int = 2
@@ -100,6 +102,11 @@ class PlotPlan:
     value_label: str | None = None
     base_bar_length: float = 4.0
     skip_data_with_only_zeroes: bool = False
+
+    # Per-subplot global y-axis range across full time series.
+    # List of (min, max) tuples, one per effective_plot_spec entry.
+    # Used by the result viewer to keep y-axis stable when scrolling.
+    subplot_y_ranges: list[tuple[float, float]] = field(default_factory=list)
 
     # Bar-specific level metadata
     stack_levels: list[int] = field(default_factory=list)
@@ -166,6 +173,7 @@ def save_plot_plan(
         'expand_axis_level_names': plan.expand_axis_level_names,
         'grouped_bar_levels': plan.grouped_bar_levels,
         'grouped_bar_level_names': plan.grouped_bar_level_names,
+        'subplot_y_ranges': [list(r) for r in plan.subplot_y_ranges],
         # Legacy: lean_parquet handles single-level MultiIndex now; kept
         # so old plan JSON files still load via the reconstruction below.
         'col_was_single_multi': False,
@@ -216,7 +224,7 @@ def load_plot_plan(
             (s[0], s[1]) for s in raw_specs
         ]
 
-        return PlotPlan(
+        plan = PlotPlan(
             chart_type=meta['chart_type'],
             plot_name=meta['plot_name'],
             total_file_count=meta['total_file_count'],
@@ -230,6 +238,7 @@ def load_plot_plan(
             sub_levels=meta.get('sub_levels', []),
             item_level_names=meta.get('item_level_names', []),
             time_index_values=meta.get('time_index_values'),
+            subplot_y_ranges=[tuple(r) for r in meta.get('subplot_y_ranges', [])],
             subplots_per_row=meta.get('subplots_per_row', 2),
             legend_position=meta.get('legend_position', 'right'),
             xlabel=meta.get('xlabel'),
@@ -247,9 +256,48 @@ def load_plot_plan(
             grouped_bar_levels=meta.get('grouped_bar_levels', []),
             grouped_bar_level_names=meta.get('grouped_bar_level_names', []),
         )
+
+        # Compute subplot_y_ranges from data if not stored in the plan file
+        if not plan.subplot_y_ranges and plan.chart_type in ('lines', 'stack'):
+            _backfill_subplot_y_ranges(plan)
+
+        return plan
     except Exception as exc:
         logger.warning("Failed to load plot plan %s/%s: %s", result_key, sub_config, exc)
         return None
+
+
+def _add_y_buffer(lo: float, hi: float, fraction: float = 0.05) -> tuple[float, float]:
+    """Add a small buffer to y-axis range so extremes are fully visible."""
+    span = hi - lo
+    if span == 0:
+        return (lo - 0.5, hi + 0.5) if lo == 0 else (lo * 0.95, hi * 1.05)
+    return (lo - span * fraction, hi + span * fraction)
+
+
+def _backfill_subplot_y_ranges(plan: PlotPlan) -> None:
+    """Compute subplot_y_ranges from the plan's processed_df.
+
+    Called for plans loaded from disk that predate the subplot_y_ranges field.
+    """
+    include_zero = plan.always_include_zero_in_axis
+    ranges: list[tuple[float, float]] = []
+    for _title, selector in plan.effective_plot_specs:
+        df_sub = _select_time_columns(plan.processed_df, selector)
+        lo, hi = 0.0, 0.0
+        if isinstance(df_sub, pd.Series):
+            vals = df_sub.dropna()
+            if len(vals):
+                lo, hi = float(vals.min()), float(vals.max())
+        elif isinstance(df_sub, pd.DataFrame):
+            num = df_sub.select_dtypes(include='number')
+            if not num.empty:
+                lo, hi = float(num.min().min()), float(num.max().max())
+        if include_zero:
+            lo = min(lo, 0.0)
+            hi = max(hi, 0.0)
+        ranges.append(_add_y_buffer(lo, hi))
+    plan.subplot_y_ranges = ranges
 
 
 # ---------------------------------------------------------------------------
@@ -277,14 +325,21 @@ def _select_time_columns(df: pd.DataFrame, selector: list) -> pd.DataFrame:
         return df
     if isinstance(df.columns, pd.MultiIndex):
         col_tuples = [tuple(c) if isinstance(c, list) else c for c in selector]
-        mask = df.columns.isin(col_tuples)
+        try:
+            mask = df.columns.isin(col_tuples)
+        except (AssertionError, ValueError):
+            # MultiIndex nlevels mismatch — fall back to string matching
+            col_strs = {str(c) for c in col_tuples}
+            mask = pd.array([str(c) in col_strs for c in df.columns], dtype=bool)
         if mask.any():
             return df.loc[:, mask]
         # Fallback: try matching as strings
         col_strs = [str(c) for c in col_tuples]
         str_cols = [str(c) for c in df.columns]
         mask2 = pd.Index(str_cols).isin(col_strs)
-        return df.loc[:, mask2]
+        if mask2.any():
+            return df.loc[:, mask2]
+        return df  # no match at all — return full DataFrame rather than empty
     # Non-MultiIndex columns: unwrap single-element lists from JSON round-trip
     flat_sel = []
     for s in selector:
@@ -316,13 +371,20 @@ def build_figure_from_plan(
         return None
 
     # For time-series plans, slice to the requested window.
+    # When slicing, use pre-computed global y-ranges so the axis stays stable.
+    # Skip slicing when the range covers the full data (nothing to slice).
     processed_df = plan.processed_df
     time_vals = plan.time_index_values
+    use_global_y_ranges = False
     if plot_rows is not None and plan.chart_type != 'bar':
         start, end = plot_rows
-        processed_df = processed_df.iloc[start:end]
-        if time_vals is not None:
-            time_vals = time_vals[start:end]
+        actually_slicing = start > 0 or end < len(processed_df)
+        if actually_slicing:
+            processed_df = processed_df.iloc[start:end]
+            if time_vals is not None:
+                time_vals = time_vals[start:end]
+        if plan.subplot_y_ranges:
+            use_global_y_ranges = True
 
     # Reconstruct effective_plots for the requested batch
     batch_indices = plan.file_batches[file_index]
@@ -359,6 +421,16 @@ def build_figure_from_plan(
     else:
         return None
 
+    # Determine axis bounds — use global y-ranges when time-slicing
+    axis_bounds = plan.axis_bounds
+    if use_global_y_ranges and plan.subplot_y_ranges:
+        # Slice to match the current batch (batch_indices are global positions)
+        axis_bounds = [
+            plan.subplot_y_ranges[i]
+            for i in batch_indices
+            if i < len(plan.subplot_y_ranges)
+        ]
+
     # Build the figure
     if plan.chart_type == 'lines':
         from flextool.plot_outputs.plot_lines import _build_lines_figure
@@ -367,7 +439,7 @@ def build_figure_from_plan(
             plan.item_level_names, time_index,
             plan.subplots_per_row, plan.legend_position,
             plan.xlabel, plan.ylabel,
-            plan.axis_bounds, plan.axis_tick_format,
+            axis_bounds, plan.axis_tick_format,
             plan.always_include_zero_in_axis,
             layout, plan.shared_color_map,
         )
@@ -378,7 +450,7 @@ def build_figure_from_plan(
             plan.item_level_names, time_index,
             plan.subplots_per_row, plan.legend_position,
             plan.xlabel, plan.ylabel,
-            plan.axis_bounds, plan.axis_tick_format,
+            axis_bounds, plan.axis_tick_format,
             plan.always_include_zero_in_axis,
             layout, plan.shared_color_map,
         )
@@ -539,6 +611,24 @@ def _compute_time_plan(
         file_batches.append(list(range(offset, offset + batch_size)))
         offset += batch_size
 
+    # Compute per-subplot global y-axis ranges from full time series
+    include_zero = cfg.always_include_zero_in_axis
+    subplot_y_ranges: list[tuple[float, float]] = []
+    for _title, df_sub in effective_plots:
+        lo, hi = 0.0, 0.0
+        if isinstance(df_sub, pd.Series):
+            vals = df_sub.dropna()
+            if len(vals):
+                lo, hi = float(vals.min()), float(vals.max())
+        elif isinstance(df_sub, pd.DataFrame):
+            num = df_sub.select_dtypes(include='number')
+            if not num.empty:
+                lo, hi = float(num.min().min()), float(num.max().max())
+        if include_zero:
+            lo = min(lo, 0.0)
+            hi = max(hi, 0.0)
+        subplot_y_ranges.append(_add_y_buffer(lo, hi))
+
     # Serialize layout
     layout_params = {
         'value_label_width': layout.value_label_width,
@@ -567,6 +657,7 @@ def _compute_time_plan(
         ylabel=cfg.ylabel,
         axis_tick_format=cfg.axis_tick_format,
         always_include_zero_in_axis=cfg.always_include_zero_in_axis,
+        subplot_y_ranges=subplot_y_ranges,
     )
 
 

@@ -2691,10 +2691,16 @@ class MainWindow(tk.Tk):
         return "break"
 
     def _on_tree_focus_in(self, event: tk.Event) -> None:  # type: ignore[type-arg]
-        """When a treeview gets focus, clear selection in the other trees."""
+        """When a treeview gets focus, clear selection in the other trees.
+
+        Only clears when another tree had an active selection, so that
+        clicking buttons or other non-tree widgets doesn't destroy state.
+        """
         focused = event.widget
+        if focused not in (self.input_sources_tree, self.available_tree, self.executed_tree):
+            return
         for tree in (self.input_sources_tree, self.available_tree, self.executed_tree):
-            if tree is not focused:
+            if tree is not focused and tree.selection():
                 tree.selection_remove(*tree.selection())
 
     def _focus_tree(self, tree: ttk.Treeview) -> None:
@@ -3053,6 +3059,9 @@ class MainWindow(tk.Tk):
             self._result_viewer is not None
             and self._result_viewer.winfo_exists()
         ):
+            # Sync the current checked state and DB map before updating the viewer
+            self._collect_checked_executed_scenarios()
+            self._result_viewer._scenario_db_map = self._get_scenario_db_map()
             # Update the viewer's scenario data before raising
             self._result_viewer._on_update()
             self._result_viewer.deiconify()
@@ -3155,7 +3164,9 @@ class MainWindow(tk.Tk):
         if self.execution_mgr is None:
             return
 
-        self.execution_window = ExecutionWindow(self, self.execution_mgr)
+        self.execution_window = ExecutionWindow(
+            self, self.execution_mgr, global_settings=self.global_settings,
+        )
         self._update_execution_menu_style()
         # When the window closes, revert button accent
         self.execution_window.bind(
