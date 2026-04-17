@@ -1439,7 +1439,7 @@
     [
       "model",
       "version",
-      32.0,
+      33.0,
       null,
       "Contains database version information.",
       null
@@ -2074,6 +2074,14 @@
       null,
       null,
       "Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps",
+      null
+    ],
+    [
+      "timeset",
+      "timeset_weights",
+      null,
+      null,
+      "Per-timestep weight map (index: timestep name, value: float) applied to cost and slack terms in the objective. Use for non-RP models where timesteps represent unequal fractions of the year (e.g. seasonal yearsplit on a coarse timeslice structure). Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so that uniform input reproduces the default (weight = 1 per step). Must not be combined with representative_period_weights on the same timeset.",
       null
     ],
     [

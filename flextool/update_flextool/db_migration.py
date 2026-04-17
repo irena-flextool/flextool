@@ -266,6 +266,21 @@ def migrate_database(database_path, up_to: int | None = None):
                     "Renamed constraint_capacity_coefficient → "
                     "constraint_invested_capacity_coefficient; added "
                     "constraint_cumulative_pre_built_capacity_coefficient")
+            elif next_version == 33:
+                db.add_update_item("parameter_definition",
+                    entity_class_name="timeset",
+                    name="timeset_weights",
+                    description=(
+                        "Per-timestep weight map (index: timestep name, value: "
+                        "float) applied to cost and slack terms in the objective. "
+                        "Use for non-RP models where timesteps represent unequal "
+                        "fractions of the year (e.g. seasonal yearsplit on a "
+                        "coarse timeslice structure). Weights are normalized per "
+                        "period to sum to 1 and then scaled by the number of "
+                        "active timesteps so that uniform input reproduces the "
+                        "default (weight = 1 per step). Must not be combined "
+                        "with representative_period_weights on the same timeset."))
+                db.commit_session("Added timeset.timeset_weights parameter")
             else:
                 print("Version invalid")
             next_version += 1
