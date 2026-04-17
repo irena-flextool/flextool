@@ -18,6 +18,18 @@
     - summary_solve.csv
     - slack__upward__node_state__dt.csv
 
+# Base + non-uniform timeset_weights = {t0001:0.25, t0002:0.75}. After
+# normalization the per-step cost weights become 0.5 and 1.5, shifting
+# the cost attribution between the two timesteps without changing the
+# dispatch decisions. Regression tripwire: if the runner stops reading
+# timeset_weights or the normalization math changes, costs__dt.csv
+# diverges from the golden.
+- scenario: base_weighted
+  csvs:
+    - node__d.csv
+    - costs__dt.csv
+    - summary_solve.csv
+
 - scenario: scale_to_peak_flow
   csvs:
     - node__d.csv

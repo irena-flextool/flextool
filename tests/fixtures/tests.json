@@ -1434,6 +1434,14 @@
       ],
       "wind_growth_cap_pre_built",
       true
+    ],
+    [
+      "timeset",
+      [
+        "2day"
+      ],
+      "weighted_2day",
+      true
     ]
   ],
   "parameter_value_lists": [
@@ -4340,6 +4348,16 @@
       ],
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d \u2014 data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored \u2014 on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize."
+    ],
+    [
+      "timeset",
+      "timeset_weights",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "Per-timestep weight map (index: timestep name, value: float) applied to cost and slack terms in the objective. Use for non-RP models where timesteps represent unequal fractions of the year. Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so uniform input reproduces weight = 1 per step. Must not be combined with representative_period_weights on the same timeset."
     ]
   ],
   "parameter_types": [
@@ -6008,6 +6026,12 @@
     [
       "unit",
       "constraint_cumulative_pre_built_capacity_coefficient",
+      "map",
+      1
+    ],
+    [
+      "timeset",
+      "timeset_weights",
       "map",
       1
     ]
@@ -9953,6 +9977,16 @@
         "map"
       ],
       "wind_growth_cap_pre_built"
+    ],
+    [
+      "timeset",
+      "2day",
+      "timeset_weights",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIDAuNV0sIFsidDAwMDIiLCAwLjVdLCBbInQwMDAzIiwgMC41XSwgWyJ0MDAwNCIsIDAuNV0sIFsidDAwMDUiLCAwLjVdLCBbInQwMDA2IiwgMC41XSwgWyJ0MDAwNyIsIDAuNV0sIFsidDAwMDgiLCAwLjVdLCBbInQwMDA5IiwgMC41XSwgWyJ0MDAxMCIsIDAuNV0sIFsidDAwMTEiLCAwLjVdLCBbInQwMDEyIiwgMC41XSwgWyJ0MDAxMyIsIDEuMF0sIFsidDAwMTQiLCAxLjBdLCBbInQwMDE1IiwgMS4wXSwgWyJ0MDAxNiIsIDEuMF0sIFsidDAwMTciLCAxLjBdLCBbInQwMDE4IiwgMS4wXSwgWyJ0MDAxOSIsIDEuMF0sIFsidDAwMjAiLCAxLjBdLCBbInQwMDIxIiwgMS4wXSwgWyJ0MDAyMiIsIDEuMF0sIFsidDAwMjMiLCAxLjBdLCBbInQwMDI0IiwgMS4wXSwgWyJ0MDAyNSIsIDEuNV0sIFsidDAwMjYiLCAxLjVdLCBbInQwMDI3IiwgMS41XSwgWyJ0MDAyOCIsIDEuNV0sIFsidDAwMjkiLCAxLjVdLCBbInQwMDMwIiwgMS41XSwgWyJ0MDAzMSIsIDEuNV0sIFsidDAwMzIiLCAxLjVdLCBbInQwMDMzIiwgMS41XSwgWyJ0MDAzNCIsIDEuNV0sIFsidDAwMzUiLCAxLjVdLCBbInQwMDM2IiwgMS41XSwgWyJ0MDAzNyIsIDIuMF0sIFsidDAwMzgiLCAyLjBdLCBbInQwMDM5IiwgMi4wXSwgWyJ0MDA0MCIsIDIuMF0sIFsidDAwNDEiLCAyLjBdLCBbInQwMDQyIiwgMi4wXSwgWyJ0MDA0MyIsIDIuMF0sIFsidDAwNDQiLCAyLjBdLCBbInQwMDQ1IiwgMi4wXSwgWyJ0MDA0NiIsIDIuMF0sIFsidDAwNDciLCAyLjBdLCBbInQwMDQ4IiwgMi4wXV19",
+        "map"
+      ],
+      "weighted_2day"
     ]
   ],
   "alternatives": [
@@ -10174,6 +10208,10 @@
     ],
     [
       "wind_growth_cap_pre_built",
+      ""
+    ],
+    [
+      "weighted_2day",
       ""
     ]
   ],
@@ -10460,6 +10498,11 @@
     ],
     [
       "multi_year_wind_growth_cap",
+      false,
+      ""
+    ],
+    [
+      "base_weighted",
       false,
       ""
     ]
@@ -12768,6 +12811,21 @@
     [
       "multi_year_wind_growth_cap",
       "wind_growth_cap_pre_built",
+      null
+    ],
+    [
+      "base_weighted",
+      "init",
+      "west"
+    ],
+    [
+      "base_weighted",
+      "west",
+      "weighted_2day"
+    ],
+    [
+      "base_weighted",
+      "weighted_2day",
       null
     ]
   ]
