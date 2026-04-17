@@ -690,6 +690,55 @@ def write_rp_data(
                 writer.writerow([period_name, f"t{t_idx:04d}", weight])
 
 
+def write_timeset_cost_weight(
+    active_time_list: dict[str, list],
+    timesets_used_by_solve: list[tuple[str, str]],
+    timeset_weights: dict[str, dict[str, float]],
+    work_folder: Path | None = None,
+) -> bool:
+    """Write rp_cost_weight.csv from timeset_weights when present on any
+    active timeset for the current solve (non-RP pathway).
+
+    For each period whose active timeset has a timeset_weights map, the
+    per-timestep weights are normalized to sum to 1 across that period's
+    active steps, then scaled by n_active_steps so that a uniform input
+    reproduces the default weight = 1 per step. Timesteps absent from the
+    user map are treated as 0 before normalization.
+
+    Returns True if the file was written, False if no timeset on the solve
+    has timeset_weights defined.
+    """
+    wf = work_folder if work_folder is not None else Path.cwd()
+    sd = wf / "solve_data"
+
+    rows: list[tuple[str, str, float]] = []
+    any_written = False
+    for period, timeset in timesets_used_by_solve:
+        weights = timeset_weights.get(timeset)
+        active_steps = active_time_list.get(period, [])
+        if weights is None or not active_steps:
+            continue
+        raw = [float(weights.get(step.timestep, 0.0)) for step in active_steps]
+        total = sum(raw)
+        n = len(raw)
+        if total <= 0 or n == 0:
+            continue
+        scale = n / total
+        for step, w in zip(active_steps, raw):
+            rows.append((period, step.timestep, w * scale))
+        any_written = True
+
+    if not any_written:
+        return False
+
+    with open(sd / "rp_cost_weight.csv", 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["period", "time", "weight"])
+        for row in rows:
+            writer.writerow([row[0], row[1], f"{row[2]:.10g}"])
+    return True
+
+
 def write_empty_rp_data(work_folder: Path | None = None) -> None:
     """Write empty RP CSV files (headers only) for non-RP models."""
     wf = work_folder if work_folder is not None else Path.cwd()

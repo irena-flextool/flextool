@@ -322,13 +322,27 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
                 with open(wf / "solve_data" / fname, "w", newline="") as f:
                     csv.writer(f).writerow(["process", "period", "time", "period_back", "time_back"])
 
-        # Write representative period data if available
-        active_timeset_names = [ts for _, ts in state.solve.timesets_used_by_solves.get(complete_solve[solve], [])]
+        # Write representative period data if available, or timeset_weights
+        # if set on the active timeset (non-RP cost weighting). The two
+        # mechanisms are mutually exclusive on a given timeset — error out
+        # if both are defined on the same one.
+        timesets_used = state.solve.timesets_used_by_solves.get(complete_solve[solve], [])
+        active_timeset_names = [ts for _, ts in timesets_used]
+        for ts_name in active_timeset_names:
+            if ts_name in state.timeline.rp_weights and ts_name in state.timeline.timeset_weights:
+                message = (
+                    f"Timeset '{ts_name}' has both representative_period_weights and "
+                    "timeset_weights set. Pick one: use representative_period_weights "
+                    "for RP scenarios and timeset_weights for non-RP per-step weighting."
+                )
+                state.logger.error(message)
+                raise FlexToolConfigError(message)
+
         rp_written = False
         for ts_name in active_timeset_names:
             if ts_name in state.timeline.rp_weights:
                 period_name = None
-                for p, ts in state.solve.timesets_used_by_solves.get(complete_solve[solve], []):
+                for p, ts in timesets_used:
                     if ts == ts_name:
                         period_name = p
                         break
@@ -342,7 +356,15 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
                     rp_written = True
                     break
         if not rp_written:
+            # Still emit the full set of empty RP stubs so the model has every
+            # file; then overwrite rp_cost_weight.csv if timeset_weights apply.
             solve_writers.write_empty_rp_data(work_folder=wf)
+            solve_writers.write_timeset_cost_weight(
+                active_time_list=active_time_lists[solve],
+                timesets_used_by_solve=timesets_used,
+                timeset_weights=state.timeline.timeset_weights,
+                work_folder=wf,
+            )
 
         state.logger.info("Starting model creation")
 

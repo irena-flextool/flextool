@@ -55,6 +55,7 @@ class TimelineConfig:
         timeset_durations: defaultdict,
         new_step_durations: dict,
         rp_weights: dict | None = None,
+        timeset_weights: dict | None = None,
     ) -> None:
         self.timelines = timelines
         self.timesets = timesets
@@ -62,6 +63,8 @@ class TimelineConfig:
         self.timeset_durations = timeset_durations
         self.new_step_durations = new_step_durations
         self.rp_weights: dict = rp_weights or {}
+        # timeset_name -> {timestep: weight}. Raw user input; runner normalizes.
+        self.timeset_weights: dict[str, dict[str, float]] = timeset_weights or {}
 
         # Mutable state — populated later
         self.stochastic_timesteps: defaultdict[str, list] = defaultdict(list)
@@ -120,6 +123,22 @@ class TimelineConfig:
                             }
                 if weight_dict:
                     rp_weights[timeset_name] = weight_dict
+
+        # Read timeset_weights (flat Map: timestep -> weight). Used for non-RP
+        # cost/slack weighting when timesteps represent unequal year fractions.
+        timeset_weights_raw = params_to_dict(
+            db=db, cl="timeset", par="timeset_weights", mode=DictMode.DICT
+        )
+        timeset_weights: dict[str, dict[str, float]] = {}
+        for timeset_name, flat_map in timeset_weights_raw.items():
+            if isinstance(flat_map, api.Map):
+                timeset_weights[timeset_name] = {
+                    str(k): float(v) for k, v in zip(flat_map.indexes, flat_map.values)
+                }
+            elif isinstance(flat_map, list):
+                timeset_weights[timeset_name] = {
+                    str(entry[0]): float(entry[1]) for entry in flat_map if len(entry) >= 2
+                }
         return cls(
             timelines=timelines,
             timesets=timesets,
@@ -127,6 +146,7 @@ class TimelineConfig:
             timeset_durations=timeset_durations,
             new_step_durations=new_step_durations,
             rp_weights=rp_weights,
+            timeset_weights=timeset_weights,
         )
 
     # ------------------------------------------------------------------
