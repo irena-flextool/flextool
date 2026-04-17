@@ -774,6 +774,28 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 8
         xlabel: t CO2 (total)
+  'CO2 period limited shadow price':
+    group: 5
+    order: 3
+    co2_price_period_d_g:
+      default:
+        variant: p
+        map_dimensions_for_plots: [d_g, s_b]
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 8
+        xlabel: Currency / tCO2
+  'CO2 cumulative limit shadow price':
+    group: 5
+    order: 4
+    co2_price_total_d_g:
+      default:
+        variant: p
+        map_dimensions_for_plots: [d_g, s_b]
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 8
+        xlabel: Currency / tCO2
 
   # NodeGroups
   'NodeGroup dispatch':
@@ -1397,6 +1419,8 @@ rename:
   nodeGroup_VRE_share_d_g: [group_node_VRE_share__dt, true]
   nodeGroup_VRE_share_dt_g: [group_node_VRE_share, true]
   CO2_d_g: [group_CO2__d, true]
+  co2_price_period_d_g: [group_CO2_price_period__d, true]
+  co2_price_total_d_g: [group_CO2_price_total__d, true]
   node_d_ep: [node__d, true]
   node_dt_ep: [node__dt, true]
   node_capacity_ed_p: [node_capacity__d, true]

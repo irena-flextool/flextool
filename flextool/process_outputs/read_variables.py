@@ -60,6 +60,9 @@ def read_variables(output_dir):
     v.dual_maxInvestGroup_period = pd.read_csv(output_path / 'v_dual_maxInvestGroup_period.csv', index_col=[0, 1]).astype(float)
     v.dual_maxInvestGroup_total = pd.read_csv(output_path / 'v_dual_maxInvestGroup_total.csv', index_col=[0, 1]).astype(float)
     v.dual_maxInvestGroup_cumulative = pd.read_csv(output_path / 'v_dual_maxInvestGroup_cumulative.csv', index_col=[0, 1]).astype(float)
+    # CO2 emission-cap duals (raw dual is per /1000-scaled RHS; downstream * 1000 for tCO2)
+    v.dual_co2_max_period = pd.read_csv(output_path / 'v_dual_co2_max_period.csv', index_col=[0, 1]).astype(float)
+    v.dual_co2_max_total = pd.read_csv(output_path / 'v_dual_co2_max_total.csv', index_col=[0]).astype(float)
     v.group_entity_invest = pd.read_csv(output_path / 'group_entity_invest.csv')
 
     v.flow.index.names = ['solve', 'period', 'time']
@@ -92,6 +95,8 @@ def read_variables(output_dir):
     v.dual_maxInvestGroup_period.index.names = ['solve', 'period']
     v.dual_maxInvestGroup_total.index.names = ['solve', 'period']
     v.dual_maxInvestGroup_cumulative.index.names = ['solve', 'period']
+    v.dual_co2_max_period.index.names = ['solve', 'period']
+    v.dual_co2_max_total.index.name = 'solve'
 
     # Create multi-index for variables with single header row
     v.state.columns.name = 'node'
@@ -119,6 +124,8 @@ def read_variables(output_dir):
     v.dual_maxInvestGroup_period.columns.name = 'group'
     v.dual_maxInvestGroup_total.columns.name = 'group'
     v.dual_maxInvestGroup_cumulative.columns.name = 'group'
+    v.dual_co2_max_period.columns.name = 'group'
+    v.dual_co2_max_total.columns.name = 'group'
 
     # Add multi-index to variables with multiple header rows (this multi-index creation works also when the dataframe is empty)
     v.flow.columns = pd.MultiIndex.from_tuples(

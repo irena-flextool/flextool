@@ -126,6 +126,8 @@ class TimeSeriesResults:
     # --- CO2 and process outputs ---
     CO2__: pd.DataFrame | None = None
     CO2_d_g: pd.DataFrame | None = None
+    co2_price_period_d_g: pd.DataFrame | None = None
+    co2_price_total_d_g: pd.DataFrame | None = None
     process_co2_d_eee: pd.DataFrame | None = None
     process_reserve_average_d_eppe: pd.DataFrame | None = None
     process_reserve_upDown_node_dt_eppe: pd.DataFrame | None = None

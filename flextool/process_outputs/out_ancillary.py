@@ -152,6 +152,61 @@ def _synthesize_invest_dual(v) -> "pd.DataFrame":
     return combined
 
 
+def co2_duals(par, s, v, r, debug):
+    """CO2 emission-cap shadow prices in Currency / tCO2 (positive = cost).
+
+    Both sides of co2_max_period and co2_max_total in the mod are divided
+    by 1000 (Mt instead of t).  The raw dual is therefore
+    Δobj / Δ(scaled-RHS in Mt); to get per-tCO2 we DIVIDE by 1000 (since
+    Δ(scaled) = Δ(raw)/1000).  The dual is also in NPV currency because
+    the objective discounts operational costs; for the per-period cap we
+    divide by inflation_factor_operations_yearly[d] to recover nominal
+    Currency/tCO2 at period d (mirroring v_dual_node_balance).  Sign is
+    always flipped so binding caps show as positive costs — negatives
+    should ring alarm bells.
+
+    The cumulative (total) cap has no single period to un-discount against
+    (it spans all periods in the sum), so it is reported in NPV currency
+    (same convention as investment duals).  Its scalar per group is
+    broadcast across periods for uniform (period × group) shape.
+
+    Caveat: the constraint LHS does not include p_rp_cost_weight whereas
+    the objective does.  In rp (representative-period) scenarios the raw
+    dual therefore picks up an extra rp_cost_weight factor, inflating
+    shadow prices relative to chrono runs.  Fixing that requires either
+    adding the weight to the constraint LHS in the mod, or post-dividing
+    by a representative value of rp_cost_weight per period.
+    """
+    import pandas as pd
+
+    results = []
+    periods = s.d_realized_period
+
+    # Period-limited shadow price: (period × group) in nominal Currency/tCO2
+    if not v.dual_co2_max_period.empty:
+        co2_period_price = (-v.dual_co2_max_period / 1000).astype(float)
+        co2_period_price = co2_period_price.div(
+            par.inflation_factor_operations_yearly, axis=0
+        )
+        co2_period_price.columns.name = 'group'
+        co2_period_price.index.name = 'period'
+        results.append((co2_period_price, 'co2_price_period_d_g'))
+
+    # Cumulative limit shadow price: scalar per group, broadcast across periods.
+    # Kept in NPV currency (no single period to un-discount against).
+    if not v.dual_co2_max_total.empty:
+        total_row = v.dual_co2_max_total.iloc[0]  # Series indexed by group
+        total_price = (-total_row / 1000).astype(float)
+        co2_total_price = pd.DataFrame(
+            {g: [total_price[g]] * len(periods) for g in total_price.index},
+            index=pd.Index(periods, name='period'),
+        )
+        co2_total_price.columns.name = 'group'
+        results.append((co2_total_price, 'co2_price_total_d_g'))
+
+    return results
+
+
 def inertia_results(par, s, v, r, debug):
     """Inertia results for groups and individual entities"""
 

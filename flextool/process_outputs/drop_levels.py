@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pandas as pd
+
 
 # Variables: droplevel('solve') only
 _V_DROP = [
@@ -12,6 +14,7 @@ _V_DROP = [
     'dual_invest_connection', 'dual_invest_node', 'dual_invest_unit',
     'dual_maxInvest_period', 'dual_maxInvest_total', 'dual_maxCumulative',
     'dual_maxInvestGroup_period', 'dual_maxInvestGroup_total', 'dual_maxInvestGroup_cumulative',
+    'dual_co2_max_period',
 ]
 
 # Parameters: droplevel('solve') only
@@ -55,6 +58,14 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
         if obj.index.duplicated().any():
             obj = obj[~obj.index.duplicated(keep='last')]
         setattr(v, attr, obj)
+
+    # dual_co2_max_total has solve-only index; collapse to a single row (last solve wins)
+    if not v.dual_co2_max_total.empty:
+        last = v.dual_co2_max_total.iloc[[-1]].copy()
+        last.index = pd.RangeIndex(1)
+        v.dual_co2_max_total = last
+    else:
+        v.dual_co2_max_total = v.dual_co2_max_total.reset_index(drop=True)
 
     # v_angle: drop solve level only when non-empty (may be empty when no DC PF nodes)
     if not v.angle.empty:

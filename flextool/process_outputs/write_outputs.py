@@ -36,6 +36,7 @@ from flextool.process_outputs.out_ancillary import (
     connection, connection_wards, connection_cf,
     reserves, investment_duals, inertia_results,
     slack_variables, input_sets, dc_power_flow,
+    co2_duals,
 )
 from flextool.process_outputs.out_group import (
     nodeGroup_indicators, nodeGroup_VRE_share,
@@ -258,6 +259,7 @@ ALL_OUTPUTS = [
     nodeGroup_indicators,
     nodeGroup_VRE_share,
     CO2,
+    co2_duals,
     nodeGroup_flows,
     unit_outputNode,
     unit_inputNode,
