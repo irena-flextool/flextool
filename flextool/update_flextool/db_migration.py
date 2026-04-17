@@ -222,6 +222,50 @@ def migrate_database(database_path, up_to: int | None = None):
                 add_value_list_manual(db, [
                     ["storage_binding_methods", "bind_intraperiod_blocks"],
                 ])
+            elif next_version == 32:
+                # Rename constraint_capacity_coefficient -> constraint_invested_capacity_coefficient
+                # on unit, connection, node. The old expression in flextool.mod was buggy
+                # (summed v_invest[e, d] once per active d_invest in edd_invest, giving
+                # #active-investments * v_invest[e, d]); it is being fixed to emit exactly
+                # v_invest[e, d] — current-period new build. In single-period models the
+                # old and new outputs coincide; in multi-period models the old output was
+                # incorrect.
+                invested_desc = (
+                    "A map of coefficients (index: constraint name, value: coefficient) "
+                    "that places v_invest[e, d] — new-build capacity decided in the "
+                    "current period — on the left side of the user-defined constraint. "
+                    "Not multiplied by unitsize."
+                )
+                parameter_definitions = db.mapped_table("parameter_definition")
+                for cls in ("unit", "connection", "node"):
+                    param = db.item(parameter_definitions,
+                                    entity_class_name=cls,
+                                    name="constraint_capacity_coefficient")
+                    if param:
+                        db.update_parameter_definition(
+                            id=param["id"],
+                            name="constraint_invested_capacity_coefficient",
+                            description=invested_desc)
+                # Add constraint_cumulative_pre_built_capacity_coefficient — cumulative
+                # new-build capacity from all periods strictly before d, ignoring
+                # retirements (learning-effect semantics).
+                prebuilt_desc = (
+                    "A map of coefficients (index: constraint name, value: coefficient) "
+                    "that places the cumulative pre-built capacity at period d — data "
+                    "baseline plus every v_invest made in periods strictly BEFORE d, "
+                    "retirements ignored — on the left side of the user-defined "
+                    "constraint. Enables learning-effect and period-over-period growth "
+                    "limits. Not multiplied by unitsize."
+                )
+                for cls in ("unit", "connection", "node"):
+                    db.add_update_item("parameter_definition",
+                        entity_class_name=cls,
+                        name="constraint_cumulative_pre_built_capacity_coefficient",
+                        description=prebuilt_desc)
+                db.commit_session(
+                    "Renamed constraint_capacity_coefficient → "
+                    "constraint_invested_capacity_coefficient; added "
+                    "constraint_cumulative_pre_built_capacity_coefficient")
             else:
                 print("Version invalid")
             next_version += 1

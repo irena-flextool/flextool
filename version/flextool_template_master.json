@@ -798,10 +798,18 @@
     ],
     [
       "connection",
-      "constraint_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coefficient",
       null,
       null,
-      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.",
+      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
+      null
+    ],
+    [
+      "connection",
+      "constraint_invested_capacity_coefficient",
+      null,
+      null,
+      "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Not multiplied by unitsize.",
       null
     ],
     [
@@ -1431,7 +1439,7 @@
     [
       "model",
       "version",
-      31.0,
+      32.0,
       null,
       "Contains database version information.",
       null
@@ -1454,10 +1462,18 @@
     ],
     [
       "node",
-      "constraint_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coefficient",
       null,
       null,
-      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage capacity in user-defined constraints. [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.",
+      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
+      null
+    ],
+    [
+      "node",
+      "constraint_invested_capacity_coefficient",
+      null,
+      null,
+      "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Not multiplied by unitsize.",
       null
     ],
     [
@@ -2070,10 +2086,18 @@
     ],
     [
       "unit",
-      "constraint_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coefficient",
       null,
       null,
-      "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the unit capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.",
+      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
+      null
+    ],
+    [
+      "unit",
+      "constraint_invested_capacity_coefficient",
+      null,
+      null,
+      "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Not multiplied by unitsize.",
       null
     ],
     [
@@ -2494,7 +2518,7 @@
     ],
     [
       "connection",
-      "constraint_capacity_coefficient",
+      "constraint_invested_capacity_coefficient",
       "map",
       1
     ],
@@ -3148,7 +3172,7 @@
     ],
     [
       "node",
-      "constraint_capacity_coefficient",
+      "constraint_invested_capacity_coefficient",
       "map",
       1
     ],
@@ -3772,7 +3796,7 @@
     ],
     [
       "unit",
-      "constraint_capacity_coefficient",
+      "constraint_invested_capacity_coefficient",
       "map",
       1
     ],
