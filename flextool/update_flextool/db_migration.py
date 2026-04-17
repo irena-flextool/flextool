@@ -218,6 +218,10 @@ def migrate_database(database_path, up_to: int | None = None):
                 add_value_list_manual(db, [
                     ["storage_binding_methods", "bind_using_blended_weights"],
                 ])
+            elif next_version == 31:
+                add_value_list_manual(db, [
+                    ["storage_binding_methods", "bind_intraperiod_blocks"],
+                ])
             else:
                 print("Version invalid")
             next_version += 1
