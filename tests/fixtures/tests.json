@@ -2262,7 +2262,7 @@
     ],
     [
       "connection",
-      "constraint_capacity_coefficient",
+      "constraint_invested_capacity_coefficient",
       [
         "bnVsbA==",
         null
@@ -3012,7 +3012,7 @@
     ],
     [
       "node",
-      "constraint_capacity_coefficient",
+      "constraint_invested_capacity_coefficient",
       [
         "bnVsbA==",
         null
@@ -3802,7 +3802,7 @@
     ],
     [
       "unit",
-      "constraint_capacity_coefficient",
+      "constraint_invested_capacity_coefficient",
       [
         "bnVsbA==",
         null
@@ -4324,7 +4324,7 @@
     ],
     [
       "connection",
-      "constraint_capacity_coefficient",
+      "constraint_invested_capacity_coefficient",
       "map",
       1
     ],
@@ -4924,7 +4924,7 @@
     ],
     [
       "node",
-      "constraint_capacity_coefficient",
+      "constraint_invested_capacity_coefficient",
       "map",
       1
     ],
@@ -5548,7 +5548,7 @@
     ],
     [
       "unit",
-      "constraint_capacity_coefficient",
+      "constraint_invested_capacity_coefficient",
       "map",
       1
     ],
@@ -5977,7 +5977,7 @@
     [
       "connection",
       "battery_inverter",
-      "constraint_capacity_coefficient",
+      "constraint_invested_capacity_coefficient",
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1siYmF0dGVyeV90aWVfa1dfa1doIiwgLTguMF1dLCAiaW5kZXhfbmFtZSI6ICJjb25zdHJhaW50In0=",
         "map"
@@ -6667,7 +6667,7 @@
     [
       "node",
       "battery",
-      "constraint_capacity_coefficient",
+      "constraint_invested_capacity_coefficient",
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1siYmF0dGVyeV90aWVfa1dfa1doIiwgMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
         "map"

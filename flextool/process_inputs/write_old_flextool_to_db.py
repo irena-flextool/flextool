@@ -711,7 +711,7 @@ def _write_storage_units(
 
         # Charger always gets charger_link coefficient
         _add_param(db, "unit", (charger_name,),
-                   "constraint_capacity_coefficient",
+                   "constraint_invested_capacity_coefficient",
                    Map([charger_link], [-1.0], index_name="constraint"),
                    alt_name, counters)
 
@@ -744,7 +744,7 @@ def _write_storage_units(
             else:
                 # Storage node coefficient — only when constraint is active
                 _add_param(db, "node", (storage_node,),
-                           "constraint_capacity_coefficient",
+                           "constraint_invested_capacity_coefficient",
                            Map([storage_link], [-1.0], index_name="constraint"),
                            alt_name, counters)
                 # Add to discharger Map
@@ -753,7 +753,7 @@ def _write_storage_units(
 
         # Discharger coefficient Map (charger_link always, storage_link when active)
         _add_param(db, "unit", (discharger_name,),
-                   "constraint_capacity_coefficient",
+                   "constraint_invested_capacity_coefficient",
                    Map(discharger_coeff_indexes, discharger_coeff_values,
                        index_name="constraint"),
                    alt_name, counters)
@@ -2896,7 +2896,7 @@ def write_sensitivities_to_db(
 
                     # Discharger: only charger_link (drop storage_link)
                     _add_param(db, "unit", (discharger,),
-                               "constraint_capacity_coefficient",
+                               "constraint_invested_capacity_coefficient",
                                Map([charger_link], [1.0], index_name="constraint"),
                                scenario_name, counters)
                     # Storage node: null
@@ -2906,7 +2906,7 @@ def write_sensitivities_to_db(
                             db.add_parameter_value(
                                 entity_class_name="node",
                                 entity_byname=(storage_node,),
-                                parameter_definition_name="constraint_capacity_coefficient",
+                                parameter_definition_name="constraint_invested_capacity_coefficient",
                                 alternative_name=scenario_name,
                                 value=null_value, type=null_type,
                             )
@@ -2928,14 +2928,14 @@ def write_sensitivities_to_db(
 
                     # Discharger: both charger_link + storage_link
                     _add_param(db, "unit", (discharger,),
-                               "constraint_capacity_coefficient",
+                               "constraint_invested_capacity_coefficient",
                                Map([charger_link, storage_link],
                                    [1.0, kw_kwh_ratio],
                                    index_name="constraint"),
                                scenario_name, counters)
                     # Storage node coefficient
                     _add_param(db, "node", (storage_node,),
-                               "constraint_capacity_coefficient",
+                               "constraint_invested_capacity_coefficient",
                                Map([storage_link], [-1.0], index_name="constraint"),
                                scenario_name, counters)
 

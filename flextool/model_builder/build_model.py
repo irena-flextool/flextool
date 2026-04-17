@@ -371,11 +371,11 @@ class ModelBuilder:
 
                         # Node coefficient: +1 per MWh of storage
                         node_coeff = make_map([constraint_name], [1.0], index_name="constraint")
-                        self._add_param("node", storage_node_name, "constraint_capacity_coefficient", node_coeff)
+                        self._add_param("node", storage_node_name, "constraint_invested_capacity_coefficient", node_coeff)
 
                         # Connection coefficient: -ratio per MW of connection
                         conn_coeff = make_map([constraint_name], [-ratio], index_name="constraint")
-                        self._add_param("connection", conn_name, "constraint_capacity_coefficient", conn_coeff)
+                        self._add_param("connection", conn_name, "constraint_invested_capacity_coefficient", conn_coeff)
 
     # -- Technologies --
 

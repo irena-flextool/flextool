@@ -60,15 +60,15 @@ unpack_map_params:
     index_column: "constraint"
   node_constraint:
     source_classes: ["node"]
-    params: ["constraint_capacity_coefficient", "constraint_state_coefficient"]
+    params: ["constraint_invested_capacity_coefficient", "constraint_cumulative_pre_built_capacity_coefficient", "constraint_state_coefficient"]
     index_column: "constraint"
   unit_constraint:
     source_classes: ["unit"]
-    params: ["constraint_capacity_coefficient"]
+    params: ["constraint_invested_capacity_coefficient", "constraint_cumulative_pre_built_capacity_coefficient"]
     index_column: "constraint"
   connection_constraint:
     source_classes: ["connection"]
-    params: ["constraint_capacity_coefficient"]
+    params: ["constraint_invested_capacity_coefficient", "constraint_cumulative_pre_built_capacity_coefficient"]
     index_column: "constraint"
 
 # Add columns from a related multi-dim entity class to a sheet.
@@ -274,7 +274,8 @@ data_type_overrides:
 # usable on both _p and _t sheets.
 period_only_params:
   node:
-    - constraint_capacity_coefficient
+    - constraint_invested_capacity_coefficient
+    - constraint_cumulative_pre_built_capacity_coefficient
     - constraint_state_coefficient
     - annual_flow
     - cumulative_max_capacity
@@ -297,7 +298,8 @@ period_only_params:
     - storage_state_reference_price
     - storage_state_reference_value
   unit:
-    - constraint_capacity_coefficient
+    - constraint_invested_capacity_coefficient
+    - constraint_cumulative_pre_built_capacity_coefficient
     - cumulative_max_capacity
     - cumulative_min_capacity
     - existing
@@ -311,7 +313,8 @@ period_only_params:
     - retire_min_period
     - salvage_value
   connection:
-    - constraint_capacity_coefficient
+    - constraint_invested_capacity_coefficient
+    - constraint_cumulative_pre_built_capacity_coefficient
     - cumulative_max_capacity
     - cumulative_min_capacity
     - existing

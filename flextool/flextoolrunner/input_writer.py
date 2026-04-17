@@ -166,9 +166,14 @@ _PARAMETER_SPECS: list[dict] = [
     },
     # --- node parameters ---
     {
-        "cl_pars": [("node", "constraint_capacity_coefficient")],
-        "header": "node,constraint,p_node_constraint_capacity_coefficient",
-        "filename": "input/p_node_constraint_capacity_coefficient.csv",
+        "cl_pars": [("node", "constraint_invested_capacity_coefficient")],
+        "header": "node,constraint,p_node_constraint_invested_capacity_coefficient",
+        "filename": "input/p_node_constraint_invested_capacity_coefficient.csv",
+    },
+    {
+        "cl_pars": [("node", "constraint_cumulative_pre_built_capacity_coefficient")],
+        "header": "node,constraint,p_node_constraint_prebuilt_capacity_coefficient",
+        "filename": "input/p_node_constraint_cumulative_pre_built_capacity_coefficient.csv",
     },
     {
         "cl_pars": [("node", "constraint_state_coefficient")],
@@ -595,10 +600,17 @@ _PARAMETER_SPECS: list[dict] = [
         "filter_in_type": ["1d_map"],
     },
     {
-        "cl_pars": [("unit", "constraint_capacity_coefficient"),
-                    ("connection", "constraint_capacity_coefficient")],
-        "header": "process,constraint,p_process_constraint_capacity_coefficient",
-        "filename": "input/p_process_constraint_capacity_coefficient.csv",
+        "cl_pars": [("unit", "constraint_invested_capacity_coefficient"),
+                    ("connection", "constraint_invested_capacity_coefficient")],
+        "header": "process,constraint,p_process_constraint_invested_capacity_coefficient",
+        "filename": "input/p_process_constraint_invested_capacity_coefficient.csv",
+        "filter_in_type": ["1d_map"],
+    },
+    {
+        "cl_pars": [("unit", "constraint_cumulative_pre_built_capacity_coefficient"),
+                    ("connection", "constraint_cumulative_pre_built_capacity_coefficient")],
+        "header": "process,constraint,p_process_constraint_prebuilt_capacity_coefficient",
+        "filename": "input/p_process_constraint_cumulative_pre_built_capacity_coefficient.csv",
         "filter_in_type": ["1d_map"],
     },
     {

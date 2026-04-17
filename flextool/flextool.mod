@@ -274,8 +274,10 @@ set node_reference_angle 'reference bus nodes (angle fixed to 0)' within node;
 
 set process_reserve_upDown_node dimen 4;
 set process_node_flow_constraint dimen 3 within {process, node, constraint};
-set process_capacity_constraint dimen 2 within {process, constraint};
-set node_capacity_constraint dimen 2 within {node, constraint};
+set process_capacity_constraint_invested dimen 2 within {process, constraint};
+set node_capacity_constraint_invested dimen 2 within {node, constraint};
+set process_capacity_constraint_prebuilt dimen 2 within {process, constraint};
+set node_capacity_constraint_prebuilt dimen 2 within {node, constraint};
 set node_state_constraint dimen 2 within {node, constraint};
 set constraint__sense dimen 2 within {constraint, sense};
 set commodity_node dimen 2 within {commodity, node};
@@ -383,8 +385,10 @@ param p_connection_susceptance {p in connection_dc_power_flow};
 
 param p_constraint_constant {constraint} default 0;
 param p_process_node_constraint_flow_coefficient {process, node, constraint};
-param p_process_constraint_capacity_coefficient {process, constraint};
-param p_node_constraint_capacity_coefficient {node, constraint};
+param p_process_constraint_invested_capacity_coefficient {process, constraint};
+param p_node_constraint_invested_capacity_coefficient {node, constraint};
+param p_process_constraint_prebuilt_capacity_coefficient {process, constraint};
+param p_node_constraint_prebuilt_capacity_coefficient {node, constraint};
 param p_node_constraint_state_coefficient {node, constraint};
 param step_duration{(d, t) in dt};
 param p_hole_multiplier {solve_current} default 1;
@@ -513,8 +517,10 @@ table data IN 'CSV' 'input/group__node.csv' : group_node <- [group,node];
 table data IN 'CSV' 'input/group__process.csv' : group_process <- [group,process];
 table data IN 'CSV' 'input/group__process__node.csv' : group_process_node <- [group,process,node];
 table data IN 'CSV' 'input/p_process_node_constraint_flow_coefficient.csv' : process_node_flow_constraint <- [process, node, constraint];
-table data IN 'CSV' 'input/p_process_constraint_capacity_coefficient.csv' : process_capacity_constraint <- [process, constraint];
-table data IN 'CSV' 'input/p_node_constraint_capacity_coefficient.csv' : node_capacity_constraint <- [node, constraint];
+table data IN 'CSV' 'input/p_process_constraint_invested_capacity_coefficient.csv' : process_capacity_constraint_invested <- [process, constraint];
+table data IN 'CSV' 'input/p_node_constraint_invested_capacity_coefficient.csv' : node_capacity_constraint_invested <- [node, constraint];
+table data IN 'CSV' 'input/p_process_constraint_cumulative_pre_built_capacity_coefficient.csv' : process_capacity_constraint_prebuilt <- [process, constraint];
+table data IN 'CSV' 'input/p_node_constraint_cumulative_pre_built_capacity_coefficient.csv' : node_capacity_constraint_prebuilt <- [node, constraint];
 table data IN 'CSV' 'input/p_node_constraint_state_coefficient.csv' : node_state_constraint <- [node, constraint];
 table data IN 'CSV' 'input/p_process_delay_weighted.csv' : process_delay_weighted__delay_duration <- [process, delay_duration];
 table data IN 'CSV' 'input/constraint__sense.csv' : constraint__sense <- [constraint, sense];
@@ -562,8 +568,10 @@ table data IN 'CSV' 'input/pd_group.csv' : [group, groupParam, period], pd_group
 table data IN 'CSV' 'input/p_node.csv' : [node, nodeParam], p_node;
 table data IN 'CSV' 'input/pd_node.csv' : [node, nodeParam, period], pd_node;
 table data IN 'CSV' 'input/p_process_node_constraint_flow_coefficient.csv' : [process, node, constraint], p_process_node_constraint_flow_coefficient;
-table data IN 'CSV' 'input/p_process_constraint_capacity_coefficient.csv' : [process, constraint], p_process_constraint_capacity_coefficient;
-table data IN 'CSV' 'input/p_node_constraint_capacity_coefficient.csv' : [node, constraint], p_node_constraint_capacity_coefficient;
+table data IN 'CSV' 'input/p_process_constraint_invested_capacity_coefficient.csv' : [process, constraint], p_process_constraint_invested_capacity_coefficient;
+table data IN 'CSV' 'input/p_node_constraint_invested_capacity_coefficient.csv' : [node, constraint], p_node_constraint_invested_capacity_coefficient;
+table data IN 'CSV' 'input/p_process_constraint_cumulative_pre_built_capacity_coefficient.csv' : [process, constraint], p_process_constraint_prebuilt_capacity_coefficient;
+table data IN 'CSV' 'input/p_node_constraint_cumulative_pre_built_capacity_coefficient.csv' : [node, constraint], p_node_constraint_prebuilt_capacity_coefficient;
 table data IN 'CSV' 'input/p_node_constraint_state_coefficient.csv' : [node, constraint], p_node_constraint_state_coefficient;
 table data IN 'CSV' 'input/p_process__reserve__upDown__node.csv' : [process, reserve, upDown, node, reserveParam], p_process_reserve_upDown_node;
 table data IN 'CSV' 'input/p_process_sink.csv' : [process, sink, sourceSinkParam], p_process_sink;
@@ -1449,7 +1457,7 @@ set pssdt_varCost_noEff := {(p, source, sink) in process_source_sink_noEff, (d, 
 set pssdt_varCost_eff_unit_source := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, source) in process_source && pdtProcess_source[p, source, 'other_operational_cost', d, t]};
 set pssdt_varCost_eff_unit_sink := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : (p, sink) in process_sink && pdtProcess_sink[p, sink, 'other_operational_cost', d, t]};
 set pssdt_varCost_eff_connection := {(p, source, sink) in process_source_sink_eff, (d, t) in dt : pdtProcess[p,'other_operational_cost', d, t]};
-set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d] || exists{(e, c) in process_capacity_constraint} 1 || exists{(e, c) in node_capacity_constraint} 1 };
+set ed_invest := {e in entityInvest, d in period_invest : ed_entity_annual[e, d] || exists{(e, c) in process_capacity_constraint_invested} 1 || exists{(e, c) in node_capacity_constraint_invested} 1 || exists{(e, c) in process_capacity_constraint_prebuilt} 1 || exists{(e, c) in node_capacity_constraint_prebuilt} 1 };
 set ed_invest_period := {(e, d) in ed_invest : (e, 'invest_period') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method
                                                || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
 set e_invest_total := {e in entityInvest : (e, 'invest_total') in entity__invest_method || (e, 'invest_period_total') in entity__invest_method
@@ -1463,7 +1471,7 @@ set edd_invest := {(e, d_invest, d) in edd_history_invest : (e, d_invest) in ed_
 
 set pd_invest := {(p, d) in ed_invest : p in process};
 set nd_invest := {(n, d) in ed_invest : n in node};
-set ed_divest := {e in entityDivest, d in period_invest : ed_entity_annual_divest[e, d] || exists{(e, c) in process_capacity_constraint} 1 || exists{(e, c) in node_capacity_constraint} 1 };
+set ed_divest := {e in entityDivest, d in period_invest : ed_entity_annual_divest[e, d] || exists{(e, c) in process_capacity_constraint_invested} 1 || exists{(e, c) in node_capacity_constraint_invested} 1 || exists{(e, c) in process_capacity_constraint_prebuilt} 1 || exists{(e, c) in node_capacity_constraint_prebuilt} 1 };
 set ed_divest_period := {(e, d) in ed_invest : (e, 'retire_period') in entity__invest_method || (e, 'retire_period_total') in entity__invest_method
                                                || (e, 'invest_retire_period') in entity__invest_method || (e, 'invest_retire_period_total') in entity__invest_method};
 set e_divest_total := {e in entityDivest : (e, 'retire_total') in entity__invest_method || (e, 'retire_period_total') in entity__invest_method
@@ -2643,20 +2651,30 @@ s.t. constraint_greater_than {(c, 'greater_than') in constraint__sense, (d, t) i
 	      * p_node_constraint_state_coefficient[n, c]
 		  * p_entity_unitsize[n]
 	)
-  + sum {(n, c) in node_capacity_constraint : d in period_invest}
-    ( ( + sum{(n, d_invest, d) in edd_invest} v_invest[n, d]
-	    - sum{(n, d_divest) in nd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d]
-	  )
-	  * p_node_constraint_capacity_coefficient[n, c]
-    * p_entity_unitsize[n]
-	)
-  + sum {(p, c) in process_capacity_constraint : d in period_invest}
-    ( ( + sum{(p, d_invest, d) in edd_invest} v_invest[p, d]
-	    - sum{(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d]
-	  )
-	  * p_process_constraint_capacity_coefficient[p, c]
-    * p_entity_unitsize[p]
-	)
+  + sum {(n, c) in node_capacity_constraint_invested : (n, d) in nd_invest}
+    ( v_invest[n, d]
+      * p_node_constraint_invested_capacity_coefficient[n, c]
+      * p_entity_unitsize[n]
+    )
+  + sum {(p, c) in process_capacity_constraint_invested : (p, d) in pd_invest}
+    ( v_invest[p, d]
+      * p_process_constraint_invested_capacity_coefficient[p, c]
+      * p_entity_unitsize[p]
+    )
+  + sum {(n, c) in node_capacity_constraint_prebuilt}
+    ( ( + p_entity_all_existing[n, d] / p_entity_unitsize[n]
+        + sum{(n, d_invest, d) in edd_invest : p_years_d[d_invest] < p_years_d[d]} v_invest[n, d_invest]
+      )
+      * p_node_constraint_prebuilt_capacity_coefficient[n, c]
+      * p_entity_unitsize[n]
+    )
+  + sum {(p, c) in process_capacity_constraint_prebuilt}
+    ( ( + p_entity_all_existing[p, d] / p_entity_unitsize[p]
+        + sum{(p, d_invest, d) in edd_invest : p_years_d[d_invest] < p_years_d[d]} v_invest[p, d_invest]
+      )
+      * p_process_constraint_prebuilt_capacity_coefficient[p, c]
+      * p_entity_unitsize[p]
+    )
   >=
   + p_constraint_constant[c]
 ;
@@ -2675,20 +2693,30 @@ s.t. process_constraint_less_than {(c, 'less_than') in constraint__sense, (d, t)
 	      * p_node_constraint_state_coefficient[n, c]
 		  * p_entity_unitsize[n]
 	)
-  + sum {(n, c) in node_capacity_constraint : d in period_invest}
-    ( ( + sum{(n, d_invest, d) in edd_invest} v_invest[n, d]
-	    - sum{(n, d_divest) in nd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d]
-	  )
-	  * p_node_constraint_capacity_coefficient[n, c]
-    * p_entity_unitsize[n]
-	)
-  + sum {(p, c) in process_capacity_constraint : d in period_invest}
-    ( ( + sum{(p, d_invest, d) in edd_invest} v_invest[p, d]
-	    - sum{(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d]
-	  )
-	  * p_process_constraint_capacity_coefficient[p, c]
-    * p_entity_unitsize[p]
-	)
+  + sum {(n, c) in node_capacity_constraint_invested : (n, d) in nd_invest}
+    ( v_invest[n, d]
+      * p_node_constraint_invested_capacity_coefficient[n, c]
+      * p_entity_unitsize[n]
+    )
+  + sum {(p, c) in process_capacity_constraint_invested : (p, d) in pd_invest}
+    ( v_invest[p, d]
+      * p_process_constraint_invested_capacity_coefficient[p, c]
+      * p_entity_unitsize[p]
+    )
+  + sum {(n, c) in node_capacity_constraint_prebuilt}
+    ( ( + p_entity_all_existing[n, d] / p_entity_unitsize[n]
+        + sum{(n, d_invest, d) in edd_invest : p_years_d[d_invest] < p_years_d[d]} v_invest[n, d_invest]
+      )
+      * p_node_constraint_prebuilt_capacity_coefficient[n, c]
+      * p_entity_unitsize[n]
+    )
+  + sum {(p, c) in process_capacity_constraint_prebuilt}
+    ( ( + p_entity_all_existing[p, d] / p_entity_unitsize[p]
+        + sum{(p, d_invest, d) in edd_invest : p_years_d[d_invest] < p_years_d[d]} v_invest[p, d_invest]
+      )
+      * p_process_constraint_prebuilt_capacity_coefficient[p, c]
+      * p_entity_unitsize[p]
+    )
   <=
   + p_constraint_constant[c]
 ;
@@ -2707,20 +2735,30 @@ s.t. process_constraint_equal {(c, 'equal') in constraint__sense, (d, t) in dt} 
 	      * p_node_constraint_state_coefficient[n, c]
 		  * p_entity_unitsize[n]
 	)
-  + sum {(n, c) in node_capacity_constraint : d in period_invest}
-    ( ( + sum{(n, d_invest, d) in edd_invest} v_invest[n, d]
-	    - sum{(n, d_divest) in nd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[n, d]
-	  )
-	  * p_node_constraint_capacity_coefficient[n, c]
-    * p_entity_unitsize[n]
-	)
-  + sum {(p, c) in process_capacity_constraint : d in period_invest}
-    ( ( + sum{(p, d_invest, d) in edd_invest} v_invest[p, d]
-	    - sum{(p, d_divest) in pd_divest : p_years_d[d_divest] <= p_years_d[d]} v_divest[p, d]
-	  )
-	  * p_process_constraint_capacity_coefficient[p, c]
-    * p_entity_unitsize[p]
-	)
+  + sum {(n, c) in node_capacity_constraint_invested : (n, d) in nd_invest}
+    ( v_invest[n, d]
+      * p_node_constraint_invested_capacity_coefficient[n, c]
+      * p_entity_unitsize[n]
+    )
+  + sum {(p, c) in process_capacity_constraint_invested : (p, d) in pd_invest}
+    ( v_invest[p, d]
+      * p_process_constraint_invested_capacity_coefficient[p, c]
+      * p_entity_unitsize[p]
+    )
+  + sum {(n, c) in node_capacity_constraint_prebuilt}
+    ( ( + p_entity_all_existing[n, d] / p_entity_unitsize[n]
+        + sum{(n, d_invest, d) in edd_invest : p_years_d[d_invest] < p_years_d[d]} v_invest[n, d_invest]
+      )
+      * p_node_constraint_prebuilt_capacity_coefficient[n, c]
+      * p_entity_unitsize[n]
+    )
+  + sum {(p, c) in process_capacity_constraint_prebuilt}
+    ( ( + p_entity_all_existing[p, d] / p_entity_unitsize[p]
+        + sum{(p, d_invest, d) in edd_invest : p_years_d[d_invest] < p_years_d[d]} v_invest[p, d_invest]
+      )
+      * p_process_constraint_prebuilt_capacity_coefficient[p, c]
+      * p_entity_unitsize[p]
+    )
   =
   + p_constraint_constant[c]
 ;
@@ -4155,9 +4193,10 @@ if p_model["solveFirst"] == 1 then {
     { printf "%s,%s\n", g, e >> "output_raw/group_entity_invest.csv"; }
 }
 
-# CO2 emission-cap duals. RHS of co2_max_period is pdGroup[g,'co2_max_period',d]/1000
-# (and /1000 for co2_max_total), so the raw dual is per the /1000-scaled RHS;
-# downstream processing multiplies by 1000 to recover the price per tCO2.
+# CO2 emission-cap duals. Both sides of co2_max_period and co2_max_total are
+# divided by 1000 (Mt instead of t), so the raw dual is Currency/Mt. Downstream
+# processing DIVIDES by 1000 (because Δ(scaled-RHS) = Δ(raw-RHS)/1000) and also
+# divides by the operational inflation factor to report nominal Currency/tCO2.
 for {i in 1..1 : p_model['solveFirst']}
   { printf 'solve,period' > "output_raw/v_dual_co2_max_period.csv";
     for {g in group_co2_max_period}
