@@ -398,3 +398,19 @@
     - node__dt.csv
     - costs__dt.csv
     - summary_solve.csv
+
+# --- constraint_cumulative_pre_built_capacity_coefficient + invested ---
+# Multi-year wind with a period-over-period growth cap:
+#   v_invest[wind_plant, d] <= 0.1 * pre_built[wind_plant, d]
+# Exercises the new pre-built coefficient together with the fixed
+# invested coefficient. The baseline (multi_year_one_solve_battery)
+# invests ~385 MW in p2020 alone; under the 0.1 cap the trajectory is
+# forced down and the capacity builds exponentially at 10%/period off
+# the existing 1000 MW baseline. A regression in either term (e.g.
+# reverting to the old #active×v_invest expression or subtracting
+# v_divest from the pre-built sum) changes the capacity ladder and costs.
+- scenario: multi_year_wind_growth_cap
+  csvs:
+    - unit_capacity__d.csv
+    - costs__dt.csv
+    - summary_solve.csv

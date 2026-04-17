@@ -1,0 +1,9 @@
+unit,solve,period,existing,invested,divested,total
+coal_plant,y2020_2035_5week,p2020,500,0.0,,500.0
+coal_plant,y2020_2035_5week,p2025,500,0.0,,500.0
+coal_plant,y2020_2035_5week,p2030,500,50.5405,,550.5407
+coal_plant,y2020_2035_5week,p2035,500,0.0,,550.5407
+wind_plant,y2020_2035_5week,p2020,1000,100.0,,1100.0
+wind_plant,y2020_2035_5week,p2025,1000,110.0,,1210.0
+wind_plant,y2020_2035_5week,p2030,1000,121.0,,1331.0
+wind_plant,y2020_2035_5week,p2035,1000,133.1,,1464.1

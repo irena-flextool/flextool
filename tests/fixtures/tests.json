@@ -1159,6 +1159,11 @@
         "west"
       ],
       null
+    ],
+    [
+      "constraint",
+      "wind_growth_cap",
+      null
     ]
   ],
   "entity_alternatives": [
@@ -1412,6 +1417,22 @@
         "wind_plant"
       ],
       "wind",
+      true
+    ],
+    [
+      "constraint",
+      [
+        "wind_growth_cap"
+      ],
+      "wind_growth_cap_pre_built",
+      true
+    ],
+    [
+      "unit",
+      [
+        "wind_plant"
+      ],
+      "wind_growth_cap_pre_built",
       true
     ]
   ],
@@ -4289,6 +4310,36 @@
       ],
       null,
       "[per unit  / minute] Maximum ramp up speed. Constant."
+    ],
+    [
+      "connection",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d \u2014 data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored \u2014 on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize."
+    ],
+    [
+      "node",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d \u2014 data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored \u2014 on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize."
+    ],
+    [
+      "unit",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      [
+        "bnVsbA==",
+        null
+      ],
+      null,
+      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d \u2014 data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored \u2014 on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize."
     ]
   ],
   "parameter_types": [
@@ -5941,6 +5992,24 @@
       "ramp_speed_up",
       "float",
       0
+    ],
+    [
+      "connection",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      "map",
+      1
+    ],
+    [
+      "node",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      "map",
+      1
     ]
   ],
   "parameter_values": [
@@ -9844,6 +9913,46 @@
         "str"
       ],
       "bind_battery_intraperiod_blocks"
+    ],
+    [
+      "constraint",
+      "wind_growth_cap",
+      "sense",
+      [
+        "Imxlc3NfdGhhbiI=",
+        "str"
+      ],
+      "wind_growth_cap_pre_built"
+    ],
+    [
+      "constraint",
+      "wind_growth_cap",
+      "constant",
+      [
+        "MC4w",
+        "float"
+      ],
+      "wind_growth_cap_pre_built"
+    ],
+    [
+      "unit",
+      "wind_plant",
+      "constraint_invested_capacity_coefficient",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ3aW5kX2dyb3d0aF9jYXAiLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
+        "map"
+      ],
+      "wind_growth_cap_pre_built"
+    ],
+    [
+      "unit",
+      "wind_plant",
+      "constraint_cumulative_pre_built_capacity_coefficient",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ3aW5kX2dyb3d0aF9jYXAiLCAtMC4xXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "wind_growth_cap_pre_built"
     ]
   ],
   "alternatives": [
@@ -10061,6 +10170,10 @@
     ],
     [
       "bind_battery_intraperiod_blocks",
+      ""
+    ],
+    [
+      "wind_growth_cap_pre_built",
       ""
     ]
   ],
@@ -10342,6 +10455,11 @@
     ],
     [
       "5weeks_battery_intraperiod_blocks",
+      false,
+      ""
+    ],
+    [
+      "multi_year_wind_growth_cap",
       false,
       ""
     ]
@@ -12590,6 +12708,66 @@
     [
       "5weeks_battery_intraperiod_blocks",
       "bind_battery_intraperiod_blocks",
+      null
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "init",
+      "west"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "west",
+      "coal"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "coal",
+      "coal_invest"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "coal_invest",
+      "wind"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "wind",
+      "wind_invest"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "wind_invest",
+      "battery"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "battery",
+      "battery_invest"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "battery_invest",
+      "5weeks"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "5weeks",
+      "invest_solveSequence_5weeks"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "invest_solveSequence_5weeks",
+      "invest_allYears_5weeks"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "invest_allYears_5weeks",
+      "wind_growth_cap_pre_built"
+    ],
+    [
+      "multi_year_wind_growth_cap",
+      "wind_growth_cap_pre_built",
       null
     ]
   ]
