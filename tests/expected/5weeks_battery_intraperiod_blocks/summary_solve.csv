@@ -1,0 +1,25 @@
+"Diagnostic results from all solves. Output at (UTC): 2026-04-17 10:58:13.795137+00:00"
+
+
+"Solve","Objective","Total cost from solver, includes all penalty costs"
+y2020_5week,1843.381499
+"Total cost (calculated) full horizon (M CUR)",956.4314949,"Annualized operational, penalty and investment costs"
+"Total cost (calculated) realized periods (M CUR)",956.4314949
+"Operational costs for realized periods (M CUR)",0
+"Investment costs for realized periods (M CUR)",0
+"Retirement costs (negative salvage value) for realized periods (M CUR)",0
+"Fixed costs for pre-existing entities (M CUR)",0
+"Fixed costs for invested entities (M CUR)",0
+"Fixed cost removal due to divested entities (M CUR)",0
+"Penalty (slack) costs for realized periods (M CUR)",956.4314949
+
+Period,p2020
+"Time in use in years",0.00228310502283
+"Operational discount factor",5
+"Investment discount factor",5
+
+Emissions
+"CO2 [Mt]",0,"System-wide annualized CO2 emissions for realized periods"
+
+"Slack variables multiplied by timestep duration (creating or removing energy/matter, creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"
+Created, west, p2020, 485.25
