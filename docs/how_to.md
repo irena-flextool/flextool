@@ -267,26 +267,36 @@ It is given parameters `constant`, `sense` and `is_active` (if Toolbox 0.7, befo
 Both *battery_inverter* and *battery* need a coefficient to tell the model how they relate to each other. The equation has the capacity variables on the left side of the equation and the constant on the right side.
 
 ```
-sum_i(`constraint_capacity_coefficient` * `invested_capacity`) = `constant` 
+sum_i(`constraint_invested_capacity_coefficient` * `v_invest`) = `constant`
       where i is any unit, connection or node that is part of the constraint
 ```
 
-When the `constraint_capacity_coefficient` for *battery* is set at 1 and for the *battery_inverter* at -8, then the equation will force *battery_inverter* `capacity` to be 8 times smaller than the *battery* `capacity`. The negative term can be arranged to the right side of the equation, which yields:
+When the `constraint_invested_capacity_coefficient` for *battery* is set at 1 and for the *battery_inverter* at -8, then the equation will force *battery_inverter* `v_invest` to be 8 times smaller than the *battery* `v_invest`. The negative term can be arranged to the right side of the equation, which yields:
 
 ```1 x *battery* = 8 x *battery_inverter*, which can be true only if *battery_inverter* is 1/8 of *battery*```
 
-`constraint_capacity_coefficient` is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the ientity to participate in multiple constraints.
+`constraint_invested_capacity_coefficient` is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the entity to participate in multiple constraints. (This parameter was previously named `constraint_capacity_coefficient`; migration v32 renames existing DBs automatically. The old expression summed `v_invest` once per active investment period — incorrect in multi-period models — and has been fixed to emit just the current period's `v_invest`.)
 
-Finally, FlexTool can actually mix three different types of constraint coefficients: `constraint_capacity_coefficient`, `constraint_state_coefficient` and `constraint_flow_coefficient` allowing the user to create custom constraints between any types of entities in the model for the main variables in the model (*flow*, *state* as well as *invest* and *divest*). So, the equation above is in full form:
+To tie cumulative, built-up capacity rather than the current period's new build, use `constraint_cumulative_pre_built_capacity_coefficient`. It takes data-baseline capacity plus every `v_invest` made in periods strictly BEFORE the current one, ignoring retirements (learning-effect semantics). Paired with `constraint_invested_capacity_coefficient`, it expresses period-over-period growth limits:
 
 ```
-  + sum_i [constraint_capacity_coefficient(i) * invested_capacity]
+v_invest[e, d] <= growth_rate * pre_built[e, d]
+```
+
+is written as: `constraint_invested_capacity_coefficient = { c: 1.0 }` and `constraint_cumulative_pre_built_capacity_coefficient = { c: -growth_rate }` on entity `e`, with constraint `c` having `sense = less_than` and `constant = 0`. A 10% growth cap starting from 1000 MW of existing wind would allow 100 MW in period 1, 110 in period 2, 121 in period 3, and so on.
+
+Finally, FlexTool can mix several types of constraint coefficients: `constraint_invested_capacity_coefficient`, `constraint_cumulative_pre_built_capacity_coefficient`, `constraint_state_coefficient` and `constraint_flow_coefficient` allowing the user to create custom constraints between any types of entities in the model for the main variables in the model (*flow*, *state* as well as *invest*). So, the equation above is in full form:
+
+```
+  + sum_i [constraint_invested_capacity_coefficient(i) * v_invest]
            where i contains [node, unit, connection] belonging to the constraint
+  + sum_i [constraint_cumulative_pre_built_capacity_coefficient(i) * pre_built]
+           where pre_built = existing baseline + Σ v_invest from earlier periods
   + sum_j [constraint_flow_coefficient(j) * capacity]
            where j contains [unit--node, connection--node] belonging to the constraint
-  + sum_k [constraint_state_coefficient(k) * capacity] 
+  + sum_k [constraint_state_coefficient(k) * capacity]
            where k contains [node] belonging to the constraint
-  = 
+  =
   constant
 
   where 'capacity' is existing capacity plus invested capacity
