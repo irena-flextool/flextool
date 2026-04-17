@@ -4155,6 +4155,33 @@ if p_model["solveFirst"] == 1 then {
     { printf "%s,%s\n", g, e >> "output_raw/group_entity_invest.csv"; }
 }
 
+# CO2 emission-cap duals. RHS of co2_max_period is pdGroup[g,'co2_max_period',d]/1000
+# (and /1000 for co2_max_total), so the raw dual is per the /1000-scaled RHS;
+# downstream processing multiplies by 1000 to recover the price per tCO2.
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve,period' > "output_raw/v_dual_co2_max_period.csv";
+    for {g in group_co2_max_period}
+      { printf ',%s', g >> "output_raw/v_dual_co2_max_period.csv"; }
+  }
+for {s in solve_current, d in period_in_use}
+  { printf '\n%s,%s', s, d >> "output_raw/v_dual_co2_max_period.csv";
+    for {g in group_co2_max_period}
+      { printf ',%.8g', co2_max_period[g, d].dual / scale_the_objective
+                        >> "output_raw/v_dual_co2_max_period.csv"; }
+  }
+
+for {i in 1..1 : p_model['solveFirst']}
+  { printf 'solve' > "output_raw/v_dual_co2_max_total.csv";
+    for {g in group_co2_max_total}
+      { printf ',%s', g >> "output_raw/v_dual_co2_max_total.csv"; }
+  }
+for {s in solve_current}
+  { printf '\n%s', s >> "output_raw/v_dual_co2_max_total.csv";
+    for {g in group_co2_max_total}
+      { printf ',%.8g', co2_max_total[g].dual / scale_the_objective
+                        >> "output_raw/v_dual_co2_max_total.csv"; }
+  }
+
 # Parameters with (d, t) dimensions
 # Write step_duration
 if p_model["solveFirst"] == 1 then {
