@@ -86,6 +86,24 @@ def write_step_jump(step_lengths: list[tuple[str, ...]], work_folder: Path | Non
         writer.writerows(step_lengths)
 
 
+def write_period_block(
+    period_block_time: list[tuple],
+    period_block_succ: list[tuple],
+    work_folder: Path | None = None,
+) -> None:
+    """Write block-structure CSVs for the bind_intraperiod_blocks method."""
+    wf = work_folder if work_folder is not None else Path.cwd()
+    sd = wf / "solve_data"
+    with open(sd / "period_block_time.csv", 'w', newline='') as f:
+        writer = csv.writer(f, delimiter=',')
+        writer.writerow(("period", "block_first", "step"))
+        writer.writerows(period_block_time)
+    with open(sd / "period_block_succ.csv", 'w', newline='') as f:
+        writer = csv.writer(f, delimiter=',')
+        writer.writerow(("period", "block_first", "block_first_next"))
+        writer.writerows(period_block_succ)
+
+
 # ---------------------------------------------------------------------------
 # Period writers
 # ---------------------------------------------------------------------------

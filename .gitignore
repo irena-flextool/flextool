@@ -1,5 +1,6 @@
 *.csv
 !test/expected/**/*.csv
+!tests/expected/**/*.csv
 *.sqlite
 templates/results_template.sqlite
 files_comp_results.txt

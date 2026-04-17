@@ -386,3 +386,15 @@
     - node__dt.csv
     - connection__dt.csv
     - costs__dt.csv
+
+# --- bind_intraperiod_blocks (LTS-style block storage binding) ---
+# Battery on 5weeks (multi-block) timeset with bind_intraperiod_blocks.
+# node_state__dt.csv must show v_state constant within each block and
+# jumping at block boundaries — a regression in the block constraints
+# would break that pattern.
+- scenario: 5weeks_battery_intraperiod_blocks
+  csvs:
+    - node_state__dt.csv
+    - node__dt.csv
+    - costs__dt.csv
+    - summary_solve.csv

@@ -2220,6 +2220,13 @@
         "Im5vIg==",
         "str"
       ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "ImJpbmRfaW50cmFwZXJpb2RfYmxvY2tzIg==",
+        "str"
+      ]
     ]
   ],
   "parameter_definitions": [
@@ -9827,6 +9834,16 @@
         "str"
       ],
       "coal_min_updowntime"
+    ],
+    [
+      "node",
+      "battery",
+      "storage_binding_method",
+      [
+        "ImJpbmRfaW50cmFwZXJpb2RfYmxvY2tzIg==",
+        "str"
+      ],
+      "bind_battery_intraperiod_blocks"
     ]
   ],
   "alternatives": [
@@ -10040,6 +10057,10 @@
     ],
     [
       "coal_min_updowntime",
+      ""
+    ],
+    [
+      "bind_battery_intraperiod_blocks",
       ""
     ]
   ],
@@ -10316,6 +10337,11 @@
     ],
     [
       "coal_wind_min_uptime_MIP",
+      false,
+      ""
+    ],
+    [
+      "5weeks_battery_intraperiod_blocks",
       false,
       ""
     ]
@@ -12534,6 +12560,36 @@
     [
       "coal_wind_min_uptime_MIP",
       "coal_min_updowntime",
+      null
+    ],
+    [
+      "5weeks_battery_intraperiod_blocks",
+      "init",
+      "west"
+    ],
+    [
+      "5weeks_battery_intraperiod_blocks",
+      "west",
+      "wind"
+    ],
+    [
+      "5weeks_battery_intraperiod_blocks",
+      "wind",
+      "battery"
+    ],
+    [
+      "5weeks_battery_intraperiod_blocks",
+      "battery",
+      "5weeks"
+    ],
+    [
+      "5weeks_battery_intraperiod_blocks",
+      "5weeks",
+      "bind_battery_intraperiod_blocks"
+    ],
+    [
+      "5weeks_battery_intraperiod_blocks",
+      "bind_battery_intraperiod_blocks",
       null
     ]
   ]

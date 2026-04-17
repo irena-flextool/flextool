@@ -216,6 +216,16 @@ set rp_base_period := setof{(b, r) in rp_base__rep}(b);
 set rp_rep_period := setof{(b, r) in rp_base__rep}(r);
 set nodeState_rp := {n in nodeState : (n, 'bind_using_blended_weights') in node__storage_binding_method};
 
+# Intraperiod-blocks sets (bind_intraperiod_blocks storage binding method).
+# Block = maximal contiguous run of active timesteps in the timeline. The Python
+# runner emits period_block_time.csv (one row per active step with its block's
+# first-step label) and period_block_succ.csv (cyclic successor of each block
+# within its period).
+set period_block_time 'active timestep tagged with its block (period, block_first, step)' dimen 3;
+set period_block_succ 'cyclic block successor within a period (period, block_first, block_first_next)' dimen 3;
+set period_block := setof {(d, b, t) in period_block_time} (d, b);
+set nodeStateBlock := {n in nodeState : (n, 'bind_intraperiod_blocks') in node__storage_binding_method};
+
 set node__profile__profile_method dimen 3 within {node,profile,profile_method};
 set group_node 'member nodes of a particular group' dimen 2 within {group, node};
 set group_process 'member processes of a particular group' dimen 2 within {group, process};
@@ -634,6 +644,8 @@ table data IN 'CSV' 'solve_data/rp_block_first.csv' : rp_block_first <- [period,
 table data IN 'CSV' 'solve_data/rp_block_last.csv' : rp_block_last <- [period, step];
 table data IN 'CSV' 'solve_data/rp_block_start_last.csv' : [rep_start], p_rp_last_step~last_step;
 table data IN 'CSV' 'solve_data/rp_cost_weight.csv' : [period, time], p_rp_cost_weight~weight;
+table data IN 'CSV' 'solve_data/period_block_time.csv' : period_block_time <- [period, block_first, step];
+table data IN 'CSV' 'solve_data/period_block_succ.csv' : period_block_succ <- [period, block_first, block_first_next];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : dt_complete <- [period, step];
 table data IN 'CSV' 'solve_data/steps_complete_solve.csv' : [period, step], complete_step_duration;
 table data IN 'CSV' 'solve_data/p_roll_continue_state.csv' : [node], p_roll_continue_state;
@@ -1914,10 +1926,10 @@ if p_model["solveFirst"] == 1 && 'read' in phase then {
     p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t];
 
   check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((n, 'fix_start') in node__storage_start_end_method || (n, 'fix_start_end') in node__storage_start_end_method)
-  && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
+  && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method || (n, 'bind_intraperiod_blocks') in node__storage_binding_method)}:
     p_node[n,'storage_state_start'] <= pdtNode[n, 'availability', d, t];
   check {n in nodeState, (d,t) in (period__time_first union period__time_last): ((n, 'fix_start_end') in node__storage_start_end_method || (n, 'fix_end') in node__storage_start_end_method)
-  && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method)}:
+  && ((n, 'bind_within_solve') in node__storage_binding_method || (n, 'bind_within_period') in node__storage_binding_method || (n, 'bind_intraperiod_blocks') in node__storage_binding_method)}:
     p_node[n,'storage_state_end'] <= pdtNode[n, 'availability', d, t];
 
   check {n in nodeState, (d,t,t_previous,t_previous_within_timeset,d_previous,t_previous_within_solve) in dtttdt:
@@ -2158,7 +2170,7 @@ printf 'Timer - Objective: %ss\n', total_obj_cost - setup;
 printf ',%s', total_obj_cost - setup >> solve_progress;
 
 # Energy balance in each node
-s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} :
+s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt : n not in nodeStateBlock} :
   + (if n in nodeState && (n, 'bind_forward_only') in node__storage_binding_method && not ((d, t) in period__time_first && d in period_first_of_solve) then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n] / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_solve') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d_previous, t_previous_within_solve]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
   + (if n in nodeState && (n, 'bind_within_period') in node__storage_binding_method && (n, 'fix_start_end') not in node__storage_start_end_method then (v_state[n, d, t] -  v_state[n, d, t_previous]) * p_entity_unitsize[n]  / p_hole_multiplier[c] )
@@ -2241,6 +2253,64 @@ s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in peri
   + sum {(d, t) in dt} vq_state_up[n, d, t] * node_capacity_for_scaling[n, d] * step_duration[d, t]
   - sum {(d, t) in dt} vq_state_down[n, d, t] * node_capacity_for_scaling[n, d] * step_duration[d, t]
 ;
+
+# Within-block constancy of v_state for nodeStateBlock (bind_intraperiod_blocks).
+# In the step_previous relation, rows with t_previous_within_timeset = t_previous
+# are interior-of-block rows (jump=1). State is pinned constant across them; the
+# nodeBalanceBlock_eq constraint below handles the per-block state transitions.
+s.t. stateConstantWithinBlock_eq {n in nodeStateBlock,
+    (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt
+    : t_previous_within_timeset = t_previous} :
+  v_state[n, d, t] = v_state[n, d, t_previous]
+;
+
+# Per-block energy balance for nodeStateBlock: state transition over the block
+# equals the net flow summed over the block's timesteps. Cyclic within period
+# via period_block_succ.
+s.t. nodeBalanceBlock_eq {c in solve_current, n in nodeStateBlock,
+    (d, b_first) in period_block
+    : (n, 'fix_start_end') not in node__storage_start_end_method} :
+  sum {(d, b_first, b_next) in period_block_succ}
+    (v_state[n, d, b_next] - v_state[n, d, b_first]) * p_entity_unitsize[n] / p_hole_multiplier[c]
+  =
+  # n is sink: flows into n
+  + sum {(p, source, n) in process_source_sink, (d, b_first, t) in period_block_time} (
+      v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t]
+    )
+  # n is source: flows out via efficiency
+  - sum {(p, n, sink) in process_source_sink_eff, (d, b_first, t) in period_block_time} (
+      ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
+            * pdtProcess_slope[p, d, t]
+            * (if p in process_unit then 1 / (p_process_sink_coefficient[p, sink] * p_process_source_coefficient[p, n]) else 1)
+        + (if (p, 'min_load_efficiency') in process__ct_method then
+            ( + (if p in process_online_linear then v_online_linear[p, d, t])
+              + (if p in process_online_integer then v_online_integer[p, d, t])
+            )
+            * pdtProcess_section[p, d, t] * p_entity_unitsize[p]
+          )
+      ) * step_duration[d, t]
+    )
+  # n is source: flows out, no efficiency conversion
+  - sum {(p, n, sink) in process_source_sink_noEff, (d, b_first, t) in period_block_time} (
+      v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t]
+    )
+  # Inflow (pdtNodeInflow is already in energy units per step, not power)
+  + (if (n, 'no_inflow') not in node__inflow_method then
+      sum {(d, b_first, t) in period_block_time} pdtNodeInflow[n, d, t])
+  # Self-discharge
+  - (if n in nodeSelfDischarge then
+      sum {(d, b_first, t) in period_block_time}
+        v_state[n, d, t]
+          * (-1 + (1 + pdtNode[n, 'self_discharge_loss', d, t]) ** step_duration[d, t])
+          * p_entity_unitsize[n]
+    )
+  # Penalty slacks (still per timestep so the solver can locate infeasibilities)
+  + sum {(d, b_first, t) in period_block_time}
+      vq_state_up[n, d, t] * node_capacity_for_scaling[n, d] * step_duration[d, t]
+  - sum {(d, b_first, t) in period_block_time}
+      vq_state_down[n, d, t] * node_capacity_for_scaling[n, d] * step_duration[d, t]
+;
+
 param balance := gmtime();
 printf 'Timer - Balance: %ss\n', balance - total_obj_cost;
 printf ',%s', balance - total_obj_cost >> solve_progress;
@@ -2546,6 +2616,7 @@ s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in peri
    && (n, 'bind_within_solve') not in node__storage_binding_method
    && (n, 'bind_within_period') not in node__storage_binding_method
    && (n, 'bind_within_timeset') not in node__storage_binding_method
+   && (n, 'bind_intraperiod_blocks') not in node__storage_binding_method
    && sum{(d2,d) in period__branch, (d, t, t2) in dtt_timeline_matching: n in n_fix_storage_price} 1 = 0
    && sum{(d2,d) in period__branch, (d, t, t2) in dtt_timeline_matching: n in n_fix_storage_quantity} 1 = 0
    && sum{(d2,d) in period__branch, (d, t, t2) in dtt_timeline_matching: n in n_fix_storage_usage} 1 = 0)} :
@@ -3910,9 +3981,13 @@ if p_model["solveFirst"] == 1 then {
 for {s in solve_current, (d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve) in dtttdt} {
     printf "\n%s,%s,%s", s, d, t >> "output_raw/v_dual_node_balance.csv";
     for {n in nodeBalance} {
-        printf ",%.6g", -nodeBalance_eq[s, n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual
-                        / p_inflation_factor_operations_yearly[d]
-                        / scale_the_objective >> "output_raw/v_dual_node_balance.csv";
+        printf ",%.6g",
+          (if n not in nodeStateBlock then
+             -nodeBalance_eq[s, n, d, t, t_previous, t_previous_within_timeset, d_previous, t_previous_within_solve].dual
+           else
+             -sum {(d, b, t) in period_block_time} nodeBalanceBlock_eq[s, n, d, b].dual)
+          / p_inflation_factor_operations_yearly[d]
+          / scale_the_objective >> "output_raw/v_dual_node_balance.csv";
         }
 }
 
