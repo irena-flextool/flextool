@@ -44,6 +44,16 @@ class ProjectSettings:
     # Input source numbers: source name -> number
     input_source_numbers: dict[str, int] = field(default_factory=dict)
 
+    # External input references: source name -> POSIX path relative to project root.
+    # Files are read in place (not copied into input_sources/).
+    external_refs: dict[str, str] = field(default_factory=dict)
+
+    # Bare-name ownership for executed scenario folders.
+    # Maps scenario_name -> source_number. Scenarios in this map write to
+    # ``output_parquet/<name>/`` (no suffix); other sources with the same
+    # scenario name write to ``output_parquet/<name>_<src#>/``.
+    bare_output_owners: dict[str, int] = field(default_factory=dict)
+
     # Ordered list of scenario names for execution
     scenario_order: list[str] = field(default_factory=list)
 
@@ -70,6 +80,9 @@ class GlobalSettings:
     recent_project: str | None = None
     theme: str = "dark"  # Valid values: "dark", "light", "os"
     exec_jobs_sash: int = 0  # saved Jobs/Progress sash position (0 = default)
+    # Last chosen value for "Max. parallel executions" in the execution
+    # window. 0 means "not set yet" → use cpu_count() - 1.
+    max_workers: int = 0
 
 
 @dataclass
@@ -80,6 +93,9 @@ class InputSourceInfo:
     number: int
     status: str  # "ok", "error", "empty", or "editing"
     scenarios: list[str] = field(default_factory=list)
+    # Set when the source lives outside the project; stored as POSIX path
+    # relative to the project root (e.g. "../data/input.xlsx").
+    external_rel_path: str | None = None
 
 
 @dataclass

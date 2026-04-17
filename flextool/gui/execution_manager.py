@@ -18,6 +18,7 @@ from typing import Callable
 
 from flextool.gui.cli_format import format_cmd_for_log
 from flextool.gui.data_models import ProjectSettings, ScenarioInfo
+from flextool.gui.scenario_key import choose_output_subdir_for_write
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class ExecutionJob:
     scenario_name: str = ""
     source_name: str = ""
     source_number: int = 0
+    output_subdir: str = ""  # on-disk folder under output_parquet/
     input_db_url: str = ""   # sqlite:///path/to/input.sqlite
     is_xlsx_source: bool = False
     xlsx_path: Path | None = None
@@ -120,6 +122,13 @@ class ExecutionManager:
     def max_workers(self, value: int) -> None:
         self._max_workers = max(1, value)
 
+    def _resolve_source_path(self, source_name: str) -> Path:
+        """Return the absolute path to a source file, honouring external refs."""
+        rel = self.settings.external_refs.get(source_name)
+        if rel is not None:
+            return (self.project_path / rel).resolve()
+        return self.project_path / "input_sources" / source_name
+
     # ------------------------------------------------------------------
     # Job management
     # ------------------------------------------------------------------
@@ -127,16 +136,15 @@ class ExecutionManager:
     def add_jobs(self, scenarios: list[ScenarioInfo]) -> list[ExecutionJob]:
         """Add scenarios to the execution queue. Returns the created jobs."""
         new_jobs: list[ExecutionJob] = []
+        ownership_changed = False
         with self._lock:
             for scenario in scenarios:
                 is_xlsx = scenario.source_name.lower().endswith(
                     (".xlsx", ".xls", ".ods")
                 )
+                source_path = self._resolve_source_path(scenario.source_name)
                 if is_xlsx:
-                    xlsx_path = (
-                        self.project_path / "input_sources" / scenario.source_name
-                    )
-                    # The converted sqlite lives in intermediate/
+                    xlsx_path = source_path
                     stem = Path(scenario.source_name).stem
                     input_db_url = (
                         "sqlite:///"
@@ -144,20 +152,24 @@ class ExecutionManager:
                     )
                 else:
                     xlsx_path = None
-                    input_db_url = (
-                        "sqlite:///"
-                        + str(
-                            self.project_path
-                            / "input_sources"
-                            / scenario.source_name
-                        )
-                    )
+                    input_db_url = "sqlite:///" + str(source_path)
+
+                prev_owners = dict(self.settings.bare_output_owners)
+                output_subdir = choose_output_subdir_for_write(
+                    self.project_path,
+                    self.settings.bare_output_owners,
+                    scenario.source_number,
+                    scenario.name,
+                )
+                if self.settings.bare_output_owners != prev_owners:
+                    ownership_changed = True
 
                 job = ExecutionJob(
                     job_id=self._next_id,
                     scenario_name=scenario.name,
                     source_name=scenario.source_name,
                     source_number=scenario.source_number,
+                    output_subdir=output_subdir,
                     input_db_url=input_db_url,
                     is_xlsx_source=is_xlsx,
                     xlsx_path=xlsx_path,
@@ -165,6 +177,16 @@ class ExecutionManager:
                 self._next_id += 1
                 self._jobs.append(job)
                 new_jobs.append(job)
+
+        if ownership_changed:
+            try:
+                from flextool.gui.settings_io import save_project_settings
+                save_project_settings(self.project_path, self.settings)
+            except Exception:
+                logger.warning(
+                    "Could not persist bare_output_owners to settings.yaml",
+                    exc_info=True,
+                )
         return new_jobs
 
     # ------------------------------------------------------------------
@@ -390,7 +412,7 @@ class ExecutionManager:
                 )
 
             # Step 2: Build and run the main FlexTool command
-            work_folder = self.project_path / "work" / job.scenario_name
+            work_folder = self.project_path / "work" / job.output_subdir
 
             # Clean work folder so re-executions start fresh
             if work_folder.exists():
@@ -498,6 +520,8 @@ class ExecutionManager:
             str(work_folder),
             "--output-location",
             str(self.project_path),
+            "--output-subdir",
+            job.output_subdir,
             "--write-methods",
             *write_methods,
         ]
@@ -544,21 +568,23 @@ class ExecutionManager:
         do_comp_plots = settings.auto_generate_comp_plots
         do_comp_excel = settings.auto_generate_comp_excel
 
-        # Gather scenario names from successful SCENARIO jobs only
+        # Gather on-disk subdirs from successful SCENARIO jobs only. Each
+        # job records its chosen subdir (bare when uncontested, suffixed
+        # on collision), so same-named scenarios from different sources
+        # stay distinct.
         with self._lock:
             successful = [
-                j.scenario_name
+                j.output_subdir
                 for j in self._jobs
                 if j.job_type == JobType.SCENARIO and j.status == JobStatus.SUCCESS
             ]
-            # Merge in any externally-specified comparison scenarios
+            # Merge in any externally-specified comparison subdirs
             extra = [s for s in self._comparison_scenarios if s not in successful]
             all_scenarios = successful + extra
-            # Accumulate: remember these scenarios so that if a new batch
-            # is added later, the next comparison will include them too.
-            for name in successful:
-                if name not in self._comparison_scenarios:
-                    self._comparison_scenarios.append(name)
+            # Accumulate across batches
+            for subdir in successful:
+                if subdir not in self._comparison_scenarios:
+                    self._comparison_scenarios.append(subdir)
 
         if not do_comp_plots and not do_comp_excel:
             return
@@ -751,7 +777,9 @@ class ExecutionManager:
                 continue
             if old.job_type != JobType.SCENARIO:
                 continue
-            if old.scenario_name != finished_job.scenario_name:
+            if (old.source_number, old.scenario_name) != (
+                finished_job.source_number, finished_job.scenario_name
+            ):
                 continue
             if old.status in (JobStatus.PENDING, JobStatus.RUNNING):
                 continue

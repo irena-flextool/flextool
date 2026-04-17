@@ -13,6 +13,24 @@ logger = logging.getLogger(__name__)
 SUPPORTED_EXTENSIONS = {".xlsx", ".ods", ".sqlite"}
 
 
+def _relative_posix(target: Path, base: Path) -> str:
+    """Return ``target`` as a POSIX path relative to ``base``.
+
+    Falls back to ``os.path.relpath`` when the paths live on the same
+    drive but ``target`` is not under ``base`` (common for references
+    that go up with ``..``). Returns the absolute POSIX path when the
+    paths cannot be related (e.g. different Windows drives).
+    """
+    import os
+    target = target.resolve()
+    base = base.resolve()
+    try:
+        rel = os.path.relpath(str(target), str(base))
+    except ValueError:
+        return target.as_posix()
+    return Path(rel).as_posix()
+
+
 class InputSourceManager:
     """Manages input source files and their scenario discovery.
 
@@ -34,30 +52,74 @@ class InputSourceManager:
     # ── Public API ────────────────────────────────────────────────────
 
     def scan_input_sources(self) -> list[InputSourceInfo]:
-        """List files in the input_sources/ directory.
+        """List files in the input_sources/ directory plus external references.
 
         Returns an :class:`InputSourceInfo` for each ``.xlsx``, ``.ods``, and
-        ``.sqlite`` file found.  No scenario reading is performed here.
+        ``.sqlite`` file found inside ``input_sources/``, followed by one
+        entry per external reference registered in project settings.
+        No scenario reading is performed here.
         """
         sources: list[InputSourceInfo] = []
-        if not self.input_dir.is_dir():
-            return sources
+        if self.input_dir.is_dir():
+            for filepath in sorted(self.input_dir.iterdir()):
+                if filepath.suffix.lower() not in SUPPORTED_EXTENSIONS:
+                    continue
+                if not filepath.is_file():
+                    continue
+                file_type = filepath.suffix.lstrip(".").lower()
+                sources.append(
+                    InputSourceInfo(
+                        name=filepath.name,
+                        file_type=file_type,
+                        number=0,  # assigned later in refresh()
+                        status="error",  # updated later
+                    )
+                )
 
-        for filepath in sorted(self.input_dir.iterdir()):
-            if filepath.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        for ext_name, rel_path in self.settings.external_refs.items():
+            ext = Path(ext_name).suffix.lower()
+            if ext not in SUPPORTED_EXTENSIONS:
                 continue
-            if not filepath.is_file():
-                continue
-            file_type = filepath.suffix.lstrip(".").lower()
             sources.append(
                 InputSourceInfo(
-                    name=filepath.name,
-                    file_type=file_type,
-                    number=0,  # assigned later in refresh()
-                    status="error",  # updated later
+                    name=ext_name,
+                    file_type=ext.lstrip("."),
+                    number=0,
+                    status="error",
+                    external_rel_path=rel_path,
                 )
             )
         return sources
+
+    def resolve_path(self, source: InputSourceInfo) -> Path:
+        """Return the absolute path to a source's underlying file."""
+        if source.external_rel_path:
+            return (self.project_path / source.external_rel_path).resolve()
+        return self.input_dir / source.name
+
+    def add_external_ref(self, filepath: Path) -> tuple[str, str]:
+        """Register an external file as an input source.
+
+        Returns ``(name, rel_path)`` where ``rel_path`` is POSIX-style and
+        relative to the project root. Raises ``ValueError`` if a reference
+        with the same name is already registered.
+        """
+        filepath = filepath.resolve()
+        rel_path = _relative_posix(filepath, self.project_path)
+        name = filepath.name
+        if name in self.settings.external_refs:
+            raise ValueError(
+                f"An external reference named '{name}' is already registered."
+            )
+        self.settings.external_refs[name] = rel_path
+        return name, rel_path
+
+    def remove_external_ref(self, name: str) -> bool:
+        """Remove an external reference. Returns True if found and removed."""
+        if name in self.settings.external_refs:
+            del self.settings.external_refs[name]
+            return True
+        return False
 
     def read_scenarios_xlsx(self, filepath: Path) -> list[str] | None:
         """Read scenario names from the 'scenario' sheet in an xlsx file.
@@ -218,7 +280,7 @@ class InputSourceManager:
 
         # Read scenarios for each source and determine status
         for source in sources:
-            filepath = self.input_dir / source.name
+            filepath = self.resolve_path(source)
             if not filepath.exists():
                 source.status = "error"
                 continue
@@ -272,20 +334,27 @@ class InputSourceManager:
         """Check and upgrade all sqlite input sources.
 
         Delegates to :func:`~flextool.gui.db_version_check.check_and_upgrade_database`
-        for each ``.sqlite`` file in the input sources directory.
+        for each ``.sqlite`` file in the input sources directory and each
+        registered external reference.
 
         Returns a list of human-readable upgrade messages (empty if nothing
         was upgraded).
         """
         all_messages: list[str] = []
-        if not self.input_dir.is_dir():
-            return all_messages
 
-        for filepath in sorted(self.input_dir.iterdir()):
-            if filepath.suffix.lower() != ".sqlite":
+        sqlite_paths: list[Path] = []
+        if self.input_dir.is_dir():
+            for filepath in sorted(self.input_dir.iterdir()):
+                if filepath.suffix.lower() == ".sqlite" and filepath.is_file():
+                    sqlite_paths.append(filepath)
+        for ext_name, rel_path in self.settings.external_refs.items():
+            if Path(ext_name).suffix.lower() != ".sqlite":
                 continue
-            if not filepath.is_file():
-                continue
+            abs_path = (self.project_path / rel_path).resolve()
+            if abs_path.is_file():
+                sqlite_paths.append(abs_path)
+
+        for filepath in sqlite_paths:
             try:
                 from flextool.gui.db_version_check import check_and_upgrade_database
 
@@ -319,7 +388,11 @@ class InputSourceManager:
         refreshes can detect ongoing editing via mtime comparison
         (Linux xlsx fallback).
         """
-        filepath = self.input_dir / source_name
+        rel = self.settings.external_refs.get(source_name)
+        if rel is not None:
+            filepath = (self.project_path / rel).resolve()
+        else:
+            filepath = self.input_dir / source_name
         self._editing_sources.add(source_name)
         try:
             self._last_known_mtimes[source_name] = filepath.stat().st_mtime

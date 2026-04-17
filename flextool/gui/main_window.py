@@ -79,6 +79,16 @@ STATUS_ERR = "\u2717"     # ✗
 STATUS_EMPTY = "\u2300"   # ⌀  (no scenarios)
 STATUS_EDITING = "\u23f3" # ⏳
 
+# Input-sources tree iid prefix for external references
+_EXT_IID_PREFIX = "ext:"
+
+
+def _source_name_from_iid(iid: str) -> str:
+    """Strip the ``ext:`` prefix used for external-reference tree iids."""
+    if iid.startswith(_EXT_IID_PREFIX):
+        return iid[len(_EXT_IID_PREFIX):]
+    return iid
+
 # Animated spinner frames for output action progress indication
 _SPINNER_FRAMES = ["\u29d6", "\u29d7"]  # ⧖ ⧗ (hourglass variants)
 
@@ -140,11 +150,21 @@ class MainWindow(tk.Tk):
         # Make LabelFrame titles the same font size as everything else
         style.configure("TLabelframe.Label", font=tkfont.nametofont("TkDefaultFont"))
 
-        # Make selected rows clearly visible in the focused tree
+        # Keep the blue highlight on selected rows even when the tree has
+        # lost keyboard focus. Without the explicit "!focus" entry sv-ttk's
+        # theme dims the selection as soon as focus moves to a button or
+        # another widget, which makes the three trees look unselected even
+        # though their selection state is still live.
         style.map(
             "Treeview",
-            background=[("selected", "#3874c8")],
-            foreground=[("selected", "#ffffff")],
+            background=[
+                ("selected", "!focus", "#3874c8"),
+                ("selected", "#3874c8"),
+            ],
+            foreground=[
+                ("selected", "!focus", "#ffffff"),
+                ("selected", "#ffffff"),
+            ],
         )
 
         # ── Custom button styles for visual highlighting ──────────
@@ -852,7 +872,9 @@ class MainWindow(tk.Tk):
         # Create input source manager and scenario managers
         self.input_source_mgr = InputSourceManager(project_path, self.project_settings)
         self.avail_scenario_mgr = AvailableScenarioManager(self.project_settings)
-        self.exec_scenario_mgr = ExecutedScenarioManager(project_path)
+        self.exec_scenario_mgr = ExecutedScenarioManager(
+            project_path, self.project_settings
+        )
         self.output_action_mgr = OutputActionManager(
             project_path=project_path,
             settings=self.project_settings,
@@ -984,13 +1006,26 @@ class MainWindow(tk.Tk):
             return
 
         changed = False
+        is_external = lambda iid: iid.startswith(_EXT_IID_PREFIX)
+        sources_by_name = {s.name: s for s in self.input_source_mgr._sources}
         for item in self.input_sources_tree.get_children():
             values = self.input_sources_tree.item(item, "values")
             if not values:
                 continue
-            source_name = values[1]
+            source_name = _source_name_from_iid(item)
             old_status_char = values[3]
-            filepath = self.input_source_mgr.input_dir / source_name
+            if is_external(item):
+                source = next(
+                    (s for s in self.input_source_mgr._sources
+                     if s.name == source_name and s.external_rel_path),
+                    None,
+                )
+            else:
+                source = sources_by_name.get(source_name)
+            if source is not None:
+                filepath = self.input_source_mgr.resolve_path(source)
+            else:
+                filepath = self.input_source_mgr.input_dir / source_name
 
             if not filepath.exists():
                 continue
@@ -1230,7 +1265,11 @@ class MainWindow(tk.Tk):
                 values = tree.item(item, "values")
                 if values and values[3]:
                     scenario_name = values[2]
-                    self._view_scenario_plots(scenario_name)
+                    try:
+                        src_num = int(values[1])
+                    except (ValueError, IndexError):
+                        src_num = None
+                    self._view_scenario_plots(scenario_name, src_num)
 
     # ── Right-click context menus ──────────────────────────────────
 
@@ -1264,15 +1303,25 @@ class MainWindow(tk.Tk):
             return
 
         status_char = values[3]
+        source_name = _source_name_from_iid(item)
+        is_external = item.startswith(_EXT_IID_PREFIX)
+        tip_lines: list[str] = []
         if status_char == STATUS_EMPTY:
-            tip_text = "No scenarios found in this file."
+            tip_lines.append("No scenarios found in this file.")
         elif status_char == STATUS_ERR:
-            tip_text = "Could not read scenarios (invalid or missing file)."
+            tip_lines.append("Could not read scenarios (invalid or missing file).")
         elif status_char == STATUS_EDITING:
-            tip_text = "File is currently open for editing."
-        else:
+            tip_lines.append("File is currently open for editing.")
+        if is_external:
+            rel = self.project_settings.external_refs.get(source_name, "")
+            tip_lines.append(
+                f"External reference: {rel}\n"
+                "Delete removes the reference only; the file stays in place."
+            )
+        if not tip_lines:
             self._hide_input_status_tip()
             return
+        tip_text = "\n\n".join(tip_lines)
 
         # Show or reposition tooltip
         if self._input_status_tip is not None:
@@ -1341,9 +1390,13 @@ class MainWindow(tk.Tk):
             values = tree.item(item, "values")
             if values and values[3]:  # has view text
                 scenario_name = values[2]
+                try:
+                    src_num = int(values[1])
+                except (ValueError, IndexError):
+                    src_num = None
                 menu.add_command(
                     label="View results",
-                    command=lambda s=scenario_name: self._view_scenario_plots(s),
+                    command=lambda s=scenario_name, n=src_num: self._view_scenario_plots(s, n),
                 )
                 menu.add_separator()
         menu.add_command(
@@ -1376,7 +1429,11 @@ class MainWindow(tk.Tk):
 
         project_path = get_projects_dir() / self.current_project
         self._ensure_execution_mgr()
-        dlg = AddDialog(self, project_path, execution_mgr=self.execution_mgr)
+        dlg = AddDialog(
+            self, project_path,
+            execution_mgr=self.execution_mgr,
+            input_source_mgr=self.input_source_mgr,
+        )
         if dlg.result:
             self._refresh_input_sources()
             self._autocheck_new_sources(old_sources)
@@ -1395,7 +1452,7 @@ class MainWindow(tk.Tk):
         new_source_numbers: set[int] = set()
         for item in self.input_sources_tree.get_children():
             values = self.input_sources_tree.item(item, "values")
-            if values and values[1] not in old_sources:
+            if values and _source_name_from_iid(item) not in old_sources:
                 self.input_sources_tree.set(item, "check", CHECK_ON)
                 try:
                     new_source_numbers.add(int(values[2]))
@@ -1504,12 +1561,21 @@ class MainWindow(tk.Tk):
                 tags = ("error",)
             elif source.status == "empty":
                 tags = ("empty",)
+            elif source.external_rel_path:
+                tags = ("external",)
             else:
                 tags = ()
+            if source.external_rel_path:
+                display_name = f"{source.name}  \u2192  {source.external_rel_path}"
+                iid = f"ext:{source.name}"
+            else:
+                display_name = source.name
+                iid = source.name
             self.input_sources_tree.insert(
                 "",
                 "end",
-                values=(check_char, source.name, source.number, status_char),
+                iid=iid,
+                values=(check_char, display_name, source.number, status_char),
                 tags=tags,
             )
 
@@ -1601,7 +1667,7 @@ class MainWindow(tk.Tk):
         for item in self.input_sources_tree.get_children():
             values = self.input_sources_tree.item(item, "values")
             if values and values[0] == CHECK_ON:
-                selected.append(values[1])  # name column
+                selected.append(_source_name_from_iid(item))
         return selected
 
     def _update_available_scenarios(self) -> None:
@@ -1694,8 +1760,7 @@ class MainWindow(tk.Tk):
         for item in self.input_sources_tree.get_children():
             values = self.input_sources_tree.item(item, "values")
             if values and values[0] == CHECK_ON:
-                # values: (check, name, number, status)
-                checked.append((values[1], values[3]))
+                checked.append((_source_name_from_iid(item), values[3]))
         return checked
 
     def _get_selected_sources(self) -> list[tuple[str, str]]:
@@ -1704,8 +1769,7 @@ class MainWindow(tk.Tk):
         for item in self.input_sources_tree.selection():
             values = self.input_sources_tree.item(item, "values")
             if values:
-                # values: (check, name, number, status)
-                selected.append((values[1], values[3]))
+                selected.append((_source_name_from_iid(item), values[3]))
         return selected
 
     def _update_input_button_states(self) -> None:
@@ -1722,11 +1786,15 @@ class MainWindow(tk.Tk):
         else:
             self.edit_source_btn.configure(state="disabled")
 
-        # ── Convert: exactly one selected, xlsx or sqlite, status OK ──
+        # ── Convert: exactly one selected, xlsx or sqlite, status OK, not external ──
         if len(selected) == 1:
             name, status = selected[0]
             is_convertible = name.lower().endswith((".xlsx", ".sqlite"))
-            if is_convertible and status == STATUS_OK:
+            is_external = (
+                self.input_source_mgr is not None
+                and name in self.input_source_mgr.settings.external_refs
+            )
+            if is_convertible and status == STATUS_OK and not is_external:
                 self.convert_source_btn.configure(state="normal")
             else:
                 self.convert_source_btn.configure(state="disabled")
@@ -1752,8 +1820,15 @@ class MainWindow(tk.Tk):
             return
 
         source_name, _status = selected[0]
-        project_path = get_projects_dir() / self.current_project
-        filepath = project_path / "input_sources" / source_name
+        source = next(
+            (s for s in self.input_source_mgr._sources if s.name == source_name),
+            None,
+        )
+        if source is not None:
+            filepath = self.input_source_mgr.resolve_path(source)
+        else:
+            project_path = get_projects_dir() / self.current_project
+            filepath = project_path / "input_sources" / source_name
 
         if not filepath.exists():
             messagebox.showerror("File not found", f"Cannot find:\n{filepath}")
@@ -2264,7 +2339,7 @@ class MainWindow(tk.Tk):
             if s.source_name not in seen:
                 seen.add(s.source_name)
                 self.execution_mgr._converted_xlsx.discard(s.source_name)
-                xlsx_path = project_path / "input_sources" / s.source_name
+                xlsx_path = self.execution_mgr._resolve_source_path(s.source_name)
                 queue.append((s.source_name, xlsx_path))
 
         self._xlsx_pending_scenarios = list(scenarios)
@@ -2531,22 +2606,36 @@ class MainWindow(tk.Tk):
 
         project_path = get_projects_dir() / self.current_project
         names = [name for name, _ in selected]
-        names_str = "\n  ".join(names)
+        external_names = [
+            n for n in names if n in self.project_settings.external_refs
+        ]
+        local_names = [n for n in names if n not in self.project_settings.external_refs]
 
+        # Split confirmation messages: external refs are just unlinked from
+        # the project, local files are deleted from disk.
+        lines: list[str] = []
+        if local_names:
+            lines.append(
+                "The following files will be DELETED from "
+                f"'projects/{self.current_project}/input_sources' "
+                "(not retrievable):\n  " + "\n  ".join(local_names)
+            )
+        if external_names:
+            lines.append(
+                "The following external references will be REMOVED "
+                "(the original files stay where they are):\n  "
+                + "\n  ".join(external_names)
+            )
         answer = messagebox.askyesno(
             "Delete input source",
-            f"Are you really sure you want to delete the input source?\n\n"
-            f"  {names_str}\n\n"
-            f"It will not be possible to retrieve. Another option is to move "
-            f"it to another folder from the current location at "
-            f"'projects/{self.current_project}/input_sources' manually.",
+            "Are you really sure?\n\n" + "\n\n".join(lines),
             icon="warning",
         )
         if not answer:
             return
 
         input_dir = project_path / "input_sources"
-        for source_name in names:
+        for source_name in local_names:
             filepath = input_dir / source_name
             try:
                 if filepath.exists():
@@ -2556,8 +2645,11 @@ class MainWindow(tk.Tk):
                     "Delete failed",
                     f"Could not delete '{source_name}':\n{exc}",
                 )
+            if source_name in self.project_settings.input_source_numbers:
+                del self.project_settings.input_source_numbers[source_name]
 
-            # Remove from input_source_numbers
+        for source_name in external_names:
+            self.input_source_mgr.remove_external_ref(source_name)
             if source_name in self.project_settings.input_source_numbers:
                 del self.project_settings.input_source_numbers[source_name]
 
@@ -2756,12 +2848,15 @@ class MainWindow(tk.Tk):
         Preserves existing checkbox states so that auto-checked scenarios
         (from ``_refresh_and_autocheck_scenario``) are not unchecked.
         """
-        # Remember which scenarios are currently checked
-        previously_checked: set[str] = set()
+        # Remember which (source_number, scenario_name) pairs are currently checked
+        previously_checked: set[tuple[int, str]] = set()
         for item in self.executed_tree.get_children():
             values = self.executed_tree.item(item, "values")
             if values and values[0] == CHECK_ON:
-                previously_checked.add(values[2])  # scenario_name
+                try:
+                    previously_checked.add((int(values[1]), values[2]))
+                except (ValueError, IndexError):
+                    pass
 
         # Clear executed scenarios tree
         for item in self.executed_tree.get_children():
@@ -2772,27 +2867,28 @@ class MainWindow(tk.Tk):
 
         executed = self.exec_scenario_mgr.scan_executed()
 
-        # Try to map source numbers from current input sources
-        source_number_map: dict[str, int] = {}
-        if self.input_source_mgr:
-            for scenario_info in self.input_source_mgr.get_all_scenarios():
-                source_number_map[scenario_info.name] = scenario_info.source_number
-
         # On first load (no items were in tree), restore from saved settings
         if not previously_checked:
-            previously_checked = set(self.project_settings.checked_executed_scenarios)
+            from flextool.gui.scenario_key import parse_key
+            for k in self.project_settings.checked_executed_scenarios:
+                previously_checked.add(parse_key(k))
 
+        from flextool.gui.scenario_key import resolve_subdir_for_read
         for info in executed:
-            src_num = source_number_map.get(info.name, info.source_number)
-            check_char = CHECK_ON if info.name in previously_checked else CHECK_OFF
-            # Check if plots exist for this scenario
-            plot_dir = self.exec_scenario_mgr.project_path / "output_plots" / info.name
+            key = (info.source_number, info.name)
+            check_char = CHECK_ON if key in previously_checked else CHECK_OFF
+            subdir = resolve_subdir_for_read(
+                self.project_settings.bare_output_owners,
+                info.source_number,
+                info.name,
+            )
+            plot_dir = self.exec_scenario_mgr.project_path / "output_plots" / subdir
             has_plots = plot_dir.is_dir() and any(plot_dir.iterdir())
             view_text = "\u25b6 View" if has_plots else ""
             self.executed_tree.insert(
                 "",
                 "end",
-                values=(check_char, src_num, info.name, view_text, info.timestamp),
+                values=(check_char, info.source_number, info.name, view_text, info.timestamp),
             )
 
         # Apply current sort mode
@@ -2927,11 +3023,15 @@ class MainWindow(tk.Tk):
 
         # Check if any checked scenarios come from editing sources (Change 5)
         editing_source_numbers: set[int] = set()
+        sources_by_name = (
+            {s.name: s for s in self.input_source_mgr._sources}
+            if self.input_source_mgr else {}
+        )
         for item in self.input_sources_tree.get_children():
             values = self.input_sources_tree.item(item, "values")
             if not values:
                 continue
-            source_name = values[1]
+            source_name = _source_name_from_iid(item)
             # Existing check: treeview status column shows editing
             if values[3] == STATUS_EDITING:
                 try:
@@ -2941,7 +3041,11 @@ class MainWindow(tk.Tk):
                 continue
             # Enhanced check: sqlite sources with a running editor process
             if source_name.lower().endswith(".sqlite") and self.input_source_mgr:
-                filepath = self.input_source_mgr.input_dir / source_name
+                source = sources_by_name.get(source_name)
+                if source is not None:
+                    filepath = self.input_source_mgr.resolve_path(source)
+                else:
+                    filepath = self.input_source_mgr.input_dir / source_name
                 if self.db_editor_mgr.has_uncommitted_changes(filepath):
                     try:
                         editing_source_numbers.add(int(values[2]))
@@ -3106,28 +3210,36 @@ class MainWindow(tk.Tk):
             self.view_results_btn.configure(style="TButton")
 
     def _get_scenario_db_map(self) -> dict[str, Path]:
-        """Build a mapping of scenario names to database paths.
+        """Build a mapping of scenario subdirs to database paths.
 
-        For each input source:
-        - .sqlite files are used directly from input_sources/
+        Keys are the on-disk subdir form ``<source_number>_<scenario_name>``
+        so the map does not alias same-named scenarios from different input
+        sources. For each input source:
+
+        - .sqlite files are used directly (possibly outside the project, for
+          external references)
         - .xlsx files use the converted .sqlite from intermediate/
         """
+        from flextool.gui.scenario_key import resolve_subdir_for_read
         db_map: dict[str, Path] = {}
         if self.input_source_mgr is None:
             return db_map
 
         project_path = get_projects_dir() / self.current_project
+        bare_owners = self.project_settings.bare_output_owners
         for source in self.input_source_mgr._sources:
             if source.file_type == "sqlite":
-                db_path = project_path / "input_sources" / source.name
+                db_path = self.input_source_mgr.resolve_path(source)
             else:
-                # xlsx/ods -> look for converted sqlite in intermediate/
                 stem = Path(source.name).stem
                 db_path = project_path / "intermediate" / f"{stem}.sqlite"
 
             if db_path.is_file():
                 for scenario in source.scenarios:
-                    db_map[scenario] = db_path
+                    subdir = resolve_subdir_for_read(
+                        bare_owners, source.number, scenario
+                    )
+                    db_map[subdir] = db_path
 
         return db_map
 
@@ -3147,6 +3259,10 @@ class MainWindow(tk.Tk):
             on_status_change=self._on_job_status_change,
             on_all_finished=self._on_all_jobs_finished,
         )
+        # Apply the persisted max-workers preference (from projects.yaml)
+        # so it takes effect even before the execution window is opened.
+        if self.global_settings.max_workers > 0:
+            self.execution_mgr.max_workers = self.global_settings.max_workers
 
     def _open_or_raise_execution_window(self) -> None:
         """Open a new ExecutionWindow or raise an existing one."""
@@ -3214,17 +3330,21 @@ class MainWindow(tk.Tk):
         if not self.exec_scenario_mgr or not self.current_project:
             return
 
-        # Gather selected scenario names from the executed tree
-        selected_names: list[str] = []
+        # Gather (source_number, scenario_name) pairs from the executed tree
+        selected_ids: list[tuple[int, str]] = []
         for item in self.executed_tree.selection():
             values = self.executed_tree.item(item, "values")
-            if values:
-                selected_names.append(values[2])  # scenario_name column
+            if not values:
+                continue
+            try:
+                selected_ids.append((int(values[1]), values[2]))
+            except (ValueError, IndexError):
+                continue
 
-        if not selected_names:
+        if not selected_ids:
             return
 
-        names_str = "\n  ".join(selected_names)
+        names_str = "\n  ".join(name for _, name in selected_ids)
         answer = messagebox.askyesno(
             "Delete results",
             f"Are you sure you want to permanently delete results for "
@@ -3236,7 +3356,9 @@ class MainWindow(tk.Tk):
         if not answer:
             return
 
-        self.exec_scenario_mgr.delete_results(selected_names)
+        self.exec_scenario_mgr.delete_results(selected_ids)
+        # Ownership of bare names may have been released → persist.
+        self._save_current_settings()
         self._refresh_executed_scenarios()
 
     # ── Output status indicator updates ──────────────────────────
@@ -3248,33 +3370,31 @@ class MainWindow(tk.Tk):
             self._update_output_frame_style()
             return
 
-        # Gather checked scenario names from the executed tree
-        checked_names: list[str] = []
-        for item in self.executed_tree.get_children():
-            values = self.executed_tree.item(item, "values")
-            if values and values[0] == CHECK_ON:
-                checked_names.append(values[2])  # scenario_name column
+        # Gather checked (source_number, scenario_name) pairs from the executed tree
+        checked_ids = self._get_checked_executed_ids()
 
-        if not checked_names:
+        if not checked_ids:
             self._reset_output_status()
             self._update_output_frame_style()
             self._update_view_results_btn()
             return
 
-        # Check per-scenario outputs
-        outputs = self.exec_scenario_mgr.check_outputs(checked_names)
+        # Check per-scenario outputs (keyed by compound key)
+        from flextool.gui.scenario_key import format_key
+        outputs = self.exec_scenario_mgr.check_outputs(checked_ids)
+        checked_keys = [format_key(sn, name) for sn, name in checked_ids]
 
         # Aggregate: all checked scenarios have the output?
-        all_have_plots = all(outputs[n]["has_plots"] for n in checked_names)
-        all_have_excel = all(outputs[n]["has_excel"] for n in checked_names)
-        all_have_csvs = all(outputs[n]["has_csvs"] for n in checked_names)
+        all_have_plots = all(outputs[k]["has_plots"] for k in checked_keys)
+        all_have_excel = all(outputs[k]["has_excel"] for k in checked_keys)
+        all_have_csvs = all(outputs[k]["has_csvs"] for k in checked_keys)
 
-        # Check comparison outputs
-        comp = self.exec_scenario_mgr.check_comparison_outputs(checked_names)
+        # Check comparison outputs (comparison outputs are project-wide, not per-scenario)
+        comp = self.exec_scenario_mgr.check_comparison_outputs([n for _, n in checked_ids])
 
-        # For comparison outputs, also verify that the currently checked
-        # scenarios match the scenarios that were used to generate them.
-        checked_set = set(checked_names)
+        # For comparison outputs, verify that the currently checked compound
+        # keys match the ones used to generate the last comparison.
+        checked_set = set(checked_keys)
         comp_plots_match = comp["has_comp_plots"] and (
             checked_set == set(self.project_settings.comp_plots_scenarios)
         )
@@ -3363,6 +3483,18 @@ class MainWindow(tk.Tk):
                 checked.append(values[2])  # scenario_name column
         return checked
 
+    def _get_checked_executed_ids(self) -> list[tuple[int, str]]:
+        """Return (source_number, scenario_name) pairs for each checked executed row."""
+        checked: list[tuple[int, str]] = []
+        for item in self.executed_tree.get_children():
+            values = self.executed_tree.item(item, "values")
+            if values and values[0] == CHECK_ON:
+                try:
+                    checked.append((int(values[1]), values[2]))
+                except (ValueError, IndexError):
+                    continue
+        return checked
+
     def _ensure_output_action_mgr(self) -> OutputActionManager | None:
         """Return the OutputActionManager, creating it if needed."""
         if self.output_action_mgr is not None:
@@ -3385,14 +3517,14 @@ class MainWindow(tk.Tk):
         )
         return self.output_action_mgr
 
-    def _start_output_action(self, key: str) -> list[str] | None:
+    def _start_output_action(self, key: str) -> list[tuple[int, str]] | None:
         """Common setup for output action buttons.
 
-        Returns the checked scenario names, or None if there are none or
-        the action manager is not available.
+        Returns the checked (source_number, scenario_name) pairs, or None
+        if there are none or the action manager is not available.
         """
-        names = self._get_checked_executed_names()
-        if not names:
+        ids = self._get_checked_executed_ids()
+        if not ids:
             messagebox.showinfo("No selection", "Please select executed scenarios first.")
             return None
         mgr = self._ensure_output_action_mgr()
@@ -3403,46 +3535,52 @@ class MainWindow(tk.Tk):
         self._start_spinner(key)
         # Show progress in the execution window
         self._open_or_raise_execution_window()
-        return names
+        return ids
 
     @safe_callback
     def _on_gen_scen_plots(self) -> None:
         """Generate plots for checked executed scenarios."""
-        names = self._start_output_action("scen_plots")
-        if names and self.output_action_mgr:
-            self.output_action_mgr.run_scenario_plots(names)
+        ids = self._start_output_action("scen_plots")
+        if ids and self.output_action_mgr:
+            self.output_action_mgr.run_scenario_plots(ids)
 
     @safe_callback
     def _on_gen_scen_excel(self) -> None:
         """Generate Excel files for checked executed scenarios."""
-        names = self._start_output_action("scen_excel")
-        if names and self.output_action_mgr:
-            self.output_action_mgr.run_scenario_excel(names)
+        ids = self._start_output_action("scen_excel")
+        if ids and self.output_action_mgr:
+            self.output_action_mgr.run_scenario_excel(ids)
 
     @safe_callback
     def _on_gen_scen_csvs(self) -> None:
         """Generate CSV files for checked executed scenarios."""
-        names = self._start_output_action("scen_csvs")
-        if names and self.output_action_mgr:
-            self.output_action_mgr.run_scenario_csvs(names)
+        ids = self._start_output_action("scen_csvs")
+        if ids and self.output_action_mgr:
+            self.output_action_mgr.run_scenario_csvs(ids)
 
     @safe_callback
     def _on_gen_comp_plots(self) -> None:
         """Generate comparison plots for checked executed scenarios."""
-        names = self._start_output_action("comp_plots")
-        if names and self.output_action_mgr:
-            self.project_settings.comp_plots_scenarios = list(names)
+        from flextool.gui.scenario_key import format_key
+        ids = self._start_output_action("comp_plots")
+        if ids and self.output_action_mgr:
+            self.project_settings.comp_plots_scenarios = [
+                format_key(sn, name) for sn, name in ids
+            ]
             self._save_current_settings()
-            self.output_action_mgr.run_comparison_plots(names)
+            self.output_action_mgr.run_comparison_plots(ids)
 
     @safe_callback
     def _on_gen_comp_excel(self) -> None:
         """Generate comparison Excel for checked executed scenarios."""
-        names = self._start_output_action("comp_excel")
-        if names and self.output_action_mgr:
-            self.project_settings.comp_excel_scenarios = list(names)
+        from flextool.gui.scenario_key import format_key
+        ids = self._start_output_action("comp_excel")
+        if ids and self.output_action_mgr:
+            self.project_settings.comp_excel_scenarios = [
+                format_key(sn, name) for sn, name in ids
+            ]
             self._save_current_settings()
-            self.output_action_mgr.run_comparison_excel(names)
+            self.output_action_mgr.run_comparison_excel(ids)
 
     # ── Spinner animation for output actions ─────────────────────
 
@@ -3533,12 +3671,16 @@ class MainWindow(tk.Tk):
         """Open the CSV folder for the checked executed scenarios."""
         if not self.current_project:
             return
-        names = self._get_checked_executed_names()
-        if not names:
+        ids = self._get_checked_executed_ids()
+        if not ids:
             return
+        from flextool.gui.scenario_key import resolve_subdir_for_read
         project_path = get_projects_dir() / self.current_project
-        if len(names) == 1:
-            csv_dir = project_path / "output_csv" / names[0]
+        if len(ids) == 1:
+            subdir = resolve_subdir_for_read(
+                self.project_settings.bare_output_owners, *ids[0]
+            )
+            csv_dir = project_path / "output_csv" / subdir
         else:
             csv_dir = project_path / "output_csv"
         if csv_dir.is_dir():
@@ -3577,16 +3719,28 @@ class MainWindow(tk.Tk):
 
     # ── View scenario plots (from executed_tree view column) ──────
 
-    def _view_scenario_plots(self, scenario_name: str) -> None:
-        """Open the ResultViewer for the given scenario."""
+    def _view_scenario_plots(self, scenario_name: str, source_number: int | None = None) -> None:
+        """Open the ResultViewer for the given scenario.
+
+        When *source_number* is given, matches on ``(source_number, scenario_name)``
+        so same-named scenarios from different sources don't alias.
+        """
         if not self.current_project:
             return
-        # Auto-check this scenario in the executed tree so the viewer picks it up
         for item in self.executed_tree.get_children():
             values = self.executed_tree.item(item, "values")
-            if values and values[2] == scenario_name:
-                self.executed_tree.set(item, "check", CHECK_ON)
-                break
+            if not values:
+                continue
+            if values[2] != scenario_name:
+                continue
+            if source_number is not None:
+                try:
+                    if int(values[1]) != source_number:
+                        continue
+                except (ValueError, IndexError):
+                    continue
+            self.executed_tree.set(item, "check", CHECK_ON)
+            break
         self._save_checked_executed_scenarios()
         self._open_or_raise_result_viewer()
 
@@ -3598,7 +3752,7 @@ class MainWindow(tk.Tk):
         for item in self.input_sources_tree.get_children():
             values = self.input_sources_tree.item(item, "values")
             if values and values[0] == CHECK_ON:
-                checked.append(values[1])  # name column
+                checked.append(_source_name_from_iid(item))
         self.project_settings.checked_input_sources = checked
 
     def _save_checked_input_sources(self) -> None:
@@ -3626,12 +3780,17 @@ class MainWindow(tk.Tk):
             save_project_settings(project_path, self.project_settings)
 
     def _collect_checked_executed_scenarios(self) -> None:
-        """Read checked executed scenario names from the tree into project settings."""
+        """Read checked executed scenario keys from the tree into project settings."""
+        from flextool.gui.scenario_key import format_key
         checked: list[str] = []
         for item in self.executed_tree.get_children():
             values = self.executed_tree.item(item, "values")
             if values and values[0] == CHECK_ON:
-                checked.append(values[2])  # scenario_name column
+                try:
+                    src_num = int(values[1])
+                except (ValueError, IndexError):
+                    continue
+                checked.append(format_key(src_num, values[2]))
         self.project_settings.checked_executed_scenarios = checked
 
     def _save_checked_executed_scenarios(self) -> None:

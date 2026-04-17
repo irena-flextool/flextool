@@ -7,6 +7,12 @@ from pathlib import Path
 from tkinter import ttk
 
 from flextool.gui.data_models import ExecutedScenarioInfo, ProjectSettings, ScenarioInfo
+from flextool.gui.scenario_key import (
+    format_key,
+    release_bare_owner,
+    resolve_source_number,
+    resolve_subdir_for_read,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,14 +87,30 @@ class AvailableScenarioManager:
 class ExecutedScenarioManager:
     """Manages the executed scenarios list with output detection."""
 
-    def __init__(self, project_path: Path) -> None:
+    def __init__(
+        self,
+        project_path: Path,
+        settings: ProjectSettings | None = None,
+    ) -> None:
         self.project_path = project_path
+        # The ownership map lets us recover (source_number, scenario_name)
+        # for bare-named folders. An empty map is fine — bare folders then
+        # parse as ``source_number = LEGACY_SOURCE_NUMBER``.
+        self._bare_owners: dict[str, int] = (
+            settings.bare_output_owners if settings is not None else {}
+        )
+        # Retain the full settings reference so mutating writers (delete_results)
+        # can update it in place when releasing ownership.
+        self._settings = settings
 
     def scan_executed(self) -> list[ExecutedScenarioInfo]:
         """Scan output_parquet/ for subdirectories.
 
-        Each subdir = one executed scenario.
-        Timestamp: directory modification time formatted as DD.MM.YY hh:mm.
+        Each subdir is either the bare scenario name (preferred when the
+        scenario name is uncontested for this source) or
+        ``<scenario_name>_<source_number>`` when another source already
+        owns the bare name. Ownership is recorded in project settings and
+        is used here to reverse-map bare folders to their source.
         """
         parquet_dir = self.project_path / "output_parquet"
         if not parquet_dir.is_dir():
@@ -99,11 +121,6 @@ class ExecutedScenarioManager:
             if not entry.is_dir():
                 continue
             try:
-                # Use the most recent file modification time within the
-                # directory rather than the directory's own mtime.  When a
-                # scenario is re-executed the parquet files are overwritten
-                # in-place (same names), which updates the *file* mtimes but
-                # may leave the directory mtime unchanged.
                 file_mtimes = [
                     f.stat().st_mtime
                     for f in entry.iterdir()
@@ -114,10 +131,13 @@ class ExecutedScenarioManager:
             except OSError:
                 ts = ""
 
+            source_number, scenario_name = resolve_source_number(
+                entry.name, self._bare_owners
+            )
             results.append(
                 ExecutedScenarioInfo(
-                    name=entry.name,
-                    source_number=0,  # updated below if available
+                    name=scenario_name,
+                    source_number=source_number,
                     timestamp=ts,
                 )
             )
@@ -125,29 +145,32 @@ class ExecutedScenarioManager:
         return results
 
     def check_outputs(
-        self, scenario_names: list[str]
+        self, scenario_ids: list[tuple[int, str]]
     ) -> dict[str, dict[str, bool]]:
         """For each scenario, check which outputs exist.
 
-        Returns dict: {scenario_name: {has_plots: bool, has_excel: bool, has_csvs: bool}}
+        *scenario_ids* is a list of ``(source_number, scenario_name)`` pairs.
+        The result dict is keyed by the compound ``"<src#>|<name>"`` key.
         """
         result: dict[str, dict[str, bool]] = {}
-        for name in scenario_names:
-            plots_dir = self.project_path / "output_plots" / name
+        for source_number, name in scenario_ids:
+            subdir = resolve_subdir_for_read(self._bare_owners, source_number, name)
+
+            plots_dir = self.project_path / "output_plots" / subdir
             has_plots = plots_dir.is_dir() and any(plots_dir.iterdir())
 
             excel_dir = self.project_path / "output_excel"
             has_excel = False
             if excel_dir.is_dir():
                 for f in excel_dir.iterdir():
-                    if f.suffix.lower() == ".xlsx" and name in f.stem:
+                    if f.suffix.lower() == ".xlsx" and subdir in f.stem:
                         has_excel = True
                         break
 
-            csv_dir = self.project_path / "output_csv" / name
+            csv_dir = self.project_path / "output_csv" / subdir
             has_csvs = csv_dir.is_dir() and any(csv_dir.iterdir())
 
-            result[name] = {
+            result[format_key(source_number, name)] = {
                 "has_plots": has_plots,
                 "has_excel": has_excel,
                 "has_csvs": has_csvs,
@@ -189,38 +212,43 @@ class ExecutedScenarioManager:
             "has_comp_excel": has_comp_excel,
         }
 
-    def delete_results(self, scenario_names: list[str]) -> None:
+    def delete_results(self, scenario_ids: list[tuple[int, str]]) -> None:
         """Delete all output files for given scenarios.
 
-        Removes: output_parquet/scenario_name/, output_plots/scenario_name/,
-        output_excel/*scenario_name*.xlsx, output_csv/scenario_name/
+        Removes ``output_parquet/<subdir>/``, ``output_plots/<subdir>/``,
+        ``output_csv/<subdir>/`` and any matching ``output_excel/*<subdir>*.xlsx``.
+        When the deleted folder is the bare-named one owned by the given
+        source, the ownership record is released so another source can
+        claim the bare name later.
         """
-        for name in scenario_names:
-            # Remove output_parquet/scenario_name/
-            parquet_dir = self.project_path / "output_parquet" / name
+        for source_number, name in scenario_ids:
+            subdir = resolve_subdir_for_read(self._bare_owners, source_number, name)
+            was_bare_owner = subdir == name
+
+            parquet_dir = self.project_path / "output_parquet" / subdir
             if parquet_dir.is_dir():
                 shutil.rmtree(parquet_dir, ignore_errors=True)
                 logger.info("Deleted %s", parquet_dir)
 
-            # Remove output_plots/scenario_name/
-            plots_dir = self.project_path / "output_plots" / name
+            plots_dir = self.project_path / "output_plots" / subdir
             if plots_dir.is_dir():
                 shutil.rmtree(plots_dir, ignore_errors=True)
                 logger.info("Deleted %s", plots_dir)
 
-            # Remove matching xlsx files from output_excel/
             excel_dir = self.project_path / "output_excel"
             if excel_dir.is_dir():
                 for f in excel_dir.iterdir():
-                    if f.suffix.lower() == ".xlsx" and name in f.stem:
+                    if f.suffix.lower() == ".xlsx" and subdir in f.stem:
                         try:
                             f.unlink()
                             logger.info("Deleted %s", f)
                         except OSError as exc:
                             logger.warning("Could not delete %s: %s", f, exc)
 
-            # Remove output_csv/scenario_name/
-            csv_dir = self.project_path / "output_csv" / name
+            csv_dir = self.project_path / "output_csv" / subdir
             if csv_dir.is_dir():
                 shutil.rmtree(csv_dir, ignore_errors=True)
                 logger.info("Deleted %s", csv_dir)
+
+            if was_bare_owner:
+                release_bare_owner(self._bare_owners, source_number, name)

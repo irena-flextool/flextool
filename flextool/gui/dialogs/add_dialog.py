@@ -93,7 +93,7 @@ class AddDialog(tk.Toplevel):
 
     def __init__(
         self, parent: tk.Misc, project_path: Path,
-        execution_mgr=None,
+        execution_mgr=None, input_source_mgr=None,
     ) -> None:
         super().__init__(parent)
         self.title("Add input sources")
@@ -105,6 +105,7 @@ class AddDialog(tk.Toplevel):
         self._input_dir = project_path / "input_sources"
         self._input_dir.mkdir(parents=True, exist_ok=True)
         self._execution_mgr = execution_mgr
+        self._input_source_mgr = input_source_mgr
 
         # Root directories for templates
         self._flextool_root = get_projects_dir().parent
@@ -119,7 +120,7 @@ class AddDialog(tk.Toplevel):
         lh: int = default_font.metrics("linespace")
 
         # ── Dialog size ─────────────────────────────────────────────
-        self.geometry(f"{self._cw * 55}x{lh * 28}")
+        self.geometry(f"{self._cw * 55}x{lh * 32}")
         self.resizable(False, False)
 
         self._build_widgets()
@@ -166,6 +167,21 @@ class AddDialog(tk.Toplevel):
             command=self._on_choose_and_copy,
         )
         choose_copy_btn.pack(fill="x")
+
+        # ── Add external reference section ──────────────────────────
+        ext_frame = ttk.LabelFrame(
+            self,
+            text="Add outside input file to the project (reference only, not copied)",
+            padding=8, style="AddDialog.TLabelframe",
+        )
+        ext_frame.pack(fill="x", **pad)
+
+        choose_ext_btn = ttk.Button(
+            ext_frame,
+            text="Choose external files...",
+            command=self._on_choose_external,
+        )
+        choose_ext_btn.pack(fill="x")
 
         # ── Add empty FlexTool input Excel section ──────────────────
         xlsx_frame = ttk.LabelFrame(
@@ -414,6 +430,123 @@ class AddDialog(tk.Toplevel):
             messagebox.showinfo(
                 "Done",
                 done_text,
+                parent=self,
+            )
+
+    def _on_choose_external(self) -> None:
+        """Register external files as input source references (no copy)."""
+        if self._input_source_mgr is None:
+            messagebox.showerror(
+                "Not available",
+                "Cannot add external references before a project is loaded.",
+                parent=self,
+            )
+            return
+
+        initial_dir = self._flextool_root
+        if not initial_dir.is_dir():
+            initial_dir = Path.home()
+
+        try:
+            root = self.winfo_toplevel()
+            main_window_width = root.winfo_width()
+            screen_height = root.winfo_screenheight()
+        except Exception:
+            main_window_width = 700
+            screen_height = 800
+
+        picker = FilePickerDialog(
+            self,
+            title="Select external input source files",
+            initialdir=str(initial_dir),
+            filetypes=[
+                ("FlexTool inputs", "*.xlsx *.xlsm *.ods *.sqlite"),
+                ("Excel files", "*.xlsx *.xlsm *.ods"),
+                ("SQLite databases", "*.sqlite"),
+                ("All files", "*"),
+            ],
+            multiple=True,
+            width=main_window_width,
+            height=int(screen_height * 0.75),
+        )
+        filepaths = picker.result
+        if not filepaths:
+            return
+
+        from flextool.process_inputs import (
+            detect_excel_format, ExcelFormat, CURRENT_FLEXTOOL_DB_VERSION,
+        )
+
+        errors: list[str] = []
+        added_names: list[str] = []
+        for fp in filepaths:
+            fp = Path(fp)
+
+            if fp.suffix.lower() in (".xlsx", ".xlsm", ".ods"):
+                info = detect_excel_format(fp)
+                if info.format == ExcelFormat.OLD_V2:
+                    messagebox.showwarning(
+                        "FlexTool 2.0 file",
+                        f"'{fp.name}' is a FlexTool 2.0 file and cannot be "
+                        "referenced externally.\nUse 'Convert from FlexTool "
+                        "2.0 input file' instead.",
+                        parent=self,
+                    )
+                    continue
+                if info.format == ExcelFormat.UNKNOWN:
+                    messagebox.showwarning(
+                        "Unrecognised format",
+                        f"'{fp.name}' does not appear to be a valid FlexTool "
+                        "input file (no scenario sheet found).",
+                        parent=self,
+                    )
+                    continue
+                needs_migration = (
+                    info.format == ExcelFormat.SPECIFICATION
+                    or (
+                        info.format == ExcelFormat.SELF_DESCRIBING
+                        and info.version is not None
+                        and info.version < CURRENT_FLEXTOOL_DB_VERSION
+                    )
+                )
+                if needs_migration:
+                    version_str = (
+                        str(info.version) if info.version is not None else "unknown"
+                    )
+                    proceed = messagebox.askyesno(
+                        "Outdated file version",
+                        f"'{fp.name}' is version {version_str} "
+                        f"(current is {CURRENT_FLEXTOOL_DB_VERSION}).\n\n"
+                        "External references cannot be migrated. Add "
+                        "anyway? Reading scenarios may still work, but "
+                        "execution may fail until the file is updated.",
+                        parent=self,
+                    )
+                    if not proceed:
+                        continue
+
+            try:
+                name, _rel = self._input_source_mgr.add_external_ref(fp)
+                added_names.append(name)
+            except ValueError as exc:
+                errors.append(str(exc))
+            except Exception as exc:
+                errors.append(f"{fp.name}: {exc}")
+                logger.error("Failed to add external ref %s: %s", fp, exc)
+
+        if errors:
+            messagebox.showerror(
+                "Errors",
+                "Some files could not be added:\n" + "\n".join(errors),
+                parent=self,
+            )
+
+        if added_names:
+            self.result = True
+            file_list = "\n".join(f"  - {name}" for name in added_names)
+            messagebox.showinfo(
+                "Done",
+                f"Added {len(added_names)} external reference(s):\n{file_list}",
                 parent=self,
             )
 

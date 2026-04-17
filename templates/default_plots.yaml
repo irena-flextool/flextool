@@ -365,7 +365,7 @@ plots:
     unit_outputNode_d_ee:
       default:
         variant: p
-        map_dimensions_for_plots: [d_ee, m_bu]
+        map_dimensions_for_plots: [d_ee, b_eu]
         ylabel: Node
         value_label: dynamic
         xlabel: MWh
@@ -375,7 +375,7 @@ plots:
       sum_periods:
         plot_name: 'Flows: unit to node total'
         variant: a
-        map_dimensions_for_plots: [d_ee, m_mb]
+        map_dimensions_for_plots: [d_ee, m_be]
         ylabel: Node
         value_label: dynamic
         xlabel: MWh (total)
@@ -410,7 +410,7 @@ plots:
     unit_inputNode_d_ee:
       default:
         variant: p
-        map_dimensions_for_plots: [d_ee, m_bu]
+        map_dimensions_for_plots: [d_ee, b_eu]
         ylabel: Node
         xlabel: MWh
         max_items_per_plot: 40
@@ -418,7 +418,7 @@ plots:
       sum_periods:
         plot_name: 'Flows: node to unit total'
         variant: a
-        map_dimensions_for_plots: [d_ee, m_mb]
+        map_dimensions_for_plots: [d_ee, m_be]
         ylabel: Node
         xlabel: MWh (total)
         axis_bounds: shared

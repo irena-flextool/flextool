@@ -157,6 +157,8 @@ def save_plot_plan(
         'sub_levels': plan.sub_levels,
         'item_level_names': plan.item_level_names,
         'time_index_values': plan.time_index_values,
+        'period_labels': plan.period_labels,
+        'max_period_label_len': plan.max_period_label_len,
         'subplots_per_row': plan.subplots_per_row,
         'legend_position': plan.legend_position,
         'xlabel': plan.xlabel,
@@ -238,6 +240,8 @@ def load_plot_plan(
             sub_levels=meta.get('sub_levels', []),
             item_level_names=meta.get('item_level_names', []),
             time_index_values=meta.get('time_index_values'),
+            period_labels=meta.get('period_labels'),
+            max_period_label_len=meta.get('max_period_label_len', 0),
             subplot_y_ranges=[tuple(r) for r in meta.get('subplot_y_ranges', [])],
             subplots_per_row=meta.get('subplots_per_row', 2),
             legend_position=meta.get('legend_position', 'right'),
@@ -375,6 +379,7 @@ def build_figure_from_plan(
     # Skip slicing when the range covers the full data (nothing to slice).
     processed_df = plan.processed_df
     time_vals = plan.time_index_values
+    period_labels = plan.period_labels
     use_global_y_ranges = False
     if plot_rows is not None and plan.chart_type != 'bar':
         start, end = plot_rows
@@ -383,6 +388,8 @@ def build_figure_from_plan(
             processed_df = processed_df.iloc[start:end]
             if time_vals is not None:
                 time_vals = time_vals[start:end]
+            if period_labels is not None:
+                period_labels = period_labels[start:end]
         if plan.subplot_y_ranges:
             use_global_y_ranges = True
 
@@ -442,6 +449,7 @@ def build_figure_from_plan(
             axis_bounds, plan.axis_tick_format,
             plan.always_include_zero_in_axis,
             layout, plan.shared_color_map,
+            period_labels=period_labels,
         )
     elif plan.chart_type == 'stack':
         from flextool.plot_outputs.plot_lines import _build_stack_figure
@@ -453,6 +461,7 @@ def build_figure_from_plan(
             axis_bounds, plan.axis_tick_format,
             plan.always_include_zero_in_axis,
             layout, plan.shared_color_map,
+            period_labels=period_labels,
         )
     elif plan.chart_type == 'bar':
         from flextool.plot_outputs.plot_bars import _build_bar_figure
@@ -547,9 +556,17 @@ def _compute_time_plan(
     else:
         item_level_names = item_levels
 
-    # Get x-axis index
+    # Get x-axis index, and the period label per x-position when the
+    # DataFrame has a ``period`` / ``solve_period`` MultiIndex level.
+    # The secondary period tick row on the x-axis depends on this being
+    # populated here and carried through the plan.
+    period_labels: list[str] | None = None
     if isinstance(df_fm.index, pd.MultiIndex):
         time_index = df_fm.index.get_level_values(-1).astype(str)
+        for lvl_i, name in enumerate(df_fm.index.names[:-1]):
+            if name and str(name).lower() in ('period', 'solve_period'):
+                period_labels = df_fm.index.get_level_values(lvl_i).astype(str).tolist()
+                break
     else:
         time_index = df_fm.index.astype(str)
 
@@ -651,6 +668,11 @@ def _compute_time_plan(
         sub_levels=fm_subplot_levels,
         item_level_names=item_level_names,
         time_index_values=time_index.tolist(),
+        period_labels=period_labels,
+        max_period_label_len=(
+            max((len(lbl) for lbl in period_labels), default=0)
+            if period_labels else 0
+        ),
         subplots_per_row=cfg.subplots_per_row,
         legend_position=cfg.legend,
         xlabel=cfg.xlabel,

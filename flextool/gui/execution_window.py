@@ -93,7 +93,13 @@ class ExecutionWindow(tk.Toplevel):
 
         cpu = os.cpu_count() or 2
         default_workers = max(1, cpu - 1)
-        self._max_workers_var = tk.IntVar(value=default_workers)
+        # Prefer the persisted value (projects.yaml) if one is stored
+        if self._global_settings and self._global_settings.max_workers > 0:
+            initial = max(1, min(cpu * 2, self._global_settings.max_workers))
+            self._mgr.max_workers = initial
+        else:
+            initial = default_workers
+        self._max_workers_var = tk.IntVar(value=initial)
         self._max_workers_spin = ttk.Spinbox(
             top_frame,
             from_=1,
@@ -112,6 +118,13 @@ class ExecutionWindow(tk.Toplevel):
         # ── Horizontal PanedWindow for Jobs / Progress ─────────────────
         self._paned = ttk.PanedWindow(self, orient="horizontal")
         self._paned.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        # Don't let the Jobs pane shrink below this — ttk.PanedWindow
+        # with weight=0 on the left and weight=1 on the right will
+        # squeeze the Jobs pane to near-zero when the window is first
+        # resized narrower than the Progress pane's minimum and then
+        # widened again.
+        self._jobs_min_width: int = cw * 30
+        self._paned.bind("<Configure>", self._enforce_jobs_min_width)
 
         # ── Jobs list (left) ──────────────────────────────────────────
         left_frame = ttk.LabelFrame(self._paned, text="Jobs", padding=5)
@@ -270,12 +283,20 @@ class ExecutionWindow(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _on_max_workers_changed(self) -> None:
-        """Sync the spinbox value to the ExecutionManager."""
+        """Sync the spinbox value to the ExecutionManager and persist it."""
         try:
             val = self._max_workers_var.get()
         except tk.TclError:
             return
         self._mgr.max_workers = val
+        if self._global_settings is not None and val > 0:
+            self._global_settings.max_workers = val
+            try:
+                from flextool.gui.project_utils import get_projects_dir
+                from flextool.gui.settings_io import save_global_settings
+                save_global_settings(get_projects_dir(), self._global_settings)
+            except Exception:
+                logger.warning("Could not persist max_workers to projects.yaml", exc_info=True)
 
     # ------------------------------------------------------------------
     # Job list display
@@ -616,7 +637,24 @@ class ExecutionWindow(tk.Toplevel):
     def _restore_sash(self) -> None:
         """Restore the saved Jobs/Progress sash position."""
         try:
-            self._paned.sashpos(0, self._global_settings.exec_jobs_sash)
+            target = max(self._global_settings.exec_jobs_sash, self._jobs_min_width)
+            self._paned.sashpos(0, target)
+        except (tk.TclError, IndexError):
+            pass
+
+    def _enforce_jobs_min_width(self, _event: tk.Event) -> None:
+        """Keep the Jobs pane from collapsing during window resize.
+
+        The Jobs pane has ``weight=0`` so that extra horizontal space goes
+        to the Progress pane; but on Linux/ttk a narrow-then-wide window
+        resize cycle can leave the sash near zero. This clamps the sash
+        back to a readable minimum whenever the pane window is laid out.
+        """
+        try:
+            if self._paned.sashpos(0) < self._jobs_min_width:
+                # Only clamp if the overall pane is wide enough to honour it.
+                if self._paned.winfo_width() > self._jobs_min_width + 50:
+                    self._paned.sashpos(0, self._jobs_min_width)
         except (tk.TclError, IndexError):
             pass
 

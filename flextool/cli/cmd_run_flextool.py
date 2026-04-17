@@ -55,6 +55,10 @@ def main():
                         help='First and last row to plot in time series (default: 0 167)')
     parser.add_argument('--output-location', metavar='PATH', default=None,
                         help='Override output location path')
+    parser.add_argument('--output-subdir', metavar='NAME', default=None,
+                        help='Subdirectory name under output_parquet/ (and the '
+                             'other output dirs). Defaults to the scenario '
+                             'name for backward compatibility.')
     parser.add_argument('--flextool-location', default='template/flextool_location.txt',
                         help='When running in Spine Toolbox, this argument provides the location of FlexTool so outputs can be directed there (instead of work directories).')
     parser.add_argument('--work-folder', metavar='PATH', default=None,
@@ -123,10 +127,11 @@ def main():
     
     # If successful and requested, write outputs
     if return_code == 0:
+        output_subdir = args.output_subdir or scenario_name
         write_outputs(
             scenario_name=scenario_name,
             output_location=args.output_location,
-            subdir=scenario_name,
+            subdir=output_subdir,
             output_config_path=args.output_config,
             active_configs=args.active_configs,
             write_methods=args.write_methods,

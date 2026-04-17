@@ -15,6 +15,7 @@ from flextool.gui.config_parser import parse_plot_configs
 from flextool.gui.data_models import PlotSettings, ProjectSettings
 from flextool.gui.platform_utils import open_file_in_default_app
 from flextool.gui.project_utils import get_projects_dir
+from flextool.gui.scenario_key import resolve_subdir_for_read
 
 if TYPE_CHECKING:
     from flextool.gui.execution_manager import ExecutionManager
@@ -59,45 +60,45 @@ class OutputActionManager:
     # Scenario-level actions
     # ------------------------------------------------------------------
 
-    def run_scenario_plots(self, scenario_names: list[str]) -> None:
+    def run_scenario_plots(self, scenario_ids: list[tuple[int, str]]) -> None:
         action = "scen_plots"
         gen = self._mark_running(action)
         job = self._create_aux_job(action, "Re-plot scenarios")
 
         def _work() -> bool:
             ok = True
-            for name in scenario_names:
-                cmd = self._build_write_outputs_cmd(name, ["plot"])
+            for source_number, name in scenario_ids:
+                cmd = self._build_write_outputs_cmd(source_number, name, ["plot"])
                 if not self._run_subprocess(cmd, job):
                     ok = False
             return ok
 
         self._start_thread(action, gen, _work, job)
 
-    def run_scenario_excel(self, scenario_names: list[str]) -> None:
+    def run_scenario_excel(self, scenario_ids: list[tuple[int, str]]) -> None:
         action = "scen_excel"
         gen = self._mark_running(action)
         job = self._create_aux_job(action, "Scenarios to Excel")
 
         def _work() -> bool:
             ok = True
-            for name in scenario_names:
-                cmd = self._build_write_outputs_cmd(name, ["excel"])
+            for source_number, name in scenario_ids:
+                cmd = self._build_write_outputs_cmd(source_number, name, ["excel"])
                 if not self._run_subprocess(cmd, job):
                     ok = False
             return ok
 
         self._start_thread(action, gen, _work, job)
 
-    def run_scenario_csvs(self, scenario_names: list[str]) -> None:
+    def run_scenario_csvs(self, scenario_ids: list[tuple[int, str]]) -> None:
         action = "scen_csvs"
         gen = self._mark_running(action)
         job = self._create_aux_job(action, "Scenarios to CSVs")
 
         def _work() -> bool:
             ok = True
-            for name in scenario_names:
-                cmd = self._build_write_outputs_cmd(name, ["csv"])
+            for source_number, name in scenario_ids:
+                cmd = self._build_write_outputs_cmd(source_number, name, ["csv"])
                 if not self._run_subprocess(cmd, job):
                     ok = False
             return ok
@@ -108,13 +109,13 @@ class OutputActionManager:
     # Comparison actions
     # ------------------------------------------------------------------
 
-    def run_comparison_plots(self, scenario_names: list[str]) -> None:
+    def run_comparison_plots(self, scenario_ids: list[tuple[int, str]]) -> None:
         action = "comp_plots"
         gen = self._mark_running(action)
         job = self._create_aux_job(action, "Comparison plots")
 
         def _work() -> bool:
-            cmd = self._build_comparison_cmd(scenario_names, plots=True, excel=False)
+            cmd = self._build_comparison_cmd(scenario_ids, plots=True, excel=False)
             ok = self._run_subprocess(cmd, job)
             if ok:
                 comp_dir = self.project_path / "output_plot_comparisons"
@@ -128,13 +129,13 @@ class OutputActionManager:
 
         self._start_thread(action, gen, _work, job)
 
-    def run_comparison_excel(self, scenario_names: list[str]) -> None:
+    def run_comparison_excel(self, scenario_ids: list[tuple[int, str]]) -> None:
         action = "comp_excel"
         gen = self._mark_running(action)
         job = self._create_aux_job(action, "Comparison to Excel")
 
         def _work() -> bool:
-            cmd = self._build_comparison_cmd(scenario_names, plots=False, excel=True)
+            cmd = self._build_comparison_cmd(scenario_ids, plots=False, excel=True)
             return self._run_subprocess(cmd, job)
 
         self._start_thread(action, gen, _work, job)
@@ -186,17 +187,21 @@ class OutputActionManager:
     # ------------------------------------------------------------------
 
     def _build_write_outputs_cmd(
-        self, scenario_name: str, write_methods: list[str]
+        self, source_number: int, scenario_name: str, write_methods: list[str]
     ) -> list[str]:
         settings = self.settings
         single = settings.single_plot_settings
-        parquet_dir = self.project_path / "output_parquet" / scenario_name
+        subdir = resolve_subdir_for_read(
+            settings.bare_output_owners, source_number, scenario_name
+        )
+        parquet_dir = self.project_path / "output_parquet" / subdir
 
         cmd: list[str] = [
             sys.executable, "-m", "flextool.cli.cmd_write_outputs",
             "--scenario-name", scenario_name,
             "--read-parquet-dir", str(parquet_dir),
             "--output-location", str(self.project_path),
+            "--subdir", subdir,
             "--write-methods", *write_methods,
         ]
 
@@ -218,7 +223,7 @@ class OutputActionManager:
 
     def _build_comparison_cmd(
         self,
-        scenario_names: list[str],
+        scenario_ids: list[tuple[int, str]],
         *,
         plots: bool,
         excel: bool,
@@ -228,10 +233,15 @@ class OutputActionManager:
         parquet_base = self.project_path / "output_parquet"
         plot_dir = self.project_path / "output_plot_comparisons"
 
+        subdirs = [
+            resolve_subdir_for_read(settings.bare_output_owners, sn, name)
+            for sn, name in scenario_ids
+        ]
+
         cmd: list[str] = [
             sys.executable, "-m", "flextool.cli.cmd_scenario_results",
             "--parquet-base-dir", str(parquet_base),
-            "--alternatives", *scenario_names,
+            "--alternatives", *subdirs,
             "--plot-dir", str(plot_dir),
         ]
 

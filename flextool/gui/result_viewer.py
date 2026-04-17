@@ -113,6 +113,8 @@ class ResultViewer(tk.Toplevel):
         # Comparison checkbox state
         self._comp_check_vars: dict[str, tk.BooleanVar] = {}
         self._comp_needs_regen: bool = False
+        # When armed (via Ctrl-A), next Space toggles all checkboxes as a group
+        self._comp_select_all_armed: bool = False
 
         # Dispatch mode state
         self._dispatch_mappings: DispatchMappings | None = None
@@ -302,6 +304,13 @@ class ResultViewer(tk.Toplevel):
         self._comp_check_frame.bind("<Configure>", _on_comp_frame_configure)
         comp_canvas.bind("<Configure>", _on_comp_canvas_configure)
 
+        self._comp_armed_label = ttk.Label(
+            comp_outer,
+            text="All selected — Space toggles all, Esc cancels",
+            anchor="w",
+            padding=(4, 2),
+        )
+
         # ── Plot tree + variant canvas ───────────────────────────────
         plots_label = ttk.Label(left, text=" Plots [P] ", font=_lf_font)
         tree_frame = ttk.LabelFrame(self._left_paned, labelwidget=plots_label, padding=5)
@@ -484,15 +493,28 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _scan_scenarios(self) -> list[str]:
-        """List scenario subdirectories in output_parquet/ that are checked in Executed scenarios."""
+        """List scenario subdirectories in output_parquet/ that are checked.
+
+        Subdirectories are either the bare scenario name (when this
+        source owns it) or ``<scenario_name>_<source_number>`` (when
+        another source owns the bare name). The checked set in project
+        settings uses the compound key ``<source_number>|<scenario_name>``
+        — we translate between the two forms here using the
+        bare-ownership map so the viewer's internal identifier remains
+        the on-disk subdir.
+        """
+        from flextool.gui.scenario_key import resolve_source_number, format_key
         parquet_dir = self._project_path / "output_parquet"
         if not parquet_dir.is_dir():
             return []
         available = sorted(d.name for d in parquet_dir.iterdir() if d.is_dir())
-        # Filter to only checked scenarios
-        checked = self._settings.checked_executed_scenarios
-        if checked:
-            available = [s for s in available if s in checked]
+        checked_keys = set(self._settings.checked_executed_scenarios)
+        if checked_keys:
+            bare_owners = self._settings.bare_output_owners
+            available = [
+                s for s in available
+                if format_key(*resolve_source_number(s, bare_owners)) in checked_keys
+            ]
         return available
 
     def _populate_scenarios(self) -> None:
@@ -1561,7 +1583,11 @@ class ResultViewer(tk.Toplevel):
         self._next_file_btn.configure(state=state)
 
     def _on_focus_scenarios_event(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
-        """Focus the scenario listbox on 's' press (only in this window)."""
+        """Focus the scenarios area on 's' press (only in this window).
+
+        In comparison mode the scenario listbox is hidden, so focus the
+        first checkbox in the comparison frame instead.
+        """
         try:
             if event.widget.winfo_toplevel() is not self:
                 return None
@@ -1569,7 +1595,17 @@ class ResultViewer(tk.Toplevel):
                 return None
         except (tk.TclError, AttributeError):
             return None
-        self._scenario_listbox.focus_set()
+        if self._mode.get() == "comparison":
+            children = [
+                w for w in self._comp_check_frame.winfo_children()
+                if isinstance(w, ttk.Checkbutton)
+            ]
+            if children:
+                children[0].focus_set()
+            else:
+                self._comp_canvas.focus_set()
+        else:
+            self._scenario_listbox.focus_set()
         return "break"
 
     def _on_focus_plots_event(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
@@ -2320,6 +2356,16 @@ class ResultViewer(tk.Toplevel):
                 command=self._on_comp_checkbox_changed,
             )
             cb.pack(fill="x", anchor="w", padx=2, pady=1)
+            cb.bind("<Control-a>", self._on_comp_ctrl_a)
+            cb.bind("<Control-A>", self._on_comp_ctrl_a)
+            cb.bind("<space>", self._on_comp_space)
+            cb.bind("<Key-Up>", self._on_comp_nav_up)
+            cb.bind("<Key-Down>", self._on_comp_nav_down)
+            cb.bind("<Escape>", self._on_comp_escape)
+            cb.bind("<Button-1>", self._on_comp_click_disarm, add="+")
+
+        # Disarm if layout changes leave no checkboxes selected
+        self._disarm_comp_select_all()
 
     def _on_comp_checkbox_changed(self) -> None:
         """Handle comparison checkbox change — filter and replot immediately."""
@@ -2346,6 +2392,77 @@ class ResultViewer(tk.Toplevel):
             self._comp_needs_regen = False
             self._clear_figure_cache()
             self._trigger_replot()
+
+    # ------------------------------------------------------------------
+    # Comparison checkbox keyboard helpers
+    # ------------------------------------------------------------------
+
+    def _comp_checkbuttons(self) -> list[ttk.Checkbutton]:
+        return [
+            w for w in self._comp_check_frame.winfo_children()
+            if isinstance(w, ttk.Checkbutton)
+        ]
+
+    def _arm_comp_select_all(self) -> None:
+        self._comp_select_all_armed = True
+        self._comp_armed_label.grid(row=1, column=0, columnspan=2, sticky="ew")
+
+    def _disarm_comp_select_all(self) -> None:
+        self._comp_select_all_armed = False
+        self._comp_armed_label.grid_remove()
+
+    def _on_comp_ctrl_a(self, _event: tk.Event) -> str:
+        """Ctrl-A on a comparison checkbox: arm smart-toggle-all."""
+        self._arm_comp_select_all()
+        return "break"
+
+    def _on_comp_space(self, _event: tk.Event) -> str | None:
+        """Space on a comparison checkbox.
+
+        When armed (after Ctrl-A): smart-toggle all (check all if any
+        unchecked, else uncheck all) and disarm. Otherwise fall through
+        to the default Checkbutton toggle.
+        """
+        if not self._comp_select_all_armed:
+            return None
+        vars_list = list(self._comp_check_vars.values())
+        new_state = any(not v.get() for v in vars_list)
+        for v in vars_list:
+            v.set(new_state)
+        self._disarm_comp_select_all()
+        self._on_comp_checkbox_changed()
+        return "break"
+
+    def _on_comp_nav_up(self, event: tk.Event) -> str:
+        self._disarm_comp_select_all()
+        cbs = self._comp_checkbuttons()
+        try:
+            idx = cbs.index(event.widget)
+        except ValueError:
+            return "break"
+        if idx > 0:
+            cbs[idx - 1].focus_set()
+        return "break"
+
+    def _on_comp_nav_down(self, event: tk.Event) -> str:
+        self._disarm_comp_select_all()
+        cbs = self._comp_checkbuttons()
+        try:
+            idx = cbs.index(event.widget)
+        except ValueError:
+            return "break"
+        if idx < len(cbs) - 1:
+            cbs[idx + 1].focus_set()
+        return "break"
+
+    def _on_comp_escape(self, _event: tk.Event) -> str | None:
+        if self._comp_select_all_armed:
+            self._disarm_comp_select_all()
+            return "break"
+        return None
+
+    def _on_comp_click_disarm(self, _event: tk.Event) -> None:
+        self._disarm_comp_select_all()
 
     def _check_comparison_freshness(self) -> None:
         """Check if comparison parquets match the checkbox selection, regenerate if not."""

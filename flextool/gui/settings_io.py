@@ -53,6 +53,10 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     settings.input_source_numbers = data.get(
         "input_source_numbers", settings.input_source_numbers
     )
+    settings.external_refs = data.get("external_refs", settings.external_refs)
+    settings.bare_output_owners = data.get(
+        "bare_output_owners", settings.bare_output_owners
+    )
     settings.scenario_order = data.get("scenario_order", settings.scenario_order)
     settings.comp_plots_scenarios = data.get("comp_plots_scenarios", [])
     settings.comp_excel_scenarios = data.get("comp_excel_scenarios", [])
@@ -133,6 +137,7 @@ def load_global_settings(projects_dir: Path) -> GlobalSettings:
         recent_project=data.get("recent_project"),
         theme=theme,
         exec_jobs_sash=data.get("exec_jobs_sash", 0),
+        max_workers=data.get("max_workers", 0),
     )
 
 
