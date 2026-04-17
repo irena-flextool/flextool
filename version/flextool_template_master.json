@@ -671,6 +671,10 @@
       "bind_using_blended_weights"
     ],
     [
+      "storage_binding_methods",
+      "bind_intraperiod_blocks"
+    ],
+    [
       "storage_nested_fix_method",
       "fix_nothing"
     ],

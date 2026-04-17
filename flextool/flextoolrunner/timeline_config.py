@@ -629,6 +629,39 @@ def make_step_jump(
     return step_lengths
 
 
+def make_period_block(active_time_list: dict) -> tuple[list[tuple], list[tuple]]:
+    """Build period_block_time and period_block_succ data.
+
+    Blocks are maximal contiguous runs of active steps in the timeline —
+    same detection rule as make_step_jump (jump > 1 starts a new block).
+    Used by the bind_intraperiod_blocks storage binding method.
+
+    Returns:
+        period_block_time: [(period, block_first, step)], one row per active step
+        period_block_succ: [(period, block_first, block_first_next)], cyclic within period
+    """
+    period_block_time: list[tuple] = []
+    period_block_succ: list[tuple] = []
+
+    for period, active_time in active_time_list.items():
+        if not active_time:
+            continue
+        block_firsts_in_order: list[str] = [active_time[0].timestep]
+        cur_block_first = active_time[0].timestep
+        for j, step in enumerate(active_time):
+            if j > 0 and active_time[j].index - active_time[j - 1].index > 1:
+                cur_block_first = step.timestep
+                block_firsts_in_order.append(cur_block_first)
+            period_block_time.append((period, cur_block_first, step.timestep))
+
+        n_blocks = len(block_firsts_in_order)
+        for i, b_first in enumerate(block_firsts_in_order):
+            b_next = block_firsts_in_order[(i + 1) % n_blocks]
+            period_block_succ.append((period, b_first, b_next))
+
+    return period_block_time, period_block_succ
+
+
 def make_steps(steplist: list, start: int, stop: int) -> list:
     """Return a slice of *steplist* from *start* to *stop* (inclusive)."""
     active_step = start

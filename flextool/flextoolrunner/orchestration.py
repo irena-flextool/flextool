@@ -15,7 +15,7 @@ from flextool.flextoolrunner.runner_state import RunnerState, FlexToolConfigErro
 from flextool.flextoolrunner.solver_runner import SolverRunner
 from flextool.flextoolrunner.recursive_solves import RecursiveSolveBuilder, ParentSolveInfo
 from flextool.flextoolrunner.stochastic import StochasticSolver
-from flextool.flextoolrunner.timeline_config import get_active_time, separate_period_and_timeseries_data
+from flextool.flextoolrunner.timeline_config import get_active_time, make_period_block, separate_period_and_timeseries_data
 from flextool.flextoolrunner import solve_writers
 
 
@@ -231,6 +231,8 @@ def run_model(state: RunnerState, solver: SolverRunner) -> int:
         solve_writers.write_active_timelines(active_time_lists[solve], str(wf / 'solve_data/steps_in_use.csv'))
         solve_writers.write_active_timelines(complete_active_time_lists, str(wf / 'solve_data/steps_complete_solve.csv'), complete=True)
         solve_writers.write_step_jump(jump_lists[solve], work_folder=wf)
+        pb_time, pb_succ = make_period_block(active_time_lists[solve])
+        solve_writers.write_period_block(pb_time, pb_succ, work_folder=wf)
         solve_writers.write_timesets(state.solve.timesets_used_by_solves, state.timeline.timesets__timeline, work_folder=wf)
         state.logger.info("Creating period data")
         solve_writers.write_period_years(period__branch_lists[solve], solve_period_history[complete_solve[solve]], str(wf / 'solve_data/period_with_history.csv'))
