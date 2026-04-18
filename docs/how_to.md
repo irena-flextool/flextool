@@ -252,7 +252,7 @@ First, the investment parameters need to be included both for the *battery_inver
 
 Additional parameters:
 
-- `lifetime_method`: Model can either be forced to reinvest when the lifetime ends `reinvest_automatic` or have a choice `reinvest_choice`
+- `lifetime_method`: Model can either be forced to reinvest when the lifetime ends (`reinvest_automatic`), have a choice (`reinvest_choice`), or be restricted to a one-shot build that retires after its lifetime without rebuild (`no_investment` — for physical one-off additions like plant refurbishments).
 - `salvage_value`: Sets the extra value that can be gained for retiring [CUR/kW]
 - `fixed_cost`: Annual cost for capacity [CUR/kW]
 

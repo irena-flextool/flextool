@@ -1442,6 +1442,14 @@
       ],
       "weighted_2day",
       true
+    ],
+    [
+      "unit",
+      [
+        "wind_plant"
+      ],
+      "wind_no_investment_10yr",
+      true
     ]
   ],
   "parameter_value_lists": [
@@ -2254,6 +2262,13 @@
       "storage_binding_methods",
       [
         "ImJpbmRfaW50cmFwZXJpb2RfYmxvY2tzIg==",
+        "str"
+      ]
+    ],
+    [
+      "lifetime_methods",
+      [
+        "Im5vX2ludmVzdG1lbnQi",
         "str"
       ]
     ]
@@ -9987,6 +10002,26 @@
         "map"
       ],
       "weighted_2day"
+    ],
+    [
+      "unit",
+      "wind_plant",
+      "lifetime_method",
+      [
+        "Im5vX2ludmVzdG1lbnQi",
+        "str"
+      ],
+      "wind_no_investment_10yr"
+    ],
+    [
+      "unit",
+      "wind_plant",
+      "lifetime",
+      [
+        "MTAuMA==",
+        "float"
+      ],
+      "wind_no_investment_10yr"
     ]
   ],
   "alternatives": [
@@ -10212,6 +10247,10 @@
     ],
     [
       "weighted_2day",
+      ""
+    ],
+    [
+      "wind_no_investment_10yr",
       ""
     ]
   ],
@@ -10503,6 +10542,11 @@
     ],
     [
       "base_weighted",
+      false,
+      ""
+    ],
+    [
+      "multi_year_wind_no_investment",
       false,
       ""
     ]
@@ -12826,6 +12870,66 @@
     [
       "base_weighted",
       "weighted_2day",
+      null
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "init",
+      "west"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "west",
+      "coal"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "coal",
+      "coal_invest"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "coal_invest",
+      "wind"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "wind",
+      "wind_invest"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "wind_invest",
+      "battery"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "battery",
+      "battery_invest"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "battery_invest",
+      "5weeks"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "5weeks",
+      "invest_solveSequence_5weeks"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "invest_solveSequence_5weeks",
+      "invest_allYears_5weeks"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "invest_allYears_5weeks",
+      "wind_no_investment_10yr"
+    ],
+    [
+      "multi_year_wind_no_investment",
+      "wind_no_investment_10yr",
       null
     ]
   ]

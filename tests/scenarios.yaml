@@ -30,6 +30,16 @@
     - costs__dt.csv
     - summary_solve.csv
 
+# lifetime_method = no_investment: wind_plant with lifetime 10y in a
+# multi-year horizon (p2020, p2025, p2030, p2035). The first-period
+# lifetime window ends at y2030, so v_invest is free in p2020/p2025 and
+# pinned to 0 in p2030/p2035 — visible in unit_capacity__d.csv.
+- scenario: multi_year_wind_no_investment
+  csvs:
+    - unit_capacity__d.csv
+    - costs__dt.csv
+    - summary_solve.csv
+
 - scenario: scale_to_peak_flow
   csvs:
     - node__d.csv
