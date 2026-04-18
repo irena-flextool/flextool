@@ -52,7 +52,13 @@ def cost_summaries(par, s, v, r, debug):
     # 2. Annualized, inflation adjusted and years represented (derived from costs_dt)
     dispatch_costs_pure_period = costs_dt.groupby(level='period').sum()
     dispatch_costs_annualized_period = dispatch_costs_pure_period.div(period_share, axis=0) / to_millions
-    dispatch_costs_inflation_adjusted = dispatch_costs_annualized_period.mul(discount_ops, axis=0)
+    # Horizon-weighted NPV (discount × years_represented) — matches investment_costs
+    # so that costs_discounted_d_p can be summed across periods for the horizon total.
+    dispatch_costs_inflation_adjusted = (
+        dispatch_costs_annualized_period
+        .mul(discount_ops, axis=0)
+        .mul(par.years_represented_d, axis=0)
+    )
 
     # 3. Discounted and inflation adjusted (with years represented) investment costs (d_realize_invest only)
     investment_costs = pd.DataFrame(index=s.d_realize_invest, dtype=float)
@@ -102,10 +108,10 @@ def CO2(par, s, v, r, debug):
     co2_summary.index.name = 'param_CO2'
     results.append((co2_summary, 'CO2__'))
 
-    # Process co2 emissions
+    # Process co2 emissions (annualized — plot rule 'y' weights by years_represented for horizon totals)
     process_co2 = r.process_emissions_co2_d.groupby(['period']).sum()
     results.append((process_co2, 'process_co2_d_eee'))
 
-    # Group co2 emissions
+    # Group co2 emissions (annualized)
     results.append((r.group_co2_d, 'CO2_d_g'))
     return results

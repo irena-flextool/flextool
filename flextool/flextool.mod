@@ -2586,7 +2586,8 @@ s.t. storage_state_end {n in nodeState, (d, t) in period__time_last
 s.t. node_balance_fix_quantity_eq_lower {n in n_fix_storage_quantity, (d,t) in period__time_last, (d2,d) in period__branch: d in period_last && sum{(n,d2,t2) in ndt_fix_storage_quantity: (d, t, t2) in dtt_timeline_matching} 1}:
   + v_state[n,d,t]* p_entity_unitsize[n]
   =
-  + sum{(d, t, t2) in dtt_timeline_matching} p_fix_storage_quantity[n,d2,t2];
+  + sum{(d, t, t2) in dtt_timeline_matching} p_fix_storage_quantity[n,d2,t2]
+;
 
 #Storage usage fix for timesteps
 
@@ -2614,7 +2615,7 @@ s.t. storage_usage_fix{n in n_fix_storage_usage, (d,t) in period__time_last, (d2
     ) * step_duration[d, t3]
   <=
   + sum{(n,d2,t2) in ndt_fix_storage_usage: exists{(d, t3, t2) in dtt_timeline_matching} 1} p_fix_storage_usage[n,d2,t2]
-  ;
+;
 
 s.t. storage_state_solve_horizon_reference_value {n in nodeState, (d, t) in period__time_last
      : d in period_last
@@ -3335,6 +3336,9 @@ s.t. minCumulative_capacity {(e, d) in ed_invest_cumulative : ed_cumulative_min_
 ;
 
 s.t. maxCumulative_flow_solve {g in group : p_group[g, 'max_cumulative_flow']} :
+  # LHS: total physical flow over the full solve horizon.  step_duration * p_rp_cost_weight
+  # / complete_period_share_of_year mirrors the objective's annualization; * p_years_represented_d
+  # then sums each period's annual flow across the multi-year horizon.
   + sum{(g, p, n) in group_process_node, (d, t) in dt} (
       # n is sink
       + sum {(p, source, n) in process_source_sink} (
@@ -3355,13 +3359,18 @@ s.t. maxCumulative_flow_solve {g in group : p_group[g, 'max_cumulative_flow']} :
       - sum {(p, n, sink) in process_source_sink_noEff } (
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 		)
-	) * step_duration[d, t]
+	) * step_duration[d, t] * p_rp_cost_weight[d, t]
+	  * p_years_represented_d[d] / complete_period_share_of_year[d]
 	<=
+  # RHS: avg_MW * total horizon hours across all periods and represented years.
   + p_group[g, 'max_cumulative_flow']
-      * hours_in_solve
+      * sum {d in period_in_use} (p_years_represented_d[d] * 8760)
 ;
 
 s.t. minCumulative_flow_solve {g in group : p_group[g, 'min_cumulative_flow']} :
+  # LHS: total physical flow over the full solve horizon.  step_duration * p_rp_cost_weight
+  # / complete_period_share_of_year mirrors the objective's annualization; * p_years_represented_d
+  # then sums each period's annual flow across the multi-year horizon.
   + sum{(g, p, n) in group_process_node, (d, t) in dt} (
       # n is sink
       + sum {(p, source, n) in process_source_sink} (
@@ -3382,13 +3391,18 @@ s.t. minCumulative_flow_solve {g in group : p_group[g, 'min_cumulative_flow']} :
       - sum {(p, n, sink) in process_source_sink_noEff } (
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 		)
-	) * step_duration[d, t]
+	) * step_duration[d, t] * p_rp_cost_weight[d, t]
+	  * p_years_represented_d[d] / complete_period_share_of_year[d]
 	>=
+  # RHS: avg_MW * total horizon hours across all periods and represented years.
   + p_group[g, 'min_cumulative_flow']
-      * hours_in_solve
+      * sum {d in period_in_use} (p_years_represented_d[d] * 8760)
 ;
 
 s.t. maxCumulative_flow_period {g in group, d in period_in_use : pdGroup[g, 'max_cumulative_flow', d]} :
+  # LHS: annualized flow within the period.  step_duration * p_rp_cost_weight
+  # / complete_period_share_of_year mirrors the objective's annualization so the LHS
+  # matches the annual flow volumes the solver sees as per-year costs.
   + sum{(g, p, n) in group_process_node, (d, t) in dt} (
       # n is sink
       + sum {(p, source, n) in process_source_sink} (
@@ -3409,13 +3423,18 @@ s.t. maxCumulative_flow_period {g in group, d in period_in_use : pdGroup[g, 'max
       - sum {(p, n, sink) in process_source_sink_noEff } (
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 		)
-	)  * step_duration[d, t]
+	)  * step_duration[d, t] * p_rp_cost_weight[d, t]
+	   / complete_period_share_of_year[d]
 	<=
+  # RHS: avg_MW * annual hours (per-period limit applied to one year's worth of flow).
   + pdGroup[g, 'max_cumulative_flow', d]
-      * hours_in_period[d]
+      * 8760
 ;
 
 s.t. minCumulative_flow_period {g in group, d in period_in_use : pdGroup[g, 'min_cumulative_flow', d]} :
+  # LHS: annualized flow within the period.  step_duration * p_rp_cost_weight
+  # / complete_period_share_of_year mirrors the objective's annualization so the LHS
+  # matches the annual flow volumes the solver sees as per-year costs.
   + sum{(g, p, n) in group_process_node, (d, t) in dt} (
       # n is sink
       + sum {(p, source, n) in process_source_sink} (
@@ -3436,10 +3455,12 @@ s.t. minCumulative_flow_period {g in group, d in period_in_use : pdGroup[g, 'min
       - sum {(p, n, sink) in process_source_sink_noEff } (
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 		)
-	) * step_duration[d, t]
+	) * step_duration[d, t] * p_rp_cost_weight[d, t]
+	  / complete_period_share_of_year[d]
 	>=
+  # RHS: avg_MW * annual hours (per-period limit applied to one year's worth of flow).
   + pdGroup[g, 'min_cumulative_flow', d]
-      * hours_in_period[d]
+      * 8760
 ;
 
 s.t. maxInstant_flow {(g, d, t) in gdt_maxInstantFlow} :
@@ -3513,11 +3534,15 @@ s.t. co2_max_period{g in group_co2_max_period, d in period_in_use} :
     (
       + p_commodity[c, 'co2_content'] / 1000
         * (
-            # CO2 increases
+            # CO2 increases.  step_duration * p_rp_cost_weight / complete_period_share_of_year
+            # mirrors the objective's annualization so the LHS matches the
+            # flow volumes the solver sees as full-year costs.
             + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt }
-              ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t] )
+              ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
+                  * step_duration[d, t] * p_rp_cost_weight[d, t] )
             + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt }
-              ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t]
+              ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
+                  * step_duration[d, t] * p_rp_cost_weight[d, t]
                   * pdtProcess_slope[p, d, t]
                   * (if p in process_unit then 1 / (p_process_sink_coefficient[p, sink] * p_process_source_coefficient[p, n]) else 1)
                 + ( if (p, 'min_load_efficiency') in process__ct_method then
@@ -3530,7 +3555,8 @@ s.t. co2_max_period{g in group_co2_max_period, d in period_in_use} :
               )
             # CO2 removals
             - sum {(p, source, n) in process_source_sink, (d, t) in dt }
-              ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t] )
+              ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p]
+                  * step_duration[d, t] * p_rp_cost_weight[d, t] )
           ) / complete_period_share_of_year[d]
     )
   <=
@@ -3542,12 +3568,16 @@ s.t. co2_max_total{g in group_co2_max_total} :
     (
       + p_commodity[c, 'co2_content'] / 1000
         * (
-            # CO2 increases
+            # CO2 increases.  step_duration * p_rp_cost_weight / complete_period_share_of_year
+            # mirrors the objective's annualization; * p_years_represented_d
+            # then sums each period's annual emissions across the horizon.
             + sum {(p, n, sink) in process_source_sink_noEff, (d, t) in dt }
-              ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t]
+              ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
+                  * step_duration[d, t] * p_rp_cost_weight[d, t]
                   * p_years_represented_d[d] / complete_period_share_of_year[d] )
             + sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt }
-              ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p] * step_duration[d, t]
+              ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
+                  * step_duration[d, t] * p_rp_cost_weight[d, t]
                   * pdtProcess_slope[p, d, t]
                   * (if p in process_unit then 1 / (p_process_sink_coefficient[p, sink] / p_process_source_coefficient[p, n]) else 1)
                 + ( if (p, 'min_load_efficiency') in process__ct_method then
@@ -3560,7 +3590,8 @@ s.t. co2_max_total{g in group_co2_max_total} :
               ) * p_years_represented_d[d] / complete_period_share_of_year[d]
           # CO2 removals
             - sum {(p, source, n) in process_source_sink, (d, t) in dt }
-              ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p] * step_duration[d, t]
+              ( + v_flow[p, source, n, d, t] * p_entity_unitsize[p]
+                  * step_duration[d, t] * p_rp_cost_weight[d, t]
                   * p_years_represented_d[d] / complete_period_share_of_year[d]
               )
           )
@@ -4228,6 +4259,15 @@ if p_model["solveFirst"] == 1 then {
 }
 for {s in solve_current, (d, t) in dt_realize_dispatch} {
     printf "\n%s,%s,%s,%.8g", s, d, t, step_duration[d, t] >> "output_raw/p_step_duration.csv";
+}
+
+# Write p_rp_cost_weight (representative-period cost weight, used for annualization
+# of counts like startups that aren't already carrying step_duration × rp scaling).
+if p_model["solveFirst"] == 1 then {
+  printf "solve,period,time,value" > "output_raw/p_rp_cost_weight.csv";
+}
+for {s in solve_current, (d, t) in dt_realize_dispatch} {
+    printf "\n%s,%s,%s,%.8g", s, d, t, p_rp_cost_weight[d, t] >> "output_raw/p_rp_cost_weight.csv";
 }
 
 # Write p_flow_min

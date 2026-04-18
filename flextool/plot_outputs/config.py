@@ -14,6 +14,8 @@ DIMENSION_RULES: dict[str, str] = {
     'f': 'file (separate file per member)',
     'm': 'merge (sum and collapse)',
     'a': 'average and collapse',
+    'y': 'weight by years_represented, then sum and collapse (period row only)',
+    'z': 'years_represented weighted average and collapse (period row only)',
 }
 
 # Field names for plot settings — used by _is_single_config() to detect config dicts.

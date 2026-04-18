@@ -389,4 +389,10 @@ def input_sets(par, s, v, r, debug):
     results.append((s.outputNodeGroup__process_fully_inside, 'outputNodeGroup__process_fully_inside'))
     results.append((par.node_inflow, 'node_inflow__dt'))
 
+    # Per-period years_represented — used by plot rules 'y' and 'z' to convert
+    # annualized outputs to horizon totals or years-weighted averages.
+    years_d = par.years_represented_d.rename('years_represented').to_frame()
+    years_d.index.name = 'period'
+    results.append((years_d, 'years_represented__d'))
+
     return results

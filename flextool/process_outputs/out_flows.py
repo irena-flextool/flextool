@@ -172,8 +172,15 @@ def unit_online_and_startup(par, s, v, r, debug):
     online_units_d = online_units_dt.mul(par.step_duration, axis=0).groupby('period').sum().div(complete_hours, axis=0)
     results.append((online_units_d, 'unit_online_average_d_e'))
 
-    # 3. Startups aggregated to period level
-    startup_units_d = r.process_startup_dt[s.process_unit.intersection(s.process_online)].groupby('period').sum()
+    # 3. Startups annualized to period level.  Raw startups only cover modeled
+    # timesteps; weight each by p_rp_cost_weight and divide by the period share
+    # of a year so the value is an annual count (same convention as flows).
+    units_online = s.process_unit.intersection(s.process_online)
+    startup_weighted = r.process_startup_dt[units_online].mul(par.rp_cost_weight, axis=0)
+    startup_units_d = (
+        startup_weighted.groupby('period').sum()
+        .div(par.complete_period_share_of_year, axis=0)
+    )
     results.append((startup_units_d, 'unit_startup_d_e'))
 
     return results

@@ -67,12 +67,85 @@ def _plan_file_splits(
         return item_chunks
 
 
+def _extract_period_weights(results_dict: dict):
+    """Pull years_represented weights out of results_dict if present.
+
+    Returns a Series (period → weight) when the frame has a single column,
+    or a DataFrame (period × scenario) when the frame carries scenario in
+    its column MultiIndex.  Returns None when the key is absent or empty.
+    """
+    df = results_dict.get('years_represented__d')
+    if df is None or df.empty:
+        return None
+    # Drop the 'scenario' level on the row index if present (per-scenario parquets).
+    if isinstance(df.index, pd.MultiIndex) and 'scenario' in df.index.names:
+        df = df.droplevel('scenario')
+    if isinstance(df.columns, pd.MultiIndex) and 'scenario' in df.columns.names:
+        # Collapse the inner 'years_represented' level; keep scenario as cols.
+        other_levels = [n for n in df.columns.names if n != 'scenario']
+        wide = df.droplevel(other_levels, axis=1) if other_levels else df
+        # Deduplicate identical scenario columns from any extra row-level leftovers.
+        wide = wide.loc[:, ~wide.columns.duplicated()]
+        return wide
+    if df.shape[1] == 1:
+        return df.iloc[:, 0]
+    return df
+
+
+def _weight_rows_by_period(df: pd.DataFrame, period_weights, period_level: int) -> pd.DataFrame:
+    """Multiply each row of df by its period weight.
+
+    ``period_weights`` is either a Series (period → weight) or a DataFrame
+    (index=period, columns=scenario).  When ``df`` has a 'scenario' column
+    MultiIndex level, a DataFrame of weights is applied per-scenario column;
+    otherwise a single Series (or first column of a DataFrame) is broadcast
+    across all columns.
+    """
+    if period_weights is None:
+        return df
+    period_vals = df.index.get_level_values(period_level)
+    col_is_multi = isinstance(df.columns, pd.MultiIndex)
+    if isinstance(period_weights, pd.DataFrame):
+        if col_is_multi and 'scenario' in df.columns.names:
+            scens = df.columns.get_level_values('scenario')
+            # Aligned weight matrix: rows match df.index via period lookup, columns match df.columns.
+            weight_rows = period_weights.reindex(period_vals)
+            weight_rows = weight_rows.reindex(columns=scens)
+            weight_rows.index = df.index
+            weight_rows.columns = df.columns
+            return df * weight_rows
+        # No scenario column level — take the first (or only) weight column.
+        w_series = period_weights.iloc[:, 0]
+    else:
+        w_series = period_weights
+    w_aligned = w_series.reindex(period_vals)
+    w_aligned.index = df.index
+    return df.mul(w_aligned, axis=0)
+
+
+def _sum_period_weights(period_weights, periods) -> float:
+    """Sum weights across the given periods (scalar); used as 'z' denominator."""
+    if period_weights is None:
+        return float(len(periods))
+    if isinstance(period_weights, pd.DataFrame):
+        w = period_weights.iloc[:, 0]
+    else:
+        w = period_weights
+    return float(w.reindex(periods).sum())
+
+
 def _apply_dimension_rules(
     df_orig: pd.DataFrame,
     cfg: PlotConfig,
     plot_rows: tuple[int, int],
+    period_weights=None,
 ) -> tuple[pd.DataFrame, str, str, list[str], list[str]] | None:
     """Apply dimension rules from PlotConfig to a DataFrame.
+
+    ``period_weights`` provides the per-period years_represented values used
+    by the 'y' (weighted sum) and 'z' (weighted average) rules.  May be None
+    when the caller doesn't have weights — 'y'/'z' then fall back to plain
+    sum/mean with a warning.
 
     Returns (df, rules, chart_type, summed_dimensions, averaged_dimensions)
     or None if config is invalid / should be skipped.
@@ -138,7 +211,39 @@ def _apply_dimension_rules(
     summed_dimensions: list[str] = []
     averaged_dimensions: list[str] = []
 
-    # Sum row levels marked 'm'
+    # 'y' = period-weighted sum, 'z' = period-weighted average.  Both
+    # pre-multiply rows by years_represented[period] before the collapse;
+    # 'z' additionally divides by the sum of weights after the collapse.
+    # Only supported when the row level being collapsed is named 'period'.
+    weight_row_levels = [i for i, c in enumerate(rules[:nr_row_levels]) if c in ('y', 'z')]
+    mean_weight_level = None  # for post-collapse division (z only)
+    periods_for_denom = None
+    if weight_row_levels:
+        valid_levels = [i for i in weight_row_levels if df.index.names[i] == 'period']
+        invalid = [i for i in weight_row_levels if i not in valid_levels]
+        for i in invalid:
+            logger.warning(
+                "Plot config '%s': rule '%s' only applies to the 'period' "
+                "row level, got '%s' — falling back to unweighted.",
+                cfg.plot_name, rules[i], df.index.names[i],
+            )
+        if period_weights is None and valid_levels:
+            logger.warning(
+                "Plot config '%s': rules 'y'/'z' require years_represented "
+                "weights but none were provided — falling back to unweighted.",
+                cfg.plot_name,
+            )
+        elif valid_levels:
+            period_level = valid_levels[0]
+            periods_for_denom = df.index.get_level_values(period_level).unique()
+            df = _weight_rows_by_period(df, period_weights, period_level)
+            if rules[period_level] == 'z':
+                mean_weight_level = period_level
+        # Rewrite 'y'/'z' to 'm' so the existing sum branch collapses them.
+        for i in weight_row_levels:
+            rules = rules[:i] + 'm' + rules[i + 1:]
+
+    # Sum row levels marked 'm' (includes 'y'/'z' rewritten above)
     sum_row_levels = [i for i, char in enumerate(rules[:nr_row_levels]) if char == 'm']
     if sum_row_levels:
         summed_dimensions.extend(df.index.names[i] for i in sum_row_levels)
@@ -151,6 +256,12 @@ def _apply_dimension_rules(
             df = df.sum(axis=0).to_frame().T
             df.index = ['']
             df.index.name = 'sum'
+
+    # For 'z': divide the (weighted) sum by the total weight → weighted average.
+    if mean_weight_level is not None:
+        denom = _sum_period_weights(period_weights, periods_for_denom)
+        if denom != 0:
+            df = df / denom
 
     # Sum column levels marked 'm'
     nr_column_levels = df.columns.nlevels
@@ -416,6 +527,7 @@ def prepare_plot_data(
     plot_rows: tuple[int, int] = (0, 167),
     break_times: set[str] | None = None,
     only_file_index: int | None = None,
+    period_weights=None,
 ) -> tuple[list[tuple[str, plt.Figure]], int]:
     """Process one result DataFrame through dimension rules and build Figures.
 
@@ -432,7 +544,7 @@ def prepare_plot_data(
     result_name = plot_name or cfg.plot_name or 'plot'
     axis_bounds = _normalize_axis_bounds(cfg.axis_bounds)
 
-    dim_result = _apply_dimension_rules(df, cfg, plot_rows)
+    dim_result = _apply_dimension_rules(df, cfg, plot_rows, period_weights=period_weights)
     if dim_result is None:
         return [], 0
     df_processed, rules, chart_type, summed_dimensions, averaged_dimensions = dim_result
@@ -660,6 +772,11 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
     # Flatten new-format entries (entry-name grouping) to flat result_key mapping
     plot_settings = flatten_new_format(plot_settings)
 
+    # Extract period weights once (for 'y'/'z' rules).  Accept either a Series
+    # (period → years) for single-scenario data, or a DataFrame with 'scenario'
+    # as the column level for combined/comparison data.
+    period_weights = _extract_period_weights(results_dict)
+
     # Empty plot dir if requested
     if delete_existing_plots:
         for filename in os.listdir(plot_dir):
@@ -725,6 +842,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 plot_name=plot_name,
                 plot_rows=plot_rows,
                 break_times=break_times,
+                period_weights=period_weights,
             )
 
             if only_first_file and len(figures) > 1:
@@ -771,6 +889,9 @@ def compute_all_plot_plans(
     # Flatten new-format entries (entry-name grouping) to flat result_key mapping
     plot_settings = flatten_new_format(plot_settings)
 
+    # Extract period weights once for 'y'/'z' rule support
+    period_weights = _extract_period_weights(results_dict)
+
     output_dir = Path(output_dir)
     plan_dir = output_dir / "plot_plans"
 
@@ -794,6 +915,7 @@ def compute_all_plot_plans(
             pairs = compute_plot_plans_for_result(
                 df, key, plot_settings, plan_dir,
                 plot_rows, break_times, active_settings,
+                period_weights=period_weights,
             )
             available.extend([k, s] for k, s in pairs)
         except Exception as exc:

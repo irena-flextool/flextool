@@ -501,16 +501,48 @@ def build_figure_from_plan(
 # ---------------------------------------------------------------------------
 
 def _encode_column_selector(
-    df_sub: pd.DataFrame, df_full: pd.DataFrame,
+    df_sub: pd.DataFrame,
+    df_full: pd.DataFrame,
+    sub_levels: list[int] | None = None,
+    sub_value=None,
 ) -> list:
-    """Encode the columns of df_sub as a JSON-serializable selector list.
+    """Encode columns of df_sub as a JSON-serializable selector list.
 
-    For MultiIndex columns, each column is stored as a list of its level values.
-    For simple columns, each column is stored as a scalar.
+    The selector must be usable with ``df_full.columns.isin(...)`` at
+    reconstruction time. ``_extract_subplot_data`` applies ``xs`` to
+    df_full, which drops the sub-levels, so df_sub's column tuples are
+    NARROWER than df_full's. When *sub_levels* and *sub_value* are
+    provided, we reinsert the sub values at the correct level positions
+    so the stored selector matches df_full's full-width tuples.
     """
-    if isinstance(df_sub.columns, pd.MultiIndex):
-        return [list(c) for c in df_sub.columns]
-    return df_sub.columns.tolist()
+    if not isinstance(df_full.columns, pd.MultiIndex):
+        return df_sub.columns.tolist()
+    if not sub_levels or sub_value is None:
+        # Nothing was dropped (or caller didn't ask) — df_sub already
+        # matches df_full's level count.
+        return [list(c) if isinstance(c, tuple) else [c] for c in df_sub.columns]
+    sub_vals = sub_value if isinstance(sub_value, tuple) else (sub_value,)
+    if len(sub_vals) != len(sub_levels):
+        # Mismatch — best effort, fall back to reduced form.
+        return [list(c) if isinstance(c, tuple) else [c] for c in df_sub.columns]
+    sub_positions = dict(zip(sub_levels, sub_vals))
+    full_width = df_full.columns.nlevels
+    result: list[list] = []
+    for c in df_sub.columns:
+        reduced = list(c) if isinstance(c, tuple) else [c]
+        full: list = [None] * full_width
+        for lvl, val in sub_positions.items():
+            if 0 <= lvl < full_width:
+                full[lvl] = val
+        r_iter = iter(reduced)
+        for i in range(full_width):
+            if full[i] is None:
+                try:
+                    full[i] = next(r_iter)
+                except StopIteration:
+                    break
+        result.append(full)
+    return result
 
 
 def _encode_row_selector(df_sub: pd.DataFrame) -> list:
@@ -544,6 +576,7 @@ def _compute_time_plan(
         _get_column_items,
     )
     from flextool.plot_outputs.legend_helpers import build_shared_color_map
+    from flextool.plot_outputs.subplot_helpers import _extract_subplot_data
 
     # Determine chart sub-type
     is_stack = bool(fm_stack_levels)
@@ -578,11 +611,44 @@ def _compute_time_plan(
         else default_max_items
     )
 
-    # Build effective_plots with item splitting
-    effective_plots = _build_effective_plots(
-        df_fm, fm_subplot_levels, item_level_names, max_items,
-        subplots_by_magnitudes=cfg.subplots_by_magnitudes if not is_stack else False,
-    )
+    # Build effective_plots with item splitting, tracking which sub-value
+    # each chunk came from so we can reconstruct full df_fm column tuples
+    # later (see _encode_column_selector).
+    from flextool.plot_outputs.subplot_helpers import _get_unique_levels
+    if fm_subplot_levels:
+        subs_for_iter = _get_unique_levels(df_fm.columns, fm_subplot_levels)
+    else:
+        subs_for_iter = [None]
+    effective_plots = []
+    chunk_subs: list = []
+    for sub in subs_for_iter:
+        if sub is None:
+            df_for_sub = df_fm
+            per_sub_levels: list[int] = []
+        else:
+            df_for_sub = _extract_subplot_data(df_fm, sub, fm_subplot_levels)
+            per_sub_levels = []  # already extracted; no further sub_levels inside
+        per_sub_plots = _build_effective_plots(
+            df_for_sub, per_sub_levels, item_level_names, max_items,
+            subplots_by_magnitudes=cfg.subplots_by_magnitudes if not is_stack else False,
+        )
+        if sub is not None:
+            base_title = (
+                ' | '.join(str(v) for v in sub) if isinstance(sub, tuple)
+                else str(sub)
+            )
+            retitled = []
+            for t, d in per_sub_plots:
+                if t is None:
+                    retitled.append((base_title, d))
+                elif str(t).startswith('None'):
+                    # chunk indicator appended after a base title of None
+                    retitled.append((base_title + str(t)[len('None'):], d))
+                else:
+                    retitled.append((t, d))
+            per_sub_plots = retitled
+        effective_plots.extend(per_sub_plots)
+        chunk_subs.extend([sub] * len(per_sub_plots))
     if not effective_plots:
         return None
 
@@ -613,10 +679,14 @@ def _compute_time_plan(
     )
     total_file_count = len(file_batches_raw)
 
-    # Encode effective_plot_specs and build batch index lists
+    # Encode effective_plot_specs and build batch index lists. Pass the
+    # per-chunk sub-value so the encoder can reinsert dropped sub-levels
+    # and produce full df_fm column tuples.
     effective_plot_specs: list[tuple[str | None, list]] = []
-    for title, df_sub in effective_plots:
-        selector = _encode_column_selector(df_sub, df_fm)
+    for (title, df_sub), chunk_sub in zip(effective_plots, chunk_subs):
+        selector = _encode_column_selector(
+            df_sub, df_fm, fm_subplot_levels, chunk_sub,
+        )
         effective_plot_specs.append((title, selector))
 
     file_batches: list[list[int]] = []
@@ -742,6 +812,10 @@ def _compute_bar_plan(
     # Split subplots that exceed max_items_per_plot visual bar labels
     # (n_rows * n_expand_groups).
     effective_plots: list[tuple[str | None, pd.DataFrame]] = []
+    # Parallel list: which sub-value each chunk was extracted from, so
+    # the column selector encoder can reinsert it and produce tuples
+    # that match df_fm.columns at reconstruction time.
+    chunk_subs: list = []
     for sub in subs:
         df_sub = _extract_subplot_data(df_fm, sub, sub_levels)
         df_sub = df_sub.dropna(how='all')
@@ -754,13 +828,17 @@ def _compute_bar_plan(
         )
         n_rows = len(df_sub)
 
+        def _add(label: str | None, df_chunk: pd.DataFrame) -> None:
+            effective_plots.append((label, df_chunk))
+            chunk_subs.append(sub)
+
         if not max_items:
-            effective_plots.append((title, df_sub))
+            _add(title, df_sub)
             continue
 
         total_items = n_rows * max(n_expand_groups, 1)
         if total_items <= max_items:
-            effective_plots.append((title, df_sub))
+            _add(title, df_sub)
             continue
 
         if expand_axis_levels and expand_axis_level_names and n_expand_groups > 1:
@@ -772,14 +850,14 @@ def _compute_bar_plan(
                 mask = df_sub.columns.get_level_values(expand_level_name_local).isin(grp_chunk)
                 chunk = df_sub.loc[:, mask]
                 chunk_label = f"{title}_{gi + 1}" if title else None
-                effective_plots.append((chunk_label, chunk))
+                _add(chunk_label, chunk)
         elif n_rows > max_items:
             for i in range(0, n_rows, max_items):
                 chunk = df_sub.iloc[i:i + max_items]
                 chunk_label = f"{title}_{i // max_items + 1}" if title else None
-                effective_plots.append((chunk_label, chunk))
+                _add(chunk_label, chunk)
         else:
-            effective_plots.append((title, df_sub))
+            _add(title, df_sub)
 
     if not effective_plots:
         return None
@@ -895,13 +973,17 @@ def _compute_bar_plan(
 
     # Encode effective_plot_specs: store row index labels AND column
     # selectors so that reconstruction filters both dimensions.
-    # Without column selectors, subplots with expand_axis levels
-    # would show a Cartesian product of all columns.
+    # The column selector is stored as FULL df_fm tuples (with the
+    # sub-level values reinserted) so reconstruction via
+    # ``df_fm.columns.isin(...)`` matches exactly. Without this the
+    # narrower tuples from ``xs`` never match and the fallback returns
+    # the whole df_fm, flooding the subplot with columns from every
+    # other subplot.
     effective_plot_specs: list[tuple[str | None, list]] = []
-    for title, df_sub in effective_plots:
+    for (title, df_sub), chunk_sub in zip(effective_plots, chunk_subs):
         selector = {
             'rows': _encode_row_selector(df_sub),
-            'cols': _encode_column_selector(df_sub, df_fm),
+            'cols': _encode_column_selector(df_sub, df_fm, sub_levels, chunk_sub),
         }
         effective_plot_specs.append((title, selector))
 
@@ -968,6 +1050,7 @@ def compute_plot_plans_for_result(
     plot_rows: tuple[int, int] = (0, 167),
     break_times: set[str] | None = None,
     active_settings: list[str] | None = None,
+    period_weights=None,
 ) -> list[tuple[str, str]]:
     """Compute and save PlotPlans for all configs of a result_key.
 
@@ -1023,7 +1106,7 @@ def compute_plot_plans_for_result(
         # This prevents hourly variants from being marked unavailable when
         # spikes happen outside the displayed window.
         full_range = (0, len(df))
-        avail_result = _apply_dimension_rules(df, cfg, full_range)
+        avail_result = _apply_dimension_rules(df, cfg, full_range, period_weights=period_weights)
         if avail_result is None:
             continue
         df_avail = avail_result[0]
@@ -1039,7 +1122,7 @@ def compute_plot_plans_for_result(
         # Apply dimension rules.  For time-series plans, use the full data
         # range so the plan can be rendered at any start/duration without
         # recomputing.  For bar charts, plot_rows is irrelevant.
-        dim_result = _apply_dimension_rules(df, cfg, full_range)
+        dim_result = _apply_dimension_rules(df, cfg, full_range, period_weights=period_weights)
         if dim_result is None:
             continue
         df_processed, rules, chart_type, summed_dims, averaged_dims = dim_result
@@ -1148,6 +1231,7 @@ def compute_live_plan(
     cfg: 'PlotConfig',
     plot_name: str,
     break_times: set[str] | None = None,
+    period_weights=None,
 ) -> PlotPlan | None:
     """Compute a PlotPlan in memory without disk I/O.
 
@@ -1162,7 +1246,7 @@ def compute_live_plan(
     from flextool.plot_outputs.format_helpers import insert_timeline_breaks
 
     full_range = (0, len(df))
-    dim_result = _apply_dimension_rules(df, cfg, full_range)
+    dim_result = _apply_dimension_rules(df, cfg, full_range, period_weights=period_weights)
     if dim_result is None:
         return None
     df_processed, rules, chart_type, summed_dims, averaged_dims = dim_result

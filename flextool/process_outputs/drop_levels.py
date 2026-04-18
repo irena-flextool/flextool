@@ -19,7 +19,7 @@ _V_DROP = [
 
 # Parameters: droplevel('solve') only
 _PAR_DROP = [
-    'step_duration', 'flow_min', 'flow_max',
+    'step_duration', 'rp_cost_weight', 'flow_min', 'flow_max',
     'process_availability', 'process_source_sink_varCost',
     'process_slope', 'process_section',
     'node_self_discharge_loss', 'node_penalty_up', 'node_penalty_down',

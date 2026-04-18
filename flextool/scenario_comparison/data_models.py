@@ -138,6 +138,7 @@ class TimeSeriesResults:
 
     # --- Other ---
     reserve_prices_dt_ppg: pd.DataFrame | None = None
+    years_represented__d: pd.DataFrame | None = None
     dual_invest_effective_node_d_e: pd.DataFrame | None = None
     dual_invest_effective_unit_d_e: pd.DataFrame | None = None
     dual_invest_effective_connection_d_e: pd.DataFrame | None = None

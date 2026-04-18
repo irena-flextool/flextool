@@ -28,6 +28,7 @@ def read_parameters(output_dir):
 
     # Parameters with (period, time) index and multi-dimensional columns
     p.step_duration = pd.read_csv(output_path / 'p_step_duration.csv', index_col=[0, 1, 2])['value'].astype(float)
+    p.rp_cost_weight = pd.read_csv(output_path / 'p_rp_cost_weight.csv', index_col=[0, 1, 2])['value'].astype(float)
     p.flow_min = pd.read_csv(output_path / 'p_flow_min.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
     p.flow_max = pd.read_csv(output_path / 'p_flow_max.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
     p.process_source = pd.read_csv(output_path / 'p_process_source.csv', header=[0, 1], index_col=[0]).astype(float)

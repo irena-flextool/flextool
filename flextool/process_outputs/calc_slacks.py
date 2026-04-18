@@ -4,8 +4,11 @@ import pandas as pd
 def compute_slacks(par, s, v, r) -> None:
     """Compute slack and reserve quantities."""
     r.reserves_dt = v.reserve.mul(par.step_duration, axis=0)
-    r.reserves_d = r.reserves_dt.groupby('period').sum() \
-        .div(par.complete_period_share_of_year, axis=0)
+    # Average MW held over the period: Σ(MW × step_duration) / total period hours.
+    # Reserves are MW capacity held per hour (not consumed energy), so the
+    # meaningful per-period figure is the average MW held across the period.
+    period_hours = par.complete_period_share_of_year * 8760
+    r.reserves_d = r.reserves_dt.groupby('period').sum().div(period_hours, axis=0)
 
     r.upward_node_slack_dt = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).mul(par.step_duration, axis=0)
     r.upward_node_slack_d_not_annualized = r.upward_node_slack_dt.mul(par.step_duration, axis=0) \

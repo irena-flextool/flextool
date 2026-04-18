@@ -67,15 +67,15 @@ plots:
         variant: p
         value_label: dynamic
         map_dimensions_for_plots: [d_e, s_b]
-        xlabel: MWh
+        xlabel: MWh (annualized)
         ylabel: Node
         skip_data_with_only_zeroes: true
       sum_periods:
         plot_name: 'Loss of load (upward slack) total'
         variant: a
         value_label: dynamic
-        map_dimensions_for_plots: [d_e, m_b]
-        xlabel: MWh (total)
+        map_dimensions_for_plots: [d_e, y_b]
+        xlabel: MWh (horizon total)
         ylabel: Node
         skip_data_with_only_zeroes: true
     node_slack_up_dt_e:
@@ -107,15 +107,15 @@ plots:
         variant: p
         value_label: dynamic
         map_dimensions_for_plots: [d_e, s_b]
-        xlabel: MWh
+        xlabel: MWh (annualized)
         ylabel: Node
         skip_data_with_only_zeroes: true
       sum_periods:
         plot_name: 'Excess load + spill (downward slack) total'
         variant: a
         value_label: dynamic
-        map_dimensions_for_plots: [d_e, m_b]
-        xlabel: MWh (total)
+        map_dimensions_for_plots: [d_e, y_b]
+        xlabel: MWh (horizon total)
         ylabel: Node
         skip_data_with_only_zeroes: true
     node_slack_down_dt_e:
@@ -167,16 +167,16 @@ plots:
         map_dimensions_for_plots: [d_eeg, s_bbu]
         max_subplots_per_file: 6
         subplots_per_row: 2
-        xlabel: MWh
+        xlabel: MWh (annualized)
         ylabel: NodeGroup
         skip_data_with_only_zeroes: true
       sum_periods:
         plot_name: 'Lack of reserves total'
         variant: a
-        map_dimensions_for_plots: [d_eeg, m_bbu]
+        map_dimensions_for_plots: [d_eeg, y_bbu]
         max_subplots_per_file: 6
         subplots_per_row: 2
-        xlabel: MWh (total)
+        xlabel: MWh (horizon total)
         ylabel: NodeGroup
         skip_data_with_only_zeroes: true
   'Lack of inertia':
@@ -206,14 +206,14 @@ plots:
         variant: p
         map_dimensions_for_plots: [d_g, s_b]
         ylabel: NodeGroup
-        xlabel: MWs
+        xlabel: MWs (annualized)
         skip_data_with_only_zeroes: true
       sum_periods:
         plot_name: 'Lack of inertia total'
         variant: a
-        map_dimensions_for_plots: [d_g, m_b]
+        map_dimensions_for_plots: [d_g, y_b]
         ylabel: NodeGroup
-        xlabel: MWs (total)
+        xlabel: MWs (horizon total)
         skip_data_with_only_zeroes: true
   'Lack of nonsynchronous sources':
     group: 0
@@ -242,14 +242,14 @@ plots:
         variant: p
         map_dimensions_for_plots: [d_g, s_b]
         ylabel: NodeGroup
-        xlabel: MWh
+        xlabel: MWh (annualized)
         skip_data_with_only_zeroes: true
       sum_periods:
         plot_name: 'Lack of nonsynchronous sources total'
         variant: a
-        map_dimensions_for_plots: [d_g, m_b]
+        map_dimensions_for_plots: [d_g, y_b]
         ylabel: NodeGroup
-        xlabel: MWh (total)
+        xlabel: MWh (horizon total)
         skip_data_with_only_zeroes: true
   'Violation of capacity margin':
     group: 0
@@ -262,11 +262,11 @@ plots:
         xlabel: MW
         skip_data_with_only_zeroes: true
       sum_periods:
-        plot_name: 'Violation of capacity margin total'
+        plot_name: 'Violation of capacity margin average'
         variant: a
-        map_dimensions_for_plots: [d_g, m_b]
+        map_dimensions_for_plots: [d_g, z_b]
         ylabel: NodeGroup
-        xlabel: MW (total)
+        xlabel: MW (weighted average)
         skip_data_with_only_zeroes: true
 
   # Curtailments
@@ -280,14 +280,15 @@ plots:
         value_label: dynamic
         skip_data_with_only_zeroes: true
         axis_tick_format: '1,.0f'
+        xlabel: MWh (annualized)
       sum_periods:
         plot_name: 'Curtail. amount total'
         variant: a
-        map_dimensions_for_plots: [d_ee, m_bb]
+        map_dimensions_for_plots: [d_ee, y_bb]
         value_label: dynamic
         skip_data_with_only_zeroes: true
         axis_tick_format: '1,.0f'
-        xlabel: MWh (total)
+        xlabel: MWh (horizon total)
     unit_curtailment_outputNode_dt_ee:
       default:
         variant: h
@@ -328,14 +329,14 @@ plots:
       sum_periods:
         plot_name: 'Curtail. share of VRE average'
         variant: a
-        map_dimensions_for_plots: [d_ee, a_eu]
+        map_dimensions_for_plots: [d_ee, z_eu]
         skip_data_with_only_zeroes: true
         subplots_per_row: 2
         max_subplots_per_file: 4
         max_items_per_plot: 40
         axis_bounds: shared
         axis_tick_format: '.0%'
-        xlabel: percent (average)
+        xlabel: percent (weighted average)
     unit_curtailment_share_outputNode_dt_ee:
       default:
         variant: h
@@ -368,17 +369,17 @@ plots:
         map_dimensions_for_plots: [d_ee, b_eu]
         ylabel: Node
         value_label: dynamic
-        xlabel: MWh
+        xlabel: MWh (annualized)
         max_items_per_plot: 40
         max_subplots_per_file: 6
         skip_data_with_only_zeroes: true
       sum_periods:
         plot_name: 'Flows: unit to node total'
         variant: a
-        map_dimensions_for_plots: [d_ee, m_be]
+        map_dimensions_for_plots: [d_ee, y_be]
         ylabel: Node
         value_label: dynamic
-        xlabel: MWh (total)
+        xlabel: MWh (horizon total)
         axis_bounds: shared
         max_items_per_plot: 40
         max_subplots_per_file: 6
@@ -412,15 +413,15 @@ plots:
         variant: p
         map_dimensions_for_plots: [d_ee, b_eu]
         ylabel: Node
-        xlabel: MWh
+        xlabel: MWh (annualized)
         max_items_per_plot: 40
         max_subplots_per_file: 6
       sum_periods:
         plot_name: 'Flows: node to unit total'
         variant: a
-        map_dimensions_for_plots: [d_ee, m_be]
+        map_dimensions_for_plots: [d_ee, y_be]
         ylabel: Node
-        xlabel: MWh (total)
+        xlabel: MWh (horizon total)
         axis_bounds: shared
         max_items_per_plot: 40
         max_subplots_per_file: 6
@@ -451,7 +452,7 @@ plots:
     connection_d_eee:
       default:
         variant: p
-        xlabel: MWh
+        xlabel: MWh (annualized)
         ylabel: Connection
         map_dimensions_for_plots: [d_e, b_e]
         max_items_per_plot: 40
@@ -460,9 +461,9 @@ plots:
       sum_periods:
         plot_name: 'Flows connection total'
         variant: a
-        xlabel: MWh (total)
+        xlabel: MWh (horizon total)
         ylabel: Connection
-        map_dimensions_for_plots: [d_e, m_b]
+        map_dimensions_for_plots: [d_e, y_b]
         max_items_per_plot: 40
         max_subplots_per_file: 6
         subplots_per_row: 2
@@ -498,15 +499,15 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 6
         subplots_per_row: 2
-        xlabel: MWh
+        xlabel: MWh (annualized)
       sum_periods:
         plot_name: 'Connection leftward total'
         variant: a
-        map_dimensions_for_plots: [d_ee, m_eu]
+        map_dimensions_for_plots: [d_ee, y_eu]
         max_items_per_plot: 40
         max_subplots_per_file: 6
         subplots_per_row: 2
-        xlabel: MWh (total)
+        xlabel: MWh (horizon total)
     connection_leftward_dt_eee:
       debug:
         variant: h
@@ -536,15 +537,15 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 8
         subplots_per_row: 2
-        xlabel: MWh
+        xlabel: MWh (annualized)
       sum_periods:
         plot_name: 'Connection rightward total'
         variant: a
-        map_dimensions_for_plots: [d_ee, m_eu]
+        map_dimensions_for_plots: [d_ee, y_eu]
         max_items_per_plot: 40
         max_subplots_per_file: 8
         subplots_per_row: 2
-        xlabel: MWh (total)
+        xlabel: MWh (horizon total)
     connection_rightward_dt_eee:
       debug:
         variant: h
@@ -569,7 +570,7 @@ plots:
   'Costs':
     group: 3
     order: 0
-    costs_d_p:
+    annualized_costs_d_p:
       default:
         variant: p
         bar_orientation: vertical
@@ -581,12 +582,13 @@ plots:
         map_dimensions_for_plots: [d_p, b_s]
         skip_data_with_only_zeroes: true
       sum_periods:
+        plot_name: 'Costs total'
         variant: a
         bar_orientation: vertical
         base_length: 6
-        map_dimensions_for_plots: [d_p, m_s]
+        map_dimensions_for_plots: [d_p, y_s]
         skip_data_with_only_zeroes: true
-        ylabel: Currency
+        ylabel: Currency (horizon total)
     costs_dt_p:
       default:
         plot_name: 'Costs stack'
@@ -746,15 +748,15 @@ plots:
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
-        xlabel: t CO2
+        xlabel: t CO2 (annualized)
       sum_periods:
         plot_name: 'Emissions CO2 per nodeGroup total'
         variant: a
-        map_dimensions_for_plots: [d_g, m_b]
+        map_dimensions_for_plots: [d_g, y_b]
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
-        xlabel: t CO2 (total)
+        xlabel: t CO2 (horizon total)
   'Process CO2 emissions':
     group: 5
     order: 2
@@ -765,15 +767,15 @@ plots:
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
-        xlabel: t CO2
+        xlabel: t CO2 (annualized)
       sum_periods:
         plot_name: 'Process CO2 emissions total'
         variant: a
-        map_dimensions_for_plots: [d_eeee, m_xbxx]
+        map_dimensions_for_plots: [d_eeee, y_xbxx]
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
-        xlabel: t CO2 (total)
+        xlabel: t CO2 (horizon total)
   'CO2 period limited shadow price':
     group: 5
     order: 3
@@ -810,7 +812,7 @@ plots:
         subplots_per_row: 2
         max_subplots_per_file: 4
         map_dimensions_for_plots: [d_gpe, b_uss]
-        ylabel: MWh
+        ylabel: MWh (annualized)
       sum_periods:
         plot_name: 'NodeGroup dispatch total'
         variant: a
@@ -819,8 +821,8 @@ plots:
         base_length: 6
         subplots_per_row: 2
         max_subplots_per_file: 4
-        map_dimensions_for_plots: [d_gpe, m_uss]
-        ylabel: MWh (total)
+        map_dimensions_for_plots: [d_gpe, y_uss]
+        ylabel: MWh (horizon total)
     nodeGroup_flows_dt_gpe:
       default:
         variant: h
@@ -874,8 +876,8 @@ plots:
         axis_tick_format: ['.0%', '.0%', '.0%', '.0%', '1,.0f', '.0%']
         xlabel: [percent, percent, percent, percent, MWh, percent]
       sum_periods:
-        variant: p
-        map_dimensions_for_plots: [gd_p, fa_u]
+        variant: a
+        map_dimensions_for_plots: [gd_p, fz_u]
         max_items_per_plot: 10
         subplots_per_row: 2
         max_subplots_per_file: 8
@@ -983,15 +985,15 @@ plots:
         base_length: 8
         map_dimensions_for_plots: [d_g, b_s]
         max_items_per_plot: 40
-        ylabel: MWh
+        ylabel: MWh (annualized)
       sum_periods:
         plot_name: 'NodeGroup inflow cumulative'
         variant: a
         bar_orientation: vertical
         base_length: 8
-        map_dimensions_for_plots: [d_g, m_s]
+        map_dimensions_for_plots: [d_g, y_s]
         max_items_per_plot: 40
-        ylabel: MWh
+        ylabel: MWh (horizon total)
     nodeGroup_flows_dt_g:
       default:
         variant: h
@@ -1021,15 +1023,15 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 8
         subplots_per_row: 2
-        ylabel: MWh
+        ylabel: MWh (annualized)
       sum_periods:
         plot_name: 'Node total'
         variant: a
-        map_dimensions_for_plots: [d_ep, m_es]
+        map_dimensions_for_plots: [d_ep, y_es]
         max_items_per_plot: 40
         max_subplots_per_file: 8
         subplots_per_row: 2
-        ylabel: MWh (total)
+        ylabel: MWh (horizon total)
     node_dt_ep:
       default:
         variant: h
@@ -1100,13 +1102,13 @@ plots:
         xlabel: percent
       sum_periods:
         variant: a
-        map_dimensions_for_plots: [d_ee, a_eb]
+        map_dimensions_for_plots: [d_ee, z_eb]
         max_items_per_plot: 40
         max_subplots_per_file: 8
         subplots_per_row: 2
         axis_bounds: [0, 1]
         axis_tick_format: '.0%'
-        xlabel: percent
+        xlabel: percent (weighted average)
   'Unit cf for outputs':
     group: 8
     order: 1
@@ -1122,13 +1124,13 @@ plots:
         xlabel: percent
       sum_periods:
         variant: a
-        map_dimensions_for_plots: [d_ee, a_eb]
+        map_dimensions_for_plots: [d_ee, z_eb]
         max_items_per_plot: 40
         max_subplots_per_file: 8
         subplots_per_row: 2
         axis_bounds: [0, 1]
         axis_tick_format: '.0%'
-        xlabel: percent
+        xlabel: percent (weighted average)
   'Unit online':
     group: 8
     order: 2
@@ -1152,13 +1154,13 @@ plots:
         variant: p
         map_dimensions_for_plots: [d_e, g_b]
         max_items_per_plot: 40
-        xlabel: units online
+        xlabel: units online (period average)
       sum_periods:
-        plot_name: 'Unit online total'
+        plot_name: 'Unit online average'
         variant: a
-        map_dimensions_for_plots: [d_e, m_b]
+        map_dimensions_for_plots: [d_e, z_b]
         max_items_per_plot: 40
-        xlabel: online-hours (total)
+        xlabel: units online (weighted average)
   'Unit ramp inputs':
     group: 8
     order: 3
@@ -1211,27 +1213,27 @@ plots:
         variant: p
         map_dimensions_for_plots: [d_e, g_b]
         max_items_per_plot: 40
-        xlabel: number of starts
+        xlabel: number of starts (annualized)
       sum_periods:
         plot_name: 'Unit startup total'
         variant: a
-        map_dimensions_for_plots: [d_e, m_b]
+        map_dimensions_for_plots: [d_e, y_b]
         max_items_per_plot: 40
-        xlabel: starts (total)
+        xlabel: starts (horizon total)
   'Connection losses':
     group: 8
     order: 6
     connection_losses_d_eee:
       default:
         variant: p
-        xlabel: MWh
+        xlabel: MWh (annualized)
         map_dimensions_for_plots: [d_e, g_b]
         max_items_per_plot: 40
       sum_periods:
         plot_name: 'Connection losses total'
         variant: a
-        xlabel: MWh (total)
-        map_dimensions_for_plots: [d_e, m_b]
+        xlabel: MWh (horizon total)
+        map_dimensions_for_plots: [d_e, y_b]
         max_items_per_plot: 40
     connection_losses_dt_eee:
       default:
@@ -1259,6 +1261,14 @@ plots:
         axis_bounds: [0, 1]
         axis_tick_format: '.0%'
         xlabel: percent
+      sum_periods:
+        plot_name: 'Connection cf average'
+        variant: a
+        map_dimensions_for_plots: [d_e, z_b]
+        max_items_per_plot: 40
+        axis_bounds: [0, 1]
+        axis_tick_format: '.0%'
+        xlabel: percent (weighted average)
 
   # Extras
   'Reserve from process to node':
@@ -1288,13 +1298,13 @@ plots:
         variant: p
         map_dimensions_for_plots: [d_eppe, e_bssb]
         max_items_per_plot: 40
-        xlabel: MWh/h
+        xlabel: MW (period average)
       sum_periods:
-        plot_name: 'Reserve from process to node total'
+        plot_name: 'Reserve from process to node average'
         variant: a
-        map_dimensions_for_plots: [d_eppe, m_bssb]
+        map_dimensions_for_plots: [d_eppe, z_bssb]
         max_items_per_plot: 40
-        xlabel: MWh/h (total)
+        xlabel: MW (weighted average)
   'Reserve price in NodeGroups':
     group: 9
     order: 1
@@ -1427,6 +1437,7 @@ rename:
   node_prices_dt_e: [node_prices__dt, true]
   node_state_dt_e: [node_state__dt, true]
   process_co2_d_eee: [process__d_co2, true]
+  years_represented__d: [years_represented__d, false]
   process_reserve_upDown_node_dt_eppe: [process__reserve__upDown__node__dt, true]
   process_reserve_average_d_eppe: [process__reserve__upDown__node__d_average, true]
   reserve_prices_dt_ppg: [reserve_price__upDown__group__dt, true]
