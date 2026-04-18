@@ -479,6 +479,10 @@
       "reinvest_choice"
     ],
     [
+      "lifetime_methods",
+      "no_investment"
+    ],
+    [
       "load_share_type",
       "equal"
     ],
@@ -1439,7 +1443,7 @@
     [
       "model",
       "version",
-      33.0,
+      34.0,
       null,
       "Contains database version information.",
       null

@@ -281,6 +281,15 @@ def migrate_database(database_path, up_to: int | None = None):
                         "default (weight = 1 per step). Must not be combined "
                         "with representative_period_weights on the same timeset."))
                 db.commit_session("Added timeset.timeset_weights parameter")
+            elif next_version == 34:
+                # New lifetime_method 'no_investment': asset retires after
+                # lifetime (like reinvest_choice) but no further v_invest is
+                # allowed once the first-period lifetime window has elapsed —
+                # a one-shot investment, no rebuild. Motivating case: life-
+                # extension refurbishments that cannot be physically repeated.
+                add_value_list_manual(db, [
+                    ["lifetime_methods", "no_investment"],
+                ])
             else:
                 print("Version invalid")
             next_version += 1
