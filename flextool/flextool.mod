@@ -1328,7 +1328,7 @@ param ed_entity_annual{e in entityInvest, d in period_invest} :=
 ;
 
 param ed_entity_annual_discounted{e in entityInvest, d in period_invest} :=
-        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_choice'}
+        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_choice' || m = 'no_investment'}
           ( + ed_entity_annual[e, d]
 			    * sum{d_all in period_in_use
 				    :    p_discount_years[d_all] >= p_discount_years[d]
@@ -1382,7 +1382,7 @@ param ed_fixed_cost{e in entity, d in period_with_history} :=
   + (if e in process then pdProcess[e, 'fixed_cost', d] * 1000 else 0);
 
 param ed_lifetime_fixed_cost{e in entity, d in period_with_history} :=
-        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_choice'}
+        + sum{(e,m) in entity__lifetime_method : m = 'reinvest_choice' || m = 'no_investment'}
           ( + ed_fixed_cost[e, d]
 			    * sum{d_all in period_in_use
 				    :    p_discount_years[d_all] >= p_discount_years[d]
@@ -1465,7 +1465,8 @@ set e_invest_total := {e in entityInvest : (e, 'invest_total') in entity__invest
 set ed_invest_cumulative := {(e, d) in ed_invest : (e, 'cumulative_limits') in entity__invest_method};
 set edd_history_choice := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'reinvest_choice') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history] && p_years_d[d] < p_years_d[d_history] + edEntity_lifetime[e, d_history]};
 set edd_history_automatic := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'reinvest_automatic') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history]};
-set edd_history := edd_history_choice union edd_history_automatic;
+set edd_history_no_investment := {e in entity, d_history in period_with_history, d in period_in_use : (e, 'no_investment') in entity__lifetime_method && p_years_d[d] >= p_years_d[d_history] && p_years_d[d] < p_years_d[d_history] + edEntity_lifetime[e, d_history]};
+set edd_history := edd_history_choice union edd_history_automatic union edd_history_no_investment;
 set edd_history_invest := {(e, d_invest, d) in edd_history : e in entityInvest};
 set edd_invest := {(e, d_invest, d) in edd_history_invest : (e, d_invest) in ed_invest};
 
@@ -1490,6 +1491,15 @@ set gd_divest_period := {(g, d) in gd_invest : (g, 'retire_period') in group__in
 set g_divest_total := {g in group_divest : (g, 'retire_total') in group__invest_method || (g, 'retire_period_total') in group__invest_method
                                                || (g, 'invest_retire_total') in group__invest_method || (g, 'invest_retire_period_total') in group__invest_method};
 set g_invest_cumulative := {g in group_invest : (g, 'cumulative_limits') in group__invest_method};
+
+# For entities with lifetime_method = 'no_investment', v_invest is allowed
+# only within the first-period lifetime window. After p_years_d[period_first]
+# + lifetime the asset retires once and the model is forbidden from
+# rebuilding — the fix_v_invest_no_investment_eq constraint below pins
+# v_invest[e, d] = 0 for these (e, d).
+set ed_invest_forbidden_no_investment := {(e, d) in ed_invest :
+    (e, 'no_investment') in entity__lifetime_method
+    && p_years_d[d] >= sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first])};
 
 param e_invest_max_total{e in entityInvest} :=
   + (if e in process then p_process[e, 'invest_max_total'])
@@ -1772,6 +1782,10 @@ param p_entity_pre_existing {e in entity, d in period_in_use} :=
   + (if (e, 'reinvest_choice') in entity__lifetime_method && e in process && p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdProcess[e, 'existing', d] * p_process[e, 'virtual_unitsize'])
   + (if (e, 'reinvest_choice') in entity__lifetime_method && e in node && not p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d])
   + (if (e, 'reinvest_choice') in entity__lifetime_method && e in node && p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d] * p_node[e, 'virtual_unitsize'])
+  + (if (e, 'no_investment') in entity__lifetime_method && e in process && not p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdProcess[e, 'existing', d])
+  + (if (e, 'no_investment') in entity__lifetime_method && e in process && p_process[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdProcess[e, 'existing', d] * p_process[e, 'virtual_unitsize'])
+  + (if (e, 'no_investment') in entity__lifetime_method && e in node && not p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d])
+  + (if (e, 'no_investment') in entity__lifetime_method && e in node && p_node[e, 'virtual_unitsize'] && p_years_d[d] < sum{d_first in period_first} (p_years_d[d_first] + edEntity_lifetime[e, d_first]) then pdNode[e, 'existing', d] * p_node[e, 'virtual_unitsize'])
 ;
 param p_entity_existing_capacity_later_solves {e in entity, d in period_in_use} :=
   + (if not p_model['solveFirst'] then sum{(e, d_history, d) in edd_history : (e, d_history) in ed_history_realized} p_entity_period_existing_capacity[e, d_history]);
@@ -3271,6 +3285,14 @@ s.t. maxInvest_entity_period {(e, d) in ed_invest_period} :  # Covers both proce
   + v_invest[e, d] * p_entity_unitsize[e]
   <=
   + ed_invest_max_period[e, d]
+;
+
+# lifetime_method = no_investment: pin v_invest to zero past the
+# first-period lifetime window. The model is free to invest during the
+# first lifetime (subject to invest_method and invest_max_period caps);
+# after that the asset retires once and cannot be rebuilt.
+s.t. fix_v_invest_no_investment_eq {(e, d) in ed_invest_forbidden_no_investment} :
+  v_invest[e, d] = 0
 ;
 
 s.t. maxDivest_entity_period {(e, d) in ed_divest_period} :  # Covers both processes and nodes
