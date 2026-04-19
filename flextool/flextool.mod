@@ -2071,7 +2071,7 @@ minimize total_cost:
 		  + sum {(p, n, sink) in process_source_sink_eff } (
 			  + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 				  * pdtProcess_slope[p, d, t]
-				  * (if p in process_unit then 1 / (p_process_sink_flow_coefficient[p, sink] * p_process_source_flow_coefficient[p, n]) else 1)
+				  * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
 			  + (if (p, 'min_load_efficiency') in process__ct_method then
 				  + ( + (if p in process_online_linear then v_online_linear[p, d, t])
 				      + (if p in process_online_integer then v_online_integer[p, d, t])
@@ -2096,7 +2096,7 @@ minimize total_cost:
 		  + sum {(p, n, sink) in process_source_sink_eff } (
 			  + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 				  * pdtProcess_slope[p, d, t]
-				  * (if p in process_unit then 1 / (p_process_sink_flow_coefficient[p, sink] * p_process_source_flow_coefficient[p, n]) else 1)
+				  * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
 			  + (if (p, 'min_load_efficiency') in process__ct_method then
 				  + ( + (if p in process_online_linear then v_online_linear[p, d, t])
 				      + (if p in process_online_integer then v_online_integer[p, d, t])
@@ -2132,7 +2132,7 @@ minimize total_cost:
 	    *
 	    ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
 		    * pdtProcess_slope[p, d, t]
-			* (if p in process_unit then 1 / ( p_process_sink_flow_coefficient[p, sink] * p_process_source_flow_coefficient[p, source]) else 1)
+			* (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, source] else 1)
           + ( if (p, 'min_load_efficiency') in process__ct_method then
 	          + ( + (if p in process_online_linear then v_online_linear[p, d, t])
 			      + (if p in process_online_integer then v_online_integer[p, d, t])
@@ -2233,7 +2233,7 @@ s.t. nodeBalance_eq {c in solve_current, n in nodeBalance, (d, t, t_previous, t_
   - sum {(p, n, sink) in process_source_sink_eff } (
       + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 	      * pdtProcess_slope[p, d, t]
-		  * (if p in process_unit then 1 / (p_process_sink_flow_coefficient[p, sink] * p_process_source_flow_coefficient[p, n]) else 1)
+		  * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
       + (if (p, 'min_load_efficiency') in process__ct_method then
 			  + ( + (if p in process_online_linear then v_online_linear[p, d, t])
 			      + (if p in process_online_integer then v_online_integer[p, d, t])
@@ -2267,7 +2267,7 @@ s.t. nodeBalancePeriod_eq {c in solve_current, n in nodeBalancePeriod, d in peri
   - sum {(p, n, sink) in process_source_sink_eff, (d, t) in dt } (
       + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 	      * pdtProcess_slope[p, d, t]
-		  * (if p in process_unit then 1 / (p_process_sink_flow_coefficient[p, sink] * p_process_source_flow_coefficient[p, n]) else 1)
+		  * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
       + (if (p, 'min_load_efficiency') in process__ct_method then
 			  + ( + (if p in process_online_linear then v_online_linear[p, d, t])
 			      + (if p in process_online_integer then v_online_integer[p, d, t])
@@ -2311,7 +2311,7 @@ s.t. nodeBalanceBlock_eq {c in solve_current, n in nodeStateBlock,
   - sum {(p, n, sink) in process_source_sink_eff, (d, b_first, t) in period_block_time} (
       ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
             * pdtProcess_slope[p, d, t]
-            * (if p in process_unit then 1 / (p_process_sink_flow_coefficient[p, sink] * p_process_source_flow_coefficient[p, n]) else 1)
+            * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
         + (if (p, 'min_load_efficiency') in process__ct_method then
             ( + (if p in process_online_linear then v_online_linear[p, d, t])
               + (if p in process_online_integer then v_online_integer[p, d, t])
@@ -2489,7 +2489,7 @@ s.t. conversion_indirect {(p, m) in process__method_indirect, (d, t) in dt} :
   =
   + sum {sink in entity : (p, sink) in process_sink && p_process_sink_flow_coefficient[p,sink] != 0}
     ( + v_flow[p, p, sink, d, t] * p_entity_unitsize[p]
-          / p_process_sink_flow_coefficient[p, sink]
+          * p_process_sink_flow_coefficient[p, sink]
     )
 	  * pdtProcess_slope[p, d, t]
   + (if (p, 'min_load_efficiency') in process__ct_method then
@@ -2623,7 +2623,7 @@ s.t. storage_usage_fix{n in n_fix_storage_usage, (d,t) in period__time_last, (d2
   + sum {(p, n, sink) in process_source_sink_eff, (d,t3) in dt} (
       + v_flow[p, n, sink, d, t3] * p_entity_unitsize[p]
         * pdtProcess_slope[p, d, t3]
-      * (if p in process_unit then 1 / (p_process_sink_flow_coefficient[p, sink] * p_process_source_flow_coefficient[p, n]) else 1)
+      * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
       + (if (p, 'min_load_efficiency') in process__ct_method then
         + ( + (if p in process_online_linear then v_online_linear[p, d, t3])
             + (if p in process_online_integer then v_online_integer[p, d, t3])
@@ -3581,7 +3581,7 @@ s.t. co2_max_period{g in group_co2_max_period, d in period_in_use} :
               ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
                   * step_duration[d, t] * p_rp_cost_weight[d, t]
                   * pdtProcess_slope[p, d, t]
-                  * (if p in process_unit then 1 / (p_process_sink_flow_coefficient[p, sink] * p_process_source_flow_coefficient[p, n]) else 1)
+                  * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
                 + ( if (p, 'min_load_efficiency') in process__ct_method then
                     + ( + (if p in process_online_linear then v_online_linear[p, d, t])
                         + (if p in process_online_integer then v_online_integer[p, d, t])
@@ -3616,7 +3616,7 @@ s.t. co2_max_total{g in group_co2_max_total} :
               ( + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
                   * step_duration[d, t] * p_rp_cost_weight[d, t]
                   * pdtProcess_slope[p, d, t]
-                  * (if p in process_unit then 1 / (p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n]) else 1)
+                  * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
                 + ( if (p, 'min_load_efficiency') in process__ct_method then
                     + ( + (if p in process_online_linear then v_online_linear[p, d, t])
                         + (if p in process_online_integer then v_online_integer[p, d, t])
@@ -3656,7 +3656,7 @@ s.t. non_sync_constraint{g in groupNonSync, (d, t) in dt} :
     + sum {(p, source, sink) in process_source_sink_eff: (g, source) in group_node && (p,g) not in process__group_inside_group_nonSync}
       ( + v_flow[p, source, sink, d, t]
 	      * pdtProcess_slope[p, d, t]
-	      * ( if p in process_unit then 1 / ( p_process_sink_flow_coefficient[p, sink] * p_process_source_flow_coefficient[p, source])
+	      * ( if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, source]
 	          else 1 )
   	    + ( if (p, 'min_load_efficiency') in process__ct_method then
 	        + ( + (if p in process_online_linear then v_online_linear[p, d, t])
@@ -3712,7 +3712,7 @@ s.t. capacityMargin {g in groupCapacityMargin, (d, t, t_previous, t_previous_wit
     ( + if (p, source, sink) in process_source_sink_eff then
         ( + v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
 	          * pdtProcess_slope[p, d, t]
-		      * 1 / (p_process_sink_flow_coefficient[p, sink] * p_process_source_flow_coefficient[p, source])
+		      * p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, source]
           + (if (p, 'min_load_efficiency') in process__ct_method then
 			  + ( + (if p in process_online_linear then v_online_linear[p, d, t])
 			      + (if p in process_online_integer then v_online_integer[p, d, t])
@@ -3748,7 +3748,7 @@ s.t. non_anticipativity_storage_use{n in nodeState, (d,b) in period__branch, (d,
         - sum {(p, n, sink) in process_source_sink_eff } (
             + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
               * pdtProcess_slope[p, d, t]
-            * (if p in process_unit then 1 / (p_process_sink_flow_coefficient[p, sink] * p_process_source_flow_coefficient[p, n]) else 1)
+            * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
             + (if (p, 'min_load_efficiency') in process__ct_method then
               + ( + (if p in process_online_linear then v_online_linear[p, d, t])
                   + (if p in process_online_integer then v_online_integer[p, d, t])
@@ -3770,7 +3770,7 @@ s.t. non_anticipativity_storage_use{n in nodeState, (d,b) in period__branch, (d,
         - sum {(p, n, sink) in process_source_sink_eff } (
             + v_flow[p, n, sink, b, t] * p_entity_unitsize[p]
               * pdtProcess_slope[p, b, t]
-            * (if p in process_unit then 1 / (p_process_sink_flow_coefficient[p, sink] * p_process_source_flow_coefficient[p, n]) else 1)
+            * (if p in process_unit then p_process_sink_flow_coefficient[p, sink] / p_process_source_flow_coefficient[p, n] else 1)
             + (if (p, 'min_load_efficiency') in process__ct_method then
               + ( + (if p in process_online_linear then v_online_linear[p, b, t])
                   + (if p in process_online_integer then v_online_integer[p, b, t])
@@ -5351,7 +5351,7 @@ param r_process__source__sink_Flow__dt{(p, source, sink) in process_source_sink_
     ( + sum {(p, source, sink2) in process_source_toSink}
         ( + v_flow[p, source, sink2, d, t].val * p_entity_unitsize[p]
 	          * pdtProcess_slope[p, d, t]
-	  		  * (if p in process_unit then 1 / (p_process_sink_flow_coefficient[p, sink2] * p_process_source_flow_coefficient[p, source]) else 1)
+	  		  * (if p in process_unit then p_process_sink_flow_coefficient[p, sink2] / p_process_source_flow_coefficient[p, source] else 1)
           + (if (p, 'min_load_efficiency') in process__ct_method then
 			  + r_process_Online__dt[p, d, t]
 			    * pdtProcess_section[p, d, t] * p_entity_unitsize[p])
