@@ -66,6 +66,9 @@ def main():
                              'Enables parallel scenario execution by isolating each run.')
     parser.add_argument('--only-first-file-per-plot', action='store_true', default=False,
                         help='Only produce the first file for each plot (quick overview mode)')
+    parser.add_argument('--use-old-raw-csv', action='store_true', default=False,
+                        help='Keep only the legacy glpsol-driven output_raw/*.csv pathway; '
+                             'skip the HiGHS → parquet extractor.')
 
     args = parser.parse_args()
     input_db_url = args.input_db_url
@@ -87,7 +90,7 @@ def main():
     timer.append(time.perf_counter())
 
     if scenario_name:
-        runner = FlexToolRunner(input_db_url, output_path, scenario_name, work_folder=work_folder)
+        runner = FlexToolRunner(input_db_url, output_path, scenario_name, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv)
         timer.insert(0, time.perf_counter())
         print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
         with open(wf / "solve_data/solve_progress.csv", "w") as solve_progress:
@@ -100,7 +103,7 @@ def main():
             solve_progress.write('Write input time,' + str(round(timer[0] - timer[1],4)) + '\n')
 
     else:
-        runner = FlexToolRunner(input_db_url, output_path, work_folder=work_folder)
+        runner = FlexToolRunner(input_db_url, output_path, work_folder=work_folder, use_old_raw_csv=args.use_old_raw_csv)
         timer.insert(0, time.perf_counter())
         print("--- Init time %.4s seconds ---" % (timer[0] - timer[1]))
         with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:

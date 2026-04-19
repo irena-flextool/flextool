@@ -194,8 +194,9 @@ class SolverRunner:
         timer_in_model_run = timer_in_model_run + timing
 
         # Phase 2: Run solver
+        highs_instance = None  # kept alive for post-phase-3 handoff extraction
         if solver == "highs":
-            self._run_highs(current_solve, highs_file, mps_file, highs_option_file, flextool_sol_file)
+            highs_instance = self._run_highs(current_solve, highs_file, mps_file, highs_option_file, flextool_sol_file)
             timing = time.perf_counter() - timer_in_model_run
             self.logger.info(f"--- Solver (HiGHS): {timing:.4f} seconds ---")
             with open(wf / "solve_data/solve_progress.csv", "a") as solve_progress:
@@ -212,7 +213,25 @@ class SolverRunner:
                 solve_progress.write(',' + str(round(timing, 4)))
             timer_in_model_run = timer_in_model_run + timing
 
-        # Phase 3: GLPSOL writes outputs
+        # Phase 3: GLPSOL writes outputs.  Still unconditional during the
+        # PoC migration.  All six solve-handoff files
+        # (``p_entity_period_existing_capacity``, ``p_entity_divested``,
+        # ``fix_storage_quantity``/``price``/``usage``,
+        # ``p_roll_continue_state``) are already re-implemented in
+        # ``flextool.process_outputs.handoff_writers`` and run AFTER
+        # phase 3 below.  What remains to retire phase 3 entirely:
+        #   1. Move Category A (``set_*``) and Category B
+        #      (``p_*``/``pd_*``/``pdt_*``/``ed_*``) printfs above
+        #      ``solve;`` in flextool.mod so they emit during phase 1
+        #      directly to ``input/`` (static content) or
+        #      ``solve_data/`` (per-solve content) instead of
+        #      ``output_raw/``.
+        #   2. Finish Category C coverage (complex duals, synthesised
+        #      duals, scalar v_obj) in ``read_highs_solution.py``.
+        #   3. Repoint ``read_parameters.py`` / ``read_sets.py`` at
+        #      ``input/`` + ``solve_data/`` instead of ``output_raw/``.
+        # See ARCHITECTURE.md "Solver outputs: folder layout" for the
+        # full plan.
         with open(wf / "solve_data/glpsol_phase.csv", 'w') as p_model_file:
             p_model_file.write("phase\nwrite\n")
 
@@ -230,6 +249,38 @@ class SolverRunner:
         if returncode != 0:
             raise FlexToolSolveError(f"glpsol output writing failed with exit code: {returncode}")
 
+        # Phase 4 (HiGHS-only): extract outputs directly from the live
+        # ``Highs`` instance.  Runs AFTER phase 3 so that:
+        #   - Category C custom writers (v_dual_node_balance with its
+        #     per-period inflation scaling) can read parameter CSVs
+        #     phase 3 produced.
+        #   - Handoff writers can read the same (unitsize, pre-existing,
+        #     inflation, period share).
+        # Phase 3 still writes its own versions of the same files —
+        # ours overwrites with values computed from the ``.sol``,
+        # acting as a live validator until phase 3 is retired.
+        if highs_instance is not None and not self.state.use_old_raw_csv:
+            from flextool.process_outputs.read_highs_solution import write_all_variables
+            from flextool.process_outputs.handoff_writers import write_all_handoffs
+            try:
+                write_all_variables(
+                    highs_instance,
+                    solve_name=current_solve,
+                    output_dir=wf / "output_raw",
+                    realized_dispatch_csv=wf / "solve_data/realized_dispatch.csv",
+                    realized_periods_csv=wf / "solve_data/realized_invest_periods_of_current_solve.csv",
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning(f"parquet variable extraction failed: {exc}")
+            try:
+                write_all_handoffs(
+                    highs_instance,
+                    solve_name=current_solve,
+                    work_folder=wf,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning(f"handoff writers failed: {exc}")
+
         return returncode
 
     def _run_highs(
@@ -239,8 +290,13 @@ class SolverRunner:
         mps_file: str,
         highs_option_file: str,
         flextool_sol_file: str,
-    ) -> None:
-        """Run HiGHS solver on an MPS file via highspy Python API."""
+    ) -> "highspy.Highs":
+        """Run HiGHS solver on an MPS file via highspy Python API.
+
+        Returns the live ``Highs`` instance so the caller (still inside
+        ``_run_highs_or_cplex``) can run the post-phase-3 handoff
+        extraction without re-reading the model.
+        """
         wf = self.state.paths.work_folder
         h = highspy.Highs()
 
@@ -300,6 +356,17 @@ class SolverRunner:
         # write_solution_to_file / solution_file options from highs.opt.
         h.writeSolution(flextool_sol_file, solution_style)
         self.logger.info("HiGHS solved the problem")
+
+        # NOTE: parquet extraction moved out of this method — it now runs
+        # AFTER phase 3 inside ``_run_highs_or_cplex`` so that the
+        # Category C custom writers (v_dual_node_balance, CO2 duals)
+        # can read the parameter CSVs phase 3 produces.  The live
+        # ``Highs`` instance is returned so the caller can do the
+        # extraction at the right point.
+        #
+        # HiGHS-only by construction — only ``_run_highs`` creates a
+        # ``Highs`` instance.  CPLEX takes a different path.
+        return h
 
     @staticmethod
     def _parse_highs_option(value: str) -> int | float | str:

@@ -28,7 +28,7 @@ class FlexToolRunner:
     See ``flextool.flextoolrunner.__init__`` docstring for a full module navigation guide.
     """
 
-    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None):
+    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, bin_dir=None, root_dir=None, work_folder=None, use_old_raw_csv=False):
         try:
             logger = logging.getLogger(__name__)
             # Resolve work_folder: default to cwd for backward compatibility
@@ -80,7 +80,10 @@ class FlexToolRunner:
             timeline.create_timeline_from_timestep_duration()
 
             # Assemble RunnerState — the single cross-cutting state container
-            self.state = RunnerState(paths=paths, solve=solve, timeline=timeline, logger=logger)
+            self.state = RunnerState(
+                paths=paths, solve=solve, timeline=timeline, logger=logger,
+                use_old_raw_csv=use_old_raw_csv,
+            )
         except FlexToolError:
             sys.exit(-1)
 

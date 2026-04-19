@@ -172,6 +172,9 @@ I/O Layer:
   read_parameters.py             Reads p_*.csv → SimpleNamespace par
   read_sets.py                   Reads s_*.csv → SimpleNamespace s
   read_flextool_outputs.py       Backward-compat shim
+  read_highs_solution.py         Direct HiGHS → parquet extractor
+                                 (bypass for variable/dual CSV writes —
+                                 see "Solver outputs" section below)
 
 Post-processing Calculations:
   drop_levels.py                 Strips 'solve' level from time-indexed objects
@@ -362,6 +365,203 @@ from flextool.helpers import compare_files, find_largest_numbers, parse_mps_to_m
    │  → comparison Excel  │
    └──────────────────────┘
 ```
+
+## Solver outputs: folder layout and two parallel pathways
+
+**Folder convention** (the direction we're migrating toward):
+
+- **`input/`** — files that do NOT change between solves in a single
+  model run.  Written once up front by the Python input writer
+  (entity definitions, parameters, sets that are pure input).
+- **`solve_data/`** — files that DO change between solves (rolling
+  window / nested / stochastic branches).  Written freshly for each
+  solve.  Includes time-dependent parameters, the six solve-to-solve
+  handoff files, and — once phase 3 retires — also the solver-output
+  parquet files (variables / duals per solve).
+- **`output/`** — user-facing aggregated outputs (Excel, parquet
+  summaries, plots) produced by `write_outputs` after the solve loop
+  completes.
+
+- **`output_raw/`** — TRANSITIONAL.  Phase 3 still writes ~140 CSVs
+  here; the new HiGHS → parquet pathway also writes here for now.
+  Target state: gone.  Its contents get redistributed to the above
+  three folders.
+
+`glpsol` is invoked **twice** per solve:
+
+- **Phase 1** — `--check --wfreemps flextool.mps`.  Reads the model +
+  input CSVs and writes the MPS file.  This stays.  *Anything the
+  model can compute before `solve;` — including all Category B
+  parameters below — can be printf-written in this phase, eliminating
+  the need to re-run glpsol after the solver.*
+- **Phase 3** — runs AFTER HiGHS has solved, re-reads the model + the
+  `.sol`, and executes all the `printf` statements at the end of
+  `flextool.mod`.  This is what the new pathway is retiring.
+
+Two pathways currently run in parallel after the solver returns:
+
+1. **Legacy GLPSOL phase 3** — produces ~140 CSVs.  Per-file audit
+   (see the classification appendix in the git history of this file;
+   counts vary slightly by scenario):
+
+   - **Category A — pure input dumps** (~76 files, all `set_*.csv`).
+     Same content as the corresponding `input/` file.  Belongs in
+     `input/` (one-time write) and the Python readers should look
+     there, not in `output_raw/`.
+   - **Category B — model-derived pre-solve** (~57 files: `p_*`,
+     `pd_*`, `pdt_*`, `ed_*`).  Computed by GMPL `param := ...`
+     declarations BEFORE `solve;`.  Split by update cadence:
+     * time-indexed / period-indexed parameters that change each
+       solve (e.g. `pdtProcess_slope`, `pdt_commodity_price` slices)
+       → `solve_data/`.
+     * static derivations (e.g. `p_entity_unitsize`,
+       `ed_entity_annuity`, entity-level financial constants) →
+       `input/` (written once on the first solve, unchanged after).
+     Either way, moving the printfs above `solve;` in `flextool.mod`
+     lets phase 1 produce them — no Python re-derivation required.
+   - **Category C — solver-derived outputs** (~34 files: `v_*`,
+     `vq_*`, `v_dual_*`, `v_obj`).  Require a solver run.  Go in
+     `solve_data/` (per-solve) as parquet once phase 3 retires.  Most
+     already covered by `VARIABLE_SPECS` in `read_highs_solution.py`;
+     remaining: complex duals (`v_dual_node_balance` with inflation
+     transform, `v_dual_reserve_balance`, CO2 duals with `/1000`),
+     synthesised duals (`v_dual_invest_unit/_connection/_node`),
+     scalar `v_obj`.
+
+   The six solve-to-solve handoff CSVs are already written to
+   `solve_data/` — they belong there by the convention above.  See
+   the "Solve-to-solve handoff" subsection below.
+
+2. **HiGHS → parquet** (new) — `flextool/process_outputs/read_highs_solution.py`
+   reads variable names and solution arrays directly from the live
+   `highspy.Highs` instance and writes one parquet file per
+   `VariableSpec` entry in `VARIABLE_SPECS` (see the module docstring).
+   Covers the ~26 "simple" variable and dual outputs (v_flow, v_state,
+   v_ramp, v_reserve, v_online/startup/shutdown_{linear,integer},
+   v_invest, v_divest, v_angle, vq_*, and the six period-only
+   investment-cap duals).  Written in wide layout via
+   `flextool.lean_parquet.write_lean_parquet` so the on-disk MultiIndex
+   round-trips exactly and downstream code can load each file with
+   `read_lean_parquet(path)` (same shape as `read_variables.v.*`).
+
+   **HiGHS-only by construction** — the hook lives inside
+   `solver_runner._run_highs` and reads the live `Highs` instance's
+   `getSolution()`.  CPLEX takes a different code path; the hook cannot
+   fire for CPLEX until someone verifies that the CPLEX → glpsol-format
+   `.sol` round-trip preserves the same `col_value` / `row_dual`
+   semantics.
+
+The `--use-old-raw-csv` CLI flag on `run_flextool.py` disables the
+new extractor (falls back to the pure-glpsol pathway) and is the
+documented fallback while parquet coverage grows.
+
+### Solve-to-solve handoff
+
+These six files are written by phase 3 and read again by `flextool.mod`
+on the *next* solve.  All six are now also written from the live
+`Highs` instance by
+`flextool.process_outputs.handoff_writers.write_all_handoffs`, called
+AFTER phase 3 inside `solver_runner._run_highs_or_cplex`.  The
+Python writer's output matches phase 3's byte-for-byte (verified
+end-to-end on `wind_battery_invest`,
+`multi_fullYear_battery_nested_24h_invest_one_solve`, `fullYear_roll`,
+and `network_all_tech`; see `tests/test_handoff_writers.py`).
+
+| File | Contains | `.sol` source |
+|---|---|---|
+| `solve_data/p_entity_period_existing_capacity.csv` | Cumulative capacity carried forward | `v_invest[e,d]` × unitsize, accumulated with prior file |
+| `solve_data/p_entity_divested.csv` | Cumulative divestments | `v_divest[e,d]` × unitsize, summed across periods, plus prior |
+| `solve_data/fix_storage_quantity.csv` | Storage state at boundary | `v_state[n,d,t]` × unitsize at fix-storage steps |
+| `solve_data/fix_storage_price.csv` | Shadow price at boundary | `−nodeBalance_eq.dual / inflation × period_share / scale` |
+| `solve_data/fix_storage_usage.csv` | Net flow through storage node | `(outflow − inflow) × step_duration`; outflow/inflow = `v_flow × unitsize` summed across connected processes.  Simplified formula — exact for method_nvar and simple method_1var_per_way; approximate when processes attached to the storage node use min_load_efficiency or non-unity unit coefficients |
+| `solve_data/p_roll_continue_state.csv` | State at last realized step | `v_state[n,d,t]` × unitsize at last realized timestep |
+
+For now `handoff_writers` reads Category-B parameters (unitsize,
+pre-existing, inflation, period-share) from `output_raw/` — i.e. from
+what phase 3 just wrote.  This is intentional during the transition:
+phase 3 still runs unconditionally, and the Python writer overwrites
+its output with values computed directly from the `.sol`, acting as a
+live validator.  Once the Category B printfs move above `solve;` in
+`flextool.mod`, `handoff_writers` will switch its parameter source to
+`input/` + `solve_data/` (per the update-cadence split above) and
+`output_raw/` can be dropped.
+
+### Update cadence — where each printf should land
+
+Combining Category A/B with a trace of each file's transitive
+dependencies against `solve_data/*.csv` reads:
+
+**Write-once (target: `input/`) — 76 files, depend only on
+`input/` data.**  All the entity / node / process / commodity / group
+sets (~36) and the static parameter dumps already gated by `if
+p_model['solveFirst']` in `flextool.mod` (~40: `p_node`, `p_unit`,
+`p_connection`, `p_entity_unitsize`, `p_entity_{all_existing,pre_existing,max_units}`,
+the process coefficient / capacity parameters, `p_commodity_co2_content`,
+`p_reserve_upDown_group_penalty`, `group_entity_invest`,
+`set_process_{VRE,source_sink}`, `set_enable_optional_outputs`, …).
+
+**Write-per-solve (target: `solve_data/`) — ~33 files, depend on at
+least one `solve_data/*.csv` (typically `steps_in_use.csv` → `dt`,
+`period_first_of_solve.csv`, `p_years_represented.csv`, or
+`realized_dispatch.csv`).**
+
+| Group | Representative files |
+|---|---|
+| Solver variables / duals (Cat. C) (~20) | `v_flow`, `v_ramp`, `v_reserve`, `v_state`, `v_{online,startup,shutdown}_{linear,integer}`, `v_angle`, `v_dual_node_balance`, `vq_state_{up,down}`, `vq_{reserve,inertia,non_synchronous,state_up_group}`, `v_obj` |
+| Solve-specific derived params (~13) | `p_step_duration`, `p_rp_cost_weight`, `p_flow_{min,max}`, `pdtProcess_{slope,section,availability,source_sink_varCost}`, `pdtNode_{self_discharge_loss,penalty_up,penalty_down}`, `pdtNodeInflow`, `entity_all_capacity` |
+| Period-scoped (~10) | `v_invest`, `v_divest`, `vq_capacity_margin`, `ed_entity_{annuity,annual_discounted,annual_divest_discounted}`, `p_inflation_factor_{operations,investment}_yearly`, `{node,group}_capacity_for_scaling`, `complete_period_share_of_year` |
+| Solve-state sets (~10) | `set_period`, `set_d_{realize_invest,realize_dispatch_or_invest,realized_period}`, `set_dt{,t,ttdt,_realize_dispatch,_fix_storage_timesteps}`, `set_period_{in_use,first_of_solve,__time_first}`, `timeline_breaks` |
+| Per-entity invest sets (3) | `set_ed_invest`, `set_ed_divest`, `set_edd_invest` |
+
+Plus the **six solve-to-solve handoff files** already in
+`solve_data/` (handoff subsection above).
+
+### Retiring phase 3
+
+The three steps below, in order, remove the need for the second
+`glpsol` invocation on HiGHS runs:
+
+1. **Move the 76 write-once printfs above `solve;`** in
+   `flextool.mod`, redirected at `input/`.  No Python work — phase 1
+   already runs the param/set derivations, so it just needs to emit
+   them before hitting `solve;`.  Guard with `if p_model['solveFirst']`
+   so only the first solve writes them.
+2. **Move the ~13 write-per-solve derived-parameter printfs above
+   `solve;`** (the derived-parameter subset — everything in the
+   write-per-solve list EXCEPT the ~20 solver-output `v_*`/`vq_*`/
+   `v_dual_*` group and the per-entity invest sets), redirected at
+   `solve_data/`.  Phase 1 runs every solve, so this correctly
+   re-emits them with the current solve's active periods.
+3. **Finish Category C coverage in `read_highs_solution.py`** — DONE.
+   Coverage for all solver-dependent outputs the downstream pipeline
+   reads, via ``VARIABLE_SPECS`` and a set of custom writers:
+
+   | Output | Pathway |
+   |---|---|
+   | `v_flow`, `v_ramp`, `v_reserve`, `v_state`, `v_online/startup/shutdown_{linear,integer}`, `v_angle`, `v_invest`, `v_divest`, `vq_*` | `VARIABLE_SPECS` — wide parquet per solve |
+   | `v_dual_maxInvest_{period,total}`, `v_dual_maxCumulative`, `v_dual_maxInvestGroup_{period,total,cumulative}` | `VARIABLE_SPECS` — `source="row_dual"`, `value_scale=1e6` |
+   | `v_dual_co2_max_{period,total}` | `VARIABLE_SPECS` — the `total` variant is the first use of `has_period=False` |
+   | `v_obj` | `write_v_obj` — `h.getObjectiveValue() * 1e6`, scalar-per-solve |
+   | `v_dual_invest_{unit,connection,node}` | `write_v_dual_invest_by_class` — `source="col_dual"` on `v_invest`, split by entity class loaded from `input/{process_unit,process_connection,node}.csv` |
+   | `v_dual_node_balance` | `write_v_dual_node_balance` — `source="row_dual"` on `nodeBalance_eq` with `leading_ignore=1` (skip `c`) + `trailing_ignore=4` (skip `tp, tpwt, dp, tpws`), then `× −1e6 / inflation[period]` |
+   | `v_dual_reserve_balance` | `write_v_dual_reserve_balance` — `reserveBalance_timeseries_eq` row duals aggregated across `method` level then `× period_share / inflation`.  **Simplified** — treats the model formula as if only the `timeseries_only` method were active.  Groups using `dynamic` or `n_1` reserve methods will be under-reported until the full `max()` of three constraints is ported. |
+   | `nodeBalanceBlock_eq` aggregation for block-storage nodes (used in representative-period scenarios) | **NOT YET** in `write_v_dual_node_balance` — `nodeStateBlock` nodes see zeroes until ported |
+
+   All solver-output files validated end-to-end against phase 3 on
+   `multi_year_wind_growth_cap`, `test_a_lot`, `wind_battery_invest`,
+   and `network_all_tech` — match within `%.8g` CSV format precision.
+
+After steps 1-3, repoint `read_parameters.py` / `read_sets.py` at
+`input/` + `solve_data/` instead of `output_raw/`, and phase 3 can be
+removed from `solver_runner` for HiGHS.  `output_raw/` becomes empty
+and the directory can be deleted.
+
+### Extension pattern
+
+To add a new variable or dual to the parquet pipeline, append a
+`VariableSpec(name, col_names, has_time, is_dual, value_scale,
+output_name)` to `VARIABLE_SPECS` in `read_highs_solution.py`.  No code
+changes elsewhere.
 
 ## Key Architectural Patterns
 

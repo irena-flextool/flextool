@@ -55,9 +55,14 @@ def write_lean_parquet(
         else:
             info["idx"] = [df.index.name]
 
-    # Record column-MultiIndex level names.
+    # Record column index level names.  For a MultiIndex we store the
+    # full list; for a plain single-level ``Index`` we store the single
+    # ``.name`` under a distinct key so the old MultiIndex reconstruction
+    # path is untouched.  ``None`` names are skipped (nothing to restore).
     if isinstance(df.columns, pd.MultiIndex):
         info["col"] = list(df.columns.names)
+    elif df.columns.name is not None:
+        info["col_name"] = df.columns.name
 
     # Swap the bulky pandas blob for our compact one.
     meta = dict(table.schema.metadata or {})
@@ -123,5 +128,12 @@ def read_lean_parquet(path: str | Path) -> pd.DataFrame:
         df.columns = pd.MultiIndex.from_tuples(
             tuples, names=col_level_names,
         )
+    else:
+        # Single-level column Index — restore the ``.name`` if one was
+        # recorded at write time.  Only touches files that actually carry
+        # the ``col_name`` field, so older parquets are unaffected.
+        single_col_name = info.get("col_name")
+        if single_col_name is not None:
+            df.columns.name = single_col_name
 
     return df

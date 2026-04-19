@@ -71,3 +71,9 @@ class RunnerState:
     solve: SolveConfig
     timeline: TimelineConfig
     logger: logging.Logger
+    # When True, keep only the legacy glpsol-phase-3 CSV output pathway
+    # (``output_raw/*.csv``) and skip the HiGHS → parquet extractor.  When
+    # False (default) the parquet extractor runs alongside glpsol phase 3
+    # during the PoC migration; glpsol phase 3 will itself be made optional
+    # once variable coverage is complete.
+    use_old_raw_csv: bool = False
