@@ -614,9 +614,9 @@ def _compute_time_plan(
     # Build effective_plots with item splitting, tracking which sub-value
     # each chunk came from so we can reconstruct full df_fm column tuples
     # later (see _encode_column_selector).
-    from flextool.plot_outputs.subplot_helpers import _get_unique_levels
+    from flextool.plot_outputs.subplot_helpers import _get_unique_levels, _sort_subs
     if fm_subplot_levels:
-        subs_for_iter = _get_unique_levels(df_fm.columns, fm_subplot_levels)
+        subs_for_iter = _sort_subs(_get_unique_levels(df_fm.columns, fm_subplot_levels))
     else:
         subs_for_iter = [None]
     effective_plots = []
@@ -769,7 +769,9 @@ def _compute_bar_plan(
     creating matplotlib Figures.
     """
     from flextool.plot_outputs.plot_bars import _compute_bar_layout
-    from flextool.plot_outputs.subplot_helpers import _get_unique_levels, _extract_subplot_data
+    from flextool.plot_outputs.subplot_helpers import (
+        _get_unique_levels, _extract_subplot_data, _sort_subs,
+    )
     from flextool.plot_outputs.legend_helpers import build_shared_color_map, _format_legend_labels
 
     sub_levels = fm_subplot_levels or []
@@ -787,7 +789,7 @@ def _compute_bar_plan(
         expand_axis_level_names = [df_fm.columns.name] if expand_axis_levels else []
         grouped_bar_level_names = [df_fm.columns.name] if grouped_bar_levels else []
 
-    subs = _get_unique_levels(df_fm.columns, sub_levels)
+    subs = _sort_subs(_get_unique_levels(df_fm.columns, sub_levels))
 
     # Compute expand-group count
     if expand_axis_levels and isinstance(df_fm.columns, pd.MultiIndex):

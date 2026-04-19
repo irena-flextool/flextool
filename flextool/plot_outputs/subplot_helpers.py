@@ -66,6 +66,29 @@ def _calculate_grid_layout(n_subs: int, subplots_per_row: int) -> tuple[int, int
     return n_rows, n_cols
 
 
+def _sort_subs(subs: list) -> list:
+    """Return subplot identifiers sorted alphabetically (case-insensitive).
+
+    Handles the three shapes :func:`_get_unique_levels` may return:
+
+    * ``[None]`` — a single un-split subplot; returned as-is.
+    * list of scalars — sorted by lowercased string form.
+    * list of tuples — sorted element-wise by lowercased string form so
+      multi-level subplot titles order like "a | x", "a | y", "b | x".
+
+    Used wherever subplot identifiers drive the final display order (both
+    the viewer's PlotPlan and the PNG builders) so the two render paths
+    agree.
+    """
+    def key(sub):
+        if sub is None:
+            return ("",)
+        if isinstance(sub, tuple):
+            return tuple(str(v).lower() for v in sub)
+        return (str(sub).lower(),)
+    return sorted(subs, key=key)
+
+
 def _get_unique_levels(df_columns: pd.Index, level_indices: list) -> list:
     """Return unique subplot values from DataFrame column index.
 

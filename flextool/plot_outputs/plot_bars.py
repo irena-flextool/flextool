@@ -14,6 +14,7 @@ from flextool.plot_outputs.axis_helpers import (
 )
 from flextool.plot_outputs.subplot_helpers import (
     BarLayoutParams, _calculate_grid_layout, _get_unique_levels, _extract_subplot_data,
+    _sort_subs,
 )
 from flextool.plot_outputs.plot_bars_detail import (
     _plot_grouped_bars, _plot_stacked_bars, _plot_simple_bars,
@@ -967,7 +968,7 @@ def build_bar_figures(
         expand_axis_level_names = [df.columns.name] if expand_axis_levels else []
         grouped_bar_level_names = [df.columns.name] if grouped_bar_levels else []
 
-    subs = _get_unique_levels(df.columns, sub_levels)
+    subs = _sort_subs(_get_unique_levels(df.columns, sub_levels))
 
     # Compute expand-group count
     if expand_axis_levels and isinstance(df.columns, pd.MultiIndex):
@@ -1252,7 +1253,7 @@ def plot_rowbars_stack_groupbars(df, key_name, plot_dir, stack_levels, expand_ax
         grouped_bar_level_names = [df.columns.name] if grouped_bar_levels else []
 
     # Handle empty sub_levels (single plot, no subplotting)
-    subs = _get_unique_levels(df.columns, sub_levels)
+    subs = _sort_subs(_get_unique_levels(df.columns, sub_levels))
 
     # Compute expand-group count so max_items_per_plot accounts for total bars
     # (each row item produces n_expand_groups visual bars)

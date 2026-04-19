@@ -111,7 +111,8 @@ def _build_effective_plots(df_plot, sub_levels, item_level_names,
     by order-of-magnitude of their max absolute value (within each 'u'
     subplot group) and each magnitude bucket becomes its own subplot.
     """
-    subs = _get_unique_levels(df_plot.columns, sub_levels)
+    from flextool.plot_outputs.subplot_helpers import _sort_subs
+    subs = _sort_subs(_get_unique_levels(df_plot.columns, sub_levels))
     effective_plots = []
     for sub in subs:
         df_sub = _extract_subplot_data(df_plot, sub, sub_levels)
