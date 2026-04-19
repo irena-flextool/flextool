@@ -352,6 +352,56 @@ def migrate_database(database_path, up_to: int | None = None):
                     "Renamed coefficient → flow_coefficient; added "
                     "max_capacity_coefficient and min_capacity_coefficient "
                     "on unit__inputNode and unit__outputNode")
+            elif next_version == 36:
+                # Backfill v35: preserve the OLD coefficient behaviour for
+                # existing databases where coefficient was set to a non-
+                # default value. The old formulas were:
+                #   sink (unit__outputNode): v_flow ≤ online × coef
+                #     → new:  max_capacity_coefficient = coef
+                #   source (unit__inputNode): v_flow × coef ≤ online
+                #                           ⇔ v_flow ≤ online / coef
+                #     → new:  max_capacity_coefficient = 1 / coef
+                # For min-load the coefficient scaled both sides the same
+                # way, so min_capacity_coefficient = coef on both classes
+                # preserves behaviour.
+                # Only entities whose flow_coefficient was *explicitly set*
+                # are affected; those relying on the default 1.0 already
+                # get max/min = 1.0 from the defaults introduced in v35.
+                parameter_values = db.mapped_table("parameter_value")
+                for cls in ("unit__outputNode", "unit__inputNode"):
+                    existing = list(db.find_parameter_values(
+                        entity_class_name=cls,
+                        parameter_definition_name="flow_coefficient"))
+                    for pv in existing:
+                        try:
+                            coef = float(pv["parsed_value"])
+                        except (TypeError, ValueError):
+                            continue
+                        # Skip default-valued rows — backfill is a no-op.
+                        if coef == 1.0:
+                            continue
+                        if cls == "unit__outputNode":
+                            max_cap = coef
+                        else:
+                            max_cap = (1.0 / coef) if coef != 0 else 0.0
+                        min_cap = coef
+                        for pname, pval in (("max_capacity_coefficient", max_cap),
+                                            ("min_capacity_coefficient", min_cap)):
+                            value, vtype = to_database(pval)
+                            db.add_update_item(
+                                "parameter_value",
+                                entity_class_name=cls,
+                                entity_byname=pv["entity_byname"],
+                                parameter_definition_name=pname,
+                                alternative_name=pv["alternative_name"],
+                                value=value, type=vtype)
+                try:
+                    db.commit_session(
+                        "Backfilled max_capacity_coefficient and "
+                        "min_capacity_coefficient from flow_coefficient for "
+                        "entities where flow_coefficient ≠ 1.0")
+                except SpineDBAPIError:
+                    pass
             else:
                 print("Version invalid")
             next_version += 1
