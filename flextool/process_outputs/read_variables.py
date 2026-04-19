@@ -17,9 +17,11 @@ otherwise the CSV pathway.
 """
 from types import SimpleNamespace
 from pathlib import Path
+from typing import Sequence
 import pandas as pd
 
 from flextool.lean_parquet import read_lean_parquet
+from flextool.process_outputs.read_highs_solution import empty_variable_frame
 
 
 def read_variables(output_dir):
@@ -52,13 +54,27 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
     """
     v = SimpleNamespace()
 
-    def _read(name: str) -> pd.DataFrame:
+    def _read(
+        name: str,
+        col_names: Sequence[str],
+        *,
+        has_period: bool = True,
+        has_time: bool = True,
+    ) -> pd.DataFrame:
         # Concatenate every per-solve parquet for this variable.  Parquet
         # carries full float64 precision; no rounding is applied — that
         # belongs only at the final user-facing CSV write boundary.
+        #
+        # When no parquet exists (writer was never called for this variable),
+        # fall back to a typed empty frame via ``empty_variable_frame`` so
+        # downstream calc code still sees the expected ``columns.name`` /
+        # row-index ``names``.
         parts = sorted(parquet_dir.glob(f"{name}__*.parquet"))
         if not parts:
-            return pd.DataFrame()
+            return empty_variable_frame(
+                solve_name="", col_names=col_names,
+                has_period=has_period, has_time=has_time,
+            )
         frames = [read_lean_parquet(p) for p in parts]
         # Drop frames that came back entirely empty (0 rows AND 0 columns);
         # concatenating them in would widen the index dtype to object.
@@ -76,40 +92,43 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
             )
         return out.fillna(0.0)
 
-    v.obj = _read("v_obj")
-    v.flow = _read("v_flow")
-    v.ramp = _read("v_ramp")
-    v.reserve = _read("v_reserve")
-    v.state = _read("v_state")
-    v.online_linear = _read("v_online_linear")
-    v.startup_linear = _read("v_startup_linear")
-    v.shutdown_linear = _read("v_shutdown_linear")
-    v.online_integer = _read("v_online_integer")
-    v.startup_integer = _read("v_startup_integer")
-    v.shutdown_integer = _read("v_shutdown_integer")
-    v.q_state_up = _read("vq_state_up")
-    v.q_state_down = _read("vq_state_down")
-    v.q_reserve = _read("vq_reserve")
-    v.q_inertia = _read("vq_inertia")
-    v.q_non_synchronous = _read("vq_non_synchronous")
-    v.q_state_up_group = _read("vq_state_up_group")
-    v.q_capacity_margin = _read("vq_capacity_margin")
-    v.invest = _read("v_invest")
-    v.divest = _read("v_divest")
-    v.dual_node_balance = _read("v_dual_node_balance")
-    v.dual_reserve_balance = _read("v_dual_reserve__upDown__group__period__t")
-    v.angle = _read("v_angle")
-    v.dual_invest_unit = _read("v_dual_invest_unit")
-    v.dual_invest_connection = _read("v_dual_invest_connection")
-    v.dual_invest_node = _read("v_dual_invest_node")
-    v.dual_maxInvest_period = _read("v_dual_maxInvest_period")
-    v.dual_maxInvest_total = _read("v_dual_maxInvest_total")
-    v.dual_maxCumulative = _read("v_dual_maxCumulative")
-    v.dual_maxInvestGroup_period = _read("v_dual_maxInvestGroup_period")
-    v.dual_maxInvestGroup_total = _read("v_dual_maxInvestGroup_total")
-    v.dual_maxInvestGroup_cumulative = _read("v_dual_maxInvestGroup_cumulative")
-    v.dual_co2_max_period = _read("v_dual_co2_max_period")
-    v.dual_co2_max_total = _read("v_dual_co2_max_total")
+    v.obj = _read("v_obj", ("objective",), has_period=False, has_time=False)
+    v.flow = _read("v_flow", ("process", "source", "sink"))
+    v.ramp = _read("v_ramp", ("process", "source", "sink"))
+    v.reserve = _read("v_reserve", ("process", "reserve", "updown", "node"))
+    v.state = _read("v_state", ("node",))
+    v.online_linear = _read("v_online_linear", ("process",))
+    v.startup_linear = _read("v_startup_linear", ("process",))
+    v.shutdown_linear = _read("v_shutdown_linear", ("process",))
+    v.online_integer = _read("v_online_integer", ("process",))
+    v.startup_integer = _read("v_startup_integer", ("process",))
+    v.shutdown_integer = _read("v_shutdown_integer", ("process",))
+    v.q_state_up = _read("vq_state_up", ("node",))
+    v.q_state_down = _read("vq_state_down", ("node",))
+    v.q_reserve = _read("vq_reserve", ("reserve", "updown", "node_group"))
+    v.q_inertia = _read("vq_inertia", ("group",))
+    v.q_non_synchronous = _read("vq_non_synchronous", ("group",))
+    v.q_state_up_group = _read("vq_state_up_group", ("group",))
+    v.q_capacity_margin = _read("vq_capacity_margin", ("group",), has_time=False)
+    v.invest = _read("v_invest", ("entity",), has_time=False)
+    v.divest = _read("v_divest", ("entity",), has_time=False)
+    v.dual_node_balance = _read("v_dual_node_balance", ("node",))
+    v.dual_reserve_balance = _read(
+        "v_dual_reserve__upDown__group__period__t",
+        ("reserve", "updown", "node_group"),
+    )
+    v.angle = _read("v_angle", ("node",))
+    v.dual_invest_unit = _read("v_dual_invest_unit", ("unit",), has_time=False)
+    v.dual_invest_connection = _read("v_dual_invest_connection", ("connection",), has_time=False)
+    v.dual_invest_node = _read("v_dual_invest_node", ("node",), has_time=False)
+    v.dual_maxInvest_period = _read("v_dual_maxInvest_period", ("entity",), has_time=False)
+    v.dual_maxInvest_total = _read("v_dual_maxInvest_total", ("entity",), has_time=False)
+    v.dual_maxCumulative = _read("v_dual_maxCumulative", ("entity",), has_time=False)
+    v.dual_maxInvestGroup_period = _read("v_dual_maxInvestGroup_period", ("group",), has_time=False)
+    v.dual_maxInvestGroup_total = _read("v_dual_maxInvestGroup_total", ("group",), has_time=False)
+    v.dual_maxInvestGroup_cumulative = _read("v_dual_maxInvestGroup_cumulative", ("group",), has_time=False)
+    v.dual_co2_max_period = _read("v_dual_co2_max_period", ("group",), has_time=False)
+    v.dual_co2_max_total = _read("v_dual_co2_max_total", ("group",), has_period=False, has_time=False)
 
     # ``group_entity_invest`` is a static map (solveFirst-only) written
     # during phase 1 directly to ``input/`` — same as the CSV pathway.

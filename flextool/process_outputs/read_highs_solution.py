@@ -270,6 +270,65 @@ def _name_regex(var_name: str) -> re.Pattern[str]:
     return re.compile(rf"^{re.escape(var_name)}\[(.+)\]$")
 
 
+def _row_index_names(*, has_period: bool, has_time: bool) -> list[str]:
+    if not has_period:
+        return ["solve"]
+    if has_time:
+        return ["solve", "period", "time"]
+    return ["solve", "period"]
+
+
+def _empty_columns(col_names: Sequence[str]) -> pd.Index:
+    if len(col_names) >= 2:
+        return pd.MultiIndex.from_tuples([], names=list(col_names))
+    return pd.Index([], name=col_names[0])
+
+
+def empty_variable_frame(
+    solve_name: str,
+    col_names: Sequence[str],
+    *,
+    has_period: bool = True,
+    has_time: bool = True,
+    realized_dt: set[tuple[str, str]] | None = None,
+    realized_p: set[str] | None = None,
+) -> pd.DataFrame:
+    """Same-shape empty frame: full ``(solve, period[, time])`` row index, zero columns.
+
+    Built so downstream pandas ops (``DataFrame.mul(axis=1, level=0)``)
+    don't see a ``(0, 0)`` operand on one side and a populated row index
+    on the other.  Construction is a single ``DataFrame`` call — no
+    Python loops over rows, just a pre-built MultiIndex from the
+    realized dispatch / period sets.
+
+    ``realized_dt`` and ``realized_p`` are pre-loaded sets (use
+    :func:`_load_realized_set` / :func:`_load_realized_periods` if
+    starting from a CSV).
+    """
+    row_index_names = _row_index_names(has_period=has_period, has_time=has_time)
+    empty_cols = _empty_columns(col_names)
+
+    if has_period and has_time and realized_dt is not None:
+        rows = pd.MultiIndex.from_tuples(
+            [(solve_name, d, t) for (d, t) in realized_dt],
+            names=row_index_names,
+        )
+    elif has_period and not has_time and realized_p is not None:
+        rows = pd.MultiIndex.from_tuples(
+            [(solve_name, d) for d in realized_p],
+            names=row_index_names,
+        )
+    elif not has_period:
+        rows = pd.Index([solve_name], name=row_index_names[0])
+    else:
+        if len(row_index_names) == 1:
+            rows = pd.Index([], name=row_index_names[0])
+        else:
+            rows = pd.MultiIndex.from_tuples([], names=row_index_names)
+
+    return pd.DataFrame(index=rows, columns=empty_cols, dtype=float)
+
+
 def extract_variable(
     h: "highspy.Highs",
     name: str,
@@ -346,12 +405,7 @@ def extract_variable(
         if (has_period and not has_time) else None
     )
 
-    if not has_period:
-        row_index_names = ["solve"]
-    elif has_time:
-        row_index_names = ["solve", "period", "time"]
-    else:
-        row_index_names = ["solve", "period"]
+    row_index_names = _row_index_names(has_period=has_period, has_time=has_time)
 
     # Flat accumulators → one DataFrame + one pivot at the end.  Cheaper
     # than building nested dicts for the typical tens-of-thousands-of-vars
@@ -403,35 +457,11 @@ def extract_variable(
     # fabricate the same ``(solve, period[, time])`` row index here using
     # the realized-dispatch data the caller already pointed us at.
     if not vals:
-        if len(col_names) >= 2:
-            empty_cols: pd.Index = pd.MultiIndex.from_tuples([], names=list(col_names))
-        else:
-            empty_cols = pd.Index([], name=col_names[0])
-
-        row_keys_synth: list[tuple] = []
-        if has_period and has_time and realized_dt is not None:
-            row_keys_synth = [(solve_name, d, t) for (d, t) in realized_dt]
-        elif has_period and not has_time and realized_p is not None:
-            row_keys_synth = [(solve_name, d) for d in realized_p]
-        elif not has_period:
-            row_keys_synth = [(solve_name,)]
-
-        if not row_keys_synth:
-            if len(row_index_names) == 1:
-                empty_rows: pd.Index = pd.Index([], name=row_index_names[0])
-            else:
-                empty_rows = pd.MultiIndex.from_tuples([], names=row_index_names)
-            return pd.DataFrame(index=empty_rows, columns=empty_cols, dtype=float)
-
-        if len(row_index_names) == 1:
-            rows = pd.Index(
-                [k[0] for k in row_keys_synth], name=row_index_names[0],
-            )
-        else:
-            rows = pd.MultiIndex.from_tuples(
-                row_keys_synth, names=row_index_names,
-            )
-        return pd.DataFrame(index=rows, columns=empty_cols, dtype=float)
+        return empty_variable_frame(
+            solve_name, col_names,
+            has_period=has_period, has_time=has_time,
+            realized_dt=realized_dt, realized_p=realized_p,
+        )
 
     long_data: dict[str, list] = {
         rn: [k[i] for k in row_keys] for i, rn in enumerate(row_index_names)
